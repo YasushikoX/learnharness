@@ -30,19 +30,19 @@ export function CompactionMomentDivider({ data: _data }: { data: CompactionDivid
 
 /** The cut divider (owner round 14): the LONGER divider at the actual
  *  compaction cut — the seam where verbatim history ends and the kept
- *  recent tail begins. Phase-divider's geometry (dotted rules + centered
+ *  recent tail begins. Phase-divider's geometry (hairline rules + centered
  *  chip) so it reads as a transcript boundary, not a message. Inert
  *  since release polish 2026-10-06 — the token count stays, the summary
  *  is inspectable only in provider logs. */
 export function CompactionCutDivider({ data }: { data: CompactionDividerData }) {
 	const kTok = data.details.tokensBefore > 0 ? ` · ${Math.round(data.details.tokensBefore / 1000)}k tok` : "";
 	return (
-		<div data-testid="compaction-cut-divider" className="my-4 flex w-full items-center gap-3">
-			<span className="h-0 flex-1 border-t-2 border-dotted border-border/50" aria-hidden />
-			<span className="rounded-full border border-border/80 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+		<div data-testid="compaction-cut-divider" className="my-6 flex w-full items-center gap-3">
+			<span className="h-0 flex-1 border-t border-border" aria-hidden />
+			<span className="whitespace-nowrap text-xs font-medium text-muted-foreground">
 				History compacted{kTok}
 			</span>
-			<span className="h-0 flex-1 border-t-2 border-dotted border-border/50" aria-hidden />
+			<span className="h-0 flex-1 border-t border-border" aria-hidden />
 		</div>
 	);
 }

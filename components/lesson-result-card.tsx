@@ -48,12 +48,12 @@ export function LessonResultView({
 				<span>Lesson result</span>
 				<span>{result.learned ? "learned" : "not learned yet"}</span>
 			</div>
-			<div className="font-medium">{result.skill.name}</div>
+			<div className="text-section font-semibold">{result.skill.name}</div>
 			<div className="text-xs text-muted-foreground" data-testid="lesson-result-understanding">
 				Understanding {result.understanding}/10{review ? ` · ${review}` : ""}
 			</div>
 			{result.summary && (
-				<div className="mt-2 text-sm text-foreground/80" data-testid="lesson-result-summary">
+				<div className="mt-2 text-sm text-foreground" data-testid="lesson-result-summary">
 					<RichText prose>{result.summary}</RichText>
 				</div>
 			)}
@@ -63,7 +63,7 @@ export function LessonResultView({
 					{lessonLabels(result.coverage.language).coverage.lessonLine(result.coverage.covered, result.coverage.total, result.coverage.left)}
 				</p>
 			)}
-			<div className="mt-3 flex flex-wrap items-center gap-2">
+			<div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-3">
 				<button type="button" className={BTN} disabled={busy} data-testid="lesson-result-practice" onClick={onPractice}>
 					Practice this skill
 				</button>

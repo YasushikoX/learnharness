@@ -42,8 +42,8 @@ describe("stats bar", () => {
 		// effort share a single pill (owner, 2026-10-27: two pills took three lines on a phone)
 		assert.match(html, /data-testid="stats-model"[^>]*>\s*<span[^>]*>—<\/span><span[^>]*>·<\/span><span[^>]*>—<\/span>/);
 		assert.ok(!html.includes('data-testid="stats-thinking"'), "no separate effort button");
-		// the control reads as a button: pill border + dropdown chevron
-		assert.match(html, /data-testid="stats-model"[^>]*rounded-md[^>]*>/);
+		// the control reads as a button: a quiet ghost control (UI round 1b) + dropdown chevron
+		assert.match(html, /data-testid="stats-model"[^>]*rounded-sm[^>]*>/);
 		assert.match(html, /lucide-chevron-down/);
 	});
 

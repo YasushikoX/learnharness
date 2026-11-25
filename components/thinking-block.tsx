@@ -110,12 +110,10 @@ export function ThinkingBlock({
 			data-testid={testId}
 			data-commit={dataCommit === undefined ? undefined : dataCommit ? "true" : "false"}
 			className={cn(
-				// Round five (owner, 2026-10-07): total inset still 3ch (the
-				// chevron law); the rail narrows (14px gap), padding 4px, pr-4
-				// keeps the text off the band's right edge. In-card rows take
-				// NO band — the accent lift read too light; rail only.
-				"lh-card-enter my-2 w-full border-l-[calc(3ch-14px)] border-muted-foreground/30 py-1 pl-[14px] pr-4 font-ui text-xs",
-				inCard ? "" : "bg-card",
+				// UI round 1b (SPEC §7): the transcript's one card style — radius 12, a hairline, 16/12px padding, 13px
+				// chrome. Inside a card it is a section over a hairline instead (no box in a box).
+				"lh-card-enter w-full text-chrome",
+				inCard ? "mt-3 border-t border-border pt-3" : "my-2 rounded-xl border border-border bg-card px-4 py-3",
 			)}
 		>
 			<button
@@ -129,10 +127,10 @@ export function ThinkingBlock({
 				className="lh-touch flex w-full items-center gap-2 lh-eyebrow text-muted-foreground transition-colors hover:text-foreground"
 			>
 				{label}
-				<ChevronDownIcon className={cn("size-4 shrink-0 transition-transform", open ? "rotate-180" : "rotate-0")} />
+				<ChevronDownIcon className={cn("size-3.5 shrink-0 transition-transform duration-(--lh-duration-hover) ease-(--lh-ease)", open ? "rotate-180" : "rotate-0")} />
 			</button>
 			{open && (
-				<div>{text && <span className="lh-prose mt-1.5 block whitespace-pre-wrap text-[15px] italic text-foreground/50"><PathText text={text} /></span>}<SubmittedImages images={images} /></div>
+				<div>{text && <span className="lh-prose mt-1.5 block whitespace-pre-wrap italic text-muted-foreground"><PathText text={text} /></span>}<SubmittedImages images={images} /></div>
 			)}
 		</div>
 	);

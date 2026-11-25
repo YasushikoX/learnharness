@@ -41,9 +41,9 @@ describe("md-blocks — code", () => {
 		assert.ok(surface, "both code paths share one surface rule");
 		assert.deepEqual(surface.trim().split(/;\s*/).filter(Boolean), [
 			"border: 1px solid var(--border)",
-			"background: color-mix(in oklab, var(--background) 86%, black)",
-		], "share the existing block surface, not block layout, padding or radius");
-		assert.match(css, /\[data-streamdown="code-block"\]\s*\{\s*border-radius: 0\.75rem;\s*padding: 0\.375rem;\s*\}/, "block geometry stays block-only and unchanged");
+			"background: var(--card)",
+		], "share the surface colour (UI round 1b), not block layout, padding or radius");
+		assert.match(css, /\[data-streamdown="code-block"\]\s*\{\s*border-radius: 0\.5rem;\s*padding: 0\.25rem;\s*\}/, "block geometry stays block-only (radius 8, UI round 1b)");
 	});
 
 	it("code fences delegate to streamdown's CodeBlock with a hover copy corner", () => {
@@ -300,9 +300,9 @@ describe("ThinkingBlock — the document band + ⌘T sync (owner rounds, 2026-10
 	it("the row is the document band — round four geometry (owner, 2026-10-07)", () => {
 		const html = renderToStaticMarkup(<ThinkingBlock text="banded" defaultOpen />);
 		assert.ok(html.includes("bg-card"), "the card-color band");
-		assert.ok(html.includes("border-l-[calc(3ch-14px)]"), "narrow rail — 14px gap inside the 3ch inset");
-		assert.ok(html.includes("py-1") && html.includes("pl-[14px]"), "4px band padding");
-		assert.ok(html.includes("pr-4"), "the text wraps early — air at the band's right edge");
+		// UI round 1b (SPEC §7): the transcript's one card style — radius 12, a hairline, 16/12px padding.
+		assert.ok(html.includes("rounded-xl border border-border"), "a hairline card, radius 12");
+		assert.ok(html.includes("px-4") && html.includes("py-3"), "16/12px padding");
 		assert.ok(html.includes("w-full"), "full width — no chat side");
 		assert.match(html, /aria-expanded="true"/);
 		assert.ok(html.includes("banded"), "text visible on arrival");
@@ -311,7 +311,7 @@ describe("ThinkingBlock — the document band + ⌘T sync (owner rounds, 2026-10
 	it("in-card rows take no band — the accent step read too light (owner round five)", () => {
 		const html = renderToStaticMarkup(<ThinkingBlock text="in card" inCard />);
 		assert.ok(!html.includes("bg-accent") && !html.includes("bg-card"), "transparent on the card");
-		assert.ok(html.includes("border-l-[calc(3ch-14px)]"), "rail only, same geometry");
+		assert.ok(html.includes("border-t border-border") && !html.includes("rounded-xl"), "a section over a hairline, no box in a box (UI round 1b)");
 	});
 
 	it("⌘T sets every row — explicit sets stomp individual state, late mounts honor the last set", () => {

@@ -2,6 +2,7 @@
 
 import type { KeyboardEvent, ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
 import {
 	CONFIDENCE_LEVELS,
 	CONFIDENCE_STOPS,
@@ -135,7 +136,7 @@ export function ConfidenceSlider({
 			disabled={dontKnowDisabled}
 			onClick={onDontKnow}
 			data-testid="dont-know-button"
-			className="lh-touch h-9 shrink-0 rounded-md border border-dashed border-border/70 bg-transparent px-3 text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+			className={cn(buttonVariants({ variant: "secondary", size: "sm" }), "lh-touch text-muted-foreground hover:text-foreground")}
 		>
 			I don&apos;t know
 		</button>
@@ -208,7 +209,7 @@ export function ConfidenceSlider({
 					{value === null ? "—" : `${value}%`}
 				</span>
 				{showUnsetHint && value === null && (
-					<span className="hidden text-xs text-muted-foreground sm:inline">
+					<span className="hidden whitespace-nowrap text-xs text-muted-foreground sm:inline">
 						set before submitting
 					</span>
 				)}

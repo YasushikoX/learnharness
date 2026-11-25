@@ -69,14 +69,17 @@ it("the appearance mapping sets the transcript variable only when capped", () =>
 	assert.deepEqual(appearanceVars(resolveAppearance({ adaptiveQuestions: false }), DEFAULT_THEME), full);
 });
 
-it("the transcript column reads the variable; unset leaves today's full-bleed column", () => {
+it("the transcript column reads the variable; unset is the reading column (the dock's 46rem, UI round 1b)", () => {
 	const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
-	assert.match(css, /\.lh-transcript-column \{\s*max-width: calc\(var\(--lh-transcript-max\) \+ 1rem\);\s*\}/);
+	assert.match(css, /--lh-reading-dock: 46rem;/);
+	assert.match(css, /\.lh-transcript-column \{\s*max-width: calc\(var\(--lh-transcript-max, var\(--lh-reading-dock\)\) \+ 1rem\);\s*\}/);
+	// The transcript mirrors its 48px bubble gutter on the left from 640px, so its text stays on the dock's axis.
+	assert.match(css, /\.lh-transcript-column\.lh-transcript-gutter \{\s*max-width: calc\(var\(--lh-transcript-max, var\(--lh-reading-dock\)\) \+ 4rem\);\s*\}/);
 	const chat = readFileSync(new URL("../components/chat.tsx", import.meta.url), "utf8");
 	assert.match(chat, /const COLUMN = "lh-transcript-column mx-auto w-full px-6";/);
 	// Fork (v0.7.0 merge): the transcript renders in TRANSCRIPT_COLUMN (room on the right for the margin bubbles), which
 	// carries the same cap; the dock keeps 46rem and widens to 60rem only on a landscape touch screen (the wide dock).
-	assert.match(chat, /const TRANSCRIPT_COLUMN = "lh-transcript-column mx-auto w-full pl-6 pr-12";/);
+	assert.match(chat, /const TRANSCRIPT_COLUMN = "lh-transcript-column lh-transcript-gutter mx-auto w-full pl-6 pr-12 sm:pl-12";/);
 	assert.match(chat, /const DOCK = "mx-auto w-full max-w-\[46rem\] px-4 \[@media\(pointer:coarse\)_and_\(orientation:landscape\)_and_\(min-width:1100px\)\]:max-w-\[60rem\]";/);
 });
 

@@ -93,7 +93,7 @@ export function ImagePresentation({ image }: { image: ImageSnapshot & Pick<ShowI
 				<div className="flex min-w-0 items-baseline gap-2">
 					<span className="shrink-0 lh-eyebrow text-muted-foreground">Image</span>
 					{image.caption && (
-						<span className="text-sm text-muted-foreground" data-testid="image-caption">
+						<span className="font-sans text-sm leading-5 text-muted-foreground" data-testid="image-caption">
 							{image.caption}
 						</span>
 					)}
