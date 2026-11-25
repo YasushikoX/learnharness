@@ -561,7 +561,7 @@ export function SketchView({
 								</Button>
 								<Button
 									type="button"
-									variant="destructive"
+									variant="destructiveSolid"
 									data-testid="sketch-clear-confirm"
 									onClick={() => {
 										setConfirmClear(false);

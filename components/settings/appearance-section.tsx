@@ -33,6 +33,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+	DEFAULT_THEME_ID,
 	EXTRACTION_CHUNK_TOKENS_FLOOR,
 	isConfidenceControl,
 	TRANSCRIPT_WIDTH_MAX_REM,
@@ -349,7 +350,7 @@ export function AppearanceSection({
 					void refreshThemes();
 					// The server already fell back to Default; the write keeps the
 					// dialog's record mirror and the live vars in step with it.
-					if (removed.id === activeTheme.id) onSectionChange({ ...appearance, theme: "default" });
+					if (removed.id === activeTheme.id) onSectionChange({ ...appearance, theme: DEFAULT_THEME_ID });
 				}}
 			/>
 			<div data-testid="group-colors" className="mt-5 flex flex-col gap-2">
@@ -469,7 +470,7 @@ export function AppearanceSection({
 			</SettingsRow>
 			<SettingsRow label="Session names in serif" testid="row-session-serif">
 				<Toggle
-					checked={appearance?.sessionNameSerif ?? true}
+					checked={resolved.sessionNameSerif}
 					label="session names serif"
 					onChange={(on) => onSectionChange({ ...appearance, sessionNameSerif: on })}
 				/>

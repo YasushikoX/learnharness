@@ -68,7 +68,8 @@ export interface ThemeFile {
 }
 
 /** What a theme sets beyond the twelve colors (fork): the primary buttons' fill and its text. Absent = upstream's rule
- *  (primary is the theme's text color on its background). Only the Default theme carries it: its brass primary. */
+ *  (primary is the theme's text color on its background). Dark and Light carry their blue primary with white text,
+ *  Warm Brass its brass primary. */
 export interface ThemeChrome {
 	primary: string;
 	primaryForeground: string;
@@ -82,8 +83,12 @@ export interface Theme extends ThemeFile {
 	chrome?: ThemeChrome;
 }
 
-/** The theme a record without `appearance.theme` renders. */
-export const DEFAULT_THEME_ID = "default";
+/** The theme a record without `appearance.theme` renders (UI round 1, 2026-11-25: the neutral Dark preset). */
+export const DEFAULT_THEME_ID = "dark";
+
+/** The id of the warm brown/brass palette that was the default until 2026-11-25. Presets keep their ids (a record
+ *  that chose it keeps it), so the "Warm Brass" preset still answers to `default`. */
+export const WARM_BRASS_THEME_ID = "default";
 
 /** #rgb / #rrggbb (case-insensitive). Mirrors settings.isHexColor without
  *  importing it (settings.ts imports this module's types). */
@@ -137,8 +142,10 @@ function builtin(name: string, mode: ThemeMode, c: ThemeColors): Theme {
 	return { id: themeIdFromName(name), name, mode, colors: c, builtin: true };
 }
 
-/** The presets, in grid order. Default = the app's warm dark palette (owner, 2026-10-27: a charcoal with a brown
- *  undertone, cream text, one muted brass accent; app/globals.css carries it as literals; tests pin the two equal).
+/** The presets, in grid order. Dark (the default; app/globals.css carries it as literals, tests pin the two equal) and
+ *  Light = the neutral pair of UI round 1 (2026-11-25, T3 Code style: grey surfaces, hairline borders, one blue accent
+ *  for the primary action, focus and selection; bold = the text color). Warm Brass = the app's previous default (owner,
+ *  2026-10-27: a charcoal with a brown undertone, cream text, one muted brass accent), still under its old id.
  *  Catppuccin: base/surface0/surface1, mauve accent, lavender/pink/peach
  *  emphasis; Latte takes mantle/surface0 instead, because surface0 on a
  *  light page reads as a heavy gray slab, and Frappé's bold is flamingo
@@ -146,13 +153,38 @@ function builtin(name: string, mode: ThemeMode, c: ThemeColors): Theme {
  *  Rosé Pine: base/surface/highlight-med, iris accent, iris/rose/gold
  *  emphasis. Gruvbox Dark: medium (bg0/bg0_s/bg2) with the bright
  *  accents; orange accent, blue/purple/aqua emphasis. Ivory: warm ivory
- *  page, terracotta accent, blue/green/clay emphasis. Pastel: a gray-cream
+ *  page, terracotta accent, green/clay emphasis (bold = the text color since
+ *  2026-11-25: link-blue bold read as links). Pastel: a gray-cream
  *  page with soft green, purple and orange inks. NvChad Onedark: base46's
  *  onedark. */
 export const BUILTIN_THEMES: readonly Theme[] = [
 	{
 		id: DEFAULT_THEME_ID,
-		name: "Default",
+		name: "Dark",
+		mode: "dark",
+		builtin: true,
+		colors: {
+			background: "#0e0e10", surface: "#17171a", border: "#252528", text: "#ededf0", textMuted: "#9b9ba4",
+			accent: "#5b8def", bold: "#ededf0", italic: "#ededf0", code: "#ededf0",
+			error: "#f87171", success: "#34c759", warning: "#f5a524",
+		},
+		chrome: { primary: "#3b76f0", primaryForeground: "#ffffff" },
+	},
+	{
+		id: "light",
+		name: "Light",
+		mode: "light",
+		builtin: true,
+		colors: {
+			background: "#fcfcfc", surface: "#ffffff", border: "#e7e7e9", text: "#18181b", textMuted: "#6b6b73",
+			accent: "#2563eb", bold: "#18181b", italic: "#18181b", code: "#18181b",
+			error: "#dc2626", success: "#16a34a", warning: "#b45309",
+		},
+		chrome: { primary: "#2563eb", primaryForeground: "#ffffff" },
+	},
+	{
+		id: WARM_BRASS_THEME_ID,
+		name: "Warm Brass",
 		mode: "dark",
 		builtin: true,
 		colors: {
@@ -199,7 +231,7 @@ export const BUILTIN_THEMES: readonly Theme[] = [
 	}),
 	builtin("Ivory", "light", {
 		background: "#faf9f5", surface: "#f0eee6", border: "#e0ddd2", text: "#3d3d3a", textMuted: "#83827d",
-		accent: "#d97757", bold: "#3266c9", italic: "#3f8f6b", code: "#c4613f",
+		accent: "#d97757", bold: "#3d3d3a", italic: "#3f8f6b", code: "#c4613f",
 		error: "#c43d3d", success: "#3f8f6b", warning: "#b8822a",
 	}),
 	builtin("Pastel", "light", {
@@ -214,7 +246,7 @@ export const BUILTIN_THEMES: readonly Theme[] = [
 	}),
 ];
 
-/** The app's original dark palette, and the fallback for a missing id. */
+/** The default (the Dark preset), and the fallback for a missing id. */
 export const DEFAULT_THEME: Theme = BUILTIN_THEMES[0]!;
 
 /** Preset ids are reserved: imports never take them, DELETE refuses them. */
@@ -256,15 +288,36 @@ export function shiftHex(hex: string, add: number): string {
 	return `#${n.map((c) => Math.min(255, Math.max(0, c + add)).toString(16).padStart(2, "0")).join("")}`;
 }
 
+/** Mix `from` toward `to` by `t` (0–1), per sRGB channel (always #rrggbb out). */
+export function mixHex(from: string, to: string, t: number): string {
+	const channels = (hex: string) => hex.length === 4
+		? hex.slice(1).split("").map((c) => parseInt(c + c, 16))
+		: [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+	const a = channels(from);
+	const b = channels(to);
+	return `#${a.map((c, i) => Math.round(c + (b[i]! - c) * t).toString(16).padStart(2, "0")).join("")}`;
+}
+
 /** The hover surface sits one step off `surface`: lighter on dark,
  *  darker on light (#1c1c1c → #2a2a2a, the original hand-picked hover). */
 const HOVER_STEP = 14;
+
+/** The roles the twelve colors do not name, derived so every preset (and every custom file) gets them (UI round 1,
+ *  2026-11-25): the sidebar sits 2.5% from the page toward the text, an input's border 7.5% from the hairline border
+ *  toward the text (one notch stronger than a card's edge). */
+const SIDEBAR_MIX = 0.025;
+const INPUT_BORDER_MIX = 0.075;
+/** The focus ring: the theme accent at 40% (#rrggbb + alpha 0x66). */
+const FOCUS_RING_ALPHA = "66";
 
 /** THE adapter: 12 theme colors → the CSS variables set on <html>.
  *  `--accent` stays the shadcn HOVER surface (derived from `surface`, so
  *  hovers never turn the highlight color); the theme's accent is
  *  `--lh-accent` (ring, toggles, the selected theme card). */
 export function themeVars(c: ThemeColors, mode: ThemeMode, chrome?: ThemeChrome): Record<string, string> {
+	const step = mode === "dark" ? HOVER_STEP : -HOVER_STEP;
+	const hover = shiftHex(c.surface, step);
+	const accent = shiftHex(c.accent, 0);
 	return {
 		"--background": c.background,
 		"--foreground": c.text,
@@ -274,17 +327,22 @@ export function themeVars(c: ThemeColors, mode: ThemeMode, chrome?: ThemeChrome)
 		"--popover-foreground": c.text,
 		"--primary": chrome?.primary ?? c.text,
 		"--primary-foreground": chrome?.primaryForeground ?? c.background,
-		"--secondary": c.surface,
+		// The neutral fill of a secondary button: one hover step off the surface, so it reads on the page and on a card.
+		"--secondary": hover,
 		"--secondary-foreground": c.text,
 		"--muted": c.surface,
 		"--muted-foreground": c.textMuted,
-		"--accent": shiftHex(c.surface, mode === "dark" ? HOVER_STEP : -HOVER_STEP),
+		"--accent": hover,
 		"--accent-foreground": c.text,
 		"--destructive": c.error,
 		"--border": c.border,
-		"--input": c.border,
+		"--input": mixHex(c.border, c.text, INPUT_BORDER_MIX),
 		"--ring": c.accent,
 		"--lh-accent": c.accent,
+		"--lh-sidebar": mixHex(c.background, c.text, SIDEBAR_MIX),
+		"--lh-raised": hover,
+		"--lh-raised-strong": shiftHex(c.surface, 2 * step),
+		"--lh-focus-ring": `${accent}${FOCUS_RING_ALPHA}`,
 		"--lh-line-strong": c.text,
 		"--lh-ink-strong": c.bold,
 		"--lh-ink-italic": c.italic,

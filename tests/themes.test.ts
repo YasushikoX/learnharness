@@ -11,8 +11,11 @@ import { describe, it } from "node:test";
 import {
 	BUILTIN_THEMES,
 	DEFAULT_THEME,
+	DEFAULT_THEME_ID,
 	effectiveColors,
 	exportThemeFile,
+	mixHex,
+	WARM_BRASS_THEME_ID,
 	parseThemeFile,
 	resolveTheme,
 	sanitizeThemeFile,
@@ -58,19 +61,38 @@ describe("theme files — the import validator", () => {
 });
 
 describe("presets", () => {
-	it("every preset is a valid theme file with a unique id matching its name", () => {
+	it("every preset is a valid theme file with a unique id matching its name (Warm Brass keeps its old id)", () => {
 		const ids = new Set<string>();
 		for (const t of BUILTIN_THEMES) {
 			assert.ok(sanitizeThemeFile(t), t.id);
 			assert.ok(!ids.has(t.id), `duplicate ${t.id}`);
 			ids.add(t.id);
-			assert.equal(t.id, themeIdFromName(t.name));
+			// Presets keep their ids (UI round 1): the old default, renamed Warm Brass, still answers to `default`.
+			assert.equal(t.id, t.id === WARM_BRASS_THEME_ID ? "default" : themeIdFromName(t.name));
 			assert.equal(t.builtin, true);
 		}
 		assert.deepEqual([...ids], [
-			"default", "catppuccin-latte", "catppuccin-frappe", "catppuccin-macchiato", "catppuccin-mocha",
+			"dark", "light", "default", "catppuccin-latte", "catppuccin-frappe", "catppuccin-macchiato", "catppuccin-mocha",
 			"rose-pine", "rose-pine-dawn", "gruvbox-dark", "ivory", "pastel", "nvchad-onedark",
 		]);
+		assert.equal(BUILTIN_THEMES.find((t) => t.id === WARM_BRASS_THEME_ID)?.name, "Warm Brass");
+		assert.equal(DEFAULT_THEME.id, DEFAULT_THEME_ID);
+		assert.equal(DEFAULT_THEME.name, "Dark");
+	});
+
+	it("the neutral pair: bold is the text color, a blue primary with white text, derived roles for every theme", () => {
+		for (const id of ["dark", "light"]) {
+			const t = BUILTIN_THEMES.find((x) => x.id === id)!;
+			assert.equal(t.colors.bold, t.colors.text, id);
+			assert.equal(t.chrome?.primaryForeground, "#ffffff", id);
+		}
+		for (const t of BUILTIN_THEMES) {
+			const v = themeVars(t.colors, t.mode, t.chrome);
+			for (const token of ["--lh-sidebar", "--lh-raised", "--lh-raised-strong", "--input", "--lh-focus-ring"]) {
+				assert.match(v[token] ?? "", /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/, `${t.id} ${token}`);
+			}
+		}
+		assert.equal(mixHex("#000000", "#ffffff", 0.5), "#808080");
 	});
 
 	it("an unknown or removed id resolves to Default", () => {

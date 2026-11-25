@@ -10,7 +10,15 @@
  */
 
 import { useLayoutEffect, useRef, useState, type ComponentPropsWithRef, type ReactNode } from "react";
+import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+/** The one select look (UI round 1, SPEC §3): a 32px field, radius 8, a 1px input border, the surface fill, a 14px
+ *  lucide chevron 10px from the right edge (the text never runs under it). Shared by SettingsMenuTrigger (the custom
+ *  menus' trigger) and ThinSelect (native, appearance:none). */
+export const SELECT_CLASS =
+	"relative flex h-8 touch:h-10 min-w-0 items-center rounded-md border border-input bg-card pl-2.5 pr-8 text-left text-sm text-foreground outline-none transition-[border-color,box-shadow] duration-(--lh-duration-hover) ease-(--lh-ease) focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/20";
+const SELECT_CHEVRON = "pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground";
 
 /** A section block: the pane's one heading (sentence case in the title font, owner 2026-11-16) + content. */
 export function SettingsSection({
@@ -27,8 +35,8 @@ export function SettingsSection({
 }) {
 	return (
 		<section data-testid={testid} className="px-6 py-5">
-			<h2 className="font-title text-xl leading-tight text-foreground max-lg:hidden">{title}</h2>
-			{hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
+			<h2 className="lh-page-title text-foreground max-lg:hidden">{title}</h2>
+			{hint && <p className="mt-1 text-sm text-muted-foreground">{hint}</p>}
 			<div className="mt-4 flex flex-col gap-3">{children}</div>
 		</section>
 	);
@@ -50,7 +58,7 @@ export function SettingsGroup({
 }) {
 	return (
 		<div data-testid={testid} className="mt-5 border-t border-border/60 pt-4 first:mt-0 first:border-t-0 first:pt-0">
-			<p className={cn("mb-2 text-[13px] font-medium text-muted-foreground", hideLabelOnPhone && "max-lg:hidden")}>{label}</p>
+			<p className={cn("mb-2 lh-section-title text-foreground", hideLabelOnPhone && "max-lg:hidden")}>{label}</p>
 			<div className="flex flex-col gap-2">{children}</div>
 		</div>
 	);
@@ -76,8 +84,8 @@ export function SettingsRow({
 	return (
 		<div data-testid={testid} className={cn("flex items-center justify-between gap-4 py-1", dimmed && "opacity-40")}>
 			<span className="min-w-0">
-				<span className="block font-prose text-(length:--lh-prose-size)">{label}</span>
-				{hint && <span className="block text-xs text-muted-foreground/70">{hint}</span>}
+				<span className="block text-base font-medium">{label}</span>
+				{hint && <span className="block text-sm text-muted-foreground">{hint}</span>}
 			</span>
 			{children}
 		</div>
@@ -98,13 +106,13 @@ export function SettingsMenuTrigger({
 		{...props}
 		disabled={disabled}
 		className={cn(
-			"flex h-7 touch:h-10 items-center gap-1 rounded-sm border border-border bg-background px-1.5 font-ui text-xs text-foreground transition-colors",
-			disabled || unavailable ? "cursor-not-allowed" : "hover:border-muted-foreground/50",
+			SELECT_CLASS,
+			disabled || unavailable ? "cursor-not-allowed opacity-45" : "hover:bg-raised",
 			className,
 		)}
 	>
 		<span className="min-w-0 flex-1 truncate">{value}</span>
-		<span aria-hidden className="text-muted-foreground">▾</span>
+		<ChevronDown aria-hidden strokeWidth={1.75} className={SELECT_CHEVRON} />
 	</button>;
 }
 
@@ -116,12 +124,12 @@ export function SettingsSegmentedControl<T extends string>({ label, options, val
 	testidPrefix?: string;
 	onChange: (value: T) => void;
 }) {
-	return <div role="radiogroup" aria-label={label} className="flex rounded-lg border border-border/60 bg-muted/30 p-0.5">
+	return <div role="radiogroup" aria-label={label} className="flex h-7 rounded-md bg-raised p-0.5">
 		{options.map(option => <button key={option.value} type="button" role="radio" aria-checked={option.value === value}
 			data-testid={testidPrefix ? `${testidPrefix}-${option.value}` : undefined}
 			disabled={disabled} onClick={() => onChange(option.value)}
-			className={cn("h-8 rounded-md px-3 text-sm font-medium transition-colors",
-				option.value === value ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>
+			className={cn("h-6 rounded-sm px-2.5 text-sm font-medium transition-colors duration-(--lh-duration-hover) ease-(--lh-ease)",
+				option.value === value ? "bg-card text-foreground shadow-[0_0_0_1px_var(--border),0_1px_2px_rgb(0_0_0/0.08)]" : "text-muted-foreground hover:text-foreground")}>
 			{option.label}
 		</button>)}
 	</div>;
@@ -160,11 +168,10 @@ export function Toggle({
 			onClick={() => onChange(!checked)}
 			className={cn(
 				// the hit area grows on touch screens (a 12px halo) without changing the switch's look
-					"relative h-4.5 w-8 shrink-0 rounded-full border border-border transition-colors touch:before:absolute touch:before:-inset-3 touch:before:content-['']",
-				// Owner (2026-09-20): on is a gray track with a WHITE disc (a full-white
-				// track was too loud); off stays the muted track. Theme wave: the on
-				// track is the theme accent (Default's accent IS that gray).
-				checked ? "bg-(--lh-accent)" : "bg-muted",
+					"relative h-5 w-[34px] shrink-0 rounded-full transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) touch:before:absolute touch:before:-inset-3 touch:before:content-[''] disabled:opacity-45",
+				// UI round 1 (SPEC §3): a 20×34 track, the theme accent when on, the
+				// strong raised fill when off; a white 16px disc 2px from the edges.
+				checked ? "bg-(--lh-accent)" : "bg-raised-strong",
 				disabled && "cursor-not-allowed",
 			)}
 		>
@@ -173,8 +180,8 @@ export function Toggle({
 				// only the knob's face changes (the invert affordance).
 				<span
 					className={cn(
-						"absolute left-0 top-0.5 flex size-3 items-center justify-center rounded-full transition-transform",
-						checked ? "translate-x-4 text-foreground" : "translate-x-0.5 text-muted-foreground",
+						"absolute left-0 top-0.5 flex size-4 items-center justify-center rounded-full bg-white text-zinc-900 shadow-[0_1px_2px_rgb(0_0_0/0.25)] transition-transform duration-(--lh-duration-hover) ease-(--lh-ease)",
+						checked ? "translate-x-4" : "translate-x-0.5",
 					)}
 				>
 					{discIcon}
@@ -182,10 +189,10 @@ export function Toggle({
 			) : (
 				<span
 					className={cn(
-						"absolute left-0 top-0.5 size-3 rounded-full transition-transform",
+						"absolute left-0 top-0.5 size-4 rounded-full bg-white shadow-[0_1px_2px_rgb(0_0_0/0.25)] transition-transform duration-(--lh-duration-hover) ease-(--lh-ease)",
 						// 2px inset from each inner edge, both states (owner round: the on
 						// disc used to touch the pill's right edge).
-						checked ? "translate-x-4 bg-foreground" : "translate-x-0.5 bg-muted-foreground",
+						checked ? "translate-x-4" : "translate-x-0.5",
 					)}
 				/>
 			)}
@@ -210,19 +217,23 @@ export function ThinSelect({
 	disabled?: boolean;
 }) {
 	return (
-		<select
-			value={value}
-			aria-label={ariaLabel}
-			data-testid={testid}
-			disabled={disabled}
-			onChange={(e) => onChange(e.target.value)}
-			className={cn(
-				"h-7 touch:h-10 rounded-sm border border-border bg-background px-1.5 font-ui text-xs text-foreground outline-none",
-				disabled && "cursor-not-allowed",
-			)}
-		>
-			{children}
-		</select>
+		<span className="relative inline-flex min-w-0">
+			<select
+				value={value}
+				aria-label={ariaLabel}
+				data-testid={testid}
+				disabled={disabled}
+				onChange={(e) => onChange(e.target.value)}
+				className={cn(
+					SELECT_CLASS,
+					"w-full appearance-none",
+					disabled ? "cursor-not-allowed opacity-45" : "hover:bg-raised",
+				)}
+			>
+				{children}
+			</select>
+			<ChevronDown aria-hidden strokeWidth={1.75} className={SELECT_CHEVRON} />
+		</span>
 	);
 }
 
@@ -240,7 +251,7 @@ export function SettingsSlider({ label, min, max, step, value, display, onChange
 	disabled?: boolean;
 }) {
 	return <label className={`flex flex-col gap-1${disabled ? " opacity-40" : ""}`}>
-		<span className="flex items-center justify-between text-[11px] text-muted-foreground">
+		<span className="flex items-center justify-between text-xs text-muted-foreground">
 			{showLabel && label}<span className="tabular-nums">{display ?? value}</span>
 		</span>
 		<input type="range" aria-label={label} min={min} max={max} step={step} value={value} disabled={disabled}
@@ -346,7 +357,11 @@ export function CommitInput({
 					e.currentTarget.blur();
 				}
 			}}
-			className="h-7 w-40 rounded-sm border border-border bg-background px-2 font-ui text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
+			className={cn(
+				"h-8 touch:h-10 w-40 rounded-md border border-input bg-card px-2.5 text-sm text-foreground tabular-nums outline-none transition-[border-color,box-shadow] duration-(--lh-duration-hover) ease-(--lh-ease) placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/20 disabled:opacity-45",
+				// hex colour fields read in mono (SPEC §1)
+				placeholder?.startsWith("#") && "font-mono",
+			)}
 		/>
 	);
 }

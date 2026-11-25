@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { JetBrains_Mono, Source_Sans_3 } from "next/font/google";
+import { Inter, JetBrains_Mono, Source_Sans_3 } from "next/font/google";
 import { connection } from "next/server";
 import "katex/dist/katex.min.css";
 import "./globals.css";
@@ -13,9 +13,13 @@ import UpstreamBanner from "@/components/upstream-banner";
 import { PluginsProvider } from "@/components/plugins";
 import { readThemeBoot } from "@/src/server";
 
-// Chrome = JetBrains Mono, teaching prose = Source Sans 3, titles = CMU
-// Serif (the bundled lh-cmu @font-face in globals.css — no CDN).
-const ui = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" });
+// UI round 1 (2026-11-25): chrome and titles = the system sans (SF Pro on
+// macOS) with Inter as the bundled face elsewhere; teaching prose = Source
+// Sans 3; code = the system mono. JetBrains Mono stays loaded: it is a
+// bundled choice in Appearance → reading font and the mono stack's
+// fallback where no system mono exists.
+const sans = Inter({ subsets: ["latin"], variable: "--font-inter" });
+const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" });
 const prose = Source_Sans_3({ subsets: ["latin"], variable: "--font-sans3" });
 
 export const metadata: Metadata = {
@@ -43,7 +47,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 	return (
 		<html
 			lang="en"
-			className={`${theme.mode} ${ui.variable} ${prose.variable}`}
+			className={`${theme.mode} ${sans.variable} ${mono.variable} ${prose.variable}`}
 			style={vars as React.CSSProperties}
 			suppressHydrationWarning
 		>
