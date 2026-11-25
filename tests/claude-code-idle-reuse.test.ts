@@ -13,7 +13,7 @@ import test, { type TestContext } from "node:test";
 import type { AssistantMessage, AssistantMessageEvent, Message, Tool } from "@earendil-works/pi-ai";
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 
-import { cliEndingOf, type ClaudeCliEnding } from "../src/agent/claude-code/constants.ts";
+import { cliEndingOf, setClaudeCliObservationCapture, type ClaudeCliEnding } from "../src/agent/claude-code/constants.ts";
 import { idleReuse } from "../src/agent/claude-code/fork-extensions.ts";
 import { CLAUDE_CODE_MODELS } from "../src/agent/claude-code/provider.ts";
 import { createClaudeCodeStreamFunction, type RunClaude } from "../src/agent/claude-code/stream.ts";
@@ -202,59 +202,45 @@ test("a delta that is not user messages only (an assistant message in it) is rep
 	assert.equal(spawned[0]!.killed, true);
 });
 
-test("follow-ups 1: a late result for the previous prompt does not settle the next turn; that turn's own result does", async (t) => {
-	// The CLI writes one `result` per prompt, in order. Here the first prompt's result is held back until the second prompt
-	// is written, and the second answer never gets a message_stop: only its own result may settle it, with its own text.
-	const spawned: Array<{ killed: boolean }> = [];
-	const runClaude: RunClaude = () => {
-		const stdin = new PassThrough();
-		const stdout = new PassThrough();
-		const record = { killed: false };
-		spawned.push(record);
-		const child = new EventEmitter() as EventEmitter & Record<string, unknown>;
-		Object.assign(child, { stdin, stdout, stderr: new PassThrough(), kill: () => { record.killed = true; setImmediate(() => child.emit("close", null)); return true; } });
-		t.after(() => (child.kill as () => boolean)());
-		const write = (value: unknown) => stdout.write(`${JSON.stringify(value)}\n`);
-		const event = (e: unknown) => write({ type: "stream_event", event: e });
-		const text = (value: string) => {
-			event({ type: "message_start", message: { usage: {} } });
-			event({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
-			event({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: value } });
-		};
-		let prompts = 0;
-		createInterface({ input: stdin }).on("line", (line) => {
-			const message = JSON.parse(line) as { type: string; request_id?: string; request?: { subtype?: string } };
-			if (message.type === "control_request") {
-				if (message.request?.subtype === "initialize") write({ type: "control_response", response: { request_id: message.request_id, subtype: "success" } });
-				return;
-			}
-			if (++prompts === 1 && spawned.length === 1) {
-				text("first answer");
-				event({ type: "content_block_stop", index: 0 });
-				event({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: {} });
-				event({ type: "message_stop" });
-				return;
-			}
-			if (prompts > 1) write({ type: "result", subtype: "success", is_error: false }); // the first prompt's, late
-			text("second answer");
-			write({ type: "result", subtype: "success", is_error: false });
-		});
-		return child as never;
-	};
+/** Records the adapter's observations (follow-ups 1) for turns started while it is set. */
+function observeCli(t: TestContext): string[] {
+	const notes: string[] = [];
+	const previous = setClaudeCliObservationCapture(() => (note) => notes.push(note));
+	t.after(() => setClaudeCliObservationCapture(previous));
+	return notes;
+}
+
+/** A turn that must stay open: its events over a bounded wait, and whether it settled in that time. */
+async function openTurnEvents(stream: ReturnType<typeof createClaudeCodeStreamFunction>, messages: Message[], waitMs = 300): Promise<{ events: AssistantMessageEvent[]; settled: boolean }> {
+	const context = normalizeContext({ systemPrompt: "You are a tutor.", messages, tools: [READ_TOOL] });
+	const events: AssistantMessageEvent[] = [];
+	const settled = (async () => { for await (const event of stream(model, context, { sessionId: "idle-session" })) events.push(event); return true; })();
+	return { events, settled: await Promise.race([settled, new Promise<false>((resolve) => setTimeout(() => resolve(false), waitMs))]) };
+}
+
+test("known, deliberately unchanged (as main): a reused turn whose answer gets a success result but no message_stop stays open; both results are recorded as observations", async (t) => {
+	// The first prompt's result is held back until the second prompt is written; the second answer never gets a
+	// message_stop. As on main a successful result settles nothing, so the turn stays open. The adapter records each
+	// success result that arrives while the turn is open (it cannot tell the previous prompt's late one from its own).
+	const notes = observeCli(t);
+	const { runClaude, spawned } = scriptedCli(t, (cli, prompt) => {
+		if (prompt === 1) { cli.text("first answer", "message-stop"); return; }
+		cli.result(); // the first prompt's, late
+		cli.text("second answer", "none");
+		cli.result();
+	});
 	const stream = createClaudeCodeStreamFunction(runClaude);
 	const first = assertSettledOnce(await turnEvents(stream, [user("hello")]), { stopReason: "stop", text: "first answer", cliEnding: "message-stop" });
-	const second = assertSettledOnce(await turnEvents(stream, [user("hello"), first, user("next", 5)]), { stopReason: "stop", text: "second answer", cliEnding: "result-without-stream-end" });
+	assert.deepEqual(notes, [], "a normal ending records nothing");
+	const second = await openTurnEvents(stream, [user("hello"), first, user("next", 5)]);
+	assert.equal(second.settled, false, "the turn is still open");
+	assert.equal(second.events.some((event) => event.type === "done" || event.type === "error"), false, "nothing settled it");
 	assert.equal(spawned.length, 1, "the second prompt went to the idle process");
-	assert.equal(second.content.map((b) => (b.type === "text" ? b.text : "")).join(""), "second answer");
-	assert.equal(second.stopReason, "stop");
-	await new Promise((resolve) => setImmediate(resolve));
-	assert.equal(spawned[0]!.killed, true, "a turn settled by its result is never reused");
-	// After the defensive ending the next message replays in a fresh process, whose first result matches its first prompt.
-	assertSettledOnce(await turnEvents(stream, [user("hello"), first, user("next", 5), second, user("third", 9)]), { stopReason: "stop", text: "second answer", cliEnding: "result-without-stream-end" });
-	assert.equal(spawned.length, 2);
+	assert.equal(spawned[0]!.killed, false, "nothing killed it");
+	assert.deepEqual(notes, ["result-before-stream-end", "result-before-stream-end"]);
 });
 
-test("ordering 14 (finding 6): a late error result for the previous prompt does not fail the next turn on the idle process", async (t) => {
+test("known, deliberately unchanged (as main): a late error result for the previous prompt fails the next turn on the idle process", async (t) => {
 	const { runClaude, spawned } = scriptedCli(t, (cli, prompt) => {
 		if (prompt === 1) { cli.text("first answer", "message-stop"); return; } // its result is held back
 		cli.result("the first prompt's late failure");
@@ -263,15 +249,16 @@ test("ordering 14 (finding 6): a late error result for the previous prompt does 
 	});
 	const stream = createClaudeCodeStreamFunction(runClaude);
 	const first = assertSettledOnce(await turnEvents(stream, [user("hello")]), { stopReason: "stop", text: "first answer", cliEnding: "message-stop" });
-	assertSettledOnce(await turnEvents(stream, [user("hello"), first, user("next", 5)]), { stopReason: "stop", text: "second answer", cliEnding: "message-stop" });
+	assertSettledOnce(await turnEvents(stream, [user("hello"), first, user("next", 5)]), { stopReason: "error", error: /the first prompt's late failure/, cliEnding: "result-error" });
 	assert.equal(spawned.length, 1, "reused");
-	assert.equal(spawned[0]!.killed, false, "kept idle for the next message");
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(spawned[0]!.killed, true, "a failed turn is not kept idle");
 });
 
-test("ordering 16: a process that exits between message_stop and its result settles the turn once; the next turn starts fresh and its own result settles it", async (t) => {
+test("ordering 16: a process that exits between message_stop and its result settles the turn once; the next turn starts fresh", async (t) => {
 	const { runClaude, spawned } = scriptedCli(t, (cli, prompt, spawn) => {
 		if (spawn === 1) { cli.text("first answer", "message-stop"); setImmediate(() => cli.exit(1)); return; }
-		cli.text("from the fresh process", "none");
+		cli.text("from the fresh process", "message-stop");
 		cli.result();
 	});
 	const stream = createClaudeCodeStreamFunction(runClaude);
@@ -280,7 +267,7 @@ test("ordering 16: a process that exits between message_stop and its result sett
 	await new Promise((resolve) => setTimeout(resolve, 20));
 	assert.equal(spawned[0]!.exited, true);
 	assert.equal(events.filter((event) => event.type === "done" || event.type === "error").length, 1, "the exit settles nothing again");
-	assertSettledOnce(await turnEvents(stream, [user("hello"), first, user("next", 5)]), { stopReason: "stop", text: "from the fresh process", cliEnding: "result-without-stream-end" });
+	assertSettledOnce(await turnEvents(stream, [user("hello"), first, user("next", 5)]), { stopReason: "stop", text: "from the fresh process", cliEnding: "message-stop" });
 	assert.equal(spawned.length, 2, "the exited process is not reused");
 });
 
@@ -302,13 +289,15 @@ for (const [kind, errorLine] of [
 	assert.equal(spawned.length, 2);
 });
 
-test("concern 3: a stray success result before the first prompt matches nothing; the first prompt's own result settles it", async (t) => {
+test("a stray success result before the first prompt changes nothing (recorded only); the reply settles at message_stop and the process is kept", async (t) => {
+	const notes = observeCli(t);
 	const { runClaude, spawned } = scriptedCli(t, (cli) => {
-		cli.text("the reply", "none");
+		cli.text("the reply", "message-stop");
 		cli.result();
 	}, (cli) => cli.result());
 	const stream = createClaudeCodeStreamFunction(runClaude);
-	assertSettledOnce(await turnEvents(stream, [user("hello")]), { stopReason: "stop", text: "the reply", cliEnding: "result-without-stream-end" });
+	assertSettledOnce(await turnEvents(stream, [user("hello")]), { stopReason: "stop", text: "the reply", cliEnding: "message-stop" });
 	await new Promise((resolve) => setImmediate(resolve));
-	assert.equal(spawned[0]!.killed, true, "settled by a result: killed");
+	assert.equal(spawned[0]!.killed, false, "kept idle, as on main");
+	assert.deepEqual(notes, ["result-before-stream-end"], "the stray result arrived while the turn was open; the one after message_stop is normal");
 });

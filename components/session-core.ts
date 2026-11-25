@@ -362,6 +362,9 @@ export class SessionModel {
 	private errorValue: { message: string } | null = null;
 	/** The refusal of a send made by the dropped banner's Retry; errorValue is it while identical (follow-ups 1, finding 2). */
 	private recoveryError: { message: string } | null = null;
+	/** The attach that follows this client's own accepted input (follow-ups 1, final round): its settle on a record that still
+	 *  owes the reply means the server lost the turn (a restart before the attach). */
+	private clientTurnAttach: AbortController | null = null;
 	/** The server-retained failure (record turnError) last adopted; errorValue is it while identical. */
 	private retainedError: { message: string } | null = null;
 	/** Dismissing a banner must not authorize an automatic replacement turn. */
@@ -891,7 +894,9 @@ export class SessionModel {
 						const failed = (this.errorValue !== null && this.errorValue.message !== STREAM_DROPPED) || failedResponseAtEnd(this.base) !== undefined;
 						// Follow-ups 1, finding 4: after a drop, a settled turn whose record still owes the reply was lost by the
 						// server (a restart). Keep the partial, if any, and the dropped banner, whose Retry runs the turn again.
-						const lost = owesTutorReply(this.base) && (this.detachedTail !== null || this.droppedStream);
+						// Final round: so is one this client started whose attach found it settled with nothing failed and the
+						// reply still owed (a restart between accepting the input and the attach).
+						const lost = owesTutorReply(this.base) && (this.detachedTail !== null || this.droppedStream || (this.clientTurnAttach === controller && !failed));
 						if ((failed && this.detachedTail) || lost) this.droppedStream = true;
 						else this.clearDroppedStream();
 					}
@@ -933,7 +938,7 @@ export class SessionModel {
 	 * lands on top. The stream then replays the turn from its first event
 	 * through the SAME consume path.
 	 */
-	async resumeStream(refetchRecordFirst = true, allowRecovery = true): Promise<void> {
+	async resumeStream(refetchRecordFirst = true, allowRecovery = true, clientTurn = false): Promise<void> {
 		// External reattachment supersedes unresolved POST preview ownership.
 		// Normal post-ack reattach keeps its preview until the atomic record swap.
 		this.retireImagePreview(this.imagePostOwner);
@@ -942,6 +947,7 @@ export class SessionModel {
 		const controller = new AbortController();
 		this.consumeAbort = controller;
 		this.latestRequest = controller;
+		this.clientTurnAttach = clientTurn ? controller : null;
 		this.activity = null;
 		this.modelThinking = false;
 		// REPLAY ONTO A CLEAN SLATE (owner, optimistic round 3, 2026-10-02):
@@ -1280,7 +1286,7 @@ export class SessionModel {
 			// flight: the turn is live server-side either way — do not attach
 			// a stream from a view that is gone or superseded.
 			if (this.consumeAbort !== controller) return true;
-			await this.resumeStream(true);
+			await this.resumeStream(true, true, true);
 			return true;
 		} catch (err) {
 			settleDelivery();

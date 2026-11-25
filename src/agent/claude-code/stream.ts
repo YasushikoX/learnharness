@@ -29,8 +29,8 @@ import type { LhMessage } from "../../core/native-messages.ts";
 import { offerWorkerContinuation } from "../worker-request-admission.ts";
 import { ClaudeLaunchError, createClaudeLauncher } from "./launch.ts";
 import { observePlanUsage } from "./plan-usage.ts";
-import { parseCliLine, type CliBlock, type CliEvent, type CliUsage } from "./cli-events.ts";
-import { ClaudeCodeError, markCliEnding, type ClaudeCliEnding } from "./constants.ts";
+import { isSuccessfulResultLine, parseCliLine, type CliBlock, type CliEvent, type CliUsage } from "./cli-events.ts";
+import { captureClaudeCliObservationSink, ClaudeCodeError, markCliEnding, type ClaudeCliEnding, type ClaudeCliObservation } from "./constants.ts";
 import { ContextWindowProbe } from "./context-window.ts";
 import { addLiveProcess, getIdleProcess, getLiveProcess, LIVE_PROCESS_IDLE_TIMEOUT_MS, removeLiveProcess, type LiveProcess } from "./live-processes.ts";
 import { forkChildEnv, idleReuse } from "./fork-extensions.ts";
@@ -74,8 +74,6 @@ const REFUSAL_MESSAGE = "The model refused to complete the request";
 const ABORT_MESSAGE = "Request was aborted";
 const START_FAILED_MESSAGE = "claude CLI failed to start";
 const NO_STOP_REASON_MESSAGE = "claude CLI ended the message without a stop reason";
-const RESULT_WITHOUT_REPLY_MESSAGE = "claude CLI ended the turn without streaming a reply";
-const RESULT_BEFORE_TOOLS_MESSAGE = "claude CLI ended the turn without running its tool calls";
 const NOT_SIGNED_IN_ERROR = "authentication_failed";
 
 export function toEffort(level: ThinkingLevel | undefined): AnthropicEffort {
@@ -162,10 +160,10 @@ class ClaudeTurn {
 	private readonly intents: ToolCall[] = [];
 	/** The current message called a harness tool by its bare name; the CLI rejects that call itself. */
 	skippedBareCall = false;
-	/** The current message began a tool call of any kind (follow-ups 1, finding 4: the defensive ending never settles it). */
-	private toolCallBegun = false;
 	started = false;
 	finished = false;
+	/** Where this turn's observations go (follow-ups 1), captured in the turn's own context. Written to, never read. */
+	private readonly observations = captureClaudeCliObservationSink();
 
 	constructor(
 		private readonly stream: AssistantMessageEventStream,
@@ -180,7 +178,7 @@ class ClaudeTurn {
 
 		switch (event.type) {
 			case "messageStart":
-				this.startMessage();
+				this.skippedBareCall = false;
 				this.updateUsage(event.usage);
 				this.start();
 				return;
@@ -287,26 +285,11 @@ class ClaudeTurn {
 		this.finish("tool-admission");
 	}
 
-	/** Fork (follow-ups 1): a successful `result` for this turn's prompt with no message_stop before it. The real CLI
-	 *  (2.1.330) was never seen doing this: every captured run ended message_stop, then result. If it does, the turn must
-	 *  still end: the text that arrived is kept; with no text, or with tool calls the CLI never ran, the learner gets an
-	 *  error with Retry instead of a turn that never finishes. */
-	settleFromResult(stopReason: string | null): void {
-		if (this.finished) return;
-		for (const index of [...this.contentIndexes.keys(), ...this.toolBlocks.keys()]) this.stopBlock(index);
-		// Follow-ups 1, finding 4: settled only with visible text and no tool call at all. A tool call the CLI never ran,
-		// however its stop reason was or was not reported, is an error with Retry, never a reply missing its question.
-		if (this.toolCallBegun || this.intents.length > 0 || this.output.stopReason === "toolUse" || stopReason === "tool_use") {
-			this.fail(RESULT_BEFORE_TOOLS_MESSAGE, "error", "result-without-stream-end");
-			return;
-		}
-		if (this.output.stopReason === "pending") this.output.stopReason = (stopReason ? STOP_REASONS[stopReason] : undefined) ?? "stop";
-		if (this.output.stopReason !== "error" && !this.output.content.some((block) => block.type === "text" && block.text.trim())) {
-			this.fail(RESULT_WITHOUT_REPLY_MESSAGE, "error", "result-without-stream-end");
-			return;
-		}
-		this.start();
-		this.finish("result-without-stream-end");
+	/** Fork (follow-ups 1): record what the CLI did, for diagnostics only. Never changes the turn. */
+	observe(note: ClaudeCliObservation): void {
+		console.warn(`claude CLI observation: ${note}`);
+		try { this.observations?.(note); }
+		catch { /* Diagnostics cannot interfere with the turn. */ }
 	}
 
 	fail(message: string, reason: "aborted" | "error", ending: ClaudeCliEnding = reason === "aborted" ? "aborted" : "adapter-error"): void {
@@ -318,16 +301,6 @@ class ClaudeTurn {
 		this.output.errorMessage = message;
 		this.stream.push({ type: "error", reason, error: this.output });
 		this.stream.end();
-	}
-
-	/** Fork (follow-ups 1, finding 5): each CLI message starts clean. Only a message of rejected bare calls keeps the turn
-	 *  open into the next one, and its stop reason, tool intents and open blocks must not carry over. */
-	private startMessage(): void {
-		for (const index of [...this.contentIndexes.keys(), ...this.toolBlocks.keys()]) this.stopBlock(index);
-		this.intents.length = 0;
-		this.skippedBareCall = false;
-		this.toolCallBegun = false;
-		this.output.stopReason = "pending";
 	}
 
 	private start(): void {
@@ -353,7 +326,6 @@ class ClaudeTurn {
 				return;
 
 			case "toolUse":
-				this.toolCallBegun = true;
 				if (!block.name.startsWith(`mcp__${BRIDGE_SERVER_NAME}__`)) {
 					// Models sometimes call a harness tool by its bare name. With --tools "" the CLI has no such
 					// tool, answers it with an error result and the model retries under the MCP name.
@@ -488,18 +460,6 @@ class ClaudeProcess implements LiveProcess {
 	private idle = false;
 	private contextWindow: number | undefined;
 	private contextProbe: ContextWindowProbe | undefined;
-	/** Fork (follow-ups 1): prompts written to stdin, `result` lines counted, and the prompt the current turn answers.
-	 *  Invariant: the CLI answers every prompt written to its stdin with exactly one `result` line (success or error), in
-	 *  the order written, and writes none before the first. So the n-th result counted is the n-th prompt's, and a result
-	 *  belongs to the current turn only when `results === turnPrompt`; every other result line is ignored. `turnPrompt` is
-	 *  0 until the first prompt is written, and a result read before then is not counted (a success is ignored; an error
-	 *  can only be this process's failure to start, so it fails the turn waiting for that first prompt). The counts live
-	 *  on the process: a turn ended by abort, a failed start, an exit, the defensive ending or a held call the CLI gave up
-	 *  kills its process, so the next turn counts from 0 in a fresh one. A tool round trip (continueTurn) writes no prompt
-	 *  and keeps `turnPrompt`; idle reuse (continueWithUser) writes one and moves `turnPrompt` to it. */
-	private prompts = 0;
-	private results = 0;
-	private turnPrompt = 0;
 
 	constructor(
 		private readonly child: ChildProcessWithoutNullStreams,
@@ -524,7 +484,7 @@ class ClaudeProcess implements LiveProcess {
 		this.child.stdin.on("error", (error) => console.error("claude CLI stdin closed early:", error));
 		this.contextProbe = new ContextWindowProbe(
 			(line) => this.child.stdin.write(`${line}\n`),
-			() => { if (!this.stopping) { this.turnPrompt = ++this.prompts; this.child.stdin.write(`${stdinLine}\n`); } },
+			() => { if (!this.stopping) this.child.stdin.write(`${stdinLine}\n`); },
 			(tokens) => { this.contextWindow = tokens; this.turn.setContextWindow(tokens); },
 		);
 		createInterface({ input: this.child.stdout }).on("line", (line) => {
@@ -601,7 +561,6 @@ class ClaudeProcess implements LiveProcess {
 		this.setSignal(signal);
 		if (this.stopping) return;
 		const content = delta.flatMap((message) => (message.role === "user" ? toUnlabelledBlocks(message.content) : []));
-		this.turnPrompt = ++this.prompts;
 		this.child.stdin.write(`${toStreamJsonLine(content)}\n`);
 	}
 
@@ -708,6 +667,9 @@ class ClaudeProcess implements LiveProcess {
 		if (this.stopping || !line.trim()) return;
 		observePlanUsage(line); // fork: the plan pill's rate_limit_event
 		if (this.contextProbe?.handle(JSON.parse(line))) return;
+		// Fork (follow-ups 1): recorded only, the turn carries on exactly as before (parseCliLine ignores this line below). A
+		// successful result normally follows message_stop on an idle process; here the turn is still open or its tool calls held.
+		if ((!this.turn.finished || !this.idle) && isSuccessfulResultLine(line)) this.turn.observe("result-before-stream-end");
 		const event = parseCliLine(line);
 		if (!event) return;
 		if (event.type === "toolResults") {
@@ -715,25 +677,6 @@ class ClaudeProcess implements LiveProcess {
 				this.fail("claude CLI refused a harness tool call before MCP admission");
 			}
 			return;
-		}
-		if (event.type === "resultSuccess" || event.type === "resultError") {
-			// See the invariant beside `turnPrompt`: a result for an earlier prompt never reaches this turn.
-			if (this.prompts > 0 && ++this.results !== this.turnPrompt) return;
-			if (event.type === "resultSuccess") {
-				if (this.prompts === 0) return;
-				if (this.turn.finished) {
-					// Normal: the turn ended at message_stop and the process idles for the next prompt.
-					if (this.idle) return;
-					// Follow-ups 1, finding 1: the CLI ended this prompt while the app holds its tool calls, so it will never
-					// take their results. Drop it now: the answer then replays in a fresh process, as after an idle timeout.
-					console.warn(`claude CLI ended its prompt after ${Math.round((Date.now() - this.heldSince) / 1000)}s with tool calls held: replaying in a fresh process`);
-					this.kill();
-					return;
-				}
-				this.turn.settleFromResult(event.stopReason);
-				this.kill(); // The CLI may hold a reply the app never saw: never reuse this process.
-				return;
-			}
 		}
 		// Moving on before held calls were answered means the CLI did not
 		// honor this tool wait. Never execute further stdout-only intentions.

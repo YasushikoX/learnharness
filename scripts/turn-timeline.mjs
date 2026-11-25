@@ -8,6 +8,8 @@ const turns = [];
 // Start lines (follow-ups 1): a turn whose start has no finish line hung and was abandoned, or is still running. Older logs
 // have none, so every line without `kind` is a finished turn.
 const starts = new Map();
+// Observation lines (follow-ups 1): written mid-turn by the claude CLI adapter, e.g. `result-before-stream-end`.
+const observations = [];
 let writeFailures = 0;
 let unreadable = 0;
 for (const name of [file + ".1", file]) {
@@ -21,6 +23,7 @@ for (const name of [file + ".1", file]) {
 		catch { unreadable++; continue; }
 		writeFailures = Math.max(writeFailures, Number(parsed.writeFailures) || 0);
 		if (parsed.kind === "start") starts.set(parsed.turnId, parsed);
+		else if (parsed.kind === "observation") observations.push(parsed);
 		else turns.push(parsed);
 	}
 }
@@ -30,9 +33,20 @@ const describe = ({ turnId, chatId, model, provider, durationMs, firstEventMs, f
 	({ turnId, chatId, provider, model, durationMs, firstEventMs, firstVisibleTextMs, longestEventGapMs, stopReason, streamEnd, errorKind, cliEnding });
 const finished = new Set(turns.map(turn => turn.turnId));
 const now = Date.now();
+const notesOf = turnId => {
+	const notes = {};
+	for (const observation of observations) if (observation.turnId === turnId) notes[observation.note] = (notes[observation.note] ?? 0) + 1;
+	return notes;
+};
 const unfinished = [...starts.values()].filter(start => !finished.has(start.turnId))
-	.map(({ turnId, chatId, provider, model, startedAt }) => ({ turnId, chatId, provider, model, startedAt, startedMinutesAgo: Math.round((now - Date.parse(startedAt)) / 60_000) }))
+	.map(({ turnId, chatId, provider, model, startedAt }) => ({ turnId, chatId, provider, model, startedAt, startedMinutesAgo: Math.round((now - Date.parse(startedAt)) / 60_000), observations: notesOf(turnId) }))
 	.sort((a, b) => b.startedMinutesAgo - a.startedMinutesAgo);
+const observed = {};
+for (const { note, turnId } of observations) {
+	observed[note] ??= { count: 0, inUnfinishedTurns: 0 };
+	observed[note].count++;
+	if (!finished.has(turnId)) observed[note].inUnfinishedTurns++;
+}
 const endings = {};
 for (const turn of turns) if (turn.cliEnding) endings[turn.cliEnding] = (endings[turn.cliEnding] ?? 0) + 1;
 const empty = slowest.filter(turn => turn.visibleTextChars === 0);
@@ -50,6 +64,8 @@ console.log(JSON.stringify({
 	timelineWriteFailures: writeFailures,
 	turnsStartedNeverFinished: { count: unfinished.length, turns: unfinished.slice(0, 20) },
 	claudeCliEndings: endings,
+	// A successful CLI result before the stream's end: the turn is left to run as before; a stall beside one shows it.
+	claudeCliObservations: observed,
 	slowestTurns: slowest.slice(0, 10).map(describe),
 	turnsWithoutVisibleText: { count: empty.length, slowest: empty.slice(0, 10).map(describe) },
 	mostRefusedGates: Object.fromEntries([...refusals].sort((a, b) => b[1] - a[1])),

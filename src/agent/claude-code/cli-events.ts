@@ -16,7 +16,6 @@ export type CliEvent =
 	| { type: "messageStop" }
 	| { type: "assistantError"; error: string; text: string }
 	| { type: "resultError"; text: string }
-	| { type: "resultSuccess"; stopReason: string | null }
 	| { type: "toolResults"; ids: string[] };
 
 type RawUsage = {
@@ -53,7 +52,6 @@ type RawCliLine = {
 	message?: { content?: { type: string; text?: string; tool_use_id?: string }[] };
 	is_error?: boolean;
 	result?: string;
-	stop_reason?: string | null;
 	subtype?: string;
 	errors?: string[];
 };
@@ -187,11 +185,20 @@ export function parseCliLine(text: string): CliEvent | null {
 		}
 
 		case "result":
-			// The CLI's end of one prompt. A successful one normally follows message_stop and changes nothing (stream.ts).
-			if (line.is_error !== true) return { type: "resultSuccess", stopReason: typeof line.stop_reason === "string" ? line.stop_reason : null };
+			if (line.is_error !== true) return null;
 			return { type: "resultError", text: getResultErrorText(line) };
 
 		default:
 			return null;
+	}
+}
+
+/** Fork (follow-ups 1): a successful `result` line, which parseCliLine ignores. Read only to record it (stream.ts). */
+export function isSuccessfulResultLine(text: string): boolean {
+	try {
+		const line = JSON.parse(text) as RawCliLine | null;
+		return typeof line === "object" && line !== null && line.type === "result" && line.is_error !== true;
+	} catch {
+		return false;
 	}
 }

@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import type { StopReason } from "@earendil-works/pi-ai";
 import { PATHS } from "../../config.ts";
-import { cliEndingOf, type ClaudeCliEnding } from "../agent/claude-code/constants.ts";
+import { cliEndingOf, setClaudeCliObservationCapture, type ClaudeCliEnding, type ClaudeCliObservation } from "../agent/claude-code/constants.ts";
 import { sendToUserText } from "../core/native-messages.ts";
 
 export const TURN_TIMELINE_MAX_BYTES = 4 * 1024 * 1024;
@@ -46,8 +46,13 @@ export type TurnTimelineLine = Identity & {
  *  finish line for the same turnId follows when it ends; the summary script lists starts that never got one. */
 export type TurnTimelineStartLine = Identity & { kind: "start"; startedAt: string };
 
+/** Written at once when the claude CLI adapter observes something odd mid-turn (follow-ups 1): ids, the time and a fixed
+ *  note, no text. Not at finish, since a turn that hits it may never finish; the summary script shows these beside the
+ *  turns that started and never finished. */
+export type TurnTimelineObservationLine = { kind: "observation"; turnId: string; chatId: string; at: string; note: ClaudeCliObservation };
+
 /** On disk a line also carries `writeFailures` once this process failed to write an earlier line: how many it lost so far. */
-export type TurnTimelineRecord = TurnTimelineLine | TurnTimelineStartLine;
+export type TurnTimelineRecord = TurnTimelineLine | TurnTimelineStartLine | TurnTimelineObservationLine;
 
 /** Serialize rotation across turns and keep disk I/O off the settlement path. */
 export function createTurnTimelineWriter(file: string, maxBytes = TURN_TIMELINE_MAX_BYTES) {
@@ -80,6 +85,12 @@ const runtime = globalThis as typeof globalThis & { __lhTurnTimelineWriter?: Ret
 const writer = runtime.__lhTurnTimelineWriter ??= createTurnTimelineWriter(timelineFile);
 export const turnTimelineWriteFailures = () => writer.failures;
 const context = new AsyncLocalStorage<TurnTimeline>();
+
+// The claude CLI adapter captures this when a turn's stream function is entered, inside that turn's context.
+setClaudeCliObservationCapture(() => {
+	const timeline = context.getStore();
+	return timeline ? (note) => timeline.observeCli(note) : undefined;
+});
 
 export async function observeTurnActivity<T>(activity: TurnActivity, run: () => Promise<T>): Promise<T> {
 	const end = context.getStore()?.beginActivity(activity);
@@ -128,6 +139,7 @@ export class TurnTimeline {
 		private readonly write: ((line: TurnTimelineLine) => void) | undefined = process.env.NODE_ENV === "test" ? undefined : writer.append,
 		private readonly clock = () => performance.now(),
 		private readonly writeStart: ((line: TurnTimelineStartLine) => void) | undefined = process.env.NODE_ENV === "test" ? undefined : writer.append,
+		private readonly writeObservation: ((line: TurnTimelineObservationLine) => void) | undefined = process.env.NODE_ENV === "test" ? undefined : writer.append,
 	) { this.start = clock(); }
 
 	private now() { return Math.round(this.clock() - this.start); }
@@ -144,6 +156,12 @@ export class TurnTimeline {
 		if (this.begun || this.finished) return;
 		this.begun = true;
 		try { this.writeStart?.({ kind: "start", ...this.identity, startedAt: this.startedAt }); }
+		catch { /* Diagnostics cannot interfere with the turn. */ }
+	}
+
+	/** An observation line, written now (follow-ups 1). Ids, the time and the fixed note only; changes nothing else. */
+	observeCli(note: ClaudeCliObservation) {
+		try { this.writeObservation?.({ kind: "observation", turnId: this.identity.turnId, chatId: this.identity.chatId, at: new Date().toISOString(), note }); }
 		catch { /* Diagnostics cannot interfere with the turn. */ }
 	}
 

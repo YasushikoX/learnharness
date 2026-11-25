@@ -12,7 +12,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 import type { ChatInput } from "../src/core/input-events.ts";
 import type { LhMessage } from "../src/core/native-messages.ts";
-import type { TurnTimelineLine, TurnTimelineStartLine } from "../src/server/turn-timeline.ts";
+import type { TurnTimelineLine, TurnTimelineObservationLine, TurnTimelineStartLine } from "../src/server/turn-timeline.ts";
 
 assert.equal(process.env.NODE_ENV, "test");
 const scratch = mkdtempSync(join(tmpdir(), "lh-stream-reliability-"));
@@ -423,6 +423,17 @@ it("follow-ups 1, timeline: a turn writes a content-free start line, and the sum
 	assert.equal(report.slowestTurns[0].firstEventMs, 7);
 	assert.equal(report.slowestTurns[0].cliEnding, null);
 	assert.doesNotMatch(await readFile(file + ".1", "utf8"), /prompt|answer|text/i);
+
+	// Observation lines (follow-ups 1, final round): not turns; counted, and shown beside the turns that never finished.
+	const observed = join(dir, "observed.jsonl");
+	const observation = (turnId: string): TurnTimelineObservationLine => ({ kind: "observation", turnId, chatId: identity.chatId, at: new Date().toISOString(), note: "result-before-stream-end" });
+	writeFileSync(observed, [start("turn-hung", 30), observation("turn-hung"), start("turn-done", 40), observation("turn-done"), { ...finished, turnId: "turn-done" }, start("turn-quiet", 20)]
+		.map(line => JSON.stringify(line)).join("\n") + "\n");
+	const observedReport = summary(observed);
+	assert.equal(observedReport.turns, 1, "an observation line is not a turn");
+	assert.deepEqual(observedReport.claudeCliObservations, { "result-before-stream-end": { count: 2, inUnfinishedTurns: 1 } });
+	assert.deepEqual(observedReport.turnsStartedNeverFinished.turns.map((turn: { turnId: string; observations: object }) => [turn.turnId, turn.observations]),
+		[["turn-hung", { "result-before-stream-end": 1 }], ["turn-quiet", {}]]);
 
 	// A log written before start lines existed (no `kind`, no cliEnding) still reads, with nothing unfinished.
 	const old = join(dir, "old.jsonl");
@@ -1039,6 +1050,41 @@ it("follow-ups 1 fix round: a drop before any text on a turn the server lost kee
 	assert.equal(visibleTexts(session).filter(text => text === "The reply after the restart.").length, 1);
 });
 
+it("follow-ups 1 final round: a restart between accepting the learner's message and the attach shows the dropped banner, and its Retry runs the turn once", async () => {
+	const reply = { ...fauxAssistantMessage("The reply after the restart."), id: "after-restart" } as LhMessage;
+	let record: object = { messages: [], turnInFlight: false };
+	const { session, posts } = scriptedSession("lost-before-attach", [], () => record, [
+		settledTurnResponse, // the restarted server has no turn: the attach finds it settled
+		() => { record = { messages: [learnerAsk, reply], turnInFlight: false }; return fullReplay(reply)(); },
+	], (input) => {
+		// Accepted and saved, then the server restarts before the view attaches: the record ends on the learner's message.
+		record = input.type === "text" ? { messages: [learnerAsk], turnInFlight: false } : { messages: [learnerAsk], turnInFlight: true };
+		return Response.json({ ok: true });
+	});
+	assert.equal(await session.send({ type: "text", text: "Teach me the planets." }), true);
+	assert.deepEqual(banner(session), { status: "ready", droppedStream: true, error: STREAM_DROPPED_TEXT }, "never nothing with no control");
+	await session.readRecord();
+	assert.equal(session.getState().droppedStream, true, "a sync keeps it: the record still owes the reply");
+	await session.recoverReply();
+	assert.deepEqual(posts.map(input => input.type), ["text", "continue"], "the learner's message is not sent again");
+	assert.deepEqual(banner(session), { status: "ready", droppedStream: false, error: null });
+	assert.equal(visibleTexts(session).filter(text => text === "The reply after the restart.").length, 1);
+	assert.equal(visibleTexts(session).filter(text => text === "Teach me the planets.").length, 1);
+});
+
+it("follow-ups 1 final round: a client turn that settled before the attach with its reply saved, or with its failure saved, shows no dropped banner", async () => {
+	const reply = { ...fauxAssistantMessage("The quick reply."), id: "quick" } as LhMessage;
+	for (const [what, after, expected] of [
+		["its reply", { messages: [learnerAsk, reply], turnInFlight: false }, { status: "ready", droppedStream: false, error: null }],
+		["its failure", { messages: [learnerAsk], turnInFlight: false, turnError: "Provider failure" }, { status: "ready", droppedStream: false, error: "Provider failure" }],
+	] as const) {
+		let record: object = { messages: [], turnInFlight: false };
+		const { session } = scriptedSession(`settled-before-attach-${what}`, [], () => record, [settledTurnResponse], () => { record = after; return Response.json({ ok: true }); });
+		await session.send({ type: "text", text: "Teach me the planets." });
+		assert.deepEqual(banner(session), expected, what);
+	}
+});
+
 // Item 7: the recovery rule as a matrix. Every case runs one sequence of steps against a scripted server for one record
 // ending, then checks the rule after every step and once more after a final sync: the learner sees exactly one of the
 // reply with no banner, a failure with a working Retry, or the dropped banner with a working Retry; never a banner beside
@@ -1054,18 +1100,21 @@ it("follow-ups 1 fix round: a drop before any text on a turn the server lost kee
 		"a complete reply": { input: [learnerAsk], output: [tutorReply], owed: false, text: REPLY_TEXT },
 	} satisfies Record<string, { input: LhMessage[]; output: LhMessage[]; owed: boolean; text: string }>;
 	type Recovery = "reattach after the turn ended" | "reattach while it runs (a restart cuts an owed one)" | "second drop";
-	type Step = "read fails" | "sync" | "Retry" | "offline Retry" | "second tab" | "second tab racing" | "Retry, its views drop twice";
+	// "Retry, lost to a restart before its attach" (final round): the server accepts the Retry's continue, then restarts before
+	// the view attaches, so the attach finds no turn and the record still owes the reply.
+	type Step = "read fails" | "sync" | "Retry" | "offline Retry" | "second tab" | "second tab racing" | "Retry, its views drop twice" | "Retry, lost to a restart before its attach";
 	const RECOVERIES: Recovery[] = ["reattach after the turn ended", "reattach while it runs (a restart cuts an owed one)", "second drop"];
 	const SEQUENCES: Step[][] = [
 		[], ["read fails"], ["read fails", "sync"], ["sync"], ["Retry"], ["read fails", "Retry"], ["offline Retry"], ["offline Retry", "Retry"],
 		["second tab"], ["second tab", "Retry"], ["second tab racing", "Retry"], ["read fails", "second tab racing", "Retry"],
 		["Retry, its views drop twice"], ["Retry, its views drop twice", "Retry"], ["offline Retry", "second tab", "Retry"],
+		["Retry, lost to a restart before its attach"], ["Retry, lost to a restart before its attach", "sync", "Retry"], ["Retry, lost to a restart before its attach", "second tab"],
 	];
 	let cases = 0;
 	for (const [ending, spec] of Object.entries(ENDINGS)) for (const recovery of RECOVERIES) for (const steps of SEQUENCES) {
 		cases++;
 		it(`item 7 matrix: record ending on ${ending}; drop, ${recovery}${steps.length ? ", " + steps.join(", ") : ""}`, async () => {
-			const server = { messages: [...spec.input] as LhMessage[], running: true, online: true, failReads: 0, failSettleRead: false, served: 0, raceNextPost: false, turnsRun: 0, ourContinues: 0, retryPresses: 0 };
+			const server = { messages: [...spec.input] as LhMessage[], running: true, online: true, failReads: 0, failSettleRead: false, served: 0, raceNextPost: false, restartAfterNextPost: false, turnsRun: 0, ourContinues: 0, retryPresses: 0 };
 			const views: ("drop" | "drop, then the turn ends" | "auto")[] = [];
 			/** The client's last record read succeeded (after a failed one, a banner may wait for the next sync). */
 			let readable = true;
@@ -1088,6 +1137,7 @@ it("follow-ups 1 fix round: a drop before any text on a turn the server lost kee
 					if (server.raceNextPost && owesTutorReply(server.messages)) { server.raceNextPost = false; runTurn(); }
 					if (server.running) return Response.json({ error: "A turn is already running for this session" }, { status: 409 });
 					if (!owesTutorReply(server.messages)) return Response.json({ error: CONTINUE_NOT_OWED_TEXT }, { status: 400 });
+					if (server.restartAfterNextPost) { server.restartAfterNextPost = false; return Response.json({ ok: true }); } // accepted, then lost: no turn
 					runTurn();
 					return Response.json({ ok: true });
 				}
@@ -1141,6 +1191,7 @@ it("follow-ups 1 fix round: a drop before any text on a turn the server lost kee
 				if (step === "second tab" && owesTutorReply(server.messages)) { server.turnsRun++; server.messages = [...server.messages, ...spec.output]; ranOrAnswered = true; }
 				if (step === "second tab racing") server.raceNextPost = true;
 				if (step === "Retry, its views drop twice") { views.push("drop", "drop"); server.retryPresses++; await session.recoverReply(); if (spec.owed) ranOrAnswered = true; }
+				if (step === "Retry, lost to a restart before its attach") { server.restartAfterNextPost = true; server.retryPresses++; await session.recoverReply(); server.restartAfterNextPost = false; }
 				check(`after ${step}`);
 			}
 			await session.readRecord().catch(() => {}); // the page's next sync
@@ -1161,7 +1212,7 @@ it("follow-ups 1 fix round: a drop before any text on a turn the server lost kee
 			assert.equal(server.turnsRun, spec.owed ? 1 : 0, spec.owed ? "the lost turn ran exactly once" : "no tutor turn ran");
 		});
 	}
-	it(`item 7 matrix: ${cases} cases (${Object.keys(ENDINGS).length} endings × ${RECOVERIES.length} recovery attaches × ${SEQUENCES.length} step sequences)`, () => assert.equal(cases, 225));
+	it(`item 7 matrix: ${cases} cases (${Object.keys(ENDINGS).length} endings × ${RECOVERIES.length} recovery attaches × ${SEQUENCES.length} step sequences)`, () => assert.equal(cases, 270));
 }
 
 it("item 5: a cut-off with an unanswered question call has the malformed-question recovery only", () => {
