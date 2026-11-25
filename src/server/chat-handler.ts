@@ -55,7 +55,8 @@ import { applyParkedDismissal } from "./dismissal-park.ts";
 import { sideConversationEntries } from "../core/side-chat.ts";
 import { sideChats, type SideChatService } from "./side-chat.ts";
 import { SIDE_CONTEXT_BUDGET_ERROR, sideBudgetRetryDrops, sideContextWindow } from "./side-context-budget.ts";
-import { registerTurn, rememberTurnFailure, unregisterTurn } from "./turn-runs.ts";
+import { registerTurn, rememberTurnFailure, turnFailure, unregisterTurn } from "./turn-runs.ts";
+import { observeAnswerKey, observeTurnActivity, TurnTimeline } from "./turn-timeline.ts";
 import { persistTurn, triggerExtraction, TurnPersistenceError } from "./turn-service.ts";
 import { hasProbeDone, hasUnresolvedQuestion, pendingPluginQuestionOf, pluginQuestionCallsOf, questionCallsOf } from "../core/native-messages.ts";
 import { samePluginQuestionOccurrence } from "../core/plugin-questions.ts";
@@ -82,7 +83,8 @@ import {
 	inputAppends,
 	parseChatInput,
 	questionRecoveryAppends,
-	retryDrops,
+	requireCutOffReply,
+	retryTurnDrops,
 	type TurnInput,
 } from "../core/input-events.ts";
 import { steerDelivered } from "../core/contracts.ts";
@@ -100,13 +102,13 @@ import type { QuestionAnswerData } from "../core/question-core.ts";
 // The answer-key check (owner, 2026-10-25): every multiple-choice question
 // is run / solved by a second model before it is posed. Tests drive the
 // tools against scripted engines — no Python, no second model there.
-if (process.env.NODE_ENV !== "test") installQuestionVerifier(checkQuizKey);
+if (process.env.NODE_ENV !== "test") installQuestionVerifier((...args) => observeAnswerKey(() => checkQuizKey(...args)));
 // The practice grader (owner, 2026-11-09): a second model grades each skill of
 // a concluded problem; without it (tests) a conclude carries no grades.
-if (process.env.NODE_ENV !== "test") installPracticeGrader(gradeConcludedProblem);
+if (process.env.NODE_ENV !== "test") installPracticeGrader((...args) => observeTurnActivity("grader", () => gradeConcludedProblem(...args)));
 // The placement grader (fork addition, 2026-11-24): grades probe/recall answers
 // using the answer, sketch read-back, and stated confidence as context.
-if (process.env.NODE_ENV !== "test") installPlacementGrader(gradePlacementSubmissionServer);
+if (process.env.NODE_ENV !== "test") installPlacementGrader((...args) => observeTurnActivity("grader", () => gradePlacementSubmissionServer(...args)));
 
 /**
  * One chat turn over the server-owned native record. Framework-free (plain
@@ -135,6 +137,14 @@ function connectionBackgroundAllowed(provider: string): boolean {
 
 function settlementErrorText(error: unknown): string {
 	return error instanceof TurnPersistenceError ? error.message : "An error occurred.";
+}
+
+/** A placement probe/recall answer graded before the turn starts; a sketched one is graded after read_sketch. */
+export function placementGradedBeforeTurn(m: unknown): boolean {
+	const tr = m as Partial<PiToolResultMessage>;
+	if (tr.role !== "toolResult" || tr.isError || (tr.toolName !== "probe" && tr.toolName !== "recall")) return false;
+	const details = tr.details as QuestionAnswerData | undefined;
+	return !!details && !details.dismissed && !details.sketch;
 }
 
 const jobRunner = createJobRunner({
@@ -324,9 +334,10 @@ export async function handleChatInput(
 
 	// Refuse an ineligible Retry before catalog refresh, compaction, or any
 	// turn/write effects. Revalidate after the awaited gates below too.
-	if (input.type === "retry") {
+	if (input.type === "retry" || input.type === "continue-reply") {
 		try {
-			retryDrops(record.messages);
+			if (input.type === "retry") retryTurnDrops(record.messages, input.failedHead, turnFailure(chatId));
+			else requireCutOffReply(record.messages, input.messageId);
 		} catch (err) {
 			if (err instanceof ChatInputError) return Response.json({ error: err.message }, { status: 400 });
 			throw err;
@@ -482,7 +493,8 @@ export async function handleChatInput(
 					const updates = sideConversationEntries({ messages: current.messages, sideChats: sideContext.snapshot(chatId) }, after);
 					if (!updates.length) return current.messages;
 					const projected = [...current.messages, ...(input.type === "answer" || input.type === "retry-question" ? [...next, ...updates] : [...updates, ...next])];
-					const omitted = input.type === "retry" ? retryDrops(current.messages) : new Set<string>();
+					const omitted = input.type === "retry" ? retryTurnDrops(current.messages, input.failedHead, turnFailure(chatId))
+						: input.type === "continue-reply" ? requireCutOffReply(current.messages, input.messageId).omittedOnRetry : new Set<string>();
 					return projected.filter((message) => !omitted.has(message.id));
 				} catch (error) {
 					if (error instanceof ChatInputError) return current.messages; // normal input validation follows the gate
@@ -532,9 +544,11 @@ export async function handleChatInput(
 	// A compaction marker or another writer may have landed during awaits.
 	// These omissions affect ONLY the agent context, never the saved record.
 	let retryOmissions = new Set<string>();
-	if (input.type === "retry") {
+	if (input.type === "retry" || input.type === "continue-reply") {
 		try {
-			retryOmissions = sideBudgetRetryDrops(beforeCompaction, record.messages) ?? retryDrops(record.messages);
+			retryOmissions = input.type === "continue-reply" ? requireCutOffReply(record.messages, input.messageId).omittedOnRetry
+				: (input.failedHead === undefined ? sideBudgetRetryDrops(beforeCompaction, record.messages) : undefined)
+					?? retryTurnDrops(record.messages, input.failedHead, turnFailure(chatId));
 		} catch (err) {
 			if (err instanceof ChatInputError) return Response.json({ error: err.message }, { status: 400 });
 			throw err;
@@ -549,6 +563,12 @@ export async function handleChatInput(
 	// input is the only steer appender; in-run delivery rides pi's own
 	// follow-up queue and never builds an input event at all.
 	let preparation: TurnPreparation | undefined;
+	const turnUsageId = crypto.randomUUID();
+	let timeline: TurnTimeline | undefined;
+	const startTimeline = () => timeline ??= new TurnTimeline({
+		turnId: turnUsageId, chatId, provider: conversationEngine.model.provider, model: conversationEngine.model.id,
+		thinking: (conversationEngine.level ?? "off") !== "off",
+	});
 	let turnClaimed = false;
 	let handedOff = false;
 	let inputSaved = false;
@@ -575,11 +595,12 @@ export async function handleChatInput(
 			const submission = questionSubmission ?? problemSubmission!;
 			const work = questionSubmission?.grade ?? problemSubmission?.process;
 			if (work) {
-				const claim = claimPreparingTurn(chatId);
+				const activity = questionSubmission ? "grader" : "processing";
+				const claim = claimPreparingTurn(chatId, startTimeline(), activity);
 				if (!claim) return Response.json({ error: "A turn is already running for this session" }, { status: 409 });
 				preparation = claim;
 				turnClaimed = true;
-				const outcome = await work(preparation.signal);
+				const outcome = await startTimeline().run(() => observeTurnActivity(activity, () => work(claim.signal)));
 				// No captured history may be written after asynchronous plugin processing.
 				const current = stores.chatStore.getChat(chatId);
 				if (!current || !preparation.isCurrent()) return staleSubmission();
@@ -630,9 +651,22 @@ export async function handleChatInput(
 			return new Response("Your input could not be saved. Please try again.", { status: 500 });
 		}
 		emit("record-changed", { chatId });
+		timeline?.finish(false);
 		return settledTurnResponse(); // the cheap terminal — no beginTurn, no turn
 	}
 
+	if (input.type === "continue-reply" || (input.type === "retry" && input.failedHead !== undefined)) {
+		const current = stores.chatStore.getChat(chatId);
+		if (!current || current.createdAt !== record.createdAt || current.messages.at(-1)?.id !== record.messages.at(-1)?.id)
+			return Response.json({ error: "The session changed before recovery. Refresh the session." }, { status: 400 });
+	}
+	const placementTurnInfo = record.course?.mode === "placement" && input.type === "answer" ? courseForTurn(chatId) : undefined;
+	if (placementTurnInfo?.placementSkills) {
+		// Sketched answers are graded later, after read_sketch: only an answer graded here holds the turn as "grader".
+		const claim = claimPreparingTurn(chatId, startTimeline(), appends.some(placementGradedBeforeTurn) ? "grader" : undefined);
+		if (!claim) return Response.json({ error: "A turn is already running for this session" }, { status: 409 });
+		preparation = claim;
+	}
 	// One turn per chat, ever. A second request while a turn runs means a
 	// stale/remounted client raced a live one — letting it through would
 	// double-run the teacher and clobber the first turn's persist.
@@ -642,19 +676,17 @@ export async function handleChatInput(
 	}
 
 	turnClaimed = true;
+	const activeTimeline = startTimeline();
 
 	// Placement grading (fork addition, 2026-11-24): grade no-sketch placement answers
 	// inside the turn lock right before write-ahead persistence and append the live DAG frontier status.
 	// Sketched placement answers are graded right after `read_sketch` succeeds.
-	const placementTurnInfo = record.course?.mode === "placement" && input.type === "answer" ? courseForTurn(chatId) : undefined;
 	if (placementTurnInfo?.placementSkills) {
 		const bySkillId = new Map(placementTurnInfo.placementSkills.map((s) => [s.id, s]));
 		for (const m of appends) {
-			if ((m as { role?: string }).role !== "toolResult") continue;
+			if (!placementGradedBeforeTurn(m)) continue;
 			const tr = m as PiToolResultMessage;
-			if (tr.isError || (tr.toolName !== "probe" && tr.toolName !== "recall")) continue;
-			const details = tr.details as (QuestionAnswerData & { placementGrade?: unknown }) | undefined;
-			if (!details || details.dismissed || details.sketch) continue;
+			const details = tr.details as unknown as QuestionAnswerData & { placementGrade?: unknown };
 
 			let callBlock: { name: string; arguments?: unknown } | undefined;
 			for (let i = record.messages.length - 1; i >= 0; i--) {
@@ -670,12 +702,14 @@ export async function handleChatInput(
 			const skillId = (callBlock.arguments as { skill?: unknown } | undefined)?.skill;
 			if (typeof skillId !== "string") continue;
 			const skill = bySkillId.get(skillId) ?? { id: skillId, name: skillId };
-			const placementGrade = await gradePlacementSubmission({
+			const placementGrade = await activeTimeline.run(() => gradePlacementSubmission({
 				callBlock,
 				answer: details,
 				skill,
 				sessionModel: conversation,
-			});
+				signal: preparation?.signal,
+			}));
+			preparation?.signal.throwIfAborted();
 			tr.details = { ...details, placementGrade } as unknown as PiToolResultMessage["details"];
 			const progress = placementProgressOf([...record.messages, ...appends], placementTurnInfo.placementSkills);
 			const statusLine = formatPlacementStatus(progress, placementTurnInfo.placementSkills);
@@ -726,7 +760,7 @@ export async function handleChatInput(
 	// tail to start continue(), so its temporary history omits the trailing
 	// failures only. Count that SAME temporary prefix at settlement, or the
 	// retained failures would make persistTurn skip genuinely new output.
-	const agentMessages = input.type === "retry" ? merged.filter((m) => !retryOmissions.has(m.id)) : merged;
+	const agentMessages = retryOmissions.size ? merged.filter((m) => !retryOmissions.has(m.id)) : merged;
 	const stagedAutomatic = isSubscriptionProvider(conversation.provider) && input.type === "steers";
 	let persistBaseCount = stagedAutomatic ? record.messages.length : agentMessages.length;
 	try {
@@ -754,7 +788,6 @@ export async function handleChatInput(
 	// MONEY CHANNEL (wave 4): one collector per request, fed by the agent's
 	// message_end events. Every model call's usage lands in the chat record's
 	// append-only turns log at onFinish — idempotent per turn id.
-	const turnUsageId = crypto.randomUUID();
 	const steps: CallUsage[] = [];
 	const collectUsage = (usage: Usage) => {
 		steps.push({
@@ -809,6 +842,7 @@ export async function handleChatInput(
 	let pendingSideBudgetError: Error | undefined;
 	let liveAgentMessages: (() => LhMessage[]) | undefined;
 	const agentOpts: AgentBuildOptions = {
+		onGateRefusal: gate => activeTimeline.refuse(gate),
 		pluginContributions,
 		engine,
 		callPurpose,
@@ -1021,8 +1055,10 @@ export async function handleChatInput(
 		// JSONL event stream with the record's turns; no-op unless
 		// LH_PROVIDER_EVENTS=1.
 		providerEventNote(chatId, "turn", `run start (base: ${agentMessages.length} messages)`);
+		activeTimeline.setModel(constructed.state.model?.provider ?? engine.model.provider, constructed.state.model?.id ?? engine.model.id, (constructed.state.thinkingLevel ?? "off") !== "off");
 		const handle = runPiTurn({
 			agent: constructed,
+			timeline: activeTimeline,
 			requestCycle,
 			// The next-turn SDK hook covers internal calls. The steering poll
 			// supplies the same fresh cargo on the first/recovery call, with
@@ -1045,10 +1081,10 @@ export async function handleChatInput(
 			// route through here: they ride the error-result path and reach the
 			// transcript directly (the retry context the model saw).
 			onError: (error) => {
-				if (conversation.provider === "chatgpt") return chatGPTStreamError(String(error));
-				if (isSubscriptionProvider(conversation.provider)) return nativeSubscriptionError(conversation.provider, String(error));
-				console.error(`[chat ${chatId}] turn error:`, error);
-				return "An error occurred.";
+				const message = conversation.provider === "chatgpt" ? chatGPTStreamError(String(error))
+					: isSubscriptionProvider(conversation.provider) ? nativeSubscriptionError(conversation.provider, String(error)) : "An error occurred.";
+				if (!preparation || preparation.isCurrent()) rememberTurnFailure(chatId, message);
+				return message;
 			},
 			onSettleError: settlementErrorText,
 			onSettleFailure: (error, reportedErrorText) => {
@@ -1207,6 +1243,7 @@ export async function handleChatInput(
 		throw err;
 	} finally {
 		if (turnClaimed && !handedOff) {
+			timeline?.finish(preparation?.signal.aborted === true, preparation?.signal.aborted ? null : "preparation");
 			try {
 				if (!preparation || preparation.isCurrent()) applyParkedDismissal(stores.chatStore, chatId);
 			} catch (err) { console.error(`[chat ${chatId}] parked dismissal failed:`, err); }

@@ -38,7 +38,7 @@ import type { PlanTree } from "./contracts/plan.ts";
 import { derivePlanStatusesLh, derivedNodeStatus } from "./contracts/plan.ts";
 import { COMPACTED_HISTORY_HEADER } from "./contracts/chat.ts";
 import type { LhMessage, LhMarkerMessage } from "./native-messages.ts";
-import { newMessageId, requestSketchPages } from "./native-messages.ts";
+import { emptyCutOffIds, newMessageId, requestSketchPages } from "./native-messages.ts";
 import { sketchOfMessage } from "./sketch.ts";
 import { leadOf } from "./tutor-prose.ts";
 import { sketchStatesOf } from "./sketch-gate.ts";
@@ -377,8 +377,10 @@ export function serializeForSummary(messages: readonly LhMessage[]): string {
 			? `[sketch ${ref.id} — read as: ${reading.reading}${reading.uncertain.length > 0 ? ` (doubts: ${reading.uncertain.join("; ")})` : ""}${reading.settled.length > 0 ? ` (settled: ${reading.settled.join("; ")})` : ""}]`
 			: `[sketch ${ref.id} — not read]`;
 	};
+	const emptyCutOffs = emptyCutOffIds(messages);
 	for (const m of messages) {
 		const role = (m as { role?: string }).role;
+		if (emptyCutOffs.has(m.id)) continue;
 		if (role === "user") {
 			lines.push(`[LEARNER] ${citationsToReadableText(contentText((m as { content: unknown }).content))}`);
 		} else if (role === "assistant") {
@@ -410,6 +412,7 @@ export function serializeForSummary(messages: readonly LhMessage[]): string {
 		} else if (role === "custom") {
 			const marker = m as LhMarkerMessage;
 			if (marker.customType === "plan-block") continue; // UI-only
+			if (marker.customType === "reply-recovery") continue; // an instruction for one reply, not conversation
 			const markerText = contentText(marker.content);
 			if (marker.customType === "side-question" && !markerText) continue;
 			if (marker.customType === "side-question") lines.push(`[LEARNER–HELPER CONVERSATION] ${citationsToReadableText(markerText)}`);

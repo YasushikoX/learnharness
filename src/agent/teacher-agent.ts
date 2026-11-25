@@ -151,6 +151,7 @@ export interface AgentBuildOptions {
 	messages?: AgentMessage[];
 	/** Money channel: one call per model request. */
 	onUsage?: StepUsageCollector;
+	onGateRefusal?: (gate: string) => void;
 	/** Append-only reference updates before each already-scheduled internal
 	 * model call. Does not schedule an extra call or interrupt live output. */
 	contextUpdates?: (messages: readonly AgentMessage[]) => AgentMessage[];
@@ -273,12 +274,14 @@ export const GATE_REFUSAL_CAP = 3;
 
 /** A refusal counter for one run: `refuse(gate, blocks, reason)` is the block result while `gate` has refused at most
  *  GATE_REFUSAL_CAP times, then undefined (the gate lets the call through). A gate that does not block is not counted. */
-export function makeGateRefusals(cap = GATE_REFUSAL_CAP) {
+export function makeGateRefusals(cap = GATE_REFUSAL_CAP, onRefusal?: (gate: string) => void) {
 	const refusals: Record<string, number> = {};
 	return (gate: string, blocks: boolean, reason: string): { block: true; reason: string } | undefined => {
 		if (!blocks) return undefined;
 		refusals[gate] = (refusals[gate] ?? 0) + 1;
-		return refusals[gate]! > cap ? undefined : { block: true, reason };
+		if (refusals[gate]! > cap) return undefined;
+		onRefusal?.(gate);
+		return { block: true, reason };
 	};
 }
 
@@ -461,13 +464,14 @@ export function baseAgentOptions(
 		...(kind === "teacher" || kind === "placement" || questionLedger || narrationHooks ? (() => {
 			// A refusal cap (owner, 2026-11-10): after GATE_REFUSAL_CAP refusals by one gate in this run, that gate lets
 			// the call through, so a model that keeps failing it cannot loop. Run-local: the agent is built once per turn.
-			const refuse = makeGateRefusals();
+			const refuse = makeGateRefusals(GATE_REFUSAL_CAP, opts.onGateRefusal);
 			return {
 				beforeToolCall: async (call: BeforeToolCallContext, signal?: AbortSignal) => {
 					const { assistantMessage, toolCall, context } = call;
 					if (kind === "placement" && (toolCall.name === "probe" || toolCall.name === "recall" || toolCall.name === FINISH_SESSION_TOOL)) {
 						const unread = hasUnreadPlacementSketch(context.messages as unknown as LhMessage[]);
 						if (unread) {
+							opts.onGateRefusal?.("placement-sketch");
 							return {
 								block: true,
 								reason: `A sketch (${unread.sketchId}) is attached to the learner's last answer — call read_sketch on it first before posing the next question or finishing.`,
@@ -502,7 +506,7 @@ export function baseAgentOptions(
 						if (sourcesRefused) return sourcesRefused;
 					}
 					const guarded = await narrationHooks?.beforeToolCall?.(call, signal);
-					if (guarded?.block) return guarded;
+					if (guarded?.block) { opts.onGateRefusal?.("narration"); return guarded; }
 					questionLedger?.validatedCall(call);
 					return undefined;
 				},

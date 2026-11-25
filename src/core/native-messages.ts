@@ -96,7 +96,8 @@ export interface LhMarkerMessage {
 		| "side-question"
 		| "side-question-told"
 		| "practice-hint"
-		| "check-nudge";
+		| "check-nudge"
+		| "reply-recovery";
 	/** The model-facing text ("" for plan blocks — UI-only). */
 	content: string;
 	display: boolean;
@@ -118,6 +119,8 @@ export type LhMessage = (UserMessage | AssistantMessage | ToolResultMessage | Lh
 	/** CLI-reported effective context budget, not a catalog model maximum.
 	 * App-only metadata: never transmitted as provider/model message content. */
 	cliContextWindow?: number;
+	/** Visible prose may precede the final, truncated model call in the same turn. */
+	lhCutoffHasText?: boolean;
 	/** Host-owned occurrence annotations, never model input. */
 	lhQuestions?: PluginQuestionOccurrenceMap;
 	/** Exact binding for genuine plugin-question results (details stays public envelope). */
@@ -489,6 +492,33 @@ export function newPracticeHintMarker(problemCallId: string, n: number, size: Hi
  *  The model reads `content`; the transcript never shows it. */
 export function newCheckNudgeMarker(): LhMarkerMessage {
 	return { id: newMessageId(), role: "custom", customType: "check-nudge", content: CHECK_NUDGE_TEXT, display: false, details: {}, timestamp: Date.now() };
+}
+
+/** Continue after a reply that was cut off after visible text. A cut-off with no visible text gets no marker: its
+ *  recovery re-runs the turn from the same input, like Retry (see emptyCutOffIds). */
+export function newReplyRecoveryMarker(): LhMarkerMessage {
+	const content = "Your previous reply was cut off. Continue from where you stopped without repeating the part already shown.";
+	return { id: newMessageId(), role: "custom", customType: "reply-recovery", content, display: false, details: {}, timestamp: Date.now() };
+}
+
+/** A reply the output limit cut off before the learner saw anything of the turn (thinking can use the whole budget).
+ *  Visible prose earlier in the same turn is stamped on it as lhCutoffHasText (server/turn-service persistTurn). */
+export function cutOffWithoutText(message: LhMessage): boolean {
+	return message.role === "assistant" && message.stopReason === "length" &&
+		!(message.lhCutoffHasText ?? message.content.some(block => block.type === "text" && !!block.text.trim()));
+}
+
+/** The empty cut-offs: no visible text and no tool call, so nothing but (omitted) thinking. Like a failed generation
+ *  such a reply has nothing to keep: it stays in the record but never reaches the model or a compaction summary
+ *  (toLlmMessages, serializeForSummary), so neither a later turn nor a retry of its recovery replays it. A cut-off WITH
+ *  tool calls stays: pi fails those calls with "re-issue the tool call" errors and asks the model again in the same
+ *  turn, which only works while the model sees them. */
+export function emptyCutOffIds(messages: readonly LhMessage[]): Set<string> {
+	const ids = new Set<string>();
+	for (const message of messages) {
+		if (message.role === "assistant" && cutOffWithoutText(message) && !message.content.some(block => block.type === "toolCall")) ids.add(message.id);
+	}
+	return ids;
 }
 
 /** The learner's explicit move-on signal (owner round 16): appended by
@@ -904,6 +934,23 @@ function practiceHintPageBlocks(marker: LhMarkerMessage, messages: readonly Agen
 	return pagesOfHint(d.problemCallId, d.n, Math.max(count, d.n), resolve, read);
 }
 
+/** A Continue instruction that no reply answered before newer input: the learner moved on (for example the
+ *  continuation failed and they wrote something else), so it is not sent again. At the end of the history it is the
+ *  turn's own input (the continuation, or a Retry of it) and stays. */
+function replyRecoverySuperseded(messages: readonly LhMessage[], index: number, emptyCutOffs: ReadonlySet<string>): boolean {
+	for (let i = index + 1; i < messages.length; i++) {
+		const m = messages[i]!;
+		if (emptyCutOffs.has(m.id)) continue;
+		if (m.role === "assistant") {
+			if (m.stopReason === "error" || m.stopReason === "aborted") continue;
+			return false;
+		}
+		if (m.role === "custom" && (m.customType === "plan-block" || m.customType === "problem-dismissed" || m.customType === "compaction" || isSideQuestionMarker(m))) continue;
+		return true;
+	}
+	return false;
+}
+
 export function toLlmMessages(messages: readonly AgentMessage[], opts: ToLlmOptions = {}): Message[] {
 	// THE COMPACTION CUT (owner round 14, 2026-10-05): the ACTIVE marker
 	// (the newest — chained compactions rule last) names the first kept
@@ -947,9 +994,12 @@ export function toLlmMessages(messages: readonly AgentMessage[], opts: ToLlmOpti
 	const out: Message[] = [];
 	if (leading) out.push(leading);
 	if (head) out.push(head);
+	// Skipped here, never removed before the cut is resolved: an empty cut-off can be the compaction's first kept message.
+	const emptyCutOffs = emptyCutOffIds(lhMessages);
 	for (let i = leading ? Math.max(start, 1) : start; i < messages.length; i++) {
 		const m = messages[i]!;
 		const role = (m as { role?: string }).role;
+		if (emptyCutOffs.has((m as LhMessage).id)) continue;
 		if (role === "custom") {
 			const marker = m as LhMarkerMessage;
 			// UI-only markers: plan blocks, and problem dismissals (the
@@ -961,6 +1011,7 @@ export function toLlmMessages(messages: readonly AgentMessage[], opts: ToLlmOpti
 			// stored position. Without a resolved head, preserve the existing
 			// full-history fallback, including the summary text.
 			if (marker.customType === "compaction" && head !== null) continue;
+			if (marker.customType === "reply-recovery" && replyRecoverySuperseded(lhMessages, i, emptyCutOffs)) continue;
 			const problemSubmission = marker.customType === "plugin-problem-submission" ? readPluginProblemSubmission(marker.details) : null;
 			// A sketch's pages lead its thinking (images before text reads best); a DISPUTE marker re-sends the disputed
 			// sketch's pages itself — the re-read needs the image, and a live process only receives what arrives in a new message.
@@ -975,7 +1026,7 @@ export function toLlmMessages(messages: readonly AgentMessage[], opts: ToLlmOpti
 			continue;
 		}
 		// Strip app-only id/CLI context metadata: the wire carries the native shape only.
-		const { id: _id, cliContextWindow: _cliContextWindow, lhQuestions: _lhQuestions, lhQuestionOccurrence: _lhQuestionOccurrence, ...native } = m as LhMessage;
+		const { id: _id, cliContextWindow: _cliContextWindow, lhCutoffHasText: _lhCutoffHasText, lhQuestions: _lhQuestions, lhQuestionOccurrence: _lhQuestionOccurrence, ...native } = m as LhMessage;
 		// Learner citations are links in the record; the wire carries them
 		// expanded (core/citations.ts) — the one model-facing rewrite.
 		const answerSketch = role === "toolResult" ? occurrenceAt.get(i) : undefined;
@@ -1258,7 +1309,7 @@ export function nativeInputCause(message: AgentMessage, history: readonly AgentM
 	if (message.role === "system" || message.role === "assistant") return "neutral";
 	if (message.role === "custom") {
 		if (["probe-handoff", "subagent-steer", "subagent-abort"].includes(message.customType)) return "automatic";
-		if (["practice-thinking", "plugin-problem-submission", "practice-next", "sketch-dispute", "lesson-finished"].includes(message.customType)) return "learner";
+		if (["practice-thinking", "plugin-problem-submission", "practice-next", "sketch-dispute", "lesson-finished", "reply-recovery"].includes(message.customType)) return "learner";
 		return ["graph-context", "plan-block", "problem-dismissed", "compaction", "side-question", "side-question-told", "practice-hint", "check-nudge"].includes(message.customType) ? "neutral" : "unrecognizable";
 	}
 	if (message.role === "toolResult") {

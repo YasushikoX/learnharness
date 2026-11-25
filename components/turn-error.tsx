@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { FallbackTarget } from "@/src/core";
-import { turnErrorDisplay } from "@/src/core";
+import { RETRY_AFTER_COMPACTION_TEXT, turnErrorDisplay } from "@/src/core";
 import { updateChatSettings } from "@/components/chat-settings-client";
 
 /**
@@ -23,6 +23,33 @@ export function TurnErrorText({ message }: { message: string }) {
 			</details>
 		</span>
 	);
+}
+
+/** The cut-off notice's button waits for a running turn, a sync in progress, compaction or its own request. A failed
+ *  background sync does not disable it: the action reconciles first itself (SessionModel.recoverReply). */
+export function cutOffRecoveryDisabled(s: { localStream: boolean; turnInFlight: boolean; reconciliation: "ready" | "syncing" | "failed"; compacting: boolean; retryingStream: boolean }): boolean {
+	return s.localStream || s.turnInFlight || s.reconciliation === "syncing" || s.compacting || s.retryingStream;
+}
+
+export function CutOffReplyNotice({ hasText, blockedByCompaction = false, disabled, recover }: { hasText: boolean; blockedByCompaction?: boolean; disabled: boolean; recover: () => void }) {
+	return (
+		<div role="status" className="flex items-center justify-between gap-3 rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+			<span>
+				{hasText ? "The tutor’s reply was cut off." : "The tutor’s reply was cut off before any text appeared."}
+				{blockedByCompaction && <RetryUnavailableNote />}
+			</span>
+			{!blockedByCompaction && (
+				<Button variant="outline" size="xs" data-testid="recover-cut-off-reply" disabled={disabled} onClick={recover}>
+					{hasText ? "Continue" : "Retry"}
+				</Button>
+			)}
+		</div>
+	);
+}
+
+/** Why a failure has no Retry: a compaction landed after it (core/input-events RETRY_AFTER_COMPACTION_TEXT). */
+export function RetryUnavailableNote() {
+	return <span data-testid="retry-unavailable" className="mt-1 block text-xs text-muted-foreground">{RETRY_AFTER_COMPACTION_TEXT}</span>;
 }
 
 /** "Retry on <model>": moves this session to the fallback model (the rest of its settings kept), then retries. Never
