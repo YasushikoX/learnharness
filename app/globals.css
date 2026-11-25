@@ -83,7 +83,7 @@
 	--lh-sidebar: #141416;
 	--lh-raised: #252528;
 	--lh-raised-strong: #333336;
-	--lh-focus-ring: #5b8def66;
+	--lh-focus-ring: #5b8defa6;
 	/* Floating layers (SPEC §3): the dialog scrim and the menu/popover/dialog shadow, per variant (.light below). */
 	--lh-scrim: rgb(0 0 0 / 0.6);
 	--lh-shadow-pop: 0 8px 28px rgb(0 0 0 / 0.5);

@@ -307,8 +307,8 @@ const HOVER_STEP = 14;
  *  toward the text (one notch stronger than a card's edge). */
 const SIDEBAR_MIX = 0.025;
 const INPUT_BORDER_MIX = 0.075;
-/** The focus ring: the theme accent at 40% (#rrggbb + alpha 0x66). */
-const FOCUS_RING_ALPHA = "66";
+/** The focus ring: the theme accent at 65% (#rrggbb + alpha 0xa6), enough for 3:1 on dark. */
+const FOCUS_RING_ALPHA = "a6";
 
 /** THE adapter: 12 theme colors → the CSS variables set on <html>.
  *  `--accent` stays the shadcn HOVER surface (derived from `surface`, so
