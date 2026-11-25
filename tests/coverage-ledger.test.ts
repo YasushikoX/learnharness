@@ -422,3 +422,24 @@ describe("the vocabulary refusal and the final-problem gate", () => {
 		assert.equal(finishGateProblem([...final, both], "finish_lesson", "fb"), null);
 	});
 });
+
+describe("listVocabulary: checks rotate when the tutor never checks", () => {
+	it("20 introduced, unchecked terms are all offered for a check within two sessions, not the oldest twelve for ever", () => {
+		const listings = new Map<string, number>();
+		const items = () =>
+			Array.from({ length: 20 }, (_, i) => ({
+				key: `t_${i + 1}`, name: `term ${i + 1}`, tier: "core" as const, definition: null, page: null, material: null,
+				state: "introduced" as const, carried: true, order: i, introducedAt: i < 12 ? 1_000 : 2_000, listedBefore: listings.get(`t_${i + 1}`) ?? 0,
+			}));
+		const offered = new Set<string>();
+		for (let session = 0; session < 2; session++) {
+			const listed = listVocabulary(items());
+			assert.equal(listed.length, 12);
+			for (const key of listed) {
+				offered.add(key);
+				listings.set(key, (listings.get(key) ?? 0) + 1);
+			}
+		}
+		assert.equal(offered.size, 20, "every term was offered for a check");
+	});
+});

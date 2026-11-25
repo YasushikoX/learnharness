@@ -578,7 +578,9 @@ export function listVocabulary(items: readonly VocabularyPromptItem[]): string[]
 	const fresh = core.filter((x) => notIntroduced(x.item) && listings(x) === 0).sort(byOrder);
 	const again = core.filter((x) => notIntroduced(x.item) && listings(x) > 0).sort((a, b) => listings(a) - listings(b) || byOrder(a, b));
 	const age = (x: X) => x.item.introducedAt ?? Number.MAX_SAFE_INTEGER;
-	const toCheck = core.filter((x) => x.item.state === "introduced").sort((a, b) => age(a) - age(b) || listings(a) - listings(b) || byOrder(a, b));
+	// fewest listings first, then oldest: with a tutor that never checks, every introduced term still comes round
+	// again (by age alone the first twelve would be offered for a check for ever and the rest never)
+	const toCheck = core.filter((x) => x.item.state === "introduced").sort((a, b) => listings(a) - listings(b) || age(a) - age(b) || byOrder(a, b));
 	const supporting = open
 		.filter((x) => x.item.tier !== "core")
 		.sort((a, b) => Number(!notIntroduced(a.item)) - Number(!notIntroduced(b.item)) || listings(a) - listings(b) || byOrder(a, b));
