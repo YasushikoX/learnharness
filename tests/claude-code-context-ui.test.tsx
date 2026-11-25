@@ -13,7 +13,10 @@ import type { ModelCatalogResponse, TurnUsage } from "../src/core/index.ts";
 
 const dom = parseHTML("<html><body></body></html>");
 Object.assign(globalThis, { window: dom.window, document: dom.document, Element: dom.window.Element, HTMLElement: dom.window.HTMLElement,
-	CustomEvent: dom.window.CustomEvent, IS_REACT_ACT_ENVIRONMENT: true });
+	CustomEvent: dom.window.CustomEvent, IS_REACT_ACT_ENVIRONMENT: true,
+	// The summary popover is a MenuShell (rAF-throttled re-placement).
+	requestAnimationFrame: (fn: () => void) => setTimeout(fn, 0) as unknown as number,
+	cancelAnimationFrame: (id: number) => clearTimeout(id) });
 const originalFetch = globalThis.fetch;
 let root: Root | undefined, host: HTMLDivElement | undefined;
 afterEach(async () => { await act(async () => root?.unmount()); host?.remove(); root = undefined; globalThis.fetch = originalFetch; });

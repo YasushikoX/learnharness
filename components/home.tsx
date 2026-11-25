@@ -11,7 +11,7 @@ import { SetupDialog } from "@/components/setup-dialog";
 import { ComposerActions, NodePickerControl } from "@/components/composer-actions";
 import { useModelSetup, selectedModelUnavailable, openModelPicker, ZeroKeysPill } from "@/components/setup-cta";
 import { DictationBar, joinDictation, useDictation } from "@/components/dictation";
-import { ComposerEdge } from "@/components/composer-edge";
+import { ComposerEdge, ComposerToolbarSession } from "@/components/composer-edge";
 import { useFieldCycle } from "@/components/field-cycle";
 import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
@@ -26,6 +26,9 @@ import { enterSends, isCoarsePointer } from "@/components/enter-submits";
 import { useServerReachable } from "@/components/server-events";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+/** No session yet: the toolbar's stats cluster shows the model only. */
+const NO_TURNS: TurnUsage[] = [];
 
 /**
  * Home — the knowledge graph is the main view, full-bleed edge to edge
@@ -245,13 +248,39 @@ export function Home({
 					    shows the pick HINT so the affordance is discoverable;
 					    teaching mode with nothing picked renders nothing. */}
 					<ComposerActions
-						picker={(practiceProps.length > 0 || mode === "practice") && (
-							<NodePickerControl
-								count={practiceProps.length}
-								onOpen={() => setChainSelectOpen(true)}
-								onClear={() => setPracticeProps([])}
-							/>
-						)}
+						// The teach | practice switch leads the row above the composer (owner 2026-11-25: the row
+						// beneath it is gone — the model rides the composer toolbar now), followed by the pick bar.
+						picker={<>
+							<div className="flex h-7 items-center rounded-md bg-raised p-0.5" data-testid="home-mode-switch">
+								{(["teach", "practice"] as const).map((m) => (
+									<button
+										key={m}
+										type="button"
+										data-testid={`home-mode-${m}`}
+										onClick={() => setMode(m)}
+										aria-pressed={mode === m}
+										className={cn(
+											// UI round 1b (SPEC §3 segmented): the app's one segmented grammar (Settings', the sidebar filter's),
+											// sentence case 13px, the selected segment on the surface fill with a hairline; was a gold eyebrow pill.
+											"lh-touch flex h-6 items-center gap-1.5 rounded-sm px-2.5 text-[13px] font-medium transition-colors duration-(--lh-duration-hover) ease-(--lh-ease)",
+											mode === m
+												? "bg-card text-foreground shadow-[0_0_0_1px_var(--border),0_1px_2px_rgb(0_0_0/0.08)] dark:bg-raised-strong"
+												: "text-muted-foreground hover:text-foreground",
+										)}
+									>
+										{m === "practice" ? <DumbbellIcon aria-hidden="true" className="size-3.5" strokeWidth={1.75} /> : null}
+										{m === "teach" ? "Teach" : "Practice"}
+									</button>
+								))}
+							</div>
+							{(practiceProps.length > 0 || mode === "practice") && (
+								<NodePickerControl
+									count={practiceProps.length}
+									onOpen={() => setChainSelectOpen(true)}
+									onClear={() => setPracticeProps([])}
+								/>
+							)}
+						</>}
 						setup={zeroKeys ? (
 							<ZeroKeysPill inline onOpen={() => setSetupOpen(true)} />
 						) : (
@@ -268,6 +297,10 @@ export function Home({
 						)}
 					/>
 					{startError && <p role="alert" className="mb-2 text-sm text-destructive">{OPENING_PROMPT_FAILURE}</p>}
+					{/* The model control rides the composer toolbar, left of the mic (owner 2026-11-25) — no
+					    session yet, so no numbers (wave 7 sweep); the control binds the strong slot (fix wave:
+					    it writes /api/settings/models). */}
+					<ComposerToolbarSession.Provider value={<StatsBar turns={NO_TURNS} />}>
 					<form
 						data-attachment-composer=""
 						className="flex flex-col gap-0.5 rounded-xl border border-input bg-card p-1.5 touch:p-2 shadow-lg transition-[border-color,box-shadow] duration-(--lh-duration-hover) ease-(--lh-ease) focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20"
@@ -325,37 +358,7 @@ export function Home({
 						}
 					/>
 					</form>
-					{/* Same as the chat view's under-composer stats bar (owner) — no
-					    session yet, so the LEFT side renders nothing (wave 7 sweep)
-					    while the RIGHT keeps the strong-slot control (fix wave: the
-					    pills write /api/settings/models). */}
-					<StatsBar
-						turns={[] as TurnUsage[]}
-						leadingSlot={
-							<div className="flex h-7 items-center rounded-md bg-raised p-0.5" data-testid="home-mode-switch">
-								{(["teach", "practice"] as const).map((m) => (
-									<button
-										key={m}
-										type="button"
-										data-testid={`home-mode-${m}`}
-										onClick={() => setMode(m)}
-										aria-pressed={mode === m}
-										className={cn(
-											// UI round 1b (SPEC §3 segmented): the app's one segmented grammar (Settings', the sidebar filter's),
-											// sentence case 13px, the selected segment on the surface fill with a hairline; was a gold eyebrow pill.
-											"lh-touch flex h-6 items-center gap-1.5 rounded-sm px-2.5 text-[13px] font-medium transition-colors duration-(--lh-duration-hover) ease-(--lh-ease)",
-											mode === m
-												? "bg-card text-foreground shadow-[0_0_0_1px_var(--border),0_1px_2px_rgb(0_0_0/0.08)] dark:bg-raised-strong"
-												: "text-muted-foreground hover:text-foreground",
-										)}
-									>
-										{m === "practice" ? <DumbbellIcon aria-hidden="true" className="size-3.5" strokeWidth={1.75} /> : null}
-										{m === "teach" ? "Teach" : "Practice"}
-									</button>
-								))}
-							</div>
-						}
-					/>
+					</ComposerToolbarSession.Provider>
 				</div>
 			</div>
 

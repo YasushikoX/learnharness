@@ -57,7 +57,8 @@ import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
 import { JobsContext } from "@/components/jobs-context";
 import { LessonLanguageContext } from "@/components/lesson-language";
-import { StatsBar } from "@/components/stats-bar";
+import { ToolbarStats } from "@/components/stats-bar";
+import { useModelSelection } from "@/components/model-picker";
 import { useServerEvent, useServerResync } from "@/components/server-events";
 import {
 	isProviderKeyRefusal,
@@ -153,7 +154,7 @@ import { ReadingThinkingField } from "@/components/reading-thinking";
 import { FinishLessonButton, LessonFinishedLine, courseOfView } from "@/components/lesson-finish";
 import { LessonResultCard } from "@/components/lesson-result-card";
 import { CutOffReplyNotice, cutOffRecoveryDisabled, RetryOnFallback, RetryUnavailableNote, TurnErrorText } from "@/components/turn-error";
-import { ComposerEdge } from "@/components/composer-edge";
+import { ComposerEdge, ComposerToolbarSession } from "@/components/composer-edge";
 import { currentUserThinkingOpen, setAllUserThinkingOpen } from "@/components/thinking-block";
 
 /**
@@ -770,7 +771,7 @@ export function Chat({
 	);
 
 	// Sketch answers (Android plan M1): offered only when the session's
-	// model reads images — the stats bar's model control reports the
+	// model reads images — the dock overlay's model selection reports the
 	// effective model; unknown (still loading) counts as no.
 	const [sessionModel, setSessionModel] = useState<string | undefined>();
 	const { catalog: modelCatalog } = useModelCatalog();
@@ -2895,7 +2896,7 @@ export function DockOverlay({
 	keptSketch: SketchRef | null;
 	/** The session's model reads images — the docks offer "Open in sketch". */
 	sketchAvailable: boolean;
-	/** The stats bar's model control reports the session's effective model. */
+	/** The overlay's model selection reports the session's effective model (always, toolbar shown or not). */
 	onModelChange: (model: string | undefined) => void;
 	/** Teach-phase pending question: arrives collapsed behind the reveal button (W5). */
 	requiresReveal: boolean;
@@ -2908,7 +2909,7 @@ export function DockOverlay({
 	phase: Phase3;
 	/** Active lesson language, for question read-aloud voice selection. */
 	language?: LessonLanguage;
-	/** The session's usage log — the stats bar beneath the composer folds it. */
+	/** The session's usage log — the stats in the composer toolbar fold it. */
 	turns: TurnUsage[];
 	contextTokens: number | null;
 	cliContextWindow: ReturnType<typeof cliContextWindowOf>;
@@ -2916,7 +2917,7 @@ export function DockOverlay({
 	composer: React.ReactNode;
 	/** Resolves to whether the server accepted the answer. */
 	onSubmitAnswer: (output: QuestionAnswerData, sketch?: SketchPayload, onAccepted?: () => void) => Promise<boolean>;
-	/** The model control's pass-through (the stats bar hosts it). */
+	/** The session: the model selection and the edge controls bind it. */
 	chatId: string;
 	/** Reports the dock's settled height (block + gradient) — ChatView's
 	 *  dockReserve state feeds the transcript's spacer from it. */
@@ -2941,6 +2942,22 @@ export function DockOverlay({
 	setupCta?: React.ReactNode;
 }) {
 	const controller = useOptionalInteractionLayers();
+	// The session's ONE model selection (owner 2026-11-25, model in the
+	// composer toolbar): held here for as long as the view is open, so the
+	// context limit and onModelChange (the sketch-answer gate) stay live
+	// while a plugin owns the dock or the edge is hidden. Its visible control
+	// rides whichever composer edge is mounted (one at a time).
+	const modelSelection = useModelSelection(chatId, onModelChange);
+	const toolbarSession = (
+		<ToolbarStats
+			selection={modelSelection}
+			turns={turns}
+			contextTokens={contextTokens}
+			cliContextWindow={cliContextWindow}
+			pricing={pricing}
+			chatId={chatId}
+		/>
+	);
 	const { isAtBottom, scrollToBottom, scrollRef } = useStickToBottomContext();
 	// Render-fresh bottom state (flicker round): the arrival block below reads
 	// it DURING RENDER — the same value the after-paint effect used to read a
@@ -3174,7 +3191,7 @@ export function DockOverlay({
 	// Budget the whole solid dock, leaving only its question area flexible.
 	// The hook measures natural, visible content before the morph/reserve
 	// effect below. Short windows scroll the reading/question/answer body;
-	// the stats/model toolbar remains outside that overflow viewport.
+	// the shell's edge row (sources, stats, model, mic) is shell chrome.
 	const [sbInset, setSbInset] = useState(0);
 	const stateKey = dockStateKey(mode, ownsDock, expanded, wordingOnly && expanded);
 	const heightMorphRef = useRef<ReturnType<typeof createDockMorph> | null>(null);
@@ -3385,6 +3402,7 @@ export function DockOverlay({
 	});
 
 	return (
+		<ComposerToolbarSession.Provider value={toolbarSession}>
 		<div className="pointer-events-none absolute inset-x-0 bottom-0" style={{ right: sbInset }}>
 			<div className="h-6 bg-gradient-to-t from-background to-transparent" />
 			{/* sm:px-8 (UI round 1b): with the dock's own px-4 that is the transcript's 48px gutters, so when the
@@ -3532,20 +3550,12 @@ export function DockOverlay({
 					</div>
 					</div>
 					</div>
-					{/* The stats row: beneath the composer/question shell, not
-					    flush to the screen bottom — static height, outside the
-					    morphing shell so it never joins a height animation. */}
-					<StatsBar
-						turns={turns}
-						contextTokens={contextTokens}
-						cliContextWindow={cliContextWindow}
-						pricing={pricing}
-						chatId={chatId}
-						onModelChange={onModelChange}
-					/>
-					{/* The scroll-down disc (moved here from the Conversation,
+					{/* The stats row that sat beneath the shell is gone (owner
+					    2026-11-25): its numbers and the model ride the composer
+					    edge (ComposerToolbarSession, provided around the shell).
+					    The scroll-down disc (moved here from the Conversation,
 					    owner refinement round 2026-09-24): anchored to the BLOCK's
-					    top edge — above the composer shell AND the stats row, in
+					    top edge — above the composer shell, in
 					    the gradient's transparent band — so it never overlaps
 					    any dock element. Because the anchor is the block itself
 					    (not the scroller's bottom), it rides every height change
@@ -3585,5 +3595,6 @@ export function DockOverlay({
 				)}
 			</div>
 		</div>
+		</ComposerToolbarSession.Provider>
 	);
 }

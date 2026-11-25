@@ -6,7 +6,7 @@ const useIsoLayoutEffect = typeof window === "undefined" ? useEffect : useLayout
 
 export interface DockHeightMeasurements {
 	columnHeight: number;
-	/** Stats/toolbar and block padding, outside the scrolling viewport. */
+	/** Block padding (and anything else beside the viewport), outside the scrolling viewport. */
 	outsideHeight: number;
 	/** Everything in the viewport except the animated shell. */
 	beforeShellHeight: number;
@@ -149,7 +149,6 @@ export function syncDockHeight(elements: DockHeightElements, expanded: boolean) 
 	else block.style.setProperty("--dock-max-h", budget.scrollWholeContent ? "none" : `${budget.questionMaxHeight}px`);
 	viewport.style.maxHeight = `${budget.viewportMaxHeight}px`;
 	// Overflow is visible in normal layouts: keep the shell's shadow intact.
-	// The stats/model toolbar is a sibling, never inside this overflow box.
 	viewport.style.overflowY = budget.scrollWholeContent ? "auto" : "visible";
 	// Clamp animated starting heights too, so a previous tall variant cannot
 	// paint above the column while morphing into a constrained layout.
