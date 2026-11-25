@@ -1947,10 +1947,10 @@ export function Chat({
 				    above the scroller on the plain page background — no gradient. Its
 				    bottom outline (border-b border-border) matches the one that
 				    separates the left sidebar — same width, same color (owner, r5).
-				    h-15 (60px), not py-2: the toggle (a size-9 icon button) renders
+				    h-12 (48px, UI round 1b), not py-2: the toggle renders
 				    only while the sidebar is CLOSED — an auto-height row would
 				    collapse when it disappears and slide the title + chip up.
-				    60px is an ALIGNMENT, not just a size: it equals the sidebar's
+				    48px is an ALIGNMENT, not just a size: it equals the sidebar's
 				    LH wordmark band, so the header's border-b continues that
 				    band's bottom edge as one line across the app (owner, round 6). */}
 				<TopBar
@@ -2034,7 +2034,7 @@ export function Chat({
 								blurAfterPointerClick(e);
 								setPlanOpen(true);
 							}}
-							className="lh-no-drag flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-border/80 px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+							className="lh-no-drag flex h-6 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-sm px-1.5 text-xs font-medium text-muted-foreground outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised hover:text-foreground focus-visible:ring-2 focus-visible:ring-focus"
 						>
 							<WaypointsIcon className="size-3.5 text-primary" aria-hidden />
 							Plan
