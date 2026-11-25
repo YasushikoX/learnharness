@@ -44,10 +44,16 @@ const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : 
  *  either mode — the dialog must say so instead of promising that everything stays. */
 export type CourseLoss = { status: "checking" } | { status: "unknown" } | { status: "known"; impact: CourseDeletionImpact };
 
-/** “A”, “A” and “B”, “A”, “B” and “C”; a course that no longer exists is named as such. */
+/** “A”, “A” and “B”, “A”, “B” and “C”; deleted courses collapse into “a deleted course” or “N deleted courses”. */
 function courseNames(impact: CourseDeletionImpact): string {
-	const names = impact.courses.map((c) => (c.title === null ? "a deleted course" : `“${c.title}”`));
-	return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0] ?? "a course";
+	const named: string[] = [];
+	let deleted = 0;
+	for (const c of impact.courses) {
+		if (c.title === null) deleted++;
+		else named.push(`“${c.title}”`);
+	}
+	const parts = deleted > 0 ? [...named, deleted === 1 ? "a deleted course" : `${deleted} deleted courses`] : named;
+	return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0] ?? "a course";
 }
 
 /** True when the deletion takes, or may take, course progress (the qualified body shows). */
@@ -56,8 +62,13 @@ export function mayLoseCourseProgress(loss: CourseLoss | undefined): boolean {
 }
 
 /** The plain-words course-progress line under the body, or null when nothing is lost. `total` is how many sessions
- *  the deletion removes, so the line can say how many of them are course sessions. */
-export function courseLossWarning(loss: CourseLoss | undefined, total: number): string | null {
+ *  the deletion removes, so the line can say how many of them are course sessions. Set `eitherMode: false` when the
+ *  loss is already conditional on a checkbox (the graph Sources dialog) instead of happening in both modes below. */
+export function courseLossWarning(
+	loss: CourseLoss | undefined,
+	total: number,
+	{ eitherMode = true }: { eitherMode?: boolean } = {},
+): string | null {
 	if (!loss) return null;
 	const one = total === 1;
 	if (loss.status === "checking") return `Checking whether ${one ? "this session" : "these sessions"} recorded course progress…`;
@@ -76,28 +87,42 @@ export function courseLossWarning(loss: CourseLoss | undefined, total: number): 
 			: `${sessions} of these ${total} sessions ${sessions === 1 ? "is a course session" : "are course sessions"}, from ${from}.`;
 	const it = sessions === 1 ? "it" : "they";
 	const what = skills > 0 ? `the ${count(skills, "skill", "skills")} ${it} taught or checked ${skills === 1 ? "loses" : "lose"}` : `the skills ${it} taught or checked lose`;
-	return `${who} Deleting ${sessions === 1 ? "it" : "them"} also deletes the course progress ${it} recorded: ${what} that progress, whichever you choose below.`;
+	const suffix = eitherMode ? ", whichever you choose below." : ".";
+	return `${who} Deleting ${sessions === 1 ? "it" : "them"} also deletes the course progress ${it} recorded: ${what} that progress${suffix}`;
 }
 
-/** Ask the server what deleting these sessions takes from the courses; null ids = the dialog is closed. A new set of
- *  ids starts at "checking", so a dialog never shows the previous deletion's answer. */
+/** Ask the server what deleting these sessions takes from the courses; null ids = the dialog is closed. Every open or
+ *  selection change gets a fresh request id starting at "checking", so reopening or revisiting a selection never shows
+ *  a stale answer or accepts a late response from an earlier request. */
 export function useCourseLoss(chatIds: readonly string[] | null): CourseLoss | undefined {
 	const key = chatIds === null ? null : JSON.stringify(chatIds);
-	const [answer, setAnswer] = useState<{ key: string; loss: CourseLoss } | null>(null);
+	const [session, setSession] = useState<{ key: string | null; id: number }>({ key, id: 0 });
+	let reqId = session.id;
+	if (session.key !== key) {
+		reqId = session.id + 1;
+		setSession({ key, id: reqId });
+	}
+	const [answer, setAnswer] = useState<{ id: number; loss: CourseLoss } | null>(null);
 	useEffect(() => {
 		if (key === null) return;
 		let alive = true;
-		void fetch("/api/courses/deletion-impact", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatIds: JSON.parse(key) }) })
+		const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+		void fetch("/api/courses/deletion-impact", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ chatIds: JSON.parse(key) }),
+			...(controller ? { signal: controller.signal } : {}),
+		})
 			.then(async (res) => {
 				if (!res.ok) throw new Error(String(res.status));
 				const impact = (await res.json()) as CourseDeletionImpact;
-				if (alive) setAnswer({ key, loss: { status: "known", impact } });
+				if (alive) setAnswer({ id: reqId, loss: { status: "known", impact } });
 			})
-			.catch(() => { if (alive) setAnswer({ key, loss: { status: "unknown" } }); });
-		return () => { alive = false; };
-	}, [key]);
+			.catch(() => { if (alive) setAnswer({ id: reqId, loss: { status: "unknown" } }); });
+		return () => { alive = false; controller?.abort(); };
+	}, [key, reqId]);
 	if (key === null) return undefined;
-	return answer?.key === key ? answer.loss : { status: "checking" };
+	return answer?.id === reqId ? answer.loss : { status: "checking" };
 }
 
 /** The folder Delete's wording (owner, 2026-11-18): the session dialog's
