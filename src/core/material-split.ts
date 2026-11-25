@@ -152,8 +152,9 @@ export function contentPages(contentMd: string): ContentPage[] {
 	const pages: { page: number; lines: string[] }[] = [];
 	const before: string[] = [];
 	for (const line of lines) {
-		const marker = PAGE_MARKER_PATTERN.exec(line);
-		if (marker) pages.push({ page: Number(marker[1]), lines: [] });
+		// the same marker rule as splitMaterial and pageCountOf: a number beyond the safe integer range is text
+		const page = markerPage(line);
+		if (page !== undefined) pages.push({ page, lines: [] });
 		else if (pages.length === 0) before.push(line);
 		else pages[pages.length - 1]!.lines.push(line);
 	}
@@ -438,7 +439,21 @@ export function splitMaterial(contentMd: string, opts: SplitOptions = {}): Mater
 					break;
 				}
 			}
-			cut = earlier > start ? earlier : cut - 1 > start ? cut - 1 : cut + 1;
+			if (earlier > start) cut = earlier;
+			else {
+				// No earlier word boundary: step back over the backslashes before it (a remainder that starts with them still
+				// looks like a marker) to the character before them; when the piece is nothing else, step forward past the
+				// leading backslashes and the first dash instead, as far as the budget allows.
+				let back = cut - 1;
+				while (back > start && contentMd.charCodeAt(back) === 0x5c) back--;
+				if (back > start && contentMd.charCodeAt(back) !== 0x5c) cut = back;
+				else {
+					let ahead = cut;
+					while (ahead < end && contentMd.charCodeAt(ahead) === 0x5c) ahead++;
+					ahead = Math.min(ahead + 1, end);
+					cut = fits(start, ahead) ? ahead : cut + 1 <= lo ? cut + 1 : lo;
+				}
+			}
 		}
 		// a page marker line is not cut at its spaces: cut before it, or (when it starts the piece and is over the budget
 		// on its own) at the plain character offset

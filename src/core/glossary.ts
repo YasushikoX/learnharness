@@ -111,15 +111,59 @@ export function conceptId(name: string): string {
 
 const WORD = "[\\p{L}\\p{N}\\p{M}]";
 const RELAXED_JOIN = new RegExp(`(?<=${WORD})[\\s\\p{Pd}]+(?=${WORD})`, "gu");
+/** Typographic apostrophes and single quotes (left, right, reversed, low-9, the modifier letter apostrophe, the full-width one). Not primes. */
+const TYPOGRAPHIC_APOSTROPHE = /[‘’‚‛ʼ＇]/gu;
+/** Typographic double quotes (left, right, low-9, reversed, the full-width one). */
+const TYPOGRAPHIC_QUOTE = /[“”„‟＂]/gu;
 
 /**
- * The relaxed key used ONLY for lookup and duplicate suggestions, never for identity: the normalised name case-folded
- * (upper then lower case, so "ß" reads as "ss" and "ς" as "σ"), whitespace and dashes between two letters or digits
- * removed ("COVID-19", "COVID 19" and "covid19" share one), and any remaining whitespace removed. Other symbols stay
- * ("C", "C++" and "C--" keep different keys). Pure.
+ * The relaxed key used ONLY for lookup and duplicate suggestions, never for identity: the normalised name with
+ * typographic apostrophes and quotes read as the plain ' and " ("Ohm’s law" and "Ohm's law" share one; a prime ′ is
+ * not an apostrophe and stays), case-folded (upper then lower case, so "ß" reads as "ss" and "ς" as "σ"), whitespace
+ * and dashes between two letters or digits removed ("COVID-19", "COVID 19" and "covid19" share one), and any
+ * remaining whitespace removed. Other symbols stay ("C", "C++" and "C--" keep different keys). Pure.
  */
 export function relaxedKey(text: string): string {
-	return normalizeName(text).toUpperCase().toLowerCase().normalize("NFC").replace(RELAXED_JOIN, "").replace(/\s+/gu, "");
+	return normalizeName(text)
+		.replace(TYPOGRAPHIC_APOSTROPHE, "'")
+		.replace(TYPOGRAPHIC_QUOTE, '"')
+		.toUpperCase()
+		.toLowerCase()
+		.normalize("NFC")
+		.replace(RELAXED_JOIN, "")
+		.replace(/\s+/gu, "");
+}
+
+/** The shortest singular a plural suggestion considers (so "as", "Cs" or "pHs" never pair with "a", "C" or "pH"). */
+const PLURAL_MIN_SINGULAR = 3;
+
+/**
+ * The singular forms a name may be the simple English plural of, as relaxed keys: [] when its ending is not one of
+ * the covered plural endings. Used ONLY to suggest duplicates. The ending must be lower case in the name itself (so
+ * the acronyms "CMOS" or "OS" are not read as plurals), follow a lower-case letter, and leave a singular of at least
+ * PLURAL_MIN_SINGULAR characters. Covered: "-s" ("resistor"/"resistors"; not after s, u or i: "class", "status",
+ * "analysis"), "-es" after s, x, z, ch or sh ("bus"/"buses", "box"/"boxes", "switch"/"switches"), "-ies" after a
+ * consonant to "-y" ("probability"/"probabilities"), and "-ices" to "-ix" or "-ex" ("matrix"/"matrices",
+ * "vertex"/"vertices", "index"/"indices"). Not covered: "-ves" ("leaf"/"leaves"), Latin and Greek plurals other than
+ * "-ices" ("criterion"/"criteria", "analysis"/"analyses", "datum"/"data"), irregular ones ("child"/"children"), and
+ * other languages. Pure.
+ */
+export function pluralSingulars(name: string): string[] {
+	const normalized = normalizeName(name);
+	const tail = /\p{Ll}(?:ices|ies|ches|shes|ses|xes|zes|s)$/u.exec(normalized);
+	if (!tail) return [];
+	const key = relaxedKey(normalized);
+	if (!key.endsWith("s")) return [];
+	const stem = (drop: number) => key.slice(0, key.length - drop);
+	const out = new Set<string>();
+	if (key.endsWith("ices")) {
+		out.add(`${stem(4)}ix`);
+		out.add(`${stem(4)}ex`);
+	}
+	if (/[^aeiou]ies$/u.test(key)) out.add(`${stem(3)}y`);
+	if (/(?:s|x|z|ch|sh)es$/u.test(key)) out.add(stem(2));
+	if (/[^siu]s$/u.test(key)) out.add(stem(1));
+	return [...out].filter((s) => [...s].length >= PLURAL_MIN_SINGULAR && /\p{L}$/u.test(s));
 }
 
 /** Code-unit order (the same in every locale). */
@@ -176,12 +220,18 @@ export interface GlossaryEntry {
 	occurrenceCount: number;
 }
 
-/** Entries a planner should look at side by side: maybe one concept under several names. Nothing is merged. */
+/**
+ * Entries a planner should look at side by side: maybe one concept under several names. Nothing is merged. One group
+ * per connected set of suggested pairs (no two groups share an entry).
+ */
 export interface SuggestedDuplicateGroup {
 	/** Two or more entry ids, sorted. */
 	ids: string[];
-	/** similar_name: their names share a relaxed key; alias: one names another as an alias. */
-	reasons: ("similar_name" | "alias")[];
+	/**
+	 * Why, over all the group's pairs, sorted: similar_name: names that share a relaxed key; alias: one names another as
+	 * an alias; plural: names that differ only by a simple English plural ending (pluralSingulars).
+	 */
+	reasons: ("alias" | "plural" | "similar_name")[];
 }
 
 /** Two or more different digests of one source (the same sourceHash), and which one the glossary used. */
@@ -228,17 +278,27 @@ const occurrenceTotal = (terms: readonly DigestTerm[]) => terms.reduce((n, t) =>
  * the conflict is reported.
  */
 function resolveSources(digests: readonly GlossarySource[]): { chosen: GlossarySource[]; conflicts: SourceConflict[] } {
-	const bySource = new Map<string, Map<string, GlossarySource>>();
+	const bySource = new Map<string, GlossarySource[]>();
 	for (const d of digests) {
-		const copies = bySource.get(d.sourceHash) ?? new Map<string, GlossarySource>();
-		const content = stableJson({ sourceHash: d.sourceHash, indexerVersion: d.indexerVersion, batches: d.batches, terms: d.terms });
-		if (!copies.has(content)) copies.set(content, d);
-		bySource.set(d.sourceHash, copies);
+		const list = bySource.get(d.sourceHash);
+		if (list) list.push(d);
+		else bySource.set(d.sourceHash, [d]);
 	}
 	const chosen: GlossarySource[] = [];
 	const conflicts: SourceConflict[] = [];
 	for (const sourceHash of [...bySource.keys()].sort(byCodeUnit)) {
-		const ranked = [...bySource.get(sourceHash)!.entries()].map(([content, d]) => ({
+		const list = bySource.get(sourceHash)!;
+		// a source that appears once needs no comparison, so no serialisation (the common case)
+		if (list.length === 1) {
+			chosen.push(list[0]!);
+			continue;
+		}
+		const copies = new Map<string, GlossarySource>();
+		for (const d of list) {
+			const content = stableJson({ sourceHash: d.sourceHash, indexerVersion: d.indexerVersion, batches: d.batches, terms: d.terms });
+			if (!copies.has(content)) copies.set(content, d);
+		}
+		const ranked = [...copies.entries()].map(([content, d]) => ({
 			d,
 			key: [failedCount(d.batches), -d.indexerVersion, -d.terms.length, -occurrenceTotal(d.terms)],
 			content,
@@ -354,15 +414,28 @@ export function mergeGlossary(digests: readonly GlossarySource[]): Glossary {
 	}
 	terms.sort(([a], [b]) => byCodeUnit(a, b));
 
-	// Suggested duplicates: a shared relaxed name, or one entry naming another as an alias. Symbols never suggest.
-	const groups = new Map<string, Set<SuggestedDuplicateGroup["reasons"][number]>>();
-	const suggest = (ids: Iterable<string>, reason: SuggestedDuplicateGroup["reasons"][number]) => {
-		const sorted = [...new Set(ids)].sort(byCodeUnit);
-		if (sorted.length < 2) return;
-		const key = sorted.join("\n");
-		const reasons = groups.get(key) ?? new Set();
-		reasons.add(reason);
-		groups.set(key, reasons);
+	// Suggested duplicates: a shared relaxed name, one entry naming another as an alias, or names that differ only by a
+	// simple English plural ending (pluralSingulars). Symbols never suggest. Every pair found joins one group per
+	// connected set of entries, with the reasons of all its pairs.
+	type Reason = SuggestedDuplicateGroup["reasons"][number];
+	const parent = new Map<string, string>();
+	const root = (id: string): string => {
+		let at = id;
+		while (parent.get(at) !== at) at = parent.get(at)!;
+		for (let walk = id; walk !== at; ) {
+			const next = parent.get(walk)!;
+			parent.set(walk, at);
+			walk = next;
+		}
+		return at;
+	};
+	const pairReasons: [string, Reason][] = [];
+	const suggest = (a: string, b: string, reason: Reason) => {
+		if (a === b) return;
+		for (const id of [a, b]) if (!parent.has(id)) parent.set(id, id);
+		const [ra, rb] = [root(a), root(b)];
+		if (ra !== rb) parent.set(byCodeUnit(ra, rb) < 0 ? rb : ra, byCodeUnit(ra, rb) < 0 ? ra : rb);
+		pairReasons.push([a, reason]);
 	};
 	const byRelaxedName = new Map<string, string[]>();
 	for (const [id, entry] of terms) {
@@ -371,16 +444,22 @@ export function mergeGlossary(digests: readonly GlossarySource[]): Glossary {
 		if (list) list.push(id);
 		else byRelaxedName.set(key, [id]);
 	}
-	for (const ids of byRelaxedName.values()) suggest(ids, "similar_name");
+	for (const ids of byRelaxedName.values()) for (const other of ids.slice(1)) suggest(ids[0]!, other, "similar_name");
 	for (const [id, entry] of terms) {
-		for (const alias of entry.aliases) {
-			const named = byRelaxedName.get(relaxedKey(alias))?.filter((other) => other !== id) ?? [];
-			for (const other of named) suggest([id, other], "alias");
-		}
+		for (const alias of entry.aliases) for (const other of byRelaxedName.get(relaxedKey(alias)) ?? []) suggest(id, other, "alias");
+		for (const singular of pluralSingulars(entry.term)) for (const other of byRelaxedName.get(singular) ?? []) suggest(id, other, "plural");
 	}
-	const suggestedDuplicates = [...groups.entries()]
-		.sort(([a], [b]) => byCodeUnit(a, b))
-		.map(([key, reasons]) => ({ ids: key.split("\n"), reasons: [...reasons].sort(byCodeUnit) }));
+	const grouped = new Map<string, { ids: string[]; reasons: Set<Reason> }>();
+	for (const id of parent.keys()) {
+		const r = root(id);
+		const group = grouped.get(r) ?? { ids: [], reasons: new Set<Reason>() };
+		group.ids.push(id);
+		grouped.set(r, group);
+	}
+	for (const [id, reason] of pairReasons) grouped.get(root(id))!.reasons.add(reason);
+	const suggestedDuplicates = [...grouped.values()]
+		.map((g) => ({ ids: g.ids.sort(byCodeUnit), reasons: [...g.reasons].sort(byCodeUnit) }))
+		.sort((a, b) => byCodeUnit(a.ids.join("\n"), b.ids.join("\n")));
 
 	// Object.fromEntries defines own properties, so a key such as "__proto__" never reaches a prototype.
 	return {

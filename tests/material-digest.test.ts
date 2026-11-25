@@ -18,6 +18,7 @@ import {
 	EXTRACTION_OVERHEAD_MAX_CHARS,
 	failedBatchesOf,
 	formatHeadingPath,
+	hasProfile,
 	HEADING_PATH_MAX_CHARS,
 	MATERIAL_INDEXER_VERSION,
 	mergeConcepts,
@@ -29,6 +30,7 @@ import {
 	REDUCE_REQUEST_MAX_CHARS,
 	rewriteProfile,
 	summarizeOccurrences,
+	truncateOccurrences,
 	validateBatchReply,
 	validateProfile,
 	type BatchNotes,
@@ -49,11 +51,13 @@ import {
 	ID_MAX_CHARS,
 	mergeGlossary,
 	normalizeName,
+	pluralSingulars,
 	relaxedKey,
 	termId,
 	type GlossarySource,
 } from "../src/core/glossary.ts";
 import { splitMaterial, type MaterialBatch } from "../src/core/material-split.ts";
+import { PROFILE_FORMAT_RULES, PROFILE_FORMAT_SECTIONS } from "../src/agent/subagents/material-profiler.ts";
 import { MATERIAL_DIGEST_VERSION, MAX_TERM_OCCURRENCES, type DigestTerm, type MaterialDigest, type TermTier } from "../src/core/contracts/material-digest.ts";
 
 const META = { sourceHash: "sha256:abc", converter: "pdfjs-markdown", converterVersion: "5.4.0" };
@@ -719,6 +723,34 @@ describe("review 3: page lists, labels and the reduce prompt", () => {
 	});
 });
 
+describe("review 4: prompts", () => {
+	it("the extraction prompt asks for the singular index-entry form and shows notation unescaped, with the JSON escaping stated", async () => {
+		const model = fakeModel((call) => notesFor(call.user, { profile: PROFILE }));
+		await digestMaterial(slideDeck(2, 100), { ...META, complete: model.complete });
+		const system = model.calls[0]!.system;
+		assert.match(system, /Report the singular, uninflected form the material would use as a heading or an index entry \("resistor" even where the text says "resistors", "matrix" where it says "matrices"\), unless the plural is itself the term/);
+		assert.ok(system.includes("(v, λ, C, \\mathbb{R})"), "the example is the notation as written");
+		assert.ok(system.includes('so \\mathbb{R} is written "\\\\mathbb{R}"'), "the JSON escaping is stated once, explicitly");
+		assert.ok(!system.includes('"\\\\mathbb{R}");'), "no doubly escaped example among the plain ones");
+	});
+
+	it("the reduce prompt never asks to cite every claim, and the most reduced notes say their names have no pages", () => {
+		const digest = { name: null, pageCount: 2, batches: [{ index: 0, pageStart: 1, pageEnd: 2, pages: [1, 2], headingPath: [], charStart: 0, charEnd: 5, status: "indexed" as const, summaryBullets: ["a"] }], terms: [], concepts: [], figures: [] };
+		const { system } = buildReduceRequest(digest)!;
+		assert.doesNotMatch(system, /Cite every claim/);
+		assert.match(system, /Cite a claim as \(p\. N\) with a page the notes give for it, and only so/);
+		assert.match(system, /When the notes list terms by name only, without pages \(shortened for length\), name them without a page and say that their pages are not available in the notes; never give them a page/);
+		assert.ok(system.includes(PROFILE_FORMAT_SECTIONS), "the same profile sections");
+		// the profiler's own prompt still cites every claim (it reads the material)
+		assert.match(PROFILE_FORMAT_RULES, /^Cite every claim/);
+		// at the most reduced level the core names come without pages, and the notes say so
+		const core = Array.from({ length: 400 }, (_, i) => reduceTerm(`Kjernebegrep nummer ${i}`, "core", `Definisjon ${i}.`));
+		const text = batchNotesText({ parts: [part(0, 1, 200, ["Oversikt"])], failed: [], terms: core, concepts: [], figures: [] }, 3_000);
+		assert.match(text, /Core terms \(names only, in order of first mention; their pages are not available in these notes\): Kjernebegrep nummer 0/);
+		assert.doesNotMatch(text, /Kjernebegrep nummer 0 \[core, p\./);
+	});
+});
+
 describe("ids: identity is the exact spelling", () => {
 	it("an id is the normalised name, encoded injectively: case, hyphens, apostrophes and compatibility forms all count", () => {
 		const expected: [string, string][] = [
@@ -956,6 +988,73 @@ describe("recovery: merging a re-run part equals a clean run", () => {
 		assert.deepEqual(combineTerms([...lists].reverse()), clean.terms);
 	});
 
+	// Review 4, finding 2: truncation ran only when the LIST was longer than 64, so a stored digest (62 occurrences,
+	// count 65) merged with a recovered part 0 (1 occurrence) kept 63 where a clean run keeps 62; the same inside a clean
+	// run when part 0 has 65 occurrences and part 1 has 1.
+	it("review 4, finding 2: the reviewer's cases: recovered merge and multi-part combine equal a clean run above the cap", () => {
+		const entropy = (part: number, n = 1) => partTerms(part, Array.from({ length: n }, () => modelTerm("Entropy", part + 1, "core", "Uorden.")));
+		const parts = Array.from({ length: 66 }, (_, p) => entropy(p));
+		const [clean] = combineTerms(parts);
+		assert.deepEqual([clean!.occurrences.length, clean!.occurrenceCount], [MAX_TERM_OCCURRENCES - 2, 66]);
+		const stored = combineTerms(parts.slice(1));
+		assert.deepEqual([stored[0]!.occurrences.length, stored[0]!.occurrenceCount], [MAX_TERM_OCCURRENCES - 2, 65]);
+		assert.deepEqual(combineTerms([stored, parts[0]!]), [clean], "the stored digest plus the recovered part 0");
+		// inside one clean run: part 0 with 65 occurrences, part 1 with 1
+		const [inRun] = combineTerms([entropy(0, 65), entropy(1)]);
+		const [whole] = partTerms(0, Array.from({ length: 66 }, () => modelTerm("Entropy", 1, "core", "Uorden.")));
+		assert.equal(inRun!.occurrenceCount, 66);
+		assert.equal(inRun!.occurrences.length, whole!.occurrences.length);
+		assert.equal(inRun!.occurrences.length, MAX_TERM_OCCURRENCES - 2);
+	});
+
+	it("property: for counts around and well above the cap, any recovered part merged into the rest equals the clean run", () => {
+		/** The stored form of a whole source-ordered list, computed directly from its definition. */
+		const expectedCut = (all: readonly DigestTerm["occurrences"][number][]) => {
+			if (all.length <= MAX_TERM_OCCURRENCES) return [...all];
+			const keep = new Set(Array.from({ length: MAX_TERM_OCCURRENCES - 2 }, (_, i) => i));
+			const coreDef = all.findIndex((o) => o.definition !== null && o.tier === "core");
+			const supplier = coreDef >= 0 ? coreDef : all.findIndex((o) => o.definition !== null);
+			if (supplier >= 0) keep.add(supplier);
+			const core = all.findIndex((o) => o.tier === "core");
+			if (core >= 0) keep.add(core);
+			return all.filter((_, i) => keep.has(i));
+		};
+		let checks = 0;
+		for (const count of [1, 2, 30, 61, 62, 63, 64, 65, 66, 67, 70, 100, 127, 128, 129, 200, 500, 2_000]) {
+			for (let seed = 1; seed <= 6; seed++) {
+				const rand = mulberry32(count * 31 + seed);
+				const partCount = 1 + Math.floor(rand() * Math.min(count, 12));
+				// every part gets at least one occurrence; the rest land anywhere; definitions and core occurrences are rare and late
+				const perPart = Array.from({ length: partCount }, () => 1);
+				for (let i = partCount; i < count; i++) perPart[Math.floor(rand() * partCount)]!++;
+				const raw = perPart.map((n, part) =>
+					Array.from({ length: n }, () => {
+						const tier: TermTier = rand() < 0.05 ? "core" : "supporting";
+						return modelTerm("Felles", part + 1, tier, rand() < 0.04 ? `Def ${part}.` : null);
+					}),
+				);
+				const lists = raw.map((terms, part) => partTerms(part, terms));
+				const clean = combineTerms(lists);
+				assert.equal(clean[0]!.occurrenceCount, count);
+				const full = raw.flatMap((terms, part) => terms.map((t) => ({ part, page: t.page, tier: t.tier, definition: t.definition, definitionPage: t.definitionPage })));
+				assert.deepEqual(clean[0]!.occurrences, expectedCut(full), `count ${count}, seed ${seed}: the cut of the whole list`);
+				for (let lost = 0; lost < partCount; lost++) {
+					const rest = combineTerms(lists.filter((_, p) => p !== lost));
+					const recovered = rest.length === 0 ? combineTerms([lists[lost]!]) : combineTerms([rest, lists[lost]!]);
+					assert.deepEqual(recovered, clean, `count ${count}, seed ${seed}, part ${lost} of ${partCount}`);
+					checks++;
+				}
+				// combining one part at a time (left to right) is the same as combining them all at once
+				const stepwise = lists.slice(1).reduce((acc, list) => combineTerms([acc, list]), lists[0]!);
+				assert.deepEqual(stepwise, clean, `count ${count}, seed ${seed}: stepwise`);
+				// the stored form is idempotent and passes the read boundary's check
+				const [t] = clean;
+				assert.deepEqual(truncateOccurrences(t!.occurrences, t!.occurrenceCount), t!.occurrences);
+			}
+		}
+		assert.ok(checks > 300, `${checks} recovery checks`);
+	});
+
 	// Review 3, finding 4, first half: the issued id depended on which spelling declared the alias.
 	it("review 3, finding 4: an id never depends on which spelling declares an alias", () => {
 		const one = mergeTerms([[modelTerm("ordinary least squares", 1, "core", null, ["OLS"]), modelTerm("OLS", 1, "supporting", null)]]);
@@ -1110,6 +1209,77 @@ describe("mergeGlossary: exact ids, occurrences, suggested duplicates", () => {
 		assert.deepEqual(findTermCandidates(own, "v").map((c) => c.entry.id), ["t_v", "t_velocity", "t_voltage"]);
 		assert.equal(relaxedKey("COVID-19"), relaxedKey("covid 19"));
 		assert.notEqual(relaxedKey("C++"), relaxedKey("C"));
+	});
+
+	// Review 4, concerns: "Ohm's law" / "Ohm’s law" and "resistor" / "resistors" were not suggested; OLS and ols beside
+	// "ordinary least squares" (alias OLS) gave three overlapping pairs instead of one group.
+	it("review 4: typographic apostrophes share a relaxed key, simple plurals are suggested, and overlapping pairs form one group", () => {
+		const rsquo = String.fromCharCode(0x2019);
+		const ldquo = String.fromCharCode(0x201c);
+		const rdquo = String.fromCharCode(0x201d);
+		const prime = String.fromCharCode(0x2032);
+		assert.equal(relaxedKey(`Ohm${rsquo}s law`), relaxedKey("Ohm's law"));
+		assert.equal(relaxedKey(`${ldquo}big O${rdquo}`), relaxedKey('"big O"'));
+		assert.notEqual(relaxedKey(`f${prime}(x)`), relaxedKey("f'(x)"), "a prime is not an apostrophe");
+		assert.notEqual(termId(`Ohm${rsquo}s law`), termId("Ohm's law"), "identity is unchanged");
+
+		const g = mergeGlossary([
+			source("circuits-1", [docTerm("Ohm's law", 1, "core"), docTerm("resistor", 2, "core"), docTerm("matrix", 3, "core"), docTerm("bus", 3, "supporting"), docTerm("probability", 3, "core")]),
+			source("circuits-2", [docTerm(`Ohm${rsquo}s law`, 1, "core"), docTerm("resistors", 4, "supporting"), docTerm("matrices", 5, "core"), docTerm("buses", 5, "supporting"), docTerm("probabilities", 6, "core")]),
+			source("geometry", [docTerm("vertex", 1, "core"), docTerm("vertices", 2, "core"), docTerm("switch", 3, "core"), docTerm("switches", 4, "core")]),
+		]);
+		assert.equal(ids(g).length, 14, "nothing merged");
+		assert.deepEqual(g.suggestedDuplicates, [
+			{ ids: ["t_Ohm~27~s_law", `t_Ohm${rsquo}s_law`], reasons: ["similar_name"] },
+			{ ids: ["t_bus", "t_buses"], reasons: ["plural"] },
+			{ ids: ["t_matrices", "t_matrix"], reasons: ["plural"] },
+			{ ids: ["t_probabilities", "t_probability"], reasons: ["plural"] },
+			{ ids: ["t_resistor", "t_resistors"], reasons: ["plural"] },
+			{ ids: ["t_switch", "t_switches"], reasons: ["plural"] },
+			{ ids: ["t_vertex", "t_vertices"], reasons: ["plural"] },
+		]);
+		// lookup finds both spellings of the apostrophe, and answers neither alone
+		assert.deepEqual(findTermCandidates(g, `ohm${rsquo}s law`).map((c) => c.entry.id), ["t_Ohm~27~s_law", `t_Ohm${rsquo}s_law`]);
+		assert.equal(findTerm(g, "Ohm's law"), undefined);
+
+		// conservative: acronyms, -ss, -us, -is, short stems and the uncovered plurals are not suggested
+		const quiet = mergeGlossary([
+			source("q", [
+				docTerm("CMOS", 1, "core"), docTerm("CMO", 1, "core"), docTerm("class", 1, "core"), docTerm("clas", 1, "core"), docTerm("status", 1, "core"), docTerm("statu", 1, "core"),
+				docTerm("analysis", 1, "core"), docTerm("analyses", 1, "core"), docTerm("Cs", 1, "core"), docTerm("C", 1, "core"), docTerm("leaf", 1, "core"), docTerm("leaves", 1, "core"),
+				docTerm("criterion", 1, "core"), docTerm("criteria", 1, "core"), docTerm("bas", 1, "core"), docTerm("ba", 1, "core"),
+			]),
+		]);
+		assert.deepEqual(quiet.suggestedDuplicates, []);
+		assert.deepEqual(pluralSingulars("resistors"), ["resistor"]);
+		assert.ok(pluralSingulars("matrices").includes("matrix") && pluralSingulars("vertices").includes("vertex"));
+		assert.deepEqual(pluralSingulars("GPUs"), [], "an upper-case letter before the ending: not read as a plural");
+		assert.deepEqual(pluralSingulars("low-pass filters"), ["lowpassfilter"]);
+
+		// overlapping pairs: one group per connected set, with every reason
+		const ols = mergeGlossary([source("s", [docTerm("ordinary least squares", 1, "core", { aliases: ["OLS"] }), docTerm("OLS", 2, "core"), docTerm("ols", 3, "supporting")])]);
+		assert.deepEqual(ols.suggestedDuplicates, [{ ids: ["t_OLS", "t_ols", "t_ordinary_least_squares"], reasons: ["alias", "similar_name"] }]);
+		const chain = mergeGlossary([source("c", [docTerm("resistor", 1, "core"), docTerm("Resistors", 2, "core"), docTerm("resistors", 3, "core"), docTerm("capacitor", 4, "core")])]);
+		assert.deepEqual(chain.suggestedDuplicates, [{ ids: ["t_Resistors", "t_resistor", "t_resistors"], reasons: ["plural", "similar_name"] }]);
+		for (const g2 of [g, quiet, ols, chain]) {
+			const seen = g2.suggestedDuplicates.flatMap((x) => x.ids);
+			assert.equal(new Set(seen).size, seen.length, "no entry is in two groups");
+		}
+	});
+
+	// Review 4, concerns: resolveSources serialised every digest with stableJson, even when its sourceHash appeared once.
+	it("review 4: a sourceHash that appears once is never serialised; two copies still are compared", () => {
+		let reads = 0;
+		const probed = (hash: string): GlossarySource => {
+			const t = docTerm("Alpha", 1, "core") as DigestTerm & { probe?: number };
+			Object.defineProperty(t, "probe", { enumerable: true, get: () => ++reads });
+			return source(hash, [t]);
+		};
+		const single = mergeGlossary([probed("a"), probed("b"), source("c", [docTerm("Beta", 1, "core")])]);
+		assert.equal(reads, 0, "no serialisation for single sources");
+		assert.equal(single.terms["t_Alpha"]!.citations.length, 2);
+		mergeGlossary([probed("same"), probed("same")]);
+		assert.ok(reads > 0, "copies of one source are still compared by content");
 	});
 
 	it("a digest term without a visible name is refused, not dropped", () => {
@@ -1274,6 +1444,84 @@ describe("stored digests: the validated read boundary, rewrite and re-run", () =
 		assert.ok(!("failedBatches" in (parsed as { digest: object }).digest));
 		assert.equal(failedBatchesOf((parsed as { digest: MaterialDigest }).digest).length, 1);
 		assert.throws(() => batchFromRef("x".repeat(10_000), { ...digest.batches[0]!, charEnd: 2.99 }), RangeError);
+	});
+
+	// Review 4, finding 3: the reader accepted "profile": "", an invisible or heading-less profile, blank or invisible
+	// text fields, unnormalised or blank aliases and symbols, a pageCount below a part's pages, an empty sourceHash, a
+	// negative indexerVersion, and kept every extra key but failedBatches.
+	it("review 4, finding 3: the reader enforces every invariant the writer enforces and returns only contract fields", async () => {
+		const { text } = await build();
+		const value = () => JSON.parse(text) as Record<string, unknown> & MaterialDigest;
+		const withProfile = (d: Record<string, unknown>, profile: unknown) => {
+			d.profile = profile;
+			delete d.profileError;
+		};
+		const firstDefined = (d: MaterialDigest) => d.terms.find((t) => t.definition !== null)!;
+		const zw = String.fromCharCode(0x200b); // zero-width space
+		const isolate = String.fromCharCode(0x2066); // left-to-right isolate
+		const edits: [string, (d: MaterialDigest & Record<string, unknown>) => void, RegExp][] = [
+			['"profile": ""', (d) => withProfile(d, ""), /"profile" is not a valid profile/],
+			["an invisible profile", (d) => withProfile(d, ` ${zw}${isolate} `), /"profile" is not a valid profile/],
+			["a profile without headings", (d) => withProfile(d, "Just some text about the material (p. 1)."), /"profile" is not a valid profile/],
+			["a profile with only empty sections", (d) => withProfile(d, `## Contents\n${zw}`), /"profile" is not a valid profile/],
+			["a profile not in its validated form", (d) => withProfile(d, `Preamble.\n\n${PROFILE}`), /validated form/],
+			["a null profile with a blank error", (d) => Object.assign(d, { profile: null, profileError: "  " }), /without a "profileError"/],
+			["a blank summary bullet", (d) => Object.assign(d.batches[0]!, { summaryBullets: ["   "] }), /blank or untrimmed summary bullet/],
+			["an invisible summary bullet", (d) => Object.assign(d.batches[0]!, { summaryBullets: [zw] }), /blank or untrimmed summary bullet/],
+			["an invisible definition", (d) => {
+				const t = firstDefined(d);
+				t.occurrences[0]!.definition = zw;
+				t.definition = zw;
+			}, /inconsistent or blank definition/],
+			["an invisible statement", (d) => Object.assign(d.concepts[0]!, { statement: `${zw} ` }), /blank or untrimmed statement/],
+			["a blank caption", (d) => Object.assign(d.figures[0]!, { caption: " " }), /blank or untrimmed caption/],
+			["an unnormalised alias", (d) => Object.assign(d.terms[0]!, { aliases: ["  OLS "] }), /alias or symbol lists/],
+			["a blank alias", (d) => Object.assign(d.terms[0]!, { aliases: [""] }), /alias or symbol lists/],
+			["an invisible symbol", (d) => Object.assign(d.terms[0]!, { symbols: [zw] }), /alias or symbol lists/],
+			["unsorted symbols", (d) => Object.assign(d.terms[0]!, { symbols: ["v", "U"] }), /alias or symbol lists/],
+			["a repeated alias", (d) => Object.assign(d.terms[0]!, { aliases: ["A", "A"] }), /alias or symbol lists/],
+			["its own name as an alias", (d) => Object.assign(d.terms[0]!, { aliases: [d.terms[0]!.term] }), /own name as an alias/],
+			["a pageCount below a part's pages", (d) => Object.assign(d, { pageCount: 1 }), /beyond the "pageCount" 1/],
+			["an empty sourceHash", (d) => Object.assign(d, { sourceHash: "" }), /"sourceHash" is not a non-empty string/],
+			["an empty converter", (d) => Object.assign(d, { converter: "" }), /"converter" is not a non-empty string/],
+			["a negative indexerVersion", (d) => Object.assign(d, { indexerVersion: -1 }), /"indexerVersion" is not a non-negative integer/],
+			["a blank name", (d) => Object.assign(d, { name: "   " }), /"name" is not null/],
+			["a blank failed-part error", (d) => Object.assign(failedBatchesOf(d)[0]!, { error: "" }), /failed without an error/],
+			["a repeated figure", (d) => d.figures.push({ ...d.figures[0]! }), /repeats a page and caption/],
+		];
+		for (const [what, edit, expected] of edits) {
+			const d = value();
+			edit(d);
+			const parsed = parseStoredDigest(d);
+			assert.equal(parsed.ok, false, what);
+			const problem = (parsed as { problem: { kind: string; reason: string } }).problem;
+			assert.equal(problem.kind, "invalid", what);
+			assert.match(problem.reason, expected, what);
+		}
+		// the returned digest has only the contract's fields, at every level
+		const extra = value() as Record<string, any>;
+		extra.note = "hand-written";
+		extra.failedBatches = [];
+		extra.batches[0].debug = true;
+		extra.terms[0].debug = true;
+		extra.terms[0].occurrences[0].debug = true;
+		extra.concepts[0].debug = true;
+		extra.figures[0].debug = true;
+		const parsed = parseStoredDigest(extra);
+		assert.ok(parsed.ok);
+		const digest = (parsed as { digest: MaterialDigest }).digest;
+		assert.deepEqual(digest, parseStoredDigest(text).ok ? (parseStoredDigest(text) as { digest: MaterialDigest }).digest : null);
+		const keys = (o: object) => Object.keys(o).sort();
+		assert.deepEqual(keys(digest), ["batches", "concepts", "converter", "converterVersion", "figures", "indexerVersion", "name", "pageCount", "profile", "profileError", "sourceHash", "sourcePageCount", "terms", "version"]);
+		assert.ok(!("debug" in digest.batches[0]!) && !("debug" in digest.terms[0]!) && !("debug" in digest.terms[0]!.occurrences[0]!) && !("debug" in digest.concepts[0]!) && !("debug" in digest.figures[0]!));
+		// a valid profile is accepted, and hasProfile is the one test of "has a profile"
+		const good = value();
+		withProfile(good, PROFILE);
+		const ok = parseStoredDigest(good);
+		assert.ok(ok.ok);
+		assert.equal(hasProfile((ok as { digest: MaterialDigest }).digest), true);
+		assert.equal(hasProfile(value()), false);
+		assert.equal(hasProfile({ profile: "" } as MaterialDigest), false);
 	});
 });
 

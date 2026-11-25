@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+	contentPages,
 	DEFAULT_BATCH_TOKENS,
 	escapePageMarkerLines,
 	estimateTextTokens,
@@ -383,6 +384,39 @@ describe("splitMaterial", () => {
 		const parts = splitMaterial(spaced);
 		assertTiles(spaced, parts);
 		for (const b of parts) assert.doesNotMatch(b.text, /^\\*--- Page \d+ ---/);
+	});
+
+	// Review 4, finding 6: with no space before an escaped marker-like line, the cut landed on the "-" after the
+	// backslash, backed up one character onto the backslash, and the next part began with "\--- Page 99 ---".
+	it("review 4, finding 6: a hard cut never leaves the next part beginning with an escaped marker-like line", () => {
+		for (const [lead, tail] of [
+			[31_999, "\\--- Page 99 ---\nExample."],
+			[31_998, "\\\\--- Page 99 ---\nExample."],
+			[31_997, "\\\\\\--- Page 7 --- \r\nExample."],
+		] as const) {
+			const doc = `${"a".repeat(lead)}${tail}`;
+			const batches = splitMaterial(doc);
+			assertTiles(doc, batches);
+			assert.ok(batches.length >= 2);
+			for (const b of batches) {
+				assert.doesNotMatch(b.text, /^\\*--- Page \d+ ---/, `part ${b.index} begins with a marker-like line (${JSON.stringify(tail)})`);
+				assert.deepEqual(b.pages, [1]);
+			}
+		}
+	});
+
+	// Review 4, finding 5: contentPages read a 350-digit marker as page Infinity while splitMaterial and pageCountOf
+	// treat it as text.
+	it("review 4, finding 5: contentPages treats a marker beyond the safe integer range as text, like the splitter", () => {
+		const huge = `--- Page ${"9".repeat(350)} ---\nText.\n--- Page ${2 ** 53} ---\nMore.\n`;
+		assert.deepEqual(contentPages(huge), [{ page: 1, text: huge }]);
+		const mixed = `--- Page 2 ---\nTwo.\n--- Page ${"9".repeat(350)} ---\nStill two.\n--- Page 3 ---\nThree.`;
+		assert.deepEqual(contentPages(mixed), [
+			{ page: 2, text: `Two.\n--- Page ${"9".repeat(350)} ---\nStill two.` },
+			{ page: 3, text: "Three." },
+		]);
+		assert.equal(pageCountOf(mixed), 3);
+		assert.deepEqual(splitMaterial(mixed)[0]!.pages, [2, 3]);
 	});
 
 	// Review 3, finding 8, case 3 (the splitter half): the validator needs the order the pages come in.

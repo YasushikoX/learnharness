@@ -7,6 +7,7 @@
  */
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -619,6 +620,368 @@ describe("the class glossary", () => {
 		assert.match(partial.incomplete.find((g) => g.id === a.id)!.detail!, /not JSON/);
 		assert.deepEqual(partial.incomplete.find((g) => g.id === c.id)!.failedPages, [{ pageStart: failed[0]!.pageStart, pageEnd: failed[0]!.pageEnd, pages: failed[0]!.pages }]);
 		assert.equal(indexing.courseGlossary("course_unknown"), null);
+	});
+});
+
+// ── Review 4 ──────────────────────────────────────────────────────────────
+
+const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
+const exists = (ownerId: string, m: LessonMaterial, file: string) => fs.existsSync(aux(ownerId, m, file));
+/** Replace a material's stored original (what the next conversion reads). */
+const replacePdf = (ownerId: string, m: LessonMaterial, bytes: Uint8Array) => fs.writeFileSync(materialStore.filePath(ownerId, m), bytes);
+const SCANNED = tinyPdf([{ image: true }]);
+const OTHER = pdfOf(["Eigenvectors span the eigenspace"], ["Diagonalisation"], ["The spectral theorem"]);
+
+/**
+ * THE INDEX INVARIANT, on disk and on the record: digest.json, a profile that came from a digest, and the indexing
+ * fields describe the content.md on disk now, or are absent.
+ */
+function assertIndexInvariant(ownerId: string, id: string, what: string): void {
+	const m = find(ownerId, id);
+	const hasContent = exists(ownerId, m, PDF_CONTENT_FILE);
+	const digestFile = exists(ownerId, m, indexing.MATERIAL_DIGEST_FILE);
+	if (!hasContent) assert.equal(digestFile, false, `${what}: no content.md, so no digest.json`);
+	if (digestFile) {
+		const digest = indexing.readDigest(aux(ownerId, m, indexing.MATERIAL_DIGEST_FILE));
+		assert.ok(digest, `${what}: digest.json is a valid digest`);
+		const sidecar = JSON.parse(fs.readFileSync(aux(ownerId, m, PDF_CONVERSION_SIDECAR), "utf8"));
+		assert.equal(digest.sourceHash, sha256(fs.readFileSync(aux(ownerId, m, PDF_CONTENT_FILE), "utf8")), `${what}: the digest is of the content.md on disk`);
+		assert.equal(digest.converter, sidecar.converterId, what);
+		assert.equal(digest.converterVersion, sidecar.converterVersion, what);
+	}
+	if (m.profileFromDigest) assert.equal(indexing.readDigest(aux(ownerId, m, indexing.MATERIAL_DIGEST_FILE))?.profile, m.profile, `${what}: a profile from a digest is the current digest's`);
+	if (m.indexingCalls !== undefined || m.indexingWarnings !== undefined) assert.ok(digestFile, `${what}: indexing calls and warnings belong to the digest on disk`);
+	if (m.indexingError) assert.ok(hasContent, `${what}: no indexing note without content.md`);
+	assert.equal(exists(ownerId, m, indexing.MATERIAL_INDEXING_STARTED), false, `${what}: no indexing marker left`);
+}
+
+async function retryConversion(ownerId: string, id: string): Promise<LessonMaterial> {
+	const started = service.retryMaterialConversion(ownerId, id);
+	assert.ok(started.ok, JSON.stringify(started));
+	await idle();
+	return find(ownerId, id);
+}
+
+describe("review 4, finding 1: a conversion run leaves no stale index, whichever way it ends", () => {
+	// Reviewer's sequence 1: 0 indexing calls, the old profile, indexingCalls 1, digest.json kept, the glossary "outdated".
+	it("converted, with a vision model: the new content.md is indexed in the same run, with progress, and the profile is the new digest's", async () => {
+		const course = courseStore.createCourse("Retry converted");
+		const m = await upload(course.id, "changed.pdf", SINGLE);
+		assert.equal(m.profileFromDigest, true);
+		const before = storedDigest(course.id, m);
+		replacePdf(course.id, m, OTHER);
+		script = { ...DEFAULT_SCRIPT, terms: () => ["Eigenvector"], onIndexCall: () => lines.push(materialStatusLine(find(course.id, m.id))) };
+		const lines: string[] = [];
+		const { value: after, index, profiler } = await counted(() => retryConversion(course.id, m.id));
+		assert.equal(index, 1, "the new content.md is indexed (one part, one call)");
+		assert.equal(profiler, 0);
+		assert.deepEqual(lines, ["reading… · indexing: part 1 of 1"], "progress shows, and the material is being read again");
+		const digest = storedDigest(course.id, after);
+		assert.notEqual(digest.sourceHash, before.sourceHash);
+		assert.deepEqual(digest.terms.map((t) => t.term), ["Eigenvector"]);
+		assert.equal(after.status, "ready");
+		assert.equal(after.profile, DIGEST_PROFILE);
+		assert.equal(after.profileFromDigest, true);
+		assert.equal(after.pages, 3);
+		assert.equal(after.indexingCalls, 1);
+		assert.equal(after.indexingError, undefined);
+		assertIndexInvariant(course.id, m.id, "converted, model");
+		const glossary = indexing.courseGlossary(course.id)!;
+		assert.deepEqual(glossary.incomplete, []);
+		assert.ok(findTerm(glossary, "Eigenvector"));
+		// identical content again: the digest still describes it, so nothing is re-read
+		const again = await counted(() => retryConversion(course.id, m.id));
+		assert.equal(again.index, 0);
+		assert.equal(again.value.indexingCalls, 1);
+		assertIndexInvariant(course.id, m.id, "converted again, unchanged");
+	});
+
+	it("converted, without a vision model: no stale digest or profile from one is left, and indexing is shown as pending", async () => {
+		const course = courseStore.createCourse("Retry no model");
+		const m = await upload(course.id, "nomodel.pdf", SINGLE);
+		replacePdf(course.id, m, OTHER);
+		writeSettings({ version: 1 });
+		const { value: after, index, profiler } = await counted(() => retryConversion(course.id, m.id));
+		assert.equal(index + profiler, 0);
+		assert.ok(exists(course.id, after, PDF_CONTENT_FILE), "converted");
+		assert.equal(exists(course.id, after, indexing.MATERIAL_DIGEST_FILE), false, "the old digest is gone");
+		assert.equal(after.profile, undefined, "the profile came from the old digest");
+		assert.equal(after.profileFromDigest, undefined);
+		assert.equal(after.indexingCalls, undefined);
+		assert.equal(after.indexingWarnings, undefined);
+		assert.equal(after.indexingError?.kind, "pending");
+		assert.match(materialStatusLine(after), /Indexing this PDF is pending: no vision model is configured/);
+		assert.equal(after.status, "error", "no profile and no model, as at upload");
+		assertIndexInvariant(course.id, m.id, "converted, no model");
+		assert.deepEqual(indexing.courseGlossary(course.id)!.incomplete.map((g) => g.reason), ["no_digest"]);
+		// once a model is configured, retrying the indexing gives the profile back
+		writeSettings(VISION);
+		assert.ok(service.retryMaterialIndexing(course.id, m.id).ok);
+		await idle();
+		assert.equal(find(course.id, m.id).profile, DIGEST_PROFILE);
+		assert.equal(find(course.id, m.id).indexingError, undefined);
+		assertIndexInvariant(course.id, m.id, "indexed after the model came back");
+	});
+
+	// Reviewer's sequence 2: content.md deleted, digest.json left as a stray file, indexingCalls still 1.
+	it("conversion failed: no digest or indexing field is left, and the material stays usable through the old path", async () => {
+		const owner = lesson("Retry fails");
+		script = { ...DEFAULT_SCRIPT, failBatch: (i) => i === 0, singleProfile: true };
+		const m = await upload(owner, "fails.pdf", longPdf(18));
+		assert.ok(m.indexingWarnings && m.indexingCalls);
+		script = DEFAULT_SCRIPT;
+		replacePdf(owner, m, SCANNED);
+		const { value: after, index, profiler } = await counted(() => retryConversion(owner, m.id));
+		assert.equal(after.conversionError?.kind, "no_text");
+		assert.equal(exists(owner, after, PDF_CONTENT_FILE), false);
+		assert.equal(exists(owner, after, indexing.MATERIAL_DIGEST_FILE), false, "no stray digest.json");
+		assert.equal(after.indexingCalls, undefined);
+		assert.equal(after.indexingWarnings, undefined);
+		assert.equal(after.indexingError, undefined);
+		assert.equal(index, 0);
+		assert.ok(profiler >= 1, "the profile came from the removed digest, so the old profiler reads the original");
+		assert.equal(after.status, "ready");
+		assert.equal(after.profile, OLD_PROFILE);
+		assert.equal(after.profileFromDigest, undefined);
+		assertIndexInvariant(owner, m.id, "conversion failed");
+	});
+
+	// Reviewer's sequence 3: content.md written, the conversion error cleared, but no indexing and the glossary "no_digest".
+	it("a scanned PDF read the old way, then converted on retry: the new content.md is indexed and joins the glossary", async () => {
+		const course = courseStore.createCourse("Retry OCR");
+		const m = await upload(course.id, "scan.pdf", SCANNED);
+		assert.equal(m.conversionError?.kind, "no_text");
+		assert.equal(m.profile, OLD_PROFILE);
+		assert.deepEqual(indexing.courseGlossary(course.id)!.incomplete.map((g) => g.reason), ["no_digest"]);
+		replacePdf(course.id, m, SINGLE); // what a converter with OCR would now read
+		const { value: after, index } = await counted(() => retryConversion(course.id, m.id));
+		assert.equal(after.conversionError, undefined);
+		assert.equal(index, 1);
+		assert.equal(after.profile, DIGEST_PROFILE, "the digest's profile replaces the old profiler's");
+		assert.equal(after.profileFromDigest, true);
+		assert.equal(after.indexingCalls, 1);
+		assertIndexInvariant(course.id, m.id, "converted on retry");
+		const glossary = indexing.courseGlossary(course.id)!;
+		assert.deepEqual(glossary.incomplete, []);
+		assert.deepEqual(glossary.indexed.map((x) => x.id), [m.id]);
+	});
+
+	// The other writer of content.md: the conversion inside a read that restarts (status reading after an app restart).
+	it("a restarted read that re-converts changed content drops the stale digest too, also without a vision model", async () => {
+		const owner = lesson("Restart converts");
+		const m = await upload(owner, "restart-convert.pdf", SINGLE);
+		replacePdf(owner, m, OTHER);
+		writeSettings({ version: 1 });
+		materialStore.update(owner, m.id, { status: "reading" });
+		service.listMaterials(owner);
+		await idle();
+		const after = find(owner, m.id);
+		assert.equal(exists(owner, after, indexing.MATERIAL_DIGEST_FILE), false);
+		assert.equal(after.profile, undefined);
+		assert.equal(after.indexingError?.kind, "pending");
+		assertIndexInvariant(owner, m.id, "restart, no model");
+		writeSettings(VISION);
+		materialStore.update(owner, m.id, { status: "reading" });
+		const resumed = await counted(async () => {
+			service.listMaterials(owner);
+			await idle();
+			return find(owner, m.id);
+		});
+		assert.equal(resumed.index, 1);
+		assert.equal(resumed.value.profile, DIGEST_PROFILE);
+		assertIndexInvariant(owner, m.id, "restart, model");
+	});
+});
+
+describe("review 4, findings 3, 4 and 7, and the retry messages", () => {
+	// Finding 3: with "profile": "" in a valid digest, digestNotes saw a profile and recorded no error while the upload
+	// hook treated it as missing and silently ran the old profiler.
+	it("finding 3: a stored digest with an empty profile is no current digest; it is indexed again and the notes agree", async () => {
+		const owner = lesson("Empty profile");
+		const m = await upload(owner, "empty-profile.pdf", SINGLE);
+		const digestPath = aux(owner, m, indexing.MATERIAL_DIGEST_FILE);
+		const { profileError: _e, ...rest } = storedDigest(owner, m);
+		fs.writeFileSync(digestPath, JSON.stringify({ ...rest, profile: "" }));
+		assert.match(indexing.rewriteRefusal(owner, m, materialStore) ?? "", /stored index is not valid \("profile" is not a valid profile/, "the reason is shown");
+		const restarted = await counted(async () => {
+			materialStore.update(owner, m.id, { status: "reading", profile: undefined });
+			service.listMaterials(owner);
+			await idle();
+			return find(owner, m.id);
+		});
+		assert.equal(restarted.index, 1, "re-indexed, as the skip rule says for an invalid digest");
+		assert.equal(restarted.profiler, 0, "not silently the old profiler");
+		assert.equal(restarted.value.profile, DIGEST_PROFILE);
+		assert.equal(restarted.value.indexingError, undefined);
+		assert.equal(storedDigest(owner, m).profile, DIGEST_PROFILE);
+		// an invalid profile in a digest object is no profile for the notes either (the same helper)
+		assert.equal(indexing.digestNotes({ ...storedDigest(owner, m), profile: " " } as MaterialDigest).error?.kind, "no_profile");
+	});
+
+	// Finding 4: a one-part PDF whose extraction failed twice: rewrite returned ok with 0 calls and the note said
+	// "Rewrite the profile to try again".
+	it("finding 4: a digest with no indexed part cannot have its profile rewritten, and the note says to retry the indexing", async () => {
+		const owner = lesson("Nothing indexed");
+		script = { ...DEFAULT_SCRIPT, failBatch: () => true };
+		const m = await upload(owner, "nothing.pdf", SINGLE);
+		assert.equal(failedBatchesOf(storedDigest(owner, m)).length, 1);
+		assert.equal(m.indexingError?.kind, "no_profile");
+		assert.match(m.indexingError!.message, /Retry the indexing to try again\.$/);
+		assert.doesNotMatch(m.indexingError!.message, /Rewrite the profile/);
+		assert.equal(indexing.canRewriteProfile(owner, m, materialStore), false);
+		const before = fs.readFileSync(aux(owner, m, indexing.MATERIAL_DIGEST_FILE), "utf8");
+		assert.deepEqual(service.rewriteMaterialProfile(owner, m.id), { ok: false, status: 409, error: "No part of this PDF could be indexed, so there is nothing to write a profile from: retry the indexing first" });
+		assert.equal(fs.readFileSync(aux(owner, m, indexing.MATERIAL_DIGEST_FILE), "utf8"), before, "digest.json untouched");
+		// with a part indexed and no profile, the note names the rewrite
+		script = { ...DEFAULT_SCRIPT, singleProfile: false };
+		const p = await upload(owner, "partial.pdf", SINGLE);
+		assert.match(p.indexingError!.message, /Rewrite the profile to try again\.$/);
+	});
+
+	// Finding 7: during an upload, rewriteMaterialProfile said "no current index" instead of "still being read".
+	it("finding 7: a rewrite or retry during an upload says the material is still being read", async () => {
+		const owner = lesson("During upload");
+		let release!: () => void;
+		let started = false;
+		script = { ...DEFAULT_SCRIPT, gate: new Promise<void>((r) => (release = r)), onIndexCall: () => (started = true) };
+		const added = service.addUploadedMaterial(owner, { name: "busy.pdf", type: "application/pdf", bytes: SINGLE });
+		assert.ok(added.ok);
+		if (!added.ok) return;
+		await until(() => started);
+		assert.deepEqual(service.rewriteMaterialProfile(owner, added.value.id), { ok: false, status: 409, error: "busy.pdf is still being read" });
+		assert.deepEqual(service.retryMaterialIndexing(owner, added.value.id), { ok: false, status: 409, error: "busy.pdf is still being read" });
+		release();
+		await idle();
+	});
+
+	// Concern: after a failed retryMaterialIndexing the note said the old profiler ran (it does not), and the failed
+	// parts' warning of the digest still on disk was cleared.
+	it("a failed indexing retry keeps the profile and the warnings that still apply, and says what happened", async () => {
+		const owner = lesson("Retry throws");
+		script = { ...DEFAULT_SCRIPT, failBatch: (i) => i === 1 };
+		const m = await upload(owner, "retry-throws.pdf", longPdf(18));
+		const warnings = m.indexingWarnings;
+		assert.equal(warnings?.length, 1);
+		script = DEFAULT_SCRIPT;
+		const restore = onRename((_from, to) => {
+			if (to.endsWith(indexing.MATERIAL_DIGEST_FILE)) throw new Error("disk full");
+		});
+		let after: { value: LessonMaterial; index: number; profiler: number };
+		try {
+			after = await counted(async () => {
+				assert.ok(service.retryMaterialIndexing(owner, m.id).ok);
+				await idle();
+				return find(owner, m.id);
+			});
+		} finally {
+			restore();
+		}
+		assert.equal(after.profiler, 0, "no old profiler on a retry");
+		assert.equal(after.value.indexingError?.kind, "failed");
+		assert.doesNotMatch(after.value.indexingError!.message, /read the old way/);
+		assert.match(after.value.indexingError!.message, /disk full\), so the material keeps the profile it had\. Retry the indexing/);
+		assert.equal(after.value.profile, DIGEST_PROFILE);
+		assert.deepEqual(after.value.indexingWarnings, warnings, "the stored digest's failed parts still apply");
+		assert.equal(after.value.indexingCalls, m.indexingCalls, "the calls that produced the digest on disk");
+		assertIndexInvariant(owner, m.id, "failed retry");
+	});
+});
+
+describe("review 4, concern: the class glossary cache", () => {
+	/** Count reads of content.md and digest.json during `run`. */
+	function reads<T>(run: () => T): { value: T; count: number } {
+		const original = fs.readFileSync;
+		let count = 0;
+		fs.readFileSync = ((file: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+			if (typeof file === "string" && (file.endsWith(PDF_CONTENT_FILE) || file.endsWith(indexing.MATERIAL_DIGEST_FILE))) count++;
+			return (original as (...a: unknown[]) => unknown)(file, ...rest);
+		}) as typeof fs.readFileSync;
+		try {
+			return { value: run(), count };
+		} finally {
+			fs.readFileSync = original;
+		}
+	}
+	const uncached = (courseId: string, store = materialStore) => indexing.courseGlossary(courseId, store, { cache: false });
+
+	it("repeated calls read nothing again; a re-index, a re-conversion, a deletion and a move are noticed; results equal the uncached path", async () => {
+		indexing.clearCourseGlossaryCache();
+		const course = courseStore.createCourse("Cache");
+		script = { ...DEFAULT_SCRIPT, terms: (name) => [name === "a.pdf" ? "Alpha" : "Beta"] };
+		const a = await upload(course.id, "a.pdf", SINGLE);
+		const b = await upload(course.id, "b.pdf", OTHER);
+		const first = reads(() => indexing.courseGlossary(course.id)!);
+		assert.equal(first.count, 4, "two content.md and two digest.json");
+		assert.deepEqual(first.value, uncached(course.id));
+		const second = reads(() => indexing.courseGlossary(course.id)!);
+		assert.equal(second.count, 0, "nothing read again");
+		assert.deepEqual(second.value, first.value);
+
+		// a re-index (a new digest.json)
+		script = { ...DEFAULT_SCRIPT, terms: (name) => [name === "a.pdf" ? "Alpha prime" : "Beta"] };
+		assert.ok(service.retryMaterialIndexing(course.id, a.id).ok);
+		await idle();
+		const reindexed = reads(() => indexing.courseGlossary(course.id)!);
+		assert.equal(reindexed.count, 2, "only a.pdf is read again");
+		assert.ok(findTerm(reindexed.value, "Alpha prime"));
+		assert.deepEqual(reindexed.value, uncached(course.id));
+
+		// a re-conversion that changes content.md (without a model, so the digest is dropped and nothing re-indexes)
+		replacePdf(course.id, b, pdfOf(["Something else entirely"]));
+		writeSettings({ version: 1 });
+		await retryConversion(course.id, b.id);
+		writeSettings(VISION);
+		const reconverted = indexing.courseGlossary(course.id)!;
+		assert.deepEqual(reconverted.incomplete.map((g) => [g.id, g.reason]), [[b.id, "no_digest"]]);
+		assert.equal(findTerm(reconverted, "Beta"), undefined);
+		assert.deepEqual(reconverted, uncached(course.id));
+
+		// a content.md edited behind the indexer's back (same digest): outdated
+		fs.appendFileSync(aux(course.id, a, PDF_CONTENT_FILE), "\nedited\n");
+		const edited = indexing.courseGlossary(course.id)!;
+		assert.deepEqual(edited.incomplete.map((g) => [g.id, g.reason]).sort(), [[a.id, "outdated"], [b.id, "no_digest"]].sort());
+		assert.deepEqual(edited, uncached(course.id));
+
+		// a deletion
+		service.removeMaterial(course.id, a.id);
+		const deleted = indexing.courseGlossary(course.id)!;
+		assert.ok(!deleted.indexed.some((x) => x.id === a.id) && !deleted.incomplete.some((x) => x.id === a.id));
+		assert.deepEqual(deleted, uncached(course.id));
+	});
+
+	it("a material moved to another course is read under its new owner, and the cache is bounded", async () => {
+		indexing.clearCourseGlossaryCache();
+		const from = courseStore.createCourse("From");
+		const to = courseStore.createCourse("To");
+		script = { ...DEFAULT_SCRIPT, terms: () => ["Moved term"] };
+		const m = await upload(from.id, "moved.pdf", SINGLE);
+		assert.equal(indexing.courseGlossary(from.id)!.indexed.length, 1);
+		assert.equal(indexing.courseGlossary(to.id)!.indexed.length, 0);
+		// move its folder and record (a store that lists it under the new course)
+		const fromDir = path.dirname(materialStore.filePath(from.id, m));
+		const toDir = path.join(path.dirname(path.dirname(fromDir)), to.id, path.basename(fromDir));
+		fs.mkdirSync(path.dirname(toDir), { recursive: true });
+		fs.renameSync(fromDir, toDir);
+		const moved = {
+			...materialStore,
+			list: (owner: string) => (owner === to.id ? [m] : owner === from.id ? [] : materialStore.list(owner)),
+			auxPath: (owner: string, id: string, name: string) => (owner === to.id && id === m.id ? path.join(toDir, name) : materialStore.auxPath(owner, id, name)),
+			filePath: (owner: string, mat: LessonMaterial) => (owner === to.id && mat.id === m.id ? path.join(toDir, mat.file) : materialStore.filePath(owner, mat)),
+		};
+		const there = indexing.courseGlossary(to.id, moved)!;
+		assert.deepEqual(there.indexed.map((x) => x.id), [m.id]);
+		assert.ok(findTerm(there, "Moved term"));
+		assert.deepEqual(there, uncached(to.id, moved));
+		assert.deepEqual(indexing.courseGlossary(from.id, moved)!.indexed, []);
+		fs.renameSync(toDir, fromDir);
+
+		// bounded: a course listing more PDF materials than the cache holds
+		const many = Array.from({ length: indexing.GLOSSARY_CACHE_MAX + 50 }, (_, i) => ({ ...m, id: `mat_bound${i}`, name: `b${i}.pdf` }));
+		const big = { ...materialStore, list: (owner: string) => (owner === to.id ? many : materialStore.list(owner)) };
+		const glossary = indexing.courseGlossary(to.id, big)!;
+		assert.equal(glossary.incomplete.length, many.length);
+		assert.ok(indexing.courseGlossaryCacheSize() <= indexing.GLOSSARY_CACHE_MAX, `${indexing.courseGlossaryCacheSize()} entries`);
+		assert.deepEqual(glossary, uncached(to.id, big));
 	});
 });
 
