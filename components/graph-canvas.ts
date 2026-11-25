@@ -353,6 +353,36 @@ export function bboxOnScreen(
 	const y1 = t.y + t.k * bbox.maxY;
 	return x1 >= 0 && x0 <= w && y1 >= 0 && y0 <= h;
 }
+
+/** The node-centre bbox grown to every node's full footprint: the disc on all sides plus, below, the label gap and
+ *  two label lines (labels hang under their disc). World units, so it scales with the camera like the discs do. */
+export function footprintBBox(
+	bbox: { minX: number; maxX: number; minY: number; maxY: number },
+	nodeR: number,
+	labelSize: number,
+): { minX: number; maxX: number; minY: number; maxY: number } {
+	const below = nodeR + (labelSize > 0 ? LABEL_GAP + 2 * labelSize * LABEL_LINE_HEIGHT : 0);
+	return { minX: bbox.minX - nodeR, maxX: bbox.maxX + nodeR, minY: bbox.minY - nodeR, maxY: bbox.maxY + below };
+}
+
+/** A camera the app did not frame itself (restored from storage, carried across a resize) may leave the bottom of the
+ *  graph under the composer dock. Returns the translate-y that lifts the footprint's bottom to `bottomLimit` (screen
+ *  px), `undefined` when it already clears, or `null` when lifting would push its top above `topLimit` (then the
+ *  caller re-fits). Footprints that are mostly off screen are the learner's own framing and are left alone. */
+export function liftAboveDock(
+	box: { minX: number; maxX: number; minY: number; maxY: number },
+	t: { k: number; x: number; y: number },
+	bottomLimit: number,
+	topLimit: number,
+): number | null | undefined {
+	const y0 = t.y + t.k * box.minY;
+	const y1 = t.y + t.k * box.maxY;
+	const overflow = y1 - bottomLimit;
+	if (overflow <= 0.5) return undefined;
+	if (y0 - overflow < topLimit) return null;
+	return t.y - overflow;
+}
+const FIT_PADDING = 40; // screen px kept clear on every side of the fitted graph (the dock inset adds to the bottom)
 const LABEL_MAX_WIDTH = 170; // wrap width at the reference label size, world units
 const LABEL_GAP = 2.9; // world units between node edge and first label line (the 2px-at-fit reference ÷ 0.69)
 const LABEL_LINE_HEIGHT = 1.3;
@@ -687,6 +717,8 @@ export class GraphCanvasRenderer {
 	private bottomInset = 0;
 	/** The camera is still fit()'s own frame: no pan, zoom or restored camera since. */
 	private autoFramed = false;
+	/** The learner panned or zoomed in this session: from then on the camera is theirs and is never lifted. */
+	private userMoved = false;
 
 	private data: CanvasData | null = null;
 	/** id -> node for the current data (avoids O(n^2) scans). */
@@ -788,7 +820,10 @@ export class GraphCanvasRenderer {
 		this.zoomBehavior = zoom<HTMLCanvasElement, unknown>()
 			.scaleExtent([0.02, 40])
 			.on("zoom", ({ transform, sourceEvent }) => {
-				if (sourceEvent) this.autoFramed = false; // the learner moved the camera
+				if (sourceEvent) {
+					this.autoFramed = false; // the learner moved the camera
+					this.userMoved = true;
+				}
 				this.transform = transform;
 				this.markDirty();
 				// The transform doubles as the persistence payload (view state).
@@ -839,7 +874,7 @@ export class GraphCanvasRenderer {
 			const wx = (prevW / 2 - tx) / k;
 			const wy = (prevH / 2 - ty) / k;
 			this.syncSize();
-			if (!this.hasFit) this.fit(); // first real size → fit once
+			if (!this.hasFit || this.autoFramed) this.fit(); // first real size, or still the app's own frame → (re)fit
 			else {
 				this.refreshFitZoom(); // the gate's "1×" is viewport-bound
 				// Center-anchor (2026-09-17, owner): same world point under
@@ -851,6 +886,7 @@ export class GraphCanvasRenderer {
 						zoomIdentity.translate(this.viewW / 2 - wx * k, this.viewH / 2 - wy * k).scale(k),
 					);
 				}
+				this.keepAboveDock();
 			}
 			// Redraw SYNCHRONOUSLY: syncSize may have reallocated the backing
 			// store (which clears the canvas), and during live window resizes
@@ -892,7 +928,10 @@ export class GraphCanvasRenderer {
 		if (!this.hasFit && data.nodes.length > 0) this.fit();
 		// The camera may be user-restored (constructor initialCamera) — the
 		// gate's "1×" reference still needs the fresh bbox's fit zoom.
-		else this.refreshFitZoom();
+		else {
+			this.refreshFitZoom();
+			this.keepAboveDock();
+		}
 		// Rebuild the live sim around the fresh nodes. New data means the
 		// server spoke (merge or refetch); any pending commit is moot and
 		// the graph is at rest until the next drag.
@@ -912,6 +951,12 @@ export class GraphCanvasRenderer {
 	setSettings(settings: GraphRenderSettings): void {
 		this.settings = settings;
 		this.geoVersion++; // sizes/wrap width changed → rebuild geometry
+		// Node/label sizes change the footprint the fit frames.
+		if (this.hasFit && this.autoFramed) this.fit();
+		else {
+			this.refreshFitZoom();
+			this.keepAboveDock();
+		}
 		this.markDirty();
 	}
 
@@ -1000,7 +1045,36 @@ export class GraphCanvasRenderer {
 		if (next === this.bottomInset) return;
 		this.bottomInset = next;
 		if (!this.hasFit || this.autoFramed) this.fit();
-		else this.refreshFitZoom();
+		else {
+			this.refreshFitZoom();
+			this.keepAboveDock();
+		}
+	}
+
+	/** Every node's full footprint, in world units (see footprintBBox). */
+	private footprint(): { minX: number; maxX: number; minY: number; maxY: number } | null {
+		if (!this.worldBBox) return null;
+		return footprintBBox(this.worldBBox, this.settings?.nodeSize ?? 0, this.settings?.labelSize ?? 0);
+	}
+
+	/** A restored or resize-carried camera keeps the whole graph above the composer dock (UI round 2: the 1024 px
+	 *  shot reopened the camera saved at 1440 px with the bottom node under the dock). Lifts the camera; re-fits when
+	 *  the graph no longer fits at this zoom. Never once the learner has panned or zoomed in this session. */
+	private keepAboveDock(): void {
+		if (this.userMoved || this.autoFramed || !this.hasFit || this.bottomInset <= 0) return;
+		const box = this.footprint();
+		const w = this.canvas.clientWidth;
+		const h = this.canvas.clientHeight;
+		if (!box || w < 10 || h < 10) return;
+		const t = zoomTransform(this.canvas);
+		if (!bboxOnScreen(box, t, w, h)) return;
+		const y = liftAboveDock(box, t, h - this.bottomInset, FIT_PADDING);
+		if (y === undefined) return;
+		if (y === null) {
+			this.fit();
+			return;
+		}
+		select(this.canvas).call(this.zoomBehavior.transform, zoomIdentity.translate(t.x, y).scale(t.k));
 	}
 
 	/** Frame the whole graph (padding included). Keeps the camera on later
@@ -1011,7 +1085,8 @@ export class GraphCanvasRenderer {
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
 		if (w < 10 || h < 10) return; // layout not ready yet; the ResizeObserver retries
-		const t = fitTransform(this.worldBBox, w, h, 40, this.bottomInset);
+		// Frames every node's whole disc + label (not just the centres) above the dock.
+		const t = fitTransform(this.footprint() ?? this.worldBBox, w, h, FIT_PADDING, this.bottomInset);
 		this.kFit = t.k;
 		this.hasFit = true;
 		this.autoFramed = true;
@@ -1028,7 +1103,7 @@ export class GraphCanvasRenderer {
 		if (!this.worldBBox) return;
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
-		if (w >= 10 && h >= 10) this.kFit = fitTransform(this.worldBBox, w, h, 40, this.bottomInset).k;
+		if (w >= 10 && h >= 10) this.kFit = fitTransform(this.footprint() ?? this.worldBBox, w, h, FIT_PADDING, this.bottomInset).k;
 	}
 
 	destroy(): void {

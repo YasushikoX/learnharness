@@ -73,11 +73,18 @@ describe("GraphChromeRow — the empty-graph ruling (owner, 2026-09-25)", () => 
 		assert.match(html, /data-testid="open-chain-table"[^>]*aria-label="Chains"|aria-label="Chains"[^>]*data-testid="open-chain-table"/);
 		assert.match(html, /data-testid="import-notes"[^>]*aria-label="Extract files…"|aria-label="Extract files…"[^>]*data-testid="import-notes"/);
 		assert.equal(html.split('class="@max-[34rem]:hidden"').length - 1, 2, "both labels hide when the bar's area is narrow");
-		assert.ok(html.includes("@max-[34rem]:w-7"), "the buttons turn into squares");
+		assert.ok(html.includes("@max-[34rem]:w-8"), "the buttons turn into squares");
 		// the search container gives way (a flex basis, not a definite width: that counts as its minimum size and ran off the screen)
-		assert.ok(/class="graph-chrome-fade-in min-w-0 shrink basis-56 /.test(html));
+		assert.ok(/class="graph-chrome-fade-in relative min-w-0 shrink basis-56"/.test(html));
 		assert.equal(/class="graph-chrome-fade-in [^"]*\bw-56\b/.test(html), false);
-		assert.ok(html.includes('class="relative min-w-0"') && html.includes("h-7 w-full min-w-0"), "the field can shrink inside it");
+		assert.ok(html.includes('class="relative min-w-0"') && html.includes("w-full min-w-0"), "the field can shrink inside it");
+	});
+
+	it("UI round 2: flat 32px hairline controls, radius 8, no shadowed capsule", () => {
+		const html = renderToStaticMarkup(createElement(GraphChromeRow, { ...PROPS, isEmpty: false }));
+		assert.equal(html.includes("shadow-lg"), false);
+		assert.equal(html.includes("rounded-xl"), false);
+		assert.ok(html.split("h-8 rounded-md border border-border").length - 1 >= 4, "search, Chains, Extract and the gear");
 	});
 
 	it("the Extract button is the same 28px as its neighbours: no touch-size growth (lh-touch made it 44px beside 28px)", () => {

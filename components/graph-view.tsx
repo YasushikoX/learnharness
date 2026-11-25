@@ -89,7 +89,7 @@ import { ChainTableOverlay } from "@/components/chain-table.tsx";
 import { ToolContentResponse } from "@/components/ai-elements/message";
 import { RichLine } from "@/components/rich-text";
 import { Hint } from "@/components/ui/hint";
-import { COMPACT_BUTTON, COMPACT_LABEL } from "@/components/chrome-compact";
+import { COMPACT_BUTTON, COMPACT_LABEL, GRAPH_TOOL, GRAPH_TOOL_BUTTON } from "@/components/chrome-compact";
 import {
 	ARROW_LENGTH_LADDER,
 	CHARGE_RANGE,
@@ -552,8 +552,8 @@ function GraphSettingsControl({
 				type="button"
 				aria-expanded={open}
 				onClick={() => setOpen((o) => !o)}
-				className={`flex size-9 items-center justify-center rounded-xl border bg-card/85 shadow-lg backdrop-blur transition-colors hover:bg-accent ${
-					open ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+				className={`${GRAPH_TOOL} flex w-8 items-center justify-center transition-colors hover:bg-raised ${
+					open ? "bg-raised text-foreground" : "text-muted-foreground hover:text-foreground"
 				}`}
 			>
 				<SettingsIcon className="size-4" />
@@ -962,7 +962,7 @@ export function GraphChromeRow({
 			{!isEmpty && (
 				// basis-56, not w-56 (owner, 2026-11-06): a definite width counts as the field's minimum size when the row is measured, so it never
 				// shrank and ran off a phone's left edge; a flex basis can give way to the other buttons.
-				<div className="graph-chrome-fade-in min-w-0 shrink basis-56 rounded-xl border bg-card/85 px-1 py-[3px] shadow-lg backdrop-blur">
+				<div className="graph-chrome-fade-in relative min-w-0 shrink basis-56">
 					<Hint
 						// ⌘F focuses node search (surface-scoped registry action).
 						label="Search nodes"
@@ -978,18 +978,18 @@ export function GraphChromeRow({
 							placeholder="Search nodes…"
 							aria-label="Search nodes"
 							spellCheck={false}
-							className="h-7 w-full min-w-0 rounded-lg border bg-background pl-8 text-xs outline-none placeholder:text-muted-foreground focus:border-ring"
+							className={`${GRAPH_TOOL} w-full min-w-0 pl-8 pr-2.5 text-chrome outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-[3px] focus:ring-ring/20`}
 						/>
 					</div>
 					</Hint>
 					{noMatch && (
-						<div className="px-1.5 pt-1 text-xs text-muted-foreground">No matching nodes.</div>
+						<div className="absolute inset-x-0 top-full mt-1 rounded-md border border-border bg-card/90 px-2.5 py-1.5 text-meta text-muted-foreground backdrop-blur">No matching nodes.</div>
 					)}
 				</div>
 			)}
 			{/* The chain table (chains overlay, owner plan 2026-09-29). Own
 			    container (36px band), between the search and Import. */}
-			<div className="graph-chrome-fade-in shrink-0 rounded-xl border bg-card/85 px-1 py-[3px] shadow-lg backdrop-blur">
+			<div className="graph-chrome-fade-in shrink-0">
 					<Hint label="Every reasoning chain" side="bottom">
 						<button
 							type="button"
@@ -997,9 +997,9 @@ export function GraphChromeRow({
 							data-testid="open-chain-table"
 							// A narrow bar (a phone, a narrow window) shows the icon alone (COMPACT_*); the name rides the aria-label.
 							aria-label="Chains"
-							className={`flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent ${COMPACT_BUTTON}`}
+							className={`${GRAPH_TOOL} ${GRAPH_TOOL_BUTTON} ${COMPACT_BUTTON}`}
 						>
-							<ListTreeIcon className="size-3 shrink-0" />
+							<ListTreeIcon className="size-3.5 shrink-0" />
 							<span className={COMPACT_LABEL}>Chains</span>
 						</button>
 					</Hint>

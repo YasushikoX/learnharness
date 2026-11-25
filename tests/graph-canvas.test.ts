@@ -472,3 +472,24 @@ describe("bboxOnScreen (a restored camera that frames nothing is re-fitted)", ()
 		assert.equal(bboxOnScreen(bbox, { k: 2, x: 0, y: -900 }, 800, 600), false);
 	});
 });
+
+describe("footprintBBox + liftAboveDock (the whole graph stays above the composer dock)", () => {
+	it("grows the centre bbox by the disc on every side and by the label below", async () => {
+		const { footprintBBox } = await import("../components/graph-canvas.ts");
+		const box = footprintBBox({ minX: 0, maxX: 100, minY: 0, maxY: 100 }, 10, 0);
+		assert.deepEqual(box, { minX: -10, maxX: 110, minY: -10, maxY: 110 });
+		const withLabel = footprintBBox({ minX: 0, maxX: 100, minY: 0, maxY: 100 }, 10, 12);
+		assert.ok(withLabel.maxY > 110 + 2 * 12, `label room below: ${withLabel.maxY}`);
+		assert.equal(withLabel.minY, -10);
+	});
+	it("lifts a restored camera whose bottom sits under the dock, re-fits when it cannot, leaves a clear one", async () => {
+		const { liftAboveDock } = await import("../components/graph-canvas.ts");
+		const box = { minX: 0, maxX: 100, minY: 0, maxY: 100 };
+		// Bottom at 100 + 1.5*100 = 250; the dock starts at 200 → lift by 50 (top 100 → 50, still below 40).
+		assert.equal(liftAboveDock(box, { k: 1.5, x: 0, y: 100 }, 200, 40), 50);
+		// Already clear.
+		assert.equal(liftAboveDock(box, { k: 1, x: 0, y: 50 }, 200, 40), undefined);
+		// Lifting would push the top above the top limit → null (re-fit).
+		assert.equal(liftAboveDock(box, { k: 3, x: 0, y: 50 }, 200, 40), null);
+	});
+});

@@ -7,8 +7,15 @@
  * The class names are literal strings on purpose: Tailwind finds them by scanning the source.
  */
 
-/** On the button: a square (the 28px inner height) instead of a padded label. */
-export const COMPACT_BUTTON = "@max-[34rem]:w-7 @max-[34rem]:justify-center @max-[34rem]:gap-0 @max-[34rem]:px-0";
+/** On the button: a square (the 32px control height) instead of a padded label. */
+export const COMPACT_BUTTON = "@max-[34rem]:w-8 @max-[34rem]:justify-center @max-[34rem]:gap-0 @max-[34rem]:px-0";
+
+/** One graph-bar control (UI round 2): a flat 32px hairline control, radius 8, translucent surface over the canvas. No
+ *  shadow and no outer capsule: the same grammar as the other toolbars. */
+export const GRAPH_TOOL = "h-8 rounded-md border border-border bg-card/90 backdrop-blur";
+
+/** A text/icon button in the graph bar (on top of GRAPH_TOOL). */
+export const GRAPH_TOOL_BUTTON = "flex items-center gap-1.5 px-2.5 text-chrome text-muted-foreground transition-colors hover:bg-raised hover:text-foreground";
 
 /** On the label span: gone when narrow (the button's aria-label carries the name). */
 export const COMPACT_LABEL = "@max-[34rem]:hidden";
