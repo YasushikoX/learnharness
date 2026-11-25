@@ -48,6 +48,7 @@ import { clearOpeningPrompt, readOpeningPromptEntry, stashOpeningPrompt, OPENING
 import { forwardDockWheel, useDockHeight } from "@/components/dock-height";
 import { createDockMorph, createDockWidthMorph } from "@/components/dock-morph";
 import { useAppearance } from "@/components/settings/appearance";
+import { useSettingsSaved } from "@/components/settings-signal";
 import { adaptedDockWidth, dockContainerMax, effectiveQuestionGeometry, layoutFontKey, rootRem, wideDockScreen, type QuestionLayout } from "@/components/question-layout";
 import { QueuedSteersBody, type QueuedSteerLine } from "@/components/queued-steers";
 import { DictationBar, finishDictation, joinDictation, useDictation, type Dictation } from "@/components/dictation";
@@ -1517,14 +1518,14 @@ export function Chat({
 			if (statsRequest.current === request) statsRequest.current = null;
 		}
 	}, [readStats]);
-	useEffect(() => {
-		let cancelled = false;
+	const reloadLanguage = useCallback(() => {
 		fetch(`/api/chats/${encodeURIComponent(chatId)}`)
 			.then((r) => (r.ok ? (r.json() as Promise<{ settings?: ChatSettings }>) : null))
-			.then((b) => { if (!cancelled && b) setSessionLanguage(resolveLessonLanguage(b.settings)); })
+			.then((b) => { if (b) setSessionLanguage(resolveLessonLanguage(b.settings)); })
 			.catch(() => {});
-		return () => { cancelled = true; };
 	}, [chatId]);
+	useEffect(() => { reloadLanguage(); }, [reloadLanguage]);
+	useSettingsSaved((section) => { if (section === "lesson") reloadLanguage(); });
 	useEffect(() => {
 		void syncTurns();
 		return () => statsRequest.current?.abort();
@@ -2421,6 +2422,7 @@ export function Chat({
 					readingThinkingRevision={readingThinkingSeed.revision}
 					onReadingThinking={(value) => { applyReadingThinking(value); if (pendingPlugin) pluginQuestionDraft(pendingPlugin).readingThinking = value; }}
 					phase={phases.at(-1) ?? "probe"}
+					language={sessionLanguage}
 					turns={turns}
 					contextTokens={contextTokens}
 					cliContextWindow={cliContextWindowOf(nativeMessages)}
@@ -2756,6 +2758,7 @@ export function DockOverlay({
 	readingThinkingRevision,
 	onReadingThinking,
 	phase,
+	language,
 	turns,
 	contextTokens,
 	cliContextWindow,
@@ -2824,6 +2827,8 @@ export function DockOverlay({
 	onReadingThinking: (v: string) => void;
 	/** Session phase at the pending question — scales the thinking field. */
 	phase: Phase3;
+	/** Active lesson language, for question read-aloud voice selection. */
+	language?: LessonLanguage;
 	/** The session's usage log — the stats bar beneath the composer folds it. */
 	turns: TurnUsage[];
 	contextTokens: number | null;
@@ -3366,6 +3371,7 @@ export function DockOverlay({
 									sketchAvailable={sketchAvailable}
 									layoutRequest={layoutRequest}
 									onLayout={setQuestionLayout}
+									language={language}
 								/>
 							) : pluginPractice ? (
 								<PluginProblemDock {...pluginPractice} viewReader={customViewReader} expanded={expanded} onExpand={() => { setExpanded(true); void suppressFoldDuringReveal(); }} />

@@ -57,6 +57,7 @@ export function resolveAppearance(delta: AppearanceSettings | undefined) {
 		compactSessionList: delta?.compactSessionList ?? f.compactSessionList,
 		transcriptMaxWidth: delta?.transcriptMaxWidth ?? f.transcriptMaxWidth,
 		adaptiveQuestions: delta?.adaptiveQuestions ?? f.adaptiveQuestions,
+		confidenceControl: delta?.confidenceControl ?? f.confidenceControl,
 		mdRendering: {
 			headingWeight: delta?.mdRendering?.headingWeight ?? f.mdRendering.headingWeight,
 			boldColor: delta?.mdRendering?.boldColor ?? f.mdRendering.boldColor,

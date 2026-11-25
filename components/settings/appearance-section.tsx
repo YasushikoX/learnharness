@@ -34,6 +34,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
 	EXTRACTION_CHUNK_TOKENS_FLOOR,
+	isConfidenceControl,
 	TRANSCRIPT_WIDTH_MAX_REM,
 	TRANSCRIPT_WIDTH_MIN_REM,
 	TRANSCRIPT_WIDTH_STEP_REM,
@@ -516,6 +517,23 @@ export function AppearanceSection({
 					label="Adapt question layout"
 					onChange={(on) => onSectionChange({ ...appearance, adaptiveQuestions: on })}
 				/>
+			</SettingsRow>
+			<SettingsRow
+				label="Confidence input"
+				hint="How you rate confidence before submitting a check"
+				testid="row-confidence-control"
+			>
+				<ThinSelect
+					value={resolved.confidenceControl}
+					ariaLabel="confidence input"
+					testid="select-confidence-control"
+					onChange={(v) => {
+						if (isConfidenceControl(v)) void onSectionChange({ ...appearance, confidenceControl: v });
+					}}
+				>
+					<option value="slider">Slider (0–100%)</option>
+					<option value="buttons">Buttons</option>
+				</ThinSelect>
 			</SettingsRow>
 		</>
 	);

@@ -28,7 +28,7 @@ import type {
 	ModelSlot,
 	RoleModelOverride,
 } from "../core/settings.ts";
-import { BACKGROUND_MODEL_ROLES, CACHE_RETENTIONS, COMPACTION_THRESHOLD_FLOOR, CUSTOM_MODEL_PIN_FLOOR, EXTRACTION_CHUNK_TOKENS_FLOOR, isTranscriptMaxWidth, MODEL_SLOTS, TRANSCRIPT_WIDTH_MAX_REM, TRANSCRIPT_WIDTH_MIN_REM } from "../core/settings.ts";
+import { BACKGROUND_MODEL_ROLES, CACHE_RETENTIONS, COMPACTION_THRESHOLD_FLOOR, CONFIDENCE_CONTROLS, CUSTOM_MODEL_PIN_FLOOR, EXTRACTION_CHUNK_TOKENS_FLOOR, isConfidenceControl, isTranscriptMaxWidth, MODEL_SLOTS, READ_ALOUD_RATE_MAX, READ_ALOUD_RATE_MIN, TRANSCRIPT_WIDTH_MAX_REM, TRANSCRIPT_WIDTH_MIN_REM } from "../core/settings.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
 import { parseRepo } from "./sync/service.ts";
 import { LESSON_LANGUAGES, isDictationEngine, isLessonLanguage } from "../core/language.ts";
@@ -174,6 +174,29 @@ export function parseGeneralSettingsBody(body: unknown): SettingsBodyResult<Gene
 			return { ok: false, error: "dictationOnline must be a boolean" };
 		}
 		settings.dictationOnline = raw.dictationOnline;
+	}
+	if (raw.readAloudAuto !== undefined) {
+		if (typeof raw.readAloudAuto !== "boolean") {
+			return { ok: false, error: "readAloudAuto must be a boolean" };
+		}
+		settings.readAloudAuto = raw.readAloudAuto;
+	}
+	if (raw.readAloudRate !== undefined) {
+		if (
+			typeof raw.readAloudRate !== "number" ||
+			!Number.isFinite(raw.readAloudRate) ||
+			raw.readAloudRate < READ_ALOUD_RATE_MIN ||
+			raw.readAloudRate > READ_ALOUD_RATE_MAX
+		) {
+			return { ok: false, error: `readAloudRate must be a number between ${READ_ALOUD_RATE_MIN} and ${READ_ALOUD_RATE_MAX}` };
+		}
+		settings.readAloudRate = Math.round(raw.readAloudRate * 100) / 100;
+	}
+	if (raw.readAloudVoice !== undefined) {
+		if (raw.readAloudVoice !== null && (typeof raw.readAloudVoice !== "string" || !raw.readAloudVoice.trim())) {
+			return { ok: false, error: "readAloudVoice must be a non-empty string or null" };
+		}
+		settings.readAloudVoice = raw.readAloudVoice === null ? null : (raw.readAloudVoice as string).trim();
 	}
 	return { ok: true, settings };
 }
@@ -413,6 +436,12 @@ export function parseAppearanceSettingsBody(body: unknown): SettingsBodyResult<A
 			return { ok: false, error: "adaptiveQuestions must be a boolean" };
 		}
 		settings.adaptiveQuestions = raw.adaptiveQuestions;
+	}
+	if (raw.confidenceControl !== undefined) {
+		if (!isConfidenceControl(raw.confidenceControl)) {
+			return { ok: false, error: `confidenceControl must be one of: ${CONFIDENCE_CONTROLS.join(", ")}` };
+		}
+		settings.confidenceControl = raw.confidenceControl;
 	}
 	if (raw.mdRendering !== undefined) {
 		const md = asRecord(raw.mdRendering);

@@ -440,6 +440,7 @@ export const explainDisplayInputSchema = Type.Object({
 	...explainInputBase.properties,
 	type: Type.Optional(Type.String()),
 	lead: Type.Optional(Type.String()),
+	skill: Type.Optional(Type.String()),
 });
 
 /** The explain authoring contract: the commitment must exist. Empty
@@ -658,6 +659,8 @@ export interface QuestionFormDraft {
 	other: string;
 	text: string;
 	confidenceIndex: number | null;
+	/** Numeric confidence (0–100) for slider mode; takes precedence over confidenceIndex when present. */
+	confidence?: number | null;
 }
 
 export interface QuestionDraft {
