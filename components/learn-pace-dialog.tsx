@@ -1,5 +1,6 @@
 "use client";
 
+import { buttonVariants } from "@/components/ui/button";
 import { useEffect, useRef, useState } from "react";
 import { DEFAULT_PACE, isPace, type Pace } from "@/src/core";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
@@ -36,21 +37,21 @@ export function LearnPaceBody({
 			aria-modal="true"
 			aria-label="How fast do you want to go?"
 			data-testid="learn-pace-dialog"
-			className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm"
+			className="fixed inset-0 z-50 flex items-center justify-center lh-scrim"
 			{...backdropDismiss}
 		>
-			<div className="mx-4 w-full max-w-sm rounded-xl border bg-card p-5 shadow-lg" onClick={(e) => e.stopPropagation()}>
+			<div className="mx-4 w-full max-w-sm lh-dialog p-6" onClick={(e) => e.stopPropagation()}>
 				<h2 className="text-sm font-semibold text-card-foreground">How fast do you want to go?</h2>
 				<div className="mt-3">
 					<PaceRadios pace={pace} onPace={onPace} />
 				</div>
-				<p className="mt-2 text-[11px] text-muted-foreground/70">This lesson only. The course and Settings keep their own defaults.</p>
+				<p className="mt-2 text-xs text-muted-foreground">This lesson only. The course and Settings keep their own defaults.</p>
 				<div className="mt-4 flex justify-end gap-2">
 					<button
 						type="button"
 						data-testid="learn-pace-cancel"
 						onClick={onClose}
-						className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+						className={buttonVariants({ variant: "ghost", size: "sm" })}
 					>
 						Cancel
 					</button>

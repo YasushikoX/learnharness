@@ -1,5 +1,6 @@
 "use client";
 
+import { buttonVariants } from "@/components/ui/button";
 import { useEffect, useState } from "react";
 import { ChevronRightIcon, Loader2Icon, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -10,7 +11,8 @@ import { LanguageControl } from "@/components/language-control";
 import { MaterialsControl } from "@/components/materials-control";
 import { SECTION_HEAD } from "@/components/section-heads";
 
-const BTN = "rounded-md border border-border px-2.5 py-1 text-xs transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50";
+/** UI round 1 (SPEC §3): ordinary actions are secondary sm Buttons; the region's one emphasised action is primary. */
+const BTN = buttonVariants({ variant: "secondary", size: "sm" });
 
 /**
  * Everything about a course that is set up rarely, behind one closed line under the page header (owner, 2026-11-14):

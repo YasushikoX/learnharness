@@ -93,10 +93,10 @@ export function appearanceVars(
 	// Code surfaces opt in to this token; never change prose or UI shaping.
 	// "normal" permits the font's behavior rather than forcing glyph joining.
 	vars["--lh-code-ligatures"] = a.codeLigatures ? "normal" : "none";
-	// Session names: CMU Serif by default; the toggle swaps the title font
-	// to the prose family — covers chat.tsx + new-session.tsx titles with
-	// zero component edits (they use the .font-title utility).
-	if (!a.sessionNameSerif) vars["--font-title"] = "var(--font-prose)";
+	// Session names: the chrome sans by default (UI round 1, 2026-11-25); the
+	// toggle puts CMU Serif back — covers every .font-title / lh-page-title
+	// surface with zero component edits.
+	if (a.sessionNameSerif) vars["--font-title"] = '"lh-cmu", serif';
 	// The session transcript's maximum width (rem). Absent = Full: the
 	// stylesheet's `none` returns, exactly today's full-width column.
 	if (a.transcriptMaxWidth !== null) vars["--lh-transcript-max"] = `${a.transcriptMaxWidth}rem`;

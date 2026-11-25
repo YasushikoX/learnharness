@@ -84,7 +84,7 @@ const useIsoLayoutEffect = typeof window === "undefined" ? useEffect : useLayout
 // Shared by the card's JSX and by questionCardStandIn below (answered cards
 // measure a stand-in of the question card, so both solve the same layout).
 // Fork: the label row also holds the read-aloud button (in the row, never over the question; the stand-in reserves its box).
-const QC_LABEL = "mb-1 flex items-center text-xs font-medium uppercase tracking-wide text-muted-foreground";
+const QC_LABEL = "mb-1 flex items-center lh-eyebrow text-muted-foreground";
 const QC_LABEL_TEXT = "min-w-0 [overflow-wrap:anywhere]";
 const QC_QUESTION = "mb-3 font-medium";
 const QC_CONTEXT = "mb-3 text-sm text-muted-foreground";
@@ -403,7 +403,7 @@ export function QuestionDockBar({
 			onClick={onExpand}
 			className="dock-variant flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm transition-colors hover:bg-accent/40"
 		>
-			<span className="shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+			<span className="shrink-0 lh-eyebrow text-muted-foreground">
 				{label ??
 							toolLabel ??
 							(toolName === "quiz" ? "Check" : toolName === "explain" ? "Explain" : "Question")}
@@ -1054,7 +1054,7 @@ function QuestionDockForm({
 								)}
 							>
 								{letter ? (
-									<span data-option-letter={letter} className={cn(QC_OPTION_LETTER, !isSel && "text-muted-foreground/70")}>
+									<span data-option-letter={letter} className={cn(QC_OPTION_LETTER, !isSel && "text-muted-foreground")}>
 										{letter}
 									</span>
 								) : isSel && (
@@ -1232,7 +1232,7 @@ function QuestionDockForm({
 								disabled={compactionRunning || preparing}
 								onClick={pressDontKnow}
 								data-testid="dont-know-button"
-								className="lh-touch h-10 min-w-0 flex-[1.8] truncate rounded-[6px] border border-dashed border-border/70 bg-transparent px-0 text-[11px] tracking-tighter text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+								className="lh-touch h-10 min-w-0 flex-[1.8] truncate rounded-md border border-dashed border-border/70 bg-transparent px-0 text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
 							>
 								I don't know
 							</button>
@@ -1246,7 +1246,7 @@ function QuestionDockForm({
 				<div className={cn("space-y-1.5 border-t border-border/60 px-4 py-2.5 text-sm", wordingOnly && "hidden")} data-testid="hint-list">
 					{hints.map((hint, i) => (
 						<div key={i} className="flex gap-2 text-foreground/80">
-							<span className="shrink-0 pt-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Hint {i + 1}</span>
+							<span className="shrink-0 pt-0.5 lh-eyebrow text-muted-foreground">Hint {i + 1}</span>
 							<div className="min-w-0 flex-1">
 								<ToolContentResponse>{hint}</ToolContentResponse>
 							</div>
@@ -1273,7 +1273,7 @@ function QuestionDockForm({
 						disabled={compactionRunning || preparing}
 						onClick={pressDontKnow}
 						data-testid="dont-know-button"
-						className="lh-touch h-9 shrink-0 rounded-[6px] border border-dashed border-border/70 bg-transparent px-3 text-[11px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+						className="lh-touch h-9 shrink-0 rounded-md border border-dashed border-border/70 bg-transparent px-3 text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
 					>
 						I don't know
 					</button>
@@ -1289,9 +1289,9 @@ function QuestionDockForm({
 			>
 				<div
 					data-testid={qd.mode === "text" ? "answer-field" : "thinking-field"}
-					className="rounded-[10px] border border-border/70 bg-background/60 transition-colors focus-within:border-primary/50"
+					className="rounded-md border border-border/70 bg-background/60 transition-colors focus-within:border-primary/50"
 				>
-					<div className="px-2.5 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+					<div className="px-2.5 pt-2 lh-eyebrow text-muted-foreground">
 						{qd.mode === "text" ? "Your answer" : "YOUR THINKING"}
 					</div>
 					{qd.mode === "text" ? (
@@ -1353,7 +1353,7 @@ function QuestionDockForm({
 							}}
 							placeholder="Why this answer? Whatever comes to mind."
 							className={cn(
-								"field-sizing-content lh-input max-h-48 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground/70",
+								"field-sizing-content lh-input max-h-48 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground",
 								// Phase-scaled prominence: teaching invites depth,
 								// probing stays quick.
 								// One line until focused (owner, 2026-11-10): the empty field took ~130px of a tablet's height; it opens up
@@ -1441,13 +1441,13 @@ function QuestionDockForm({
 									}
 								}}
 								placeholder="What should the tutor do differently?"
-								className="field-sizing-content lh-input max-h-40 min-h-[4.5rem] w-full resize-none rounded-md bg-background px-2.5 py-2 outline-none placeholder:text-muted-foreground/70"
+								className="field-sizing-content lh-input max-h-40 min-h-[4.5rem] w-full resize-none rounded-md bg-background px-2.5 py-2 outline-none placeholder:text-muted-foreground"
 							/>
 							<div className="flex justify-end gap-2">
-								<Button type="button" variant="ghost" data-testid="question-steer-cancel" onClick={() => setSteerOpen(false)} className="h-9 rounded-pill px-4 text-sm">
+								<Button type="button" variant="ghost" data-testid="question-steer-cancel" onClick={() => setSteerOpen(false)} className="h-9 rounded-md px-4 text-sm">
 									Cancel
 								</Button>
-								<Button type="button" data-testid="question-steer-send" disabled={!steerText.trim() || compactionRunning || preparing} onClick={sendSteer} className="h-9 rounded-pill px-4 text-sm">
+								<Button type="button" data-testid="question-steer-send" disabled={!steerText.trim() || compactionRunning || preparing} onClick={sendSteer} className="h-9 rounded-md px-4 text-sm">
 									Send to tutor
 								</Button>
 							</div>
@@ -1460,7 +1460,7 @@ function QuestionDockForm({
 								variant="secondary"
 								data-testid="question-add-photo"
 								onClick={camera.open}
-								className="lh-press h-9 gap-1.5 rounded-pill px-4 text-sm active:rounded-lg"
+								className="lh-press h-9 gap-1.5 rounded-md px-4 text-sm"
 							>
 								<CameraIcon className="size-4" />
 								Camera
@@ -1472,7 +1472,7 @@ function QuestionDockForm({
 								variant="secondary"
 								data-testid="question-open-sketch"
 								onClick={() => setSketching(true)}
-								className="lh-press h-9 gap-1.5 rounded-pill px-4 text-sm active:rounded-lg"
+								className="lh-press h-9 gap-1.5 rounded-md px-4 text-sm"
 							>
 								<PenLineIcon className="size-4" />
 								Open in sketch
@@ -1487,7 +1487,7 @@ function QuestionDockForm({
 								disabled={hintCtl.disabled}
 								onClick={hintCtl.ask}
 								className={cn(
-									"lh-press h-9 gap-1.5 rounded-pill px-4 text-sm active:rounded-lg",
+									"lh-press h-9 gap-1.5 rounded-md px-4 text-sm",
 									hintCtl.nudge && hints.length === 0 && "ring-2 ring-primary/50",
 								)}
 							>
@@ -1504,7 +1504,7 @@ function QuestionDockForm({
 								aria-expanded={steerOpen}
 								title="Set this question aside and write to the tutor instead"
 								onClick={() => setSteerOpen((open) => !open)}
-								className="lh-press h-9 gap-1.5 rounded-pill px-4 text-sm active:rounded-lg"
+								className="lh-press h-9 gap-1.5 rounded-md px-4 text-sm"
 							>
 								<MessageSquareIcon className="size-4" />
 								<span className="hidden @xl/dock:inline">Tell the tutor</span>
@@ -1517,7 +1517,7 @@ function QuestionDockForm({
 							<Button
 								type="submit"
 								disabled={!canSubmit || compactionRunning || preparing}
-								className="ml-auto h-9 rounded-[6px] px-3.5 text-sm font-medium"
+								className="ml-auto h-9 rounded-md px-3.5 text-sm font-medium"
 							>
 								Submit answer
 							</Button>

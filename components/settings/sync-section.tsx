@@ -16,7 +16,7 @@ import { loadSyncState, previewReplace, removeSyncToken, replaceFromRepo, runSyn
  */
 
 const FIELD =
-	"h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50";
+	"h-8 min-w-0 flex-1 rounded-md border border-input bg-card px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring";
 const LINK = "shrink-0 text-xs text-foreground underline-offset-2 hover:underline disabled:text-muted-foreground/40 disabled:no-underline";
 
 export function SyncSection() {
@@ -182,7 +182,7 @@ export function SyncSection() {
 							onClick={() => void removeToken()}
 							disabled={busy}
 							data-testid="sync-token-remove"
-							className="shrink-0 text-xs text-muted-foreground/70 underline-offset-2 hover:text-error hover:underline"
+							className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-error hover:underline"
 						>
 							Remove
 						</button>
@@ -222,7 +222,7 @@ export function SyncSection() {
 					onClick={() => void openReplace()}
 					disabled={busy || replacing || !status?.configured || status.running || confirm !== null}
 					data-testid="sync-replace-open"
-					className="shrink-0 text-xs text-muted-foreground/70 underline-offset-2 hover:text-error hover:underline disabled:text-muted-foreground/40 disabled:no-underline"
+					className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-error hover:underline disabled:text-muted-foreground/40 disabled:no-underline"
 				>
 					Replace this device with the repo…
 				</button>
@@ -254,7 +254,7 @@ export function SyncSection() {
 							onClick={() => setConfirm(null)}
 							disabled={replacing}
 							data-testid="sync-replace-cancel"
-							className="shrink-0 text-xs text-muted-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
+							className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
 						>
 							Cancel
 						</button>
@@ -266,7 +266,7 @@ export function SyncSection() {
 					{line}
 				</p>
 			))}
-			<p className="text-xs leading-relaxed text-muted-foreground/70">
+			<p className="text-xs leading-relaxed text-muted-foreground">
 				Syncs on start, every few minutes, and a little after you stop working. Settings that belong to this device (custom provider, Claude Code, dictation,
 				appearance) and original source files stay here. Chats are stored readable in the repo.
 			</p>

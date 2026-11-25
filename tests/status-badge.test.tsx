@@ -13,7 +13,8 @@ import { buildAnswer, type QuestionData } from "../src/core/question-core.ts";
 import type { ArtifactPartProps } from "../src/core";
 
 const badgeSelector = '[data-slot="status-badge"]';
-const baseClasses = ["rounded", "px-1.5", "py-0.5", "font-ui", "text-xs", "font-medium", "uppercase", "tracking-wide"];
+// UI round 1: sentence case on the 6px radius (no uppercase mono).
+const baseClasses = ["rounded-sm", "px-1.5", "py-0.5", "text-xs", "font-medium"];
 
 function badgeFrom(html: string) {
 	const { document } = parseHTML(html);
@@ -27,13 +28,13 @@ function assertAppearance(badge: HTMLElement, text: string, color?: string) {
 	assert.equal(badge.textContent, text);
 	for (const token of baseClasses) assert.ok(badge.classList.contains(token), token);
 	if (color === undefined) {
-		assert.ok(badge.classList.contains("bg-muted"));
+		assert.ok(badge.classList.contains("bg-raised"));
 		assert.ok(badge.classList.contains("text-muted-foreground"));
 		assert.equal(badge.hasAttribute("style"), false);
 	} else {
 		assert.equal(badge.style.color, color);
 		assert.equal(badge.style.backgroundColor, `color-mix(in oklab, ${color} 15%, transparent)`);
-		assert.equal(badge.classList.contains("bg-muted"), false);
+		assert.equal(badge.classList.contains("bg-raised"), false);
 		assert.equal(badge.classList.contains("text-muted-foreground"), false);
 	}
 }

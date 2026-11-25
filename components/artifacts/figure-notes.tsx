@@ -15,7 +15,7 @@ export function FigureNotes({ lookAt, tryThis }: { lookAt: readonly string[]; tr
 		<div className="mx-auto mt-2 mb-4 max-w-full space-y-2 text-sm sm:max-w-lg" data-testid="figure-notes">
 			{lookAt.length > 0 && (
 				<div data-testid="figure-look-at">
-					<span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{labels.lookAt}</span>
+					<span className="lh-eyebrow text-muted-foreground">{labels.lookAt}</span>
 					{lookAt.length === 1 ? (
 						<ToolContentResponse className="lh-prose text-muted-foreground">{lookAt[0]!}</ToolContentResponse>
 					) : (
@@ -31,7 +31,7 @@ export function FigureNotes({ lookAt, tryThis }: { lookAt: readonly string[]; tr
 			)}
 			{tryThis && (
 				<div data-testid="figure-try-this">
-					<span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{labels.tryThis}</span>
+					<span className="lh-eyebrow text-muted-foreground">{labels.tryThis}</span>
 					<ToolContentResponse className="lh-prose text-muted-foreground">{tryThis}</ToolContentResponse>
 				</div>
 			)}

@@ -197,7 +197,7 @@ export function SourceFolderTree<T extends TreeSource>({ groups, directory, quer
 					<TreeDisclosure plain open={open} aria-label={`Expand folder ${folder.name}`} data-testid={`folder-toggle-${folder.id}`}
 						onClick={() => onToggleExpanded(folder.id)} />
 					<button type="button" data-source-icon data-testid={`folder-icon-${folder.id}`} aria-expanded={open} aria-label={`Expand folder ${folder.name}`}
-						onClick={() => onToggleExpanded(folder.id)} className="flex h-5 w-3.5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+						onClick={() => onToggleExpanded(folder.id)} className="flex h-5 w-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
 						{open ? <FolderOpenIcon className="size-3.5 shrink-0" /> : <FolderIcon className="size-3.5 shrink-0" />}
 					</button>
 					{onAction ? <EditableSourceName name={folder.name} onSave={(name) => onAction({ action: "rename-folder", id: folder.id, name })} />

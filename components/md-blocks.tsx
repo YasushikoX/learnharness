@@ -109,7 +109,7 @@ export function CopyCorner({
 				type="button"
 				aria-label={label}
 				data-testid="md-copy"
-				className="flex size-6 items-center justify-center rounded-md text-muted-foreground/70 opacity-0 transition-opacity [@media(hover:none)]:opacity-100 hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover/md:opacity-100"
+				className="flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity [@media(hover:none)]:opacity-100 hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover/md:opacity-100"
 				onClick={(e) => {
 					blurAfterPointerClick(e);
 					void copyText(getText()).then((ok) => {
@@ -153,7 +153,7 @@ function MermaidInline({ chart }: { chart: string }) {
 	const [attempt, setAttempt] = useState(0);
 	const overlay = useSessionMermaid();
 	const incomplete = useIsCodeFenceIncomplete();
-	const { resolvedMode } = useAppearance();
+	const { resolvedMode, colors } = useAppearance();
 	// The font-parity cap (owner rule, 2026-09-19): the house CSS
 	// (`max-width: 100% !important`) overrides mermaid's own natural-size cap,
 	// so a chart would otherwise stretch to the full column and render its
@@ -176,7 +176,7 @@ function MermaidInline({ chart }: { chart: string }) {
 		let cancelled = false;
 		setSvg(null);
 		setError(null);
-		renderMermaid(chart, resolvedMode)
+		renderMermaid(chart, resolvedMode, colors)
 			.then((s) => {
 				if (!cancelled) setSvg(s);
 			})
@@ -186,7 +186,7 @@ function MermaidInline({ chart }: { chart: string }) {
 		return () => {
 			cancelled = true;
 		};
-	}, [chart, attempt, incomplete, resolvedMode]);
+	}, [chart, attempt, incomplete, resolvedMode, colors]);
 
 	if (incomplete || (svg === null && error === null)) {
 		return (
@@ -221,7 +221,7 @@ function MermaidInline({ chart }: { chart: string }) {
 						type="button"
 						aria-label="Expand diagram"
 						data-testid="md-mermaid-expand"
-												className="flex size-6 items-center justify-center rounded-md text-muted-foreground/70 opacity-0 transition-opacity [@media(hover:none)]:opacity-100 hover:bg-accent hover:text-foreground group-hover/md:opacity-100"
+												className="flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity [@media(hover:none)]:opacity-100 hover:bg-accent hover:text-foreground group-hover/md:opacity-100"
 						onClick={(e) => {
 							blurAfterPointerClick(e);
 							overlay.openMermaid(chart);
@@ -251,7 +251,7 @@ export function MarkdownCode(props: ComponentProps<"code"> & ExtraProps) {
 	// Inline code: no data-block (the pre handler stamps block fences only).
 	if (!("data-block" in props)) {
 		return (
-			<code className={cn("rounded px-1.5 py-0.5 font-mono text-sm text-(--lh-ink-code)", className)} data-streamdown="inline-code" {...rest}>
+			<code className={cn("rounded-sm px-1.5 py-0.5 font-mono text-sm text-(--lh-ink-code)", className)} data-streamdown="inline-code" {...rest}>
 				{children}
 			</code>
 		);

@@ -23,9 +23,9 @@ import { ConverterWizard } from "./converter-wizard.tsx";
 export const CONVERTER_TEST_CLIENT_TIMEOUT_MS = 2 * 60_000 + 15_000;
 
 const FIELD =
-	"h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50";
+	"h-8 min-w-0 flex-1 rounded-md border border-input bg-card px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring";
 const LINK = "shrink-0 text-xs text-foreground underline-offset-2 hover:underline disabled:text-muted-foreground/40 disabled:no-underline";
-const QUIET_LINK = "shrink-0 text-xs text-muted-foreground/70 underline-offset-2 hover:text-error hover:underline";
+const QUIET_LINK = "shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-error hover:underline";
 const NOTE = "text-xs leading-relaxed text-muted-foreground";
 
 const MARK = { pass: "✓", fail: "✗", skipped: "–" } as const;
@@ -346,7 +346,7 @@ export function ConvertersSection() {
 						))}
 					</ul>
 					{report.pages.map((p) => (
-						<p key={p.page} className="truncate font-mono text-[11px] text-muted-foreground/80">
+						<p key={p.page} className="truncate font-mono text-xs text-muted-foreground">
 							Page {p.page}: {p.text || "(empty)"}
 						</p>
 					))}
@@ -368,7 +368,7 @@ export function ConvertersSection() {
 					data-testid="converter-import-text"
 					rows={6}
 					spellCheck={false}
-					className="min-h-24 rounded-sm border border-border bg-background p-1.5 font-mono text-xs text-foreground outline-none focus:border-muted-foreground/50"
+					className="min-h-24 rounded-md border border-input bg-card p-2.5 font-mono text-xs text-foreground outline-none focus:border-ring"
 				/>
 				<div className="flex flex-wrap items-center gap-3">
 					<button type="button" onClick={() => void doImport(profileText)} disabled={busy || !profileText.trim()} data-testid="converter-import-run" className={LINK}>
@@ -383,7 +383,7 @@ export function ConvertersSection() {
 				{importErrors.length > 0 && (
 					<ul role="alert" data-testid="converter-import-errors" className="flex flex-col gap-0.5">
 						{importErrors.map((e) => (
-							<li key={e} className="font-mono text-[11px] text-error">{e}</li>
+							<li key={e} className="font-mono text-xs text-error">{e}</li>
 						))}
 					</ul>
 				)}
@@ -412,7 +412,7 @@ export function ConvertersSection() {
 				<div data-testid="converter-invalid-profiles" className="flex flex-col gap-0.5">
 					<p className="text-xs text-error">These profile files are not valid and are not used:</p>
 					{overview.invalidProfiles.map((p) => (
-						<p key={p.file} className="font-mono text-[11px] text-muted-foreground">
+						<p key={p.file} className="font-mono text-xs text-muted-foreground">
 							{p.file}: {p.errors.join("; ")}
 						</p>
 					))}

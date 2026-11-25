@@ -261,7 +261,7 @@ const PositionedContent = React.forwardRef<HTMLDivElement, ContentProps>(functio
   return <Popper.Content role={ariaLabel ? undefined : "tooltip"} id={ariaLabel ? undefined : context.contentId}
     data-slot="tooltip-content" data-state={context.state} side={side} sideOffset={sideOffset} collisionPadding={collisionPadding}
     className={cn(
-      "z-50 w-fit max-w-[calc(100vw-1rem)] origin-(--radix-tooltip-content-transform-origin) animate-in rounded-md bg-accent px-2 py-1 text-[11px] text-foreground/85 text-balance fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
+      "z-50 w-fit max-w-[calc(100vw-1rem)] origin-(--radix-tooltip-content-transform-origin) animate-in rounded-md bg-accent px-2 py-1 text-xs text-foreground/85 text-balance fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
       className
     )}
     {...props} ref={ref} onPointerLeave={event => { onPointerLeave?.(event); context.contentLeave(event) }}

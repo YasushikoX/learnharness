@@ -17,7 +17,7 @@ import { isInteractionScopeEligible } from "./plugin-input-focus";
  * without remounting).
  *
  * Corner-radius math (concentric with the shell): shell rounded-2xl (16px) −
- * row padding p-1.5 (6px) = button rounded-[10px] = 25% of the 40px button.
+ * row padding p-1.5 (6px); the button takes the 8px control radius.
  */
 /** What one Enter press does, in precedence order: stop a busy stream,
  *  otherwise send the message, otherwise — practice sessions only — fire
@@ -196,7 +196,7 @@ export function Composer({
 				e.preventDefault();
 				onPlanContinue?.();
 			}}
-			className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-[10px] bg-success px-4 font-ui text-xs font-medium uppercase tracking-wide text-background transition-colors hover:bg-success/85"
+			className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-md bg-success px-4 text-xs font-medium text-background transition-colors hover:bg-success/85"
 		>
 			Continue
 			<ArrowRightIcon className="size-4" />
@@ -206,7 +206,7 @@ export function Composer({
 			type="submit"
 			data-testid="next-problem-button"
 			aria-label="Next problem"
-			className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-[10px] bg-success px-4 font-ui text-xs font-medium uppercase tracking-wide text-background transition-colors hover:bg-success/85"
+			className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-md bg-success px-4 text-xs font-medium text-background transition-colors hover:bg-success/85"
 		>
 			Next problem
 			<ArrowRightIcon className="size-4" />
@@ -221,7 +221,7 @@ export function Composer({
 					// composer: 48 dp on touch screens (corners stay concentric with the shell: 25% of the side) that morphs
 					// squarer under the finger. With nothing to send it
 					// stays a visible quiet gold tone (gold glyph on 25% gold, about 5:1), not a faded copy of itself.
-					"lh-press flex size-10 touch:size-12 shrink-0 items-center justify-center rounded-[10px] touch:rounded-xl active:rounded-md",
+					"lh-press flex size-10 touch:size-12 shrink-0 items-center justify-center rounded-md",
 				busy && !canSend
 					? "bg-secondary text-foreground hover:bg-accent"
 					: "bg-primary text-primary-foreground hover:opacity-90 disabled:bg-primary/25 disabled:text-primary",

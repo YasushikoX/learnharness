@@ -1,5 +1,6 @@
 "use client";
 
+import { buttonVariants } from "@/components/ui/button";
 import { createContext, useContext, useState } from "react";
 import { Loader2Icon } from "lucide-react";
 import { examDateLabel, forecastLine, readinessBasis, readinessStep, understandingColor, type Readiness, SKILL_WEIGHTS, WEIGHT_LABELS, type CoursePlan, type CourseMode, type CourseSkillView, type SkillWeightValue } from "@/src/core";
@@ -13,7 +14,9 @@ import { LectureNotesRow } from "@/components/lecture-notes-row";
  * skill row shows.
  */
 
-const BTN = "rounded-md border border-border px-2.5 py-1 text-xs transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50";
+/** UI round 1 (SPEC §3): ordinary actions are secondary sm Buttons; the region's one emphasised action is primary. */
+const BTN = buttonVariants({ variant: "secondary", size: "sm" });
+const BTN_PRIMARY = buttonVariants({ size: "sm" });
 
 /** A skill's weight chip text ("w3"), shown when someone set it or it is not the default. Pure. */
 export function weightChip(skill: Pick<CourseSkillView, "weight" | "weightBy">): string | null {
@@ -29,7 +32,7 @@ export function WeightChip({ skill }: { skill: Pick<CourseSkillView, "id" | "wei
 	const text = weightChip(skill);
 	if (!text) return null;
 	return (
-		<span data-testid={`weight-chip-${skill.id}`} title={`Exam weight ${skill.weight}: ${WEIGHT_LABELS[skill.weight as SkillWeightValue] ?? ""}`} className="rounded-full border border-border/70 px-1.5 text-[10px] font-medium tracking-wide text-muted-foreground">
+		<span data-testid={`weight-chip-${skill.id}`} title={`Exam weight ${skill.weight}: ${WEIGHT_LABELS[skill.weight as SkillWeightValue] ?? ""}`} className="rounded-full border border-border/70 px-1.5 text-xs font-medium tracking-wide text-muted-foreground">
 			{text}
 		</span>
 	);
@@ -110,7 +113,7 @@ function ReadinessStrip({ readiness }: { readiness: Readiness }) {
 		<div className="space-y-1.5" data-testid="course-exam-readiness">
 			<div className="flex items-baseline justify-between gap-2">
 				<span className="text-sm text-muted-foreground">Readiness</span>
-				<span className="font-mono text-xl leading-none">{percent}%</span>
+				<span className="text-xl font-semibold leading-none tabular-nums">{percent}%</span>
 			</div>
 			<span role="meter" aria-label="Exam readiness" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} className="relative block h-2 w-full rounded-full bg-border/50">
 				<span className="block h-full rounded-full" style={{ width: `${percent}%`, backgroundColor: understandingColor(readinessStep(readiness.score, readiness.key)) ?? "var(--lh-understanding-1)" }} />
@@ -227,7 +230,7 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 									<span className="whitespace-nowrap">{plan.reviewBatch < plan.reviewDue ? `Review · ${plan.reviewBatch} of ${plan.reviewDue}` : `Review · ${plan.reviewDue}`}</span>
 									{(plan.reviewFading ?? 0) > 0 && <span className="text-muted-foreground" data-testid="course-review-fading">{`· ${plan.reviewFading} fading before the exam`}</span>}
 								</span>
-								<button type="button" className={cn(BTN, "border-foreground/40 text-foreground")} disabled={busy} onClick={() => onStart("review")}>
+								<button type="button" className={BTN_PRIMARY} disabled={busy} onClick={() => onStart("review")}>
 									Start
 								</button>
 							</div>
@@ -268,7 +271,7 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 					<div className={PAGE_HEAD}>Exam</div>
 					{examDate ? (
 						<div className="flex items-baseline gap-2" data-testid="course-exam-countdown">
-							<span className="font-mono text-4xl font-semibold leading-none">{examCountdown(plan.daysLeft ?? 0)}</span>
+							<span className="lh-big-number">{examCountdown(plan.daysLeft ?? 0)}</span>
 							<span className="text-sm text-muted-foreground">{examDateLabel(examDate)}</span>
 						</div>
 					) : (

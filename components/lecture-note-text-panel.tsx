@@ -86,7 +86,7 @@ export function LectureNoteTextPanel({ courseId, noteId, onClose }: { courseId: 
 								onChange={(e) => setDrafts((d) => ({ ...d, [s.id]: e.target.value }))}
 								rows={Math.min(14, Math.max(3, value.split("\n").length + 1))}
 								placeholder={s.state === "unread" ? "Not read yet: it is read when you leave the note." : ""}
-								className="w-full resize-y rounded-md border bg-background px-2.5 py-1.5 font-mono text-xs leading-relaxed"
+								className="w-full resize-y rounded-md border border-input bg-card px-2.5 py-1.5 font-mono text-xs leading-relaxed"
 							/>
 							<div className="flex justify-end gap-2">
 								<button type="button" disabled={busy || view.status === "reading"} onClick={() => void reread([s.id])} className="rounded-sm px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50">

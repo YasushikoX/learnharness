@@ -296,7 +296,7 @@ export function PracticeDock({
 			    markdown + LaTeX rendered, capped by the measured column
 			    (--dock-max-h; the old fixed 40vh cut long problems short). */}
 			<div data-dock-scroll-area="" className="max-h-[var(--dock-max-h,40vh)] overflow-y-auto px-4 pt-3 pb-2">
-				<div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Problem</div>
+				<div className="mb-1 lh-eyebrow text-muted-foreground">Problem</div>
 				<ClarifyWording messageId={messageId} callId={problemCallId} dock className="lh-prose text-[15px]">
 					<ToolContentResponse>{input.statement}</ToolContentResponse>
 				</ClarifyWording>
@@ -306,7 +306,7 @@ export function PracticeDock({
 				<div className={cn("space-y-1.5 border-t border-border/60 px-4 py-2.5 text-sm", wordingOnly && "hidden")} data-testid="hint-list">
 					{hintCtl.lines.map((line, i) => (
 						<div key={i} className="flex gap-2 text-foreground/80">
-							<span className="shrink-0 pt-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Hint {i + 1}</span>
+							<span className="shrink-0 pt-0.5 lh-eyebrow text-muted-foreground">Hint {i + 1}</span>
 							<div className="min-w-0 flex-1">
 								<ToolContentResponse>{line.text}</ToolContentResponse>
 							</div>
@@ -326,9 +326,9 @@ export function PracticeDock({
 			    Shift+Enter makes a newline — less to decide about. */}
 			<div
 				data-testid="practice-thinking-field"
-				className={cn("m-1.5 rounded-[10px] border border-border/70 bg-background/60 transition-colors focus-within:border-primary/50", wordingOnly && "hidden")}
+				className={cn("m-1.5 rounded-md border border-border/70 bg-background/60 transition-colors focus-within:border-primary/50", wordingOnly && "hidden")}
 			>
-				<div className="px-2.5 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+				<div className="px-2.5 pt-2 lh-eyebrow text-muted-foreground">
 					YOUR THINKING
 				</div>
 				<PathInput
@@ -426,7 +426,7 @@ export function PracticeDock({
 									disabled={compactionRunning}
 									onClick={() => send({ dontKnow: true })}
 									data-testid="practice-dont-know"
-									className="lh-touch h-10 min-w-0 flex-[1.8] truncate rounded-[6px] border border-dashed border-border/70 bg-transparent px-0 text-[11px] tracking-tighter text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+									className="lh-touch h-10 min-w-0 flex-[1.8] truncate rounded-md border border-dashed border-border/70 bg-transparent px-0 text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
 								>
 									I don't know
 								</button>
@@ -441,7 +441,7 @@ export function PracticeDock({
 								variant="secondary"
 								data-testid="practice-add-photo"
 								onClick={camera.open}
-								className="lh-press h-9 gap-1.5 rounded-pill px-4 text-sm active:rounded-lg"
+								className="lh-press h-9 gap-1.5 rounded-md px-4 text-sm"
 							>
 								<CameraIcon className="size-4" />
 								Camera
@@ -456,7 +456,7 @@ export function PracticeDock({
 									setDetached(false);
 									setSketching(true);
 								}}
-								className="lh-press h-9 gap-1.5 rounded-pill px-4 text-sm active:rounded-lg"
+								className="lh-press h-9 gap-1.5 rounded-md px-4 text-sm"
 							>
 								<PenLineIcon className="size-4" />
 								Open in sketch
@@ -470,7 +470,7 @@ export function PracticeDock({
 								data-nudge={hintCtl.nudge && hintCtl.lines.length === 0 ? "true" : undefined}
 								disabled={hintCtl.disabled}
 								onClick={hintCtl.ask}
-								className={cn("lh-press h-9 gap-1.5 rounded-pill px-4 text-sm active:rounded-lg", hintCtl.nudge && hintCtl.lines.length === 0 && "ring-2 ring-primary/50")}
+								className={cn("lh-press h-9 gap-1.5 rounded-md px-4 text-sm", hintCtl.nudge && hintCtl.lines.length === 0 && "ring-2 ring-primary/50")}
 							>
 								<LightbulbIcon className="size-4" />
 								{hintLabel(hintCtl)}
@@ -484,7 +484,7 @@ export function PracticeDock({
 							data-testid="practice-send"
 							disabled={(customInput ? !customInput.ready : (!thinking.trim() && !photo && !hasPendingInput)) || compactionRunning || preparing}
 							onClick={() => submit()}
-							className="ml-auto h-9 rounded-[6px] px-3.5 text-sm font-medium"
+							className="ml-auto h-9 rounded-md px-3.5 text-sm font-medium"
 						>
 							{customInput ? "Submit" : "Submit thinking"}
 						</Button>

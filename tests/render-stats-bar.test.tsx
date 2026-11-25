@@ -43,8 +43,8 @@ describe("stats bar", () => {
 		assert.match(html, /data-testid="stats-model"[^>]*>\s*<span[^>]*>—<\/span><span[^>]*>·<\/span><span[^>]*>—<\/span>/);
 		assert.ok(!html.includes('data-testid="stats-thinking"'), "no separate effort button");
 		// the control reads as a button: pill border + dropdown chevron
-		assert.match(html, /data-testid="stats-model"[^>]*rounded-full[^>]*>/);
-		assert.match(html, /▾/);
+		assert.match(html, /data-testid="stats-model"[^>]*rounded-md[^>]*>/);
+		assert.match(html, /lucide-chevron-down/);
 	});
 
 	it("folds context + cost from the turns log (core/prices, no local math)", () => {

@@ -72,7 +72,7 @@ function DictationLanguagePicker({ preference, disabled }: {
 			testid="dictation-language-menu"
 			onClose={(reason) => { setOpen(false); if (reason === "escape" || reason === "back") triggerRef.current?.focus(); return "closed"; }}
 			preferredSide="down"
-			menuClass="flex w-72 max-w-[calc(100vw-1rem)] flex-col rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
+			menuClass="flex w-72 max-w-[calc(100vw-1rem)] flex-col lh-menu"
 		>
 			<div onKeyDown={(event) => {
 				if (event.key === "Enter") {

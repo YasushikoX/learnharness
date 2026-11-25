@@ -1,5 +1,6 @@
 "use client";
 
+import { buttonVariants } from "@/components/ui/button";
 import { useEffect, useState, type ReactElement, type ReactNode } from "react";
 import { HostDialog } from "@/components/host-dialog";
 import type { ChatDeleteMode, ChatListItem, CourseDeletionImpact, FolderDeletionScope } from "@/src/core";
@@ -240,7 +241,7 @@ export function DeleteSessionDialog({
 				renderFrame={(frame) => <HostDialog open frame={frame} onClose={() => {
 					if (busy) return "blocked";
 					onClose(); return "closed";
-				}} backdropProps={{ className: "fixed inset-0 z-50 flex items-center justify-center bg-background/80" }}>{frame.props.children}</HostDialog>}
+				}} backdropProps={{ className: "fixed inset-0 z-50 flex items-center justify-center lh-scrim" }}>{frame.props.children}</HostDialog>}
 			/>;
 }
 
@@ -281,7 +282,7 @@ export function DeleteSessionBody({
 			aria-label={copy.label}
 			data-testid={copy.testid}
 			onClick={(e) => e.stopPropagation()}
-			className="w-[32rem] max-w-[calc(100vw-2rem)] rounded-xl border bg-card p-5 shadow-xl"
+			className="w-[32rem] max-w-[calc(100vw-2rem)] lh-dialog p-6"
 		>
 			<h2 className="text-sm font-semibold text-destructive">{copy.heading}</h2>
 			{/* The session name below the title in JetBrains Mono (owner,
@@ -290,7 +291,7 @@ export function DeleteSessionBody({
 			    sized-up text-lg), still white. Same shape as the node
 			    dialog. */}
 			<div className="mt-1.5">
-				<code data-testid="session-name-code" className="font-mono text-sm text-foreground">
+				<code data-testid="session-name-code" className="font-sans text-sm font-medium text-foreground">
 					{chat.title}
 				</code>
 			</div>
@@ -344,7 +345,7 @@ export function DeleteSessionBody({
 					data-testid="delete-cancel"
 					onClick={onClose}
 					disabled={busy}
-					className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+					className={buttonVariants({ variant: "ghost", size: "sm" })}
 				>
 					Cancel
 				</button>
@@ -353,7 +354,7 @@ export function DeleteSessionBody({
 					data-testid="delete-confirm"
 					onClick={onRun}
 					disabled={busy || checking}
-					className="rounded-sm border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-40"
+					className={buttonVariants({ variant: "destructiveSolid", size: "sm" })}
 				>
 					{busy ? "Deleting…" : "Delete"}
 				</button>
@@ -429,6 +430,6 @@ export function DeleteFolderDialog({
 				renderFrame={(frame) => <HostDialog open frame={frame} onClose={() => {
 					if (busy) return "blocked";
 					onClose(); return "closed";
-				}} backdropProps={{ className: "fixed inset-0 z-50 flex items-center justify-center bg-background/80" }}>{frame.props.children}</HostDialog>}
+				}} backdropProps={{ className: "fixed inset-0 z-50 flex items-center justify-center lh-scrim" }}>{frame.props.children}</HostDialog>}
 			/>;
 }

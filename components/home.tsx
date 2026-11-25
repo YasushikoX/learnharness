@@ -256,7 +256,7 @@ export function Home({
 					{startError && <p role="alert" className="mb-2 text-sm text-destructive">{OPENING_PROMPT_FAILURE}</p>}
 					<form
 						data-attachment-composer=""
-						className="flex flex-col gap-0.5 rounded-xxl border border-border/50 bg-card p-1.5 touch:p-2 shadow-lg"
+						className="flex flex-col gap-0.5 rounded-xl border border-input bg-card p-1.5 touch:p-2 shadow-lg transition-[border-color,box-shadow] duration-(--lh-duration-hover) ease-(--lh-ease) focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20"
 					onSubmit={(e) => {
 						e.preventDefault();
 						void start();
@@ -304,7 +304,7 @@ export function Home({
 								type="submit"
 								aria-label="Start session"
 								disabled={(!topic.trim() && !dictation.active) || busy || !reachable}
-								className="lh-press flex size-10 touch:size-12 shrink-0 items-center justify-center rounded-lgi bg-primary text-primary-foreground hover:opacity-90 active:rounded-xl disabled:bg-primary/25 disabled:text-primary"
+								className="lh-press flex size-10 touch:size-12 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:bg-primary/25 disabled:text-primary"
 							>
 								<CornerDownLeftIcon className="size-5" />
 							</button>
@@ -328,9 +328,9 @@ export function Home({
 										className={
 											// A connected button group (Material 3 Expressive, owner 2026-10-29): the selected segment is a filled
 												// gold pill, the others tonal and squarer; the shapes morph on the fast spatial spring.
-												"lh-touch lh-press flex items-center gap-1 px-2 py-0.5 touch:h-9 touch:px-2.5 text-xs uppercase " +
+												"lh-touch lh-press flex items-center gap-1 px-2 py-0.5 touch:h-9 touch:px-2.5 lh-eyebrow " +
 											(mode === m
-												? "rounded-pill bg-primary text-primary-foreground"
+												? "rounded-md bg-primary text-primary-foreground"
 												: "rounded-lg bg-accent text-foreground hover:bg-accent/70")
 										}
 									>

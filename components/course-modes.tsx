@@ -8,12 +8,13 @@
  * and Practice say what is needed first, from the same course state the page already shows (status, draft, drafting).
  */
 
+import { buttonVariants } from "@/components/ui/button";
 import { BookOpenIcon, DumbbellIcon, MessageCircleQuestionIcon } from "lucide-react";
 import type { CourseView } from "@/src/core";
 import { cn } from "@/lib/utils";
 
-const BTN =
-	"rounded-md border border-border px-2.5 py-1 text-xs transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50";
+/** UI round 1 (SPEC §3): ordinary actions are secondary sm Buttons; the region's one emphasised action is primary. */
+const BTN = buttonVariants({ variant: "secondary", size: "sm" });
 const CARD = "flex min-w-0 flex-col gap-2 rounded-xl border border-border/60 bg-card/50 p-4";
 
 type ModesData = Pick<CourseView, "course" | "skills" | "nextUp" | "notExamined" | "learning" | "known" | "plan" | "sessions"> & { drafting?: boolean };
@@ -93,7 +94,7 @@ export function CourseModes({
 			<div className="flex items-center justify-between gap-2">
 				<button
 					type="button"
-					className={cn(BTN, "lh-touch flex items-center gap-1.5 text-sm", state.available && "border-foreground/40 text-foreground")}
+					className={cn(BTN, "lh-touch flex items-center gap-1.5 text-sm", state.available && "bg-raised-strong")}
 					disabled={busy || !state.available}
 					data-testid={`course-mode-${id}-start`}
 					onClick={start}

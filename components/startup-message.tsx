@@ -108,10 +108,10 @@ export function StartupMessage() {
 	}
 
 	return <HostDialog open layerId={layerId} openingLease={open.lease} aria-labelledby={headingId} onClose={dismiss}
-		backdropProps={{ className: "fixed inset-0 flex items-center justify-center bg-background/80" }}
-		frame={<div className="mx-4 flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-md border border-border bg-card text-card-foreground shadow-xl" />}>
+		backdropProps={{ className: "fixed inset-0 flex items-center justify-center lh-scrim" }}
+		frame={<div className="mx-4 flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden lh-dialog" />}>
 		<header className="flex min-h-15 shrink-0 items-center gap-3 border-b border-border px-5 py-3">
-			<h2 id={headingId} className="min-w-0 break-words font-title text-2xl tracking-tight">{open.message.title}</h2>
+			<h2 id={headingId} className="min-w-0 break-words lh-section-title">{open.message.title}</h2>
 			<Button type="button" aria-label="Close announcement" variant="ghost" size="icon-xs"
 				className="ml-auto size-7 rounded-sm text-muted-foreground hover:text-foreground" onClick={dismiss}>
 				<XIcon aria-hidden="true" className="size-3.5" />

@@ -193,9 +193,9 @@ export function MaterialsControl({
 					anchorRef={containerRef}
 					testid="materials-menu"
 					preferredSide={courseId ? "down" : "up"}
-					menuClass="flex w-80 flex-col gap-1 rounded-xl border bg-card p-2 text-xs shadow-xl"
+					menuClass="flex w-80 flex-col gap-1 lh-menu"
 				>
-					<div className="px-1 pb-1 text-[11px] text-muted-foreground/80">
+					<div className="px-1 pb-1 text-xs text-muted-foreground">
 						{courseId
 							? "The curriculum: everything the course should teach. The course planner turns it into the skill map; every course session can read it."
 							: "The material sets the lesson's target; teaching uses its definitions, notation and terms and cites it."}
@@ -259,10 +259,10 @@ export function MaterialsControl({
 							aria-label="Source link"
 							data-testid="materials-link-input"
 							disabled={busy}
-							className="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-1.5 text-xs outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+							className="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-1.5 text-xs outline-none placeholder:text-muted-foreground focus:border-muted-foreground/50"
 						/>
 					</div>
-					<div className="px-1 text-[10px] text-muted-foreground/60">PDF, text, Markdown, images, a photo, or a web link</div>
+					<div className="px-1 text-xs text-muted-foreground">PDF, text, Markdown, images, a photo, or a web link</div>
 					{error && <div className="px-1 text-error" data-testid="materials-error">{error}</div>}
 				</MenuShell>
 			)}

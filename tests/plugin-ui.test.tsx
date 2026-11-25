@@ -172,7 +172,7 @@ describe("controlled plugin UI", () => {
 	}));
 
 	it("emits native SVG and wrapped-icon padding for all text button sizes", async () => {
-		const sizes = ["default", "xs", "sm", "lg"] as const, padding = ["3", "1.5", "2.5", "4"];
+		const sizes = ["default", "xs", "sm", "lg"] as const, padding = ["2.5", "1.5", "2", "3.5"]; // UI round 1 sizes
 		const candidates = sizes.flatMap(size => buttonVariants({ size }).split(" ").filter(value => value.startsWith("has-[")));
 		const compiler = await compile("@theme { --spacing: 0.25rem; } @tailwind utilities;");
 		const css = compiler.build(candidates).replace(/\s/g, "");
@@ -419,9 +419,9 @@ describe("controlled plugin UI", () => {
 	it("shared model/thinking triggers own their canonical chrome typography", () => {
 		const { document } = parseHTML(renderToStaticMarkup(<ModelPickerPill>Fixture model</ModelPickerPill>));
 		const trigger = document.querySelector("button")!;
-		for (const token of ["font-ui", "text-xs"]) assert.ok(trigger.classList.contains(token), token);
+		for (const token of ["font-mono", "text-xs"]) assert.ok(trigger.classList.contains(token), token);
 		assert.equal(trigger.querySelector("span")!.className, "text-card-foreground", "label color stays native foreground");
-		assert.equal(trigger.querySelector("[aria-hidden]")!.className, "text-xs text-muted-foreground");
+		assert.ok(trigger.querySelector("svg.lucide-chevron-down"), "a lucide chevron, no text glyph (UI round 1)");
 	});
 
 	it("standard composer keeps only the input row inside the frame and controls below it", () => {

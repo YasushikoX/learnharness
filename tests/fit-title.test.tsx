@@ -15,8 +15,8 @@ describe("the title's font size", () => {
 	});
 
 	it("shrinks in proportion when the title is wider than the room", () => {
-		// 900 px wide at the largest size in 600 px of room: two thirds of the size
-		assert.equal(fitFontPx(900, 600), 20);
+		// 900 px wide at the largest size (24) in 600 px of room: two thirds of the size
+		assert.equal(fitFontPx(900, 600), 16);
 		assert.equal(fitFontPx(900, 450), TITLE_MIN_PX, "half the size would be 15 px: held at the floor");
 		assert.equal(fitFontPx(1000, 800, 30, 10), 24);
 	});

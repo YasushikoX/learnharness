@@ -30,7 +30,7 @@
  * lands here.
  */
 
-import { isBuiltinThemeId, syncActiveProfile, type AgentSettings, type AppearanceSettings, type ChatSettings, type ModelsSettings, type PdfConversionSettings } from "@/src/core";
+import { DEFAULT_THEME_ID, isBuiltinThemeId, syncActiveProfile, type AgentSettings, type AppearanceSettings, type ChatSettings, type ModelsSettings, type PdfConversionSettings } from "@/src/core";
 import {
 	SETTINGS_SECTIONS,
 	allSegmentPaths,
@@ -104,7 +104,7 @@ export async function PUT(request: Request, ctx: { params: Promise<{ section: st
 			if (theme !== record.appearance?.theme) {
 				return Response.json({ error: `unknown theme "${theme}"` }, { status: 400 });
 			}
-			appearance.theme = "default";
+			appearance.theme = DEFAULT_THEME_ID;
 		}
 	}
 	if (section === "agent") {

@@ -5,32 +5,44 @@ import { Slot } from "radix-ui"
 import { cn } from "@/lib/utils"
 import type { PluginButtonColors as ButtonColors } from "@/src/core"
 
+/**
+ * THE BUTTON (UI round 1, 2026-11-25, SPEC §3): one primitive, one grammar.
+ * Heights sm 28 / md 32 (default) / lg 36; icon buttons square 28 / 32 / 36; touch screens keep a 44px hit area
+ * (lh-touch grows the box on coarse pointers only). Radius 8 (6 for the compact xs/sm sizes).
+ * Variants: primary (`default`, solid accent, at most one per region) · secondary (neutral fill) · outline (hairline
+ * input border) · ghost (no fill until hover) · destructive (danger text on a neutral fill) · destructiveSolid (the
+ * confirm button of a delete dialog only) · link (inline). States: hover one fill step, active one more, no scale
+ * except primary (0.98), disabled 45%, focus-visible a 2px accent ring at 40% with a 1px offset. No shadows.
+ * `buttonVariants` is the class helper for elements that cannot be a <Button> (a link, a label).
+ */
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-all outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap select-none transition-[background-color,color,border-color,opacity,transform] duration-(--lh-duration-hover) ease-(--lh-ease) outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-45 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/90",
-        destructive:
-          "bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40",
-        outline:
-          "border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
+        default: "bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/85 active:scale-[0.98] motion-reduce:active:scale-100",
         secondary:
-          "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+          "bg-secondary text-secondary-foreground hover:bg-raised-strong active:bg-raised-strong",
+        outline:
+          "border border-input bg-transparent text-foreground hover:bg-raised active:bg-raised-strong",
         ghost:
-          "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
-        link: "text-primary underline-offset-4 hover:underline",
+          "text-foreground hover:bg-raised active:bg-raised-strong",
+        destructive:
+          "bg-secondary text-destructive hover:bg-raised-strong active:bg-raised-strong",
+        destructiveSolid:
+          "bg-destructive text-white dark:text-zinc-950 hover:bg-destructive/90 active:bg-destructive/85",
+        link: "h-auto! px-0! text-primary underline-offset-4 hover:underline",
         custom: "border border-transparent bg-primary text-primary-foreground",
       },
       size: {
-        default: "h-9 px-4 py-2 has-[>svg]:px-3 has-[>[data-slot=button-icon]]:px-3",
-        xs: "h-6 gap-1 rounded-md px-2 text-xs has-[>svg]:px-1.5 has-[>[data-slot=button-icon]]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
-        sm: "h-8 gap-1.5 rounded-md px-3 has-[>svg]:px-2.5 has-[>[data-slot=button-icon]]:px-2.5",
-        lg: "h-10 rounded-md px-6 has-[>svg]:px-4 has-[>[data-slot=button-icon]]:px-4",
-        icon: "size-9",
-        "icon-xs": "size-6 rounded-md [&_svg:not([class*='size-'])]:size-3",
-        "icon-sm": "size-8",
-        "icon-lg": "size-10",
+        default: "h-8 px-3 has-[>svg]:px-2.5 has-[>[data-slot=button-icon]]:px-2.5",
+        xs: "h-6 gap-1 rounded-sm px-2 text-xs has-[>svg]:px-1.5 has-[>[data-slot=button-icon]]:px-1.5 [&_svg:not([class*='size-'])]:size-3.5",
+        sm: "h-7 gap-1.5 rounded-sm px-2.5 has-[>svg]:px-2 has-[>[data-slot=button-icon]]:px-2 [&_svg:not([class*='size-'])]:size-3.5",
+        lg: "h-9 px-4 has-[>svg]:px-3.5 has-[>[data-slot=button-icon]]:px-3.5",
+        icon: "size-8",
+        "icon-xs": "size-6 rounded-sm [&_svg:not([class*='size-'])]:size-3.5",
+        "icon-sm": "size-7 rounded-sm [&_svg:not([class*='size-'])]:size-3.5",
+        "icon-lg": "size-9",
       },
     },
     defaultVariants: {

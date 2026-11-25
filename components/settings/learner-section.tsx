@@ -1,5 +1,6 @@
 "use client";
 
+import { buttonVariants } from "@/components/ui/button";
 import { useEffect, useState } from "react";
 import { LEARNER_CLAIM_TEXT_MAX, LEARNER_NOTE_MAX, OVERCONFIDENT_AT, type LearnerClaim, type LearnerSettings, type LearnerStats } from "@/src/core";
 import { SettingsGroup } from "@/components/settings/controls";
@@ -13,9 +14,10 @@ import { SettingsGroup } from "@/components/settings/controls";
  * sessions. Sessions already open keep the profile they were born with.
  */
 
-const BTN = "rounded-md border border-border px-2.5 py-1 text-xs transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50";
+/** UI round 1 (SPEC §3): ordinary actions are secondary sm Buttons; the region's one emphasised action is primary. */
+const BTN = buttonVariants({ variant: "secondary", size: "sm" });
 const FIELD =
-	"lh-prose w-full rounded-lg border border-border bg-background px-3 py-2 text-(length:--lh-prose-size) outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50";
+	"lh-prose w-full rounded-lg border border-border bg-background px-3 py-2 text-(length:--lh-prose-size) outline-none placeholder:text-muted-foreground focus:border-muted-foreground/50";
 
 interface Draft {
 	claims: LearnerClaim[];
@@ -107,7 +109,7 @@ export function LearnerSection({
 	return (
 		<>
 			<SettingsGroup label="How I learn best" testid="group-learner-note">
-				<p className="text-xs text-muted-foreground/70">
+				<p className="text-xs text-muted-foreground">
 					In your own words: what helps you, what does not. The tutor reads it at the start of new practice, review, teach and learn sessions (not placement tests), as
 					background about you, not as instructions. Sessions already open keep what they started with.
 				</p>
@@ -121,19 +123,19 @@ export function LearnerSection({
 					rows={4}
 					className={FIELD}
 				/>
-				<p className="text-right text-xs text-muted-foreground/60">
+				<p className="text-right text-xs text-muted-foreground">
 					{noteDraft.length}/{LEARNER_NOTE_MAX}
 				</p>
 			</SettingsGroup>
 
 			<SettingsGroup label="Mistake patterns" testid="group-learner-stats">
 				{stats === undefined ? (
-					<p className="text-xs text-muted-foreground/70">Reading your sessions…</p>
+					<p className="text-xs text-muted-foreground">Reading your sessions…</p>
 				) : stats === null ? (
-					<p className="text-xs text-muted-foreground/70">The statistics could not be loaded.</p>
+					<p className="text-xs text-muted-foreground">The statistics could not be loaded.</p>
 				) : (
 					<>
-						<p className="text-xs text-muted-foreground/70">
+						<p className="text-xs text-muted-foreground">
 							Counted from your sessions, never stored. The tutor sees the pattern only once there are at least 6 classified misses, and names a kind only when it has
 							at least 3 of them from 2 sessions. Recent misses rank first.
 						</p>
@@ -169,7 +171,7 @@ export function LearnerSection({
 								{cal.underconfident ? " You tend to be underconfident: you are right more often than you expect." : ""}
 							</p>
 						)}
-						<p className="text-xs text-muted-foreground/60">
+						<p className="text-xs text-muted-foreground">
 							Gaps: lessons carry no miss classification (only the answers above), practice outside a course carries no skill, and the kind of problem (proof, example,
 							computation) is not recorded.
 						</p>
@@ -178,7 +180,7 @@ export function LearnerSection({
 			</SettingsGroup>
 
 			<SettingsGroup label="Adapt" testid="group-learner-adapt">
-				<p className="text-xs text-muted-foreground/70">
+				<p className="text-xs text-muted-foreground">
 					Asks the strong model to draft observations about you from your sessions. Nothing reaches the tutor until you edit the draft and press Apply. It works from your
 					transcripts each time, not from the last profile.
 				</p>
@@ -187,7 +189,7 @@ export function LearnerSection({
 						{busy ? "Drafting…" : "Adapt"}
 					</button>
 					{stats && !stats.adaptReady && (
-						<span className="text-xs text-muted-foreground/70" data-testid="learner-adapt-needs">
+						<span className="text-xs text-muted-foreground" data-testid="learner-adapt-needs">
 							Needs {stats.adaptMinSessions} sessions with evidence; you have {stats.sessions}.
 						</span>
 					)}
@@ -202,7 +204,7 @@ export function LearnerSection({
 						<p className="text-xs text-muted-foreground">
 							Draft from {draft.sessions} sessions{draft.truncated ? " (the oldest were left out to fit)" : ""}. Edit or delete anything, then Apply.
 						</p>
-						{draft.claims.length === 0 && <p className="text-xs text-muted-foreground/70">The evidence did not support any claim.</p>}
+						{draft.claims.length === 0 && <p className="text-xs text-muted-foreground">The evidence did not support any claim.</p>}
 						{draft.claims.map((c, i) => (
 							<div key={i} className="rounded-md border border-border p-2" data-testid="learner-draft-claim">
 								<div className="mb-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -250,7 +252,7 @@ export function LearnerSection({
 
 			<SettingsGroup label="Applied to new sessions" testid="group-learner-applied">
 				{applied.length === 0 ? (
-					<p className="text-xs text-muted-foreground/70" data-testid="learner-no-applied">
+					<p className="text-xs text-muted-foreground" data-testid="learner-no-applied">
 						Nothing applied yet.
 					</p>
 				) : (

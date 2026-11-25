@@ -763,7 +763,7 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 						</div>
 						<PlanLayoutProbe probe={plan.probe} />
 						<div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between p-2">
-							<span className="text-xs text-muted-foreground/60">
+							<span className="text-xs text-muted-foreground">
 									<span className="[@media(hover:none)]:hidden">Drag to pan · scroll to zoom</span>
 									<span className="hidden [@media(hover:none)]:inline">Drag to pan · pinch to zoom</span>
 								</span>

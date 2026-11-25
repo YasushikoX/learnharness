@@ -412,9 +412,9 @@ export function SessionRow({
 			    was left of the name; right-aligned keeps the titles flush with
 			    the teaching rows and reads cleaner. */}
 			{(chat.kind ?? "teach") === "practice" && (
-				<DumbbellIcon className="size-3.5 shrink-0 text-muted-foreground/70" aria-label="Practice session" />
+				<DumbbellIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Practice session" />
 			)}
-			{chat.finished && <CheckIcon className="size-3.5 shrink-0 text-muted-foreground/70" aria-label="Finished" data-testid="session-finished" />}
+			{chat.finished && <CheckIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Finished" data-testid="session-finished" />}
 		</button>
 	);
 }
@@ -605,7 +605,7 @@ function SessionsSidebar() {
 		>
 			<CheckIcon className="size-3" />
 			Finished
-			<span className="font-normal tabular-nums text-muted-foreground/60">{finishedCount}</span>
+			<span className="font-normal tabular-nums text-muted-foreground">{finishedCount}</span>
 			{finishedExpanded ? <ChevronDownIcon className="size-3" /> : <ChevronRightIcon className="size-3" />}
 		</div>
 	);
@@ -1016,7 +1016,7 @@ function SessionsSidebar() {
 				<div
 					data-testid="sidebar-backdrop"
 					aria-hidden="true"
-					className="fixed inset-0 z-[44] bg-background/60"
+					className="fixed inset-0 z-[44] lh-scrim"
 					onClick={close}
 				/>
 			)}
@@ -1089,7 +1089,7 @@ function SessionsSidebar() {
 						data-testid="new-session"
 						data-drawer-close
 						onClick={() => void newSession()}
-						className="lh-touch lh-press flex w-full items-center gap-2 rounded-lgi bg-accent px-2.5 py-1.5 touch:px-3 touch:py-2.5 text-[13px] font-medium text-foreground hover:bg-accent/70 active:rounded-xl"
+						className="lh-touch lh-press flex w-full items-center gap-2 rounded-md bg-accent px-2.5 py-1.5 touch:px-3 touch:py-2.5 text-sm font-medium text-foreground hover:bg-accent/70"
 					>
 						<PlusIcon className="size-3.5 touch:size-4" />
 						Teaching
@@ -1100,7 +1100,7 @@ function SessionsSidebar() {
 						data-testid="new-session-practice"
 						data-drawer-close
 						onClick={() => router.push("/chat/new?mode=practice")}
-						className="lh-touch lh-press flex w-full items-center gap-2 rounded-lgi bg-accent px-2.5 py-1.5 touch:px-3 touch:py-2.5 text-[13px] font-medium text-foreground hover:bg-accent/70 active:rounded-xl"
+						className="lh-touch lh-press flex w-full items-center gap-2 rounded-md bg-accent px-2.5 py-1.5 touch:px-3 touch:py-2.5 text-sm font-medium text-foreground hover:bg-accent/70"
 					>
 						<DumbbellIcon className="size-3.5 touch:size-4" />
 						Practice
@@ -1293,7 +1293,7 @@ function SessionsSidebar() {
 						anchorRef={ctxAnchorRef}
 						testid="session-context-menu"
 						preferredSide="down"
-						menuClass="flex w-52 flex-col gap-0.5 rounded-xl border bg-card p-2 text-xs shadow-xl"
+						menuClass="flex w-52 flex-col gap-0.5 lh-menu"
 					>
 						{/* The two management actions first, then the extraction block
 						    (owner refinement round, 2026-09-24): Rename/Delete stay at the
@@ -1308,7 +1308,7 @@ function SessionsSidebar() {
 								setRenamingId(ctxChatId);
 								setCtxChatId(null);
 							}}
-							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-accent [@media(pointer:coarse)]:min-h-11"
+							className="lh-menu-item text-foreground [@media(pointer:coarse)]:min-h-11"
 						>
 							Rename
 						</button>
@@ -1330,7 +1330,7 @@ function SessionsSidebar() {
 								a.click();
 								a.remove();
 							}}
-							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-accent [@media(pointer:coarse)]:min-h-11"
+							className="lh-menu-item text-foreground [@media(pointer:coarse)]:min-h-11"
 						>
 							Export as Markdown…
 						</button>
@@ -1342,7 +1342,7 @@ function SessionsSidebar() {
 								if (target) setDeleting(target);
 								setCtxChatId(null);
 							}}
-							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-muted-foreground/80 transition-colors hover:bg-accent hover:text-foreground [@media(pointer:coarse)]:min-h-11"
+							className="lh-menu-item lh-menu-item-danger [@media(pointer:coarse)]:min-h-11"
 						>
 							Delete…
 						</button>
@@ -1364,13 +1364,13 @@ function SessionsSidebar() {
 						anchorRef={folderAnchorRef}
 						testid="folder-context-menu"
 						preferredSide="down"
-						menuClass="flex w-52 flex-col gap-0.5 rounded-xl border bg-card p-2 text-xs shadow-xl"
+						menuClass="flex w-52 flex-col gap-0.5 lh-menu"
 					>
 						<button
 							type="button"
 							data-testid="folder-ctx-rename"
 							onClick={() => { setRenamingFolderId(ctxFolderId); setCtxFolderId(null); }}
-							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-accent"
+							className="lh-menu-item text-foreground"
 						>
 							Rename
 						</button>
@@ -1384,7 +1384,7 @@ function SessionsSidebar() {
 								else setFolderOpen(id, true);
 								setCreatingFolder({ parentId: id });
 							}}
-							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-accent"
+							className="lh-menu-item text-foreground"
 						>
 							New subfolder
 						</button>
@@ -1392,7 +1392,7 @@ function SessionsSidebar() {
 							type="button"
 							data-testid="folder-ctx-delete"
 							onClick={() => deleteFolder(ctxFolderId)}
-							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-muted-foreground/80 transition-colors hover:bg-accent hover:text-foreground"
+							className="lh-menu-item lh-menu-item-danger"
 						>
 							Delete
 						</button>

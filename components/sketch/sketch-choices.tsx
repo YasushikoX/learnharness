@@ -61,13 +61,13 @@ export function SketchChoices({
 						>
 							<span
 								className={cn(
-									"mt-0.5 flex size-4 shrink-0 items-center justify-center border text-[11px] leading-none",
+									"mt-0.5 flex size-4 shrink-0 items-center justify-center border text-xs leading-none",
 									multi ? "rounded-sm" : "rounded-full",
 									isSel ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40",
 								)}
 							>
 								{letter ? (
-									<span data-option-letter={letter} className={cn("text-[0.625rem] font-medium", !isSel && "text-muted-foreground/70")}>
+									<span data-option-letter={letter} className={cn("text-[0.625rem] font-medium", !isSel && "text-muted-foreground")}>
 										{letter}
 									</span>
 								) : isSel && (multi ? "✓" : <span className="size-1.5 rounded-full bg-current" />)}

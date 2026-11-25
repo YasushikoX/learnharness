@@ -30,7 +30,7 @@ export function LessonFinishedLine({ skill, lesson = true, request = false }: { 
 		return (
 			<div
 				data-testid="finish-requested-line"
-				className="my-4 flex items-center justify-center gap-1.5 font-ui text-xs font-medium uppercase tracking-wide text-muted-foreground"
+				className="my-4 flex items-center justify-center gap-1.5 lh-eyebrow text-muted-foreground"
 			>
 				<FlagIcon className="size-3" />
 				Finish requested · final problem next
@@ -40,7 +40,7 @@ export function LessonFinishedLine({ skill, lesson = true, request = false }: { 
 	return (
 		<div
 			data-testid="lesson-finished-line"
-			className="my-4 flex items-center justify-center gap-1.5 font-ui text-xs font-medium uppercase tracking-wide text-muted-foreground"
+			className="my-4 flex items-center justify-center gap-1.5 lh-eyebrow text-muted-foreground"
 		>
 			<CheckIcon className="size-3" />
 			{lesson ? `Lesson finished${skill ? ` · ${skill} learned` : ""}` : "Session finished"}
@@ -65,7 +65,7 @@ export function FinishLessonButton({
 		return (
 			<span
 				data-testid="lesson-finished-chip"
-				className="flex shrink-0 select-none items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+				className="flex shrink-0 select-none items-center gap-1 whitespace-nowrap text-xs font-medium text-muted-foreground"
 			>
 				<CheckIcon className="size-3" />
 				Finished
@@ -87,7 +87,7 @@ export function FinishLessonButton({
 				data-testid="finish-lesson"
 				disabled={blocked !== null}
 				onClick={onFinish}
-				className="lh-no-drag flex shrink-0 items-center gap-1.5 rounded-full border border-border/80 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:border-border hover:text-foreground disabled:opacity-50 disabled:hover:border-border/80 disabled:hover:text-muted-foreground"
+				className="lh-no-drag flex shrink-0 items-center gap-1.5 rounded-full border border-border/80 px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground disabled:opacity-50 disabled:hover:border-border/80 disabled:hover:text-muted-foreground"
 			>
 				<FlagIcon className="size-3" aria-hidden />
 				{lesson ? "Finish lesson" : "Finish session"}

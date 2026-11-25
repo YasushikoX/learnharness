@@ -48,7 +48,7 @@ import { DEFAULT_PACE, isPace, type Pace } from "./pace.ts";
 import { DEFAULT_DIFFICULTY, isDifficulty, type Difficulty } from "./difficulty.ts";
 import { parseFileAccessSettings, type FileAccessSettings } from "./file-access.ts";
 import { sanitizeLearner, type LearnerSettings } from "./learner.ts";
-import { COLOR_OVERRIDE_KEYS, isThemeId, type AppearanceColorOverrides } from "./themes.ts";
+import { COLOR_OVERRIDE_KEYS, DEFAULT_THEME_ID, isThemeId, type AppearanceColorOverrides } from "./themes.ts";
 
 /** The schema version this code understands. Bump ONLY for breaking shape
  *  changes (a field renamed/meaning changed); pure additions never bump. */
@@ -474,7 +474,7 @@ export interface AgentSettings {
 
 /** Markdown-rendering knobs — the bare-bones set (owner decision). */
 export interface MdRenderingSettings {
-	/** Heading font weight (100–900, default 900). CSS resolves the nearest
+	/** Heading font weight (100–900, default 600). CSS resolves the nearest
 	 *  available weight of the chosen font — no font introspection needed. */
 	headingWeight?: number;
 	/** Color for **bold** spans (default #ffffff). */
@@ -486,7 +486,7 @@ export interface MdRenderingSettings {
 /** Appearance settings — theme, color overrides, type, markdown emphasis. */
 export interface AppearanceSettings {
 	/** The active theme id (core/themes.ts presets or a custom file under
-	 *  THEMES_DIR). Absent or gone = "default". The theme declares the
+	 *  THEMES_DIR). Absent or gone = DEFAULT_THEME_ID ("dark"). The theme declares the
 	 *  mode (dark/light) — the old `mode`/`lightBackground` keys are no
 	 *  longer read (theme wave, 2026-11-04). */
 	theme?: string;
@@ -499,12 +499,12 @@ export interface AppearanceSettings {
 	/** The main reading font (everything that is Source Sans 3 today), by
 	 *  name — user-chosen from installed fonts. null = Source Sans 3. */
 	fontFamily?: string | null;
-	/** Reading font size in px (12–24, default 16). Headings render as
+	/** Reading font size in px (12–24, default 17). Headings render as
 	 *  multiples of this, so one knob scales the document coherently. */
 	proseFontSize?: number;
 	/** Permit normal font ligatures in code (including inline code and code editors). Default false; prose is unaffected. */
 	codeLigatures?: boolean;
-	/** Session names in CMU Serif (default true — today's look). */
+	/** Session names in CMU Serif (default false since UI round 1, 2026-11-25: the chrome sans). */
 	sessionNameSerif?: boolean;
 	/** Single-line monospace rows in the session sidebar. Default false. */
 	compactSessionList?: boolean;
@@ -730,18 +730,18 @@ export const FACTORY_SETTINGS: FactorySettings = {
 	agent: { workerRequestConcurrency: 8 },
 	dictation: { language: "en" },
 	appearance: {
-		theme: "default",
+		theme: DEFAULT_THEME_ID, // the neutral Dark preset (UI round 1, 2026-11-25)
 		background: null, // null = the active theme's background
 		colors: {}, // no overrides: every color is the theme's
 		fontFamily: null, // Source Sans 3
-		proseFontSize: 16,
+		proseFontSize: 17, // UI round 1: 17/27 reading prose
 		codeLigatures: false,
-		sessionNameSerif: true,
+		sessionNameSerif: false, // UI round 1: titles in the chrome sans; the toggle puts CMU Serif back
 		compactSessionList: false,
 		transcriptMaxWidth: null, // Full
 		adaptiveQuestions: true,
 		confidenceControl: DEFAULT_CONFIDENCE_CONTROL,
-		mdRendering: { headingWeight: 900, boldColor: null, italicColor: null },
+		mdRendering: { headingWeight: 600, boldColor: null, italicColor: null },
 	},
 	graph: { enabled: true, rendering: true, extractionChunkTokens: 4096 },
 	compaction: { thresholdTokens: 150_000, includeReasoning: false },

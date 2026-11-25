@@ -185,7 +185,7 @@ export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, mess
 			    card is exactly the stacked one. */}
 			<div className={columns ? "grid" : "contents"} style={columnStyle}>
 			<div ref={questionColRef} className={columns ? "min-w-0 [&>*:last-child]:mb-0" : "contents"}>
-			<div className="mb-1 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+			<div className="mb-1 flex items-center gap-2 lh-eyebrow text-muted-foreground">
 				{/* The tool's OWN name first (owner 2026-10-09): probe-phase
 			    cards label Probe/Recall — the phase boundary visible in the
 			    transcript. No `tool` on old records: kind labels as before. */}
@@ -236,7 +236,7 @@ export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, mess
 									!sel && key && "border-success/40",
 								)}
 							>
-								{letter && <span data-option-letter={letter} className="w-3 shrink-0 text-center text-xs font-medium text-muted-foreground/70">{letter}</span>}
+								{letter && <span data-option-letter={letter} className="w-3 shrink-0 text-center text-xs font-medium text-muted-foreground">{letter}</span>}
 								{isQuiz && (
 									// Zapf-Dingbats-derived SVG outlines — the exact LaTeX \ding{51}/
 									// \ding{55} hand-drawn shapes (owner, round 6); see ui/glyph-mark.
@@ -297,7 +297,7 @@ export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, mess
 				<div className="mt-3 flex items-center gap-3" data-testid="answered-confidence">
 					<ConfidenceRail value={answer.confidence} className="min-w-0 flex-1" />
 					{/* Sized for "100%", shorter values centered (as on the question card). */}
-					<span className="w-[4ch] shrink-0 text-center font-mono text-sm tabular-nums text-muted-foreground">
+					<span className="w-[4ch] shrink-0 text-center text-sm tabular-nums text-muted-foreground">
 						{answer.confidence}%
 					</span>
 				</div>

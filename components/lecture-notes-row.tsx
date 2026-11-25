@@ -1,5 +1,6 @@
 "use client";
 
+import { buttonVariants } from "@/components/ui/button";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { PlusIcon, MoreHorizontalIcon, PencilLineIcon } from "lucide-react";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
@@ -185,9 +186,9 @@ function NoteDialog({
 
 	return (
 		<div ref={rootRef} className="contents">
-			<div role="dialog" aria-modal="true" aria-label={editing ? "Edit lecture note" : "New lecture note"} data-testid="lecture-note-dialog" className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm" {...backdropDismiss}>
+			<div role="dialog" aria-modal="true" aria-label={editing ? "Edit lecture note" : "New lecture note"} data-testid="lecture-note-dialog" className="fixed inset-0 z-50 flex items-center justify-center lh-scrim" {...backdropDismiss}>
 				<form
-					className="mx-4 w-full max-w-sm rounded-xl border bg-card p-5 shadow-lg"
+					className="mx-4 w-full max-w-sm lh-dialog p-6"
 					onClick={(e) => e.stopPropagation()}
 					onSubmit={(e) => {
 						e.preventDefault();
@@ -221,7 +222,7 @@ function NoteDialog({
 							<span />
 						)}
 						<div className="flex gap-2">
-							<button type="button" onClick={onClose} className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
+							<button type="button" onClick={onClose} className={buttonVariants({ variant: "ghost", size: "sm" })}>
 								Cancel
 							</button>
 							<button type="submit" data-testid="lecture-note-save" disabled={busy} className="rounded-sm border border-foreground/30 bg-muted px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-muted/70 disabled:pointer-events-none disabled:opacity-50">

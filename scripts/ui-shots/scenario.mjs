@@ -8,4 +8,6 @@ export const ids = {
 	material: "mat_ui_energetics",
 };
 
-export const themes = { dark: "default", light: "ivory" };
+// The default neutral pair since UI round 1 (2026-11-25): Dark is the preset id "dark", Light "light". (Before: the
+// warm default, now Warm Brass with id "default", and Ivory.)
+export const themes = { dark: "dark", light: "light" };

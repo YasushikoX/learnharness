@@ -63,7 +63,7 @@ export function CitationChip({ citation, variant, contentEditable, source }: Cit
 		<span
 			data-testid="citation-chip"
 			contentEditable={contentEditable}
-			className="inline-flex max-w-[16em] items-center gap-1 rounded border bg-muted/50 px-1.5 py-0.5 align-middle text-sm"
+			className="inline-flex max-w-[16em] items-center gap-1 rounded-sm border bg-muted/50 px-1.5 py-0.5 align-middle text-sm"
 		>
 			<button
 				ref={labelRef}
@@ -82,7 +82,7 @@ export function CitationChip({ citation, variant, contentEditable, source }: Cit
 				<button
 					type="button"
 					aria-label={citation.comment ? "Edit citation comment" : "Add comment to citation"}
-					className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
+					className="shrink-0 rounded-sm p-0.5 text-muted-foreground hover:text-foreground"
 					onPointerDown={(event) => event.preventDefault()}
 					onClick={() => { if (source) actions?.editComment?.(citation, source); }}
 				>
@@ -90,7 +90,7 @@ export function CitationChip({ citation, variant, contentEditable, source }: Cit
 				</button>
 			) : null}
 			{cardOpen ? (
-				<MenuShell anchorRef={labelRef} onClose={() => { setCardOpen(false); return "closed"; }} testid="citation-quote-card" preferredSide="up" align="left" menuClass="w-80 rounded-xl border bg-popover p-3 text-sm shadow-xl">
+				<MenuShell anchorRef={labelRef} onClose={() => { setCardOpen(false); return "closed"; }} testid="citation-quote-card" preferredSide="up" align="left" menuClass="w-80 lh-popover p-3 text-sm">
 					<div ref={cardRef}>
 						<CitationQuoteCard citation={citation} onOpenSource={() => { setCardOpen(false); if (labelRef.current) openSource(labelRef.current); }} />
 					</div>

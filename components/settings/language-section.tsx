@@ -137,7 +137,7 @@ export function DictationEngineRows({
 					testid={`row-stt-model-${m.language}`}
 				>
 					<span className="flex items-center gap-2">
-						<span className="font-mono text-[11px] text-muted-foreground" data-testid={`stt-model-${m.language}-status`}>
+						<span className="font-mono text-xs text-muted-foreground" data-testid={`stt-model-${m.language}-status`}>
 							{localModelLine(m)}
 						</span>
 						{(m.state === "absent" || m.state === "error") && (
@@ -145,7 +145,7 @@ export function DictationEngineRows({
 								type="button"
 								onClick={() => download(m.language)}
 								data-testid={`stt-model-${m.language}-download`}
-								className="lh-touch lh-press rounded-pill bg-primary/20 px-3 py-1 text-xs font-medium text-primary hover:bg-primary/30 active:rounded-lg"
+								className="lh-touch lh-press rounded-md bg-primary/20 px-3 py-1 text-xs font-medium text-primary hover:bg-primary/30"
 							>
 								Download
 							</button>

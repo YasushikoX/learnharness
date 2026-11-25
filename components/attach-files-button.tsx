@@ -180,7 +180,7 @@ export function AttachFilesButton({ editorRef, edge = false }: { editorRef: Reac
 						// `edge`: the quiet tool button on the fork's composer-shell bottom edge (beside Sources and the language).
 						edge
 							? CONTROL_CLASS.edge
-							: "flex size-10 shrink-0 items-center justify-center rounded-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
+							: "flex size-10 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
 						"aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:bg-transparent aria-disabled:hover:text-muted-foreground",
 					)}
 				>
@@ -191,7 +191,7 @@ export function AttachFilesButton({ editorRef, edge = false }: { editorRef: Reac
 				aria-label={open ? "Attach files or a folder" : undefined}
 				data-testid="attachment-popup"
 				style={{ position: "fixed", zIndex: 60, ...(placement ?? { left: 0, top: 0, visibility: "hidden" }), overflowY: "auto" }}
-				className={open ? "w-max rounded-lg border bg-card p-1 shadow-lg" : "w-64 rounded-lg border bg-card p-2 text-xs text-muted-foreground shadow-lg"}
+				className={open ? "w-max lh-menu" : "w-64 lh-popover p-2 text-xs text-muted-foreground"}
 				onKeyDown={(event) => {
 					const buttons = Array.from(popupRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
 					const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
@@ -199,9 +199,9 @@ export function AttachFilesButton({ editorRef, edge = false }: { editorRef: Reac
 					if (next >= 0) { event.preventDefault(); buttons[next]?.focus(); }
 				}}>
 				{open ? <>
-					<button type="button" role="menuitem" className="block w-full rounded px-2 py-1 text-left text-xs hover:bg-accent"
+					<button type="button" role="menuitem" className="block w-full rounded-sm px-2 py-1 text-left text-xs hover:bg-accent"
 						onClick={() => { setOpen(false); pickerRef.current?.click(); }}>Files</button>
-					<button type="button" role="menuitem" className="block w-full rounded px-2 py-1 text-left text-xs hover:bg-accent"
+					<button type="button" role="menuitem" className="block w-full rounded-sm px-2 py-1 text-left text-xs hover:bg-accent"
 						onClick={() => { void chooseFolder(); }}>Folder</button>
 				</> : notice}
 			</div></AttachmentPopup>}

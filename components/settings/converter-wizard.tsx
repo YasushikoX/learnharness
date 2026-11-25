@@ -25,10 +25,10 @@ import { DRAFT_TEST_CLIENT_TIMEOUT_MS, approveDraft, createDraft, discardDraft, 
  */
 
 const FIELD =
-	"h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50";
-const AREA = "min-h-24 rounded-sm border border-border bg-background p-1.5 font-mono text-xs text-foreground outline-none focus:border-muted-foreground/50";
+	"h-8 min-w-0 flex-1 rounded-md border border-input bg-card px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring";
+const AREA = "min-h-24 rounded-md border border-input bg-card p-2.5 font-mono text-xs text-foreground outline-none focus:border-ring";
 const LINK = "shrink-0 text-xs text-foreground underline-offset-2 hover:underline disabled:text-muted-foreground/40 disabled:no-underline";
-const QUIET_LINK = "shrink-0 text-xs text-muted-foreground/70 underline-offset-2 hover:text-error hover:underline";
+const QUIET_LINK = "shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-error hover:underline";
 const NOTE = "text-xs leading-relaxed text-muted-foreground";
 const BOX = "flex flex-col gap-1 rounded-sm border border-border p-2";
 const MARK = { pass: "✓", fail: "✗", skipped: "–" } as const;
@@ -57,7 +57,7 @@ function FixedValues({ values }: { values: FixedValue[] }) {
 			<p className="text-xs font-medium text-foreground">{FIXED_VALUES_HEADING}:</p>
 			{values.map((v, i) => (
 				<div key={`${v.kind}-${v.request}-${v.label}-${i}`} data-testid={v.warning ? "wizard-fixed-red" : "wizard-fixed-value"} data-kind={v.kind} className={`flex flex-col ${v.warning ? "text-error" : "text-foreground"}`}>
-					<span className="font-mono text-[11px]">
+					<span className="font-mono text-xs">
 						{SELF_LABELLED.has(v.kind) ? `${v.label}: ` : `${v.request === "every request" ? "" : `${v.request} `}${KIND[v.kind]} ${v.label} = `}{v.value}
 						{v.raw !== undefined && <span className="text-muted-foreground"> (written as {v.raw})</span>}
 					</span>
@@ -201,7 +201,7 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 	const steps = (
 		<ol className="flex flex-wrap gap-3" data-testid="wizard-steps">
 			{STEPS.map((s, i) => (
-				<li key={s} data-testid={`wizard-step-${s.toLowerCase()}`} data-current={i === step ? "true" : undefined} className={`text-xs ${i === step ? "font-medium text-foreground" : "text-muted-foreground/70"}`}>
+				<li key={s} data-testid={`wizard-step-${s.toLowerCase()}`} data-current={i === step ? "true" : undefined} className={`text-xs ${i === step ? "font-medium text-foreground" : "text-muted-foreground"}`}>
 					{i + 1} {s}
 				</li>
 			))}
@@ -210,7 +210,7 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 	const problem = (error || errors.length > 0) && (
 		<div role="alert" data-testid="wizard-error" className="flex flex-col gap-0.5">
 			{error && <p className="text-xs text-error">{error}</p>}
-			{errors.map((e) => <p key={e} className="font-mono text-[11px] text-error">{e}</p>)}
+			{errors.map((e) => <p key={e} className="font-mono text-xs text-error">{e}</p>)}
 		</div>
 	);
 
@@ -328,38 +328,38 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 			{draft.status === "invalid" && (
 				<div data-testid="wizard-invalid" className="flex flex-col gap-0.5">
 					<p className="text-xs text-error">The draft is not a valid profile, so nothing can be sent with it:</p>
-					{draft.errors.map((e) => <p key={e} className="font-mono text-[11px] text-error">{e}</p>)}
+					{draft.errors.map((e) => <p key={e} className="font-mono text-xs text-error">{e}</p>)}
 				</div>
 			)}
 			{draft.fixErrors && (
 				<div data-testid="wizard-fix-errors" className="flex flex-col gap-0.5">
 					<p className="text-xs text-error">The AI&apos;s fix was not a valid profile, so the previous draft is kept:</p>
-					{draft.fixErrors.map((e) => <p key={e} className="font-mono text-[11px] text-error">{e}</p>)}
+					{draft.fixErrors.map((e) => <p key={e} className="font-mono text-xs text-error">{e}</p>)}
 				</div>
 			)}
 
 			{pre && (
 				<div data-testid="wizard-preflight" className="flex flex-col gap-1">
 					<p className="text-xs font-medium text-foreground">What it would send, and only when you press Test or use it:</p>
-					<p data-testid="wizard-submit" className="font-mono text-[11px] text-foreground">{pre.submit}</p>
+					<p data-testid="wizard-submit" className="font-mono text-xs text-foreground">{pre.submit}</p>
 					<p className={NOTE}>{pre.body}</p>
 					{pre.auth ? (
 						<p data-testid="wizard-auth" className="text-xs text-foreground">
-							Key header: <span className="font-mono text-[11px]">{pre.auth.header}: {pre.auth.value}</span> (your key, never shown)
+							Key header: <span className="font-mono text-xs">{pre.auth.header}: {pre.auth.value}</span> (your key, never shown)
 						</p>
 					) : (
 						<p data-testid="wizard-auth" className={NOTE}>No key is sent.</p>
 					)}
 					<FixedValues values={pre.fixed} />
-					{pre.poll && <p data-testid="wizard-poll" className="font-mono text-[11px] text-foreground">{pre.poll}</p>}
-					{pre.result && <p data-testid="wizard-result" className="font-mono text-[11px] text-foreground">{pre.result}</p>}
+					{pre.poll && <p data-testid="wizard-poll" className="font-mono text-xs text-foreground">{pre.poll}</p>}
+					{pre.result && <p data-testid="wizard-result" className="font-mono text-xs text-foreground">{pre.result}</p>}
 					<p data-testid="wizard-pages" className={NOTE}>{pre.pages}</p>
 				</div>
 			)}
 			{draft.profileText !== undefined && (
 				<details data-testid="wizard-json">
 					<summary className="cursor-pointer text-xs text-foreground">The profile&apos;s JSON</summary>
-					<pre className="mt-1 max-h-64 overflow-auto font-mono text-[11px] text-muted-foreground">{draft.profileText}</pre>
+					<pre className="mt-1 max-h-64 overflow-auto font-mono text-xs text-muted-foreground">{draft.profileText}</pre>
 				</details>
 			)}
 			{editor}
@@ -412,7 +412,7 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 						))}
 					</ul>
 					{report.pages.map((p) => (
-						<p key={p.page} data-testid="wizard-page-preview" className="truncate font-mono text-[11px] text-muted-foreground/80">Page {p.page}: {p.text || "(empty)"}</p>
+						<p key={p.page} data-testid="wizard-page-preview" className="truncate font-mono text-xs text-muted-foreground">Page {p.page}: {p.text || "(empty)"}</p>
 					))}
 					{draft.test?.previews === false && (
 						<p className={NOTE} data-testid="wizard-no-previews">The service&apos;s own messages and the page previews are kept only while the app runs. Run Test again to see them.</p>

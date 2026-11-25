@@ -17,7 +17,7 @@ export function SketchHintCard({ hint }: { hint: HintControl }) {
 			)}
 			{hint.lines.map((line, i) => (
 				<div key={i} className="flex gap-2 text-foreground/90">
-					<span className="shrink-0 pt-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Hint {i + 1}</span>
+					<span className="shrink-0 pt-0.5 lh-eyebrow text-muted-foreground">Hint {i + 1}</span>
 					<div className="min-w-0 flex-1">
 						<ToolContentResponse>{line.text}</ToolContentResponse>
 					</div>

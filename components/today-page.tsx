@@ -1,5 +1,6 @@
 "use client";
 
+import { buttonVariants } from "@/components/ui/button";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { TodayCourse } from "@/src/core";
@@ -16,7 +17,9 @@ import { cn } from "@/lib/utils";
  */
 
 /** The course page's Next up button (exam-plan.tsx), so the same rows look the same on both pages. */
-const BTN = "rounded-md border border-border px-2.5 py-1 text-xs transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50";
+/** UI round 1 (SPEC §3): ordinary actions are secondary sm Buttons; the region's one emphasised action is primary. */
+const BTN = buttonVariants({ variant: "secondary", size: "sm" });
+const BTN_PRIMARY = buttonVariants({ size: "sm" });
 const CARD = "min-w-0 rounded-xl border border-border/60 bg-card/50 p-4";
 
 /** "15 days to the exam", "exam today", "exam passed", or nothing without a date. Pure. */
@@ -37,7 +40,7 @@ export function TodayPage({ initial }: { initial: TodayCourse[] }) {
 			<header className="lh-drag z-10 bg-background/85 pb-2 pt-[calc(0.5rem+var(--lh-safe-top))] backdrop-blur sm:sticky sm:top-0">
 				<div className="mx-auto flex max-w-5xl items-center gap-3 px-4 sm:px-6">
 					<SidebarToggle />
-					<h1 className="min-w-0 flex-1 font-title text-[30px] leading-tight">Today</h1>
+					<h1 className="min-w-0 flex-1 lh-page-title">Today</h1>
 				</div>
 			</header>
 			<div className="mx-auto max-w-5xl px-4 pb-16 pt-4 sm:px-6" data-testid="today-page">
@@ -64,7 +67,7 @@ export function TodayPage({ initial }: { initial: TodayCourse[] }) {
 													<span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: "var(--lh-due)" }} />
 													{c.reviewBatch < c.reviewDue ? `Review · ${c.reviewBatch} of ${c.reviewDue}` : `Review · ${c.reviewDue}`}
 												</span>
-												<button type="button" className={cn(BTN, "border-foreground/40 text-foreground")} disabled={busy} onClick={() => void startReview(c.courseId)}>
+												<button type="button" className={BTN_PRIMARY} disabled={busy} onClick={() => void startReview(c.courseId)}>
 													Start
 												</button>
 											</div>

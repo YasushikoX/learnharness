@@ -59,11 +59,11 @@ describe("first paint follows the theme", () => {
 		assert.match(out, /--lh-warning:#123456/);
 	});
 
-	it("no record = the Default dark theme", () => {
+	it("no record = the default Dark theme", () => {
 		fs.rmSync(path.join(TMP_DATA, "settings.json"), { force: true });
 		const out = html();
 		assert.match(out, /<html class="dark"/);
-		assert.match(out, /--background:#151210/);
+		assert.match(out, /--background:#0e0e10/);
 	});
 });
 

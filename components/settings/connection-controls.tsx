@@ -21,8 +21,8 @@ export function ConnectionFooter({ leading, children, testid }: { leading?: Reac
 
 export function ConnectionDialog({ children, onClose, busy, label, testid, backdropTestid }: { children: React.ReactNode; onClose: () => CloseOutcome; busy: boolean; label: string; testid: string; backdropTestid: string }) {
 	return <HostDialog open onClose={onClose} aria-label={label}
-		backdropProps={{ className: "fixed inset-0 z-[60] flex items-center justify-center bg-background/80", "data-testid": backdropTestid }}
-		frame={<div aria-busy={busy} data-testid={testid} onClick={(event) => event.stopPropagation()} className="settings-dialog-pop mx-4 max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-md border border-border bg-card p-5 shadow-xl" />}>
+		backdropProps={{ className: "fixed inset-0 z-[60] flex items-center justify-center lh-scrim", "data-testid": backdropTestid }}
+		frame={<div aria-busy={busy} data-testid={testid} onClick={(event) => event.stopPropagation()} className="settings-dialog-pop mx-4 max-h-[85vh] w-full max-w-lg overflow-y-auto lh-dialog p-6" />}>
 		{children}
 	</HostDialog>;
 }

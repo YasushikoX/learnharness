@@ -71,8 +71,8 @@ export function CameraDialog({ onPhoto, onClose }: { onPhoto: (file: File) => vo
 
 	if (typeof document === "undefined") return null;
 	return createPortal(
-		<div ref={rootRef} data-lh-menu data-testid="camera-dialog" role="dialog" aria-modal="true" aria-label="Take a photo" className="fixed inset-0 z-[70] grid place-items-center bg-black/60 p-4">
-			<div className="flex w-full max-w-xl flex-col gap-3 rounded-xl border bg-card p-3 text-card-foreground shadow-xl">
+		<div ref={rootRef} data-lh-menu data-testid="camera-dialog" role="dialog" aria-modal="true" aria-label="Take a photo" className="fixed inset-0 z-[70] grid place-items-center lh-scrim p-4">
+			<div className="flex w-full max-w-xl flex-col gap-3 lh-dialog p-3">
 				<div className="flex items-center justify-between">
 					<h2 className="text-sm font-semibold">Take a photo</h2>
 					<button type="button" aria-label="Close" data-testid="camera-close" onClick={onClose} className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground">

@@ -69,7 +69,7 @@ export function ReadingThinkingField({
 		>
 			{/* One line until focused (owner, 2026-11-10): the label shows once the field is tapped or holds text; the
 			    placeholder names the field meanwhile. */}
-			<div className={`pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground ${draft.trim() === "" ? "hidden group-focus-within/reading:block" : ""}`}>
+			<div className={`pb-1 lh-eyebrow text-muted-foreground ${draft.trim() === "" ? "hidden group-focus-within/reading:block" : ""}`}>
 				Thinking while reading
 			</div>
 			<PathInput
@@ -117,7 +117,7 @@ export function ReadingThinkingField({
 					}
 				}}
 				placeholder="Thinking while reading: whatever comes to mind."
-				className="field-sizing-content lh-input max-h-40 w-full resize-none bg-transparent py-0.5 outline-none placeholder:text-muted-foreground/70"
+				className="field-sizing-content lh-input max-h-40 w-full resize-none bg-transparent py-0.5 outline-none placeholder:text-muted-foreground"
 			/>
 		</div>
 	);

@@ -20,7 +20,7 @@ export function PaceRadios({ pace, onPace }: { pace: Pace | null; onPace: (pace:
 				>
 					<span className="flex flex-col">
 						<span className="text-sm">{p.label}</span>
-						<span className="text-xs text-muted-foreground/80">{p.blurb}</span>
+						<span className="text-xs text-muted-foreground">{p.blurb}</span>
 					</span>
 					{p.id === pace && <span aria-hidden>✓</span>}
 				</button>
@@ -65,7 +65,7 @@ export function SessionSetup({
 					className="resize-none rounded-md border bg-background px-2 py-1.5 text-sm text-foreground outline-none"
 				/>
 			</label>
-			<p className="text-[11px] text-muted-foreground/70">
+			<p className="text-xs text-muted-foreground">
 				Your pace is the default for new sessions. The note is for this session only; for a course, set it on the course page.
 			</p>
 		</section>

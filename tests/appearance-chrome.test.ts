@@ -44,12 +44,12 @@ it("selected custom files resolve before a renderer; missing or malformed files 
 });
 
 it("absent and corrupt records fall back; renderer reports are normalized", () => {
-	assert.deepEqual(readAppearance(data), { mode: "dark", background: "#151210" });
+	assert.deepEqual(readAppearance(data), { mode: "dark", background: "#0e0e10" });
 	fs.writeFileSync(path.join(data, "settings.json"), "{");
-	assert.deepEqual(readAppearance(data), { mode: "dark", background: "#151210" });
+	assert.deepEqual(readAppearance(data), { mode: "dark", background: "#0e0e10" });
 	for (const theme of [null, [], {}, { toString: null }, 123, true]) {
 		record({ theme });
-		assert.deepEqual(readAppearance(data), { mode: "dark", background: "#151210" });
+		assert.deepEqual(readAppearance(data), { mode: "dark", background: "#0e0e10" });
 	}
 	assert.deepEqual(normalizeAppearance({ mode: "light", background: "#fff" }), { mode: "light", background: "#fff" });
 	assert.deepEqual(normalizeAppearance({ mode: "system", background: "white" }), { mode: "dark", background: null });

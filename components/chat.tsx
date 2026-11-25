@@ -297,7 +297,7 @@ export function PendingTurnIndicator({ evaluating, label = "Thinking", quiet = f
 	return (
 		<span
 			aria-hidden={quiet || undefined}
-			className={cn("flex items-center gap-2 font-ui text-xs font-medium uppercase tracking-wide text-muted-foreground", quiet && "invisible")}
+			className={cn("flex items-center gap-2 lh-eyebrow text-muted-foreground", quiet && "invisible")}
 		>
 			<BrailleSpinner label={text} />
 			<Shimmer duration={1}>{`${text.toUpperCase()}…`}</Shimmer>
@@ -1989,7 +1989,7 @@ export function Chat({
 								data-plugin-chrome-title
 								aria-label="Session title"
 								title="Rename this session"
-								className="lh-no-drag min-w-[8ch] max-w-[70%] shrink-0 bg-transparent font-title text-xl tracking-tight sm:text-3xl caret-current outline-none [field-sizing:content]"
+								className="lh-no-drag min-w-[8ch] max-w-[70%] shrink-0 bg-transparent lh-bar-title caret-current outline-none [field-sizing:content]"
 							/>
 							{/* flex-1 spacer during rename too, so the chips stay at
 							    the right edge; clicks here commit via the header
@@ -2011,7 +2011,7 @@ export function Chat({
 								setRenaming(true);
 							}}
 							data-plugin-chrome-title
-							className="lh-no-drag -mx-1.5 min-w-4 shrink cursor-text truncate rounded-md px-1.5 text-left font-title text-xl tracking-tight sm:text-3xl transition-colors hover:bg-accent"
+							className="lh-no-drag -mx-1.5 min-w-4 shrink cursor-text truncate rounded-md px-1.5 text-left lh-bar-title transition-colors hover:bg-accent"
 						>
 							{titleText}
 							</button>
@@ -2033,7 +2033,7 @@ export function Chat({
 								blurAfterPointerClick(e);
 								setPlanOpen(true);
 							}}
-							className="lh-no-drag flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-border/80 px-2 py-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+							className="lh-no-drag flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-border/80 px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground"
 						>
 							<WaypointsIcon className="size-3.5 text-primary" aria-hidden />
 							Plan
@@ -2078,7 +2078,7 @@ export function Chat({
 							data-testid="phase-chip"
 							data-phase="ask"
 							aria-hidden="true"
-							className="pointer-events-none flex shrink-0 select-none items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+							className="pointer-events-none flex shrink-0 select-none items-center gap-1 whitespace-nowrap text-xs font-medium text-muted-foreground"
 						>
 							<MessageCircleQuestionIcon className="size-3" />
 							Questions
@@ -2088,7 +2088,7 @@ export function Chat({
 							data-testid="phase-chip"
 							data-phase="placement"
 							aria-hidden="true"
-							className="pointer-events-none flex shrink-0 select-none items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+							className="pointer-events-none flex shrink-0 select-none items-center gap-1 whitespace-nowrap text-xs font-medium text-muted-foreground"
 						>
 							<ClipboardCheckIcon className="size-3" />
 							Placement test
@@ -2098,7 +2098,7 @@ export function Chat({
 							data-testid="phase-chip"
 							data-phase="practice"
 							aria-hidden="true"
-							className="pointer-events-none flex shrink-0 select-none items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+							className="pointer-events-none flex shrink-0 select-none items-center gap-1 whitespace-nowrap text-xs font-medium text-muted-foreground"
 						>
 							<DumbbellIcon className="size-3" />
 							Practice
@@ -2166,7 +2166,7 @@ export function Chat({
 													<div
 														key={pi}
 														data-testid="practice-next-line"
-														className="my-4 flex items-center justify-center gap-1.5 font-ui text-xs font-medium uppercase tracking-wide text-muted-foreground"
+														className="my-4 flex items-center justify-center gap-1.5 lh-eyebrow text-muted-foreground"
 													>
 														<ArrowRightIcon className="size-3" />
 														Next problem
@@ -2233,7 +2233,7 @@ export function Chat({
 												{/* The rail GROUPS (owner round 4, 2026-10-05): the YOU heading
 												    sits INSIDE the rail, same mono-xs register and same 1ch
 												    rail as the thinking rows — one quote geometry. */}
-												<div className="font-medium uppercase tracking-wide text-muted-foreground">You</div>
+												<div className="lh-eyebrow text-muted-foreground">You</div>
 												<div className="lh-prose whitespace-pre-wrap text-foreground">
 													<PathText text={m.parts.filter((p) => p.type === "text").map((p) => p.text).join("\n")} />
 												</div>
@@ -2371,7 +2371,7 @@ export function Chat({
 						    the THINKING placeholder by construction (the gate sits
 						    BEFORE beginTurn; the settle kick runs after endTurn). */}
 							{compacting && (
-								<span className="flex items-center gap-2 font-ui text-xs font-medium uppercase tracking-wide text-muted-foreground">
+								<span className="flex items-center gap-2 lh-eyebrow text-muted-foreground">
 									<BrailleSpinner label="Compacting context" />
 									<Shimmer duration={1}>COMPACTING CONTEXT…</Shimmer>
 								</span>
@@ -3401,7 +3401,7 @@ export function DockOverlay({
 							claim={revealPending}
 						/>
 					)}
-					<div ref={shellRef} data-attachment-composer="" className="pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg">
+					<div ref={shellRef} data-attachment-composer="" className="pointer-events-auto overflow-hidden rounded-2xl border border-input bg-card shadow-lg transition-[border-color,box-shadow] duration-(--lh-duration-hover) ease-(--lh-ease) focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20">
 						{(pending || practice) && <DockHandle expanded={expanded} onCollapse={collapseByUser} onExpand={pending ? expandAndReveal : expandPractice} />}
 						{preparationStatus}
 						{/* Include descendant margins (notably practice thinking's

@@ -128,7 +128,7 @@ export function ThemeCards({
 			<div className="flex items-end justify-between gap-4">
 				<span className="min-w-0">
 					<span className="block font-prose text-(length:--lh-prose-size)">Theme</span>
-					<span data-testid="theme-hint" className="block text-xs text-muted-foreground/70">
+					<span data-testid="theme-hint" className="block text-xs text-muted-foreground">
 						{active.name} · {active.mode} · sets every color below
 					</span>
 				</span>
@@ -163,7 +163,7 @@ export function ThemeCards({
 										{selected && <CheckIcon className="size-3.5 shrink-0" strokeWidth={2.5} />}
 										<span className="truncate">{theme.name}</span>
 									</span>
-									<span className="shrink-0 rounded-sm border border-border px-1.5 font-ui text-xs uppercase tracking-wider text-muted-foreground">
+									<span className="shrink-0 rounded-sm border border-border px-1.5 text-xs text-muted-foreground">
 										{theme.builtin ? theme.mode : "custom"}
 									</span>
 								</span>
@@ -194,7 +194,7 @@ export function ThemeCards({
 					{importError ? (
 						<span data-testid="theme-import-error" className="text-error">{importError}</span>
 					) : (
-						<span className="text-muted-foreground/70">name · mode · colors</span>
+						<span className="text-muted-foreground">name · mode · colors</span>
 					)}
 				</button>
 				<input

@@ -17,9 +17,9 @@ export function DeleteSourceBody({ sources, folders, deleteSessions, onDeleteSes
 	const checking = deleteSessions && chats.length > 0 && courseLoss?.status === "checking";
 	const names = [...sources.map((s) => s.label ?? s.id), ...folders.map((f) => f.name)];
 	const frame = <div role="dialog" aria-modal="true" aria-label="Delete sources" data-testid="delete-source-dialog"
-		onClick={(e) => e.stopPropagation()} className="w-[32rem] max-w-[calc(100vw-2rem)] rounded-xl border bg-card p-5 shadow-xl">
+		onClick={(e) => e.stopPropagation()} className="w-[32rem] max-w-[calc(100vw-2rem)] lh-dialog p-6">
 		<h2 className="text-sm font-semibold text-destructive">Delete selected sources and folders?</h2>
-		<p className="mt-1.5 font-mono text-sm" data-testid="source-deletion-names">{names.slice(0, 8).join(", ")}{names.length > 8 ? `, and ${names.length - 8} more` : ""}</p>
+		<p className="mt-1.5 font-sans text-sm font-medium" data-testid="source-deletion-names">{names.slice(0, 8).join(", ")}{names.length > 8 ? `, and ${names.length - 8} more` : ""}</p>
 		{sources.length > 0 && <p className="mt-2 text-sm text-muted-foreground" data-testid="source-deletion-contributions">
 			Removes these sources’ contributions to propositions and reasoning chains. Knowledge supported by other sources survives; knowledge supported only by these sources is removed.
 		</p>}
@@ -62,5 +62,5 @@ export function DeleteSourceDialog({ open, sources, folders, onDelete, onClose }
 		renderFrame={(frame) => <HostDialog open frame={frame} onClose={() => {
 			if (busy) return "blocked";
 			onClose(); return "closed";
-		}} backdropProps={{ className: "fixed inset-0 z-50 flex items-center justify-center bg-background/80" }}>{frame.props.children}</HostDialog>} />;
+		}} backdropProps={{ className: "fixed inset-0 z-50 flex items-center justify-center lh-scrim" }}>{frame.props.children}</HostDialog>} />;
 }

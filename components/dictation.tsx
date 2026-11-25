@@ -1199,7 +1199,7 @@ export function DictationBar({ dictation, compact = false, disabled = false }: {
 								: "lh-touch flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
 							: // Same blurring as the floating chrome (owner, fix wave round 3),
 								// but lower opacity — the mic stays quieter than the model pills.
-								"flex min-h-7 w-full items-center justify-center gap-1.5 rounded-md border border-border/50 bg-card/50 px-2 py-1 text-xs text-muted-foreground/70 shadow-lg backdrop-blur transition-colors hover:border-border hover:text-muted-foreground"
+								"flex min-h-7 w-full items-center justify-center gap-1.5 rounded-md border border-border/50 bg-card/50 px-2 py-1 text-xs text-muted-foreground shadow-lg backdrop-blur transition-colors hover:border-border hover:text-muted-foreground"
 					}
 				>
 					<MicIcon className={compact && !error ? "size-4" : "size-3.5 shrink-0"} />
@@ -1228,7 +1228,7 @@ export function DictationBar({ dictation, compact = false, disabled = false }: {
 		<div className="flex w-full min-w-0 items-center gap-2" data-testid="dictation-bar">
 			<span className="size-1.5 shrink-0 animate-pulse rounded-full bg-destructive" aria-hidden />
 			{dictation.online && (
-				<span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground" data-testid="dictation-online" title="This run uses Google's online recognizer: audio leaves the device">
+				<span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground" data-testid="dictation-online" title="This run uses Google's online recognizer: audio leaves the device">
 					Online
 				</span>
 			)}

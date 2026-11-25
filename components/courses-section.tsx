@@ -121,7 +121,7 @@ export function CourseRow({
 			)}
 		>
 			<span className="min-w-0 flex-1">
-				<span className="block truncate font-prose text-(length:--lh-prose-size)">{course.title}</span>
+				<span className="block truncate text-sm">{course.title}</span>
 				{meta.status !== null ? (
 					<span className="block truncate text-xs text-muted-foreground">{meta.status}</span>
 				) : meta.percent !== null ? (
@@ -376,7 +376,7 @@ export function CoursesSection({ onCourses, query = "" }: { onCourses?: (courses
 					>
 						{open ? <ChevronDownIcon className="size-3 shrink-0" /> : <ChevronRightIcon className="size-3 shrink-0" />}
 						<span className="min-w-0 truncate">{f.name}</span>
-						<span className="shrink-0 font-normal tabular-nums text-muted-foreground/60">{f.courses.length}</span>
+						<span className="shrink-0 font-normal tabular-nums text-muted-foreground">{f.courses.length}</span>
 					</button>
 				)}
 				{open && <div className="pl-2">{f.courses.map(renderCourse)}</div>}
@@ -397,13 +397,13 @@ export function CoursesSection({ onCourses, query = "" }: { onCourses?: (courses
 					onClick={toggleSection}
 					{...dropProps("section", null)}
 					className={cn(
-						"lh-touch flex items-center gap-2 rounded-lg px-2 text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground",
+						"lh-touch flex items-center gap-2 rounded-lg px-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground",
 						dropTarget === "section" && "bg-accent text-foreground ring-1 ring-border",
 					)}
 				>
 					<GraduationCapIcon className="size-3.5" />
 					Courses
-					{courses !== null && <span className="font-normal tabular-nums text-muted-foreground/60">{total}</span>}
+					{courses !== null && <span className="font-normal tabular-nums text-muted-foreground">{total}</span>}
 					{bodyOpen ? <ChevronDownIcon className="size-3" /> : <ChevronRightIcon className="size-3" />}
 				</button>
 				{/* a quiet + (owner, 2026-11-16): the gold pill was the loudest thing in the sidebar */}

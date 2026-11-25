@@ -19,28 +19,30 @@
  *     future settings UI reassigns them (configurable per the owner).
  */
 
-/* The no-ring law (owner, UI round 2026-10-01): the browser's default
-   focus/focus-visible outline appears NOWHERE in the app. Pointer focus
-   never showed it; any keypress while a clicked element still held focus
-   DID (:focus-visible re-evaluates on key input — a clicked sidebar
-   session lit up when the quiz's ←/→ were pressed). Surfaces carry their
-   own hover/active/selected affordances; the dock's keyboard walk uses
-   its own ring utilities, unaffected by an outline reset. */
-*:focus,
-*:focus-visible {
-	outline: none;
+/* Focus (UI round 1, 2026-11-25, SPEC §6; replaces the 2026-10-01 no-ring
+   law): keyboard focus shows a 2px ring in the accent, pointer focus shows
+   nothing. In the BASE layer on purpose: a control that draws its own
+   focus state (outline-none + focus-visible:ring-*, the composer's
+   :focus-within border) keeps it, since utilities beat base styles. */
+@layer base {
+	:focus:not(:focus-visible) {
+		outline: none;
+	}
+	:focus-visible {
+		outline: 2px solid var(--lh-focus-ring);
+		outline-offset: 1px;
+	}
 }
 
-/* Palette (owner, 2026-10-27: warm, the opposite of a dopamine app, "locked in"): a charcoal with a brown undertone,
-   cream text, one muted brass accent (the same amber the skill nodes use). Main #151210, raised #1D1916, edges #4A433B,
-   text #ECE5DA, muted text #A1978A (6.5:1 on the main), accent #E0B45A (9.6:1).
-   Mono chrome = JetBrains Mono; prose = Source Sans 3; titles = CMU Serif.
+/* Palette (UI round 1, 2026-11-25): the default is the neutral Dark preset (T3 Code style: near-black page, one blue
+   accent used sparingly). The old warm brown/brass default lives on as the "Warm Brass" preset (id `default`).
+   Chrome and titles = the system sans (SF Pro, Inter elsewhere); prose = Source Sans 3; code = the system mono.
    Dark is the default variant (:root) and the `.dark` class on <html>.
    THEMES (theme wave, 2026-11-04): the active theme's colors land as
    inline variables on <html> (app/layout.tsx first paint, then the
-   appearance provider), so these literals are the Default theme's —
-   themeVars(DEFAULT_THEME) in src/core/themes.ts (the warm palette above;
-   its brass primary rides on the theme's `chrome`); tests/themes.test.ts
+   appearance provider), so these literals are the default theme's —
+   themeVars(DEFAULT_THEME) in src/core/themes.ts (the Dark preset; its
+   blue primary rides on the theme's `chrome`); tests/themes.test.ts
    pins the two equal. */
 :root,
 .dark {
@@ -53,30 +55,40 @@
 	--lh-safe-left: env(safe-area-inset-left, 0px);
 	color-scheme: dark;
 	--radius: 8px;
-	--background: #151210;
-	--foreground: #ece5da;
-	--card: #1d1916;
-	--card-foreground: #ece5da;
-	--popover: #1d1916;
-	--popover-foreground: #ece5da;
-	--primary: #e0b45a;
-	--primary-foreground: #1a1410;
+	--background: #0e0e10;
+	--foreground: #ededf0;
+	--card: #17171a;
+	--card-foreground: #ededf0;
+	--popover: #17171a;
+	--popover-foreground: #ededf0;
+	--primary: #3b76f0;
+	--primary-foreground: #ffffff;
 	--lh-skill: #e0b45a;
-	--secondary: #1d1916;
-	--secondary-foreground: #ece5da;
-	--muted: #1d1916;
-	--muted-foreground: #a1978a;
-	--accent: #2b2724;
-	--accent-foreground: #ece5da;
-	--destructive: #ff6467;
-	--border: #4a433b;
-	--input: #4a433b;
-	--ring: #e0b45a;
+	--secondary: #252528;
+	--secondary-foreground: #ededf0;
+	--muted: #17171a;
+	--muted-foreground: #9b9ba4;
+	--accent: #252528;
+	--accent-foreground: #ededf0;
+	--destructive: #f87171;
+	--border: #252528;
+	--input: #343437;
+	--ring: #5b8def;
 	/* The theme accent (rings, toggles, the selected theme card). The
 	   shadcn --accent above is the HOVER surface, not this. */
-	--lh-accent: #e0b45a;
+	--lh-accent: #5b8def;
+	/* Derived roles (UI round 1, 2026-11-25; themeVars computes them for every theme): the sidebar's fill, the raised
+	   fill (hover, selected row; = --accent), one step more (a secondary button's hover, a pressed row), and the
+	   keyboard focus ring (the accent at 40%). */
+	--lh-sidebar: #141416;
+	--lh-raised: #252528;
+	--lh-raised-strong: #333336;
+	--lh-focus-ring: #5b8def66;
+	/* Floating layers (SPEC §3): the dialog scrim and the menu/popover/dialog shadow, per variant (.light below). */
+	--lh-scrim: rgb(0 0 0 / 0.6);
+	--lh-shadow-pop: 0 8px 28px rgb(0 0 0 / 0.5);
 	/* The strong line ink: plan-map outlines, callout borders, the LH mark. */
-	--lh-line-strong: #ece5da;
+	--lh-line-strong: #ededf0;
 	/* Skill understanding ramp (owner, 2026-11-09: color on the course page): steps 1-10 are the 0-10 understanding scale,
 	   orange (just started) through brass to green (known = 6 and up). Lightness rises monotonically with the step (OKLCH L .66 to .78, chroma .15, hue 38 to 150) and each step is at least 3:1 on the raised #1D1916 (dataviz validator, dark mode). Color
 	   never stands alone: the number and the word sit beside every bar. --lh-due marks a skill whose recall fell below
@@ -94,22 +106,20 @@
 	--lh-due: #6fb3e0;
 	/* Emphasis inks default to the REGULAR TEXT COLOR (owner ruling,
 	   appearance wave 2026-09-26); themes give them their own colors. */
-	--lh-ink-strong: #ece5da;
-	--lh-ink-italic: #ece5da;
-	--lh-ink-code: #ece5da;
+	--lh-ink-strong: #ededf0;
+	--lh-ink-italic: #ededf0;
+	--lh-ink-code: #ededf0;
 	/* Status inks (text-error, bg-success/15, border-warning/40, …). */
-	--lh-error: #ff6467;
-	--lh-success: #22c55e;
-	--lh-warning: #f59e0b;
-	/* THE READING SIZE = the ladder's 16px rung (--text-lg). Can't be
-	   var()-linked: @theme inline inlines literals into utilities without
-	   emitting runtime vars — so this is the one documented duplication:
-	   change one, change both. (owner, typography round 4: snapped from
-	   the reskin's hand-tuned 16.5 to the ladder's 16.) */
-	--lh-prose-size: 16px;
-	--lh-prose-leading: 1.5;
-	/* Markdown heading weight (appearance settings; 900 = the Black cut). */
-	--lh-heading-weight: 900;
+	--lh-error: #f87171;
+	--lh-success: #34c759;
+	--lh-warning: #f5a524;
+	/* THE READING SIZE (UI round 1, 2026-11-25: 17/27 in Source Sans 3). The
+	   Appearance setting writes the size inline on <html>; the leading is a
+	   ratio, so 17px reads at 27px and other sizes keep the proportion. */
+	--lh-prose-size: 17px;
+	--lh-prose-leading: 1.5882;
+	/* Markdown heading weight (appearance settings; 600 since UI round 1, no Black cut). */
+	--lh-heading-weight: 600;
 }
 
 /* The light variant: the colors come from the active light theme (inline
@@ -118,9 +128,12 @@
    <html class="light">, and with equal specificity the later rule wins. */
 .light {
 	color-scheme: light;
+	--lh-scrim: rgb(0 0 0 / 0.32);
+	--lh-shadow-pop: 0 8px 28px rgb(0 0 0 / 0.12);
 }
 
-/* CMU Serif bold (titles) — bundled local file, no CDN dependency. */
+/* CMU Serif bold — bundled local file, no CDN dependency. Titles no longer use it (UI round 1: one sans for chrome and
+   titles); it stays for the Appearance "session names in serif" option. */
 @font-face {
 	font-family: "lh-cmu";
 	src: url("/fonts/cmunbx.ttf") format("truetype");
@@ -130,47 +143,64 @@
 }
 
 @theme inline {
-	/* Chrome/code = JetBrains Mono; sans surfaces follow the reading font
-	   (Source Sans 3 by default). The loading-face variables attach in
-	   app/layout.tsx. Keep the sans alias pointed at the RUNTIME prose token,
-	   not the loading face, so font-sans also honors Appearance changes. */
-	--font-ui: var(--font-jetbrains), ui-monospace, SFMono-Regular, monospace;
-	--font-mono: var(--font-jetbrains), ui-monospace, SFMono-Regular, monospace;
-	--font-sans: var(--font-prose);
-	/* The modular type ladder — each size carries its own line-height.
-	   Component sizes must pull from this ladder. (owner, typography
-	   round 4: the 10px rung is merged into 11 — one pixel apart was a
-	   distinction with no visible difference, and 10px sits at the mono
-	   legibility floor; quiet labels get their quiet from color +
-	   tracking, not a notch of size. Reading prose = the 16px rung via
-	   --lh-prose-size.) */
+	/* Fonts (UI round 1, 2026-11-25, SPEC §1): chrome and titles = the system
+	   sans (SF Pro on macOS, the bundled Inter elsewhere); code, keys, hex
+	   inputs, model ids and token counts = the system mono (the bundled
+	   JetBrains Mono where none exists). font-ui is kept as an alias of the
+	   sans for plugins and older call sites. The loading-face variables
+	   attach in app/layout.tsx. */
+	--font-sans: -apple-system, BlinkMacSystemFont, var(--font-inter), "Inter", "Segoe UI", system-ui, sans-serif;
+	--font-ui: var(--font-sans);
+	--font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, var(--font-jetbrains), "JetBrains Mono", monospace;
+	/* THE TYPE SCALE (SPEC §1) — each size carries its own line-height.
+	   Component sizes must pull from this scale. The named rungs say what
+	   they are for; the t-shirt rungs map onto them (xs = meta, sm = chrome,
+	   base = body-ui) so the existing utilities land on the scale.
+	     eyebrow 11/16 (only with .lh-eyebrow) · meta 12/16 · chrome 13/18 ·
+	     body 14/20 · lg 16/24 (question stems) · section 15/20 (page
+	     sections, dialog titles, the top-bar title) · xl 20/26 (prose h2) ·
+	     page 24/30 (page H1) · big 28/32 (big numbers).
+	   Teaching prose = --lh-prose-size (17/27). Floor: nothing below 11px,
+	   normal text never below 12px. */
 	/* --font-prose and --font-title live in the NON-inline @theme below:
 	   their utilities must read the runtime variables, not bake in the
 	   defaults and bypass the Appearance reading-font/serif overrides. The smallest text rung (--text-xs) lives there
 	   too, so a touch screen can raise it. */
-	--text-sm: 12.5px;
-	--text-sm--line-height: 1.4;
+	--text-eyebrow: 11px;
+	--text-eyebrow--line-height: calc(16 / 11);
+	--text-meta: 12px;
+	--text-meta--line-height: calc(16 / 12);
+	--text-chrome: 13px;
+	--text-chrome--line-height: calc(18 / 13);
+	--text-body: 14px;
+	--text-body--line-height: calc(20 / 14);
+	--text-section: 15px;
+	--text-section--line-height: calc(20 / 15);
+	--text-page: 24px;
+	--text-page--line-height: 1.25;
+	--text-big: 28px;
+	--text-big--line-height: calc(32 / 28);
+	--text-sm: 13px;
+	--text-sm--line-height: calc(18 / 13);
 	--text-base: 14px;
-	--text-base--line-height: 1.45;
+	--text-base--line-height: calc(20 / 14);
 	--text-lg: 16px;
-	--text-lg--line-height: 1.45;
+	--text-lg--line-height: 1.5;
 	--text-xl: 20px;
-	--text-xl--line-height: 1.4;
-	--text-2xl: 25px;
-	--text-2xl--line-height: 1.3;
-	--text-3xl: 32px;
-	--text-3xl--line-height: 1.25;
-	/* Radii ladder — 4/8/12/16 multiples of the 4px base. */
-	--radius-sm: 4px;
+	--text-xl--line-height: 1.3;
+	--text-2xl: 24px;
+	--text-2xl--line-height: 1.25;
+	--text-3xl: 28px;
+	--text-3xl--line-height: calc(32 / 28);
+	/* Radii (SPEC §3): 6 compact buttons, menu items, chips · 8 buttons,
+	   inputs, selects · 12 cards, popovers, menus, dialogs · 16 the
+	   composer / question dock shell · full only for toggles, status dots,
+	   avatars and count badges. */
+	--radius-sm: 6px;
 	--radius-md: 8px;
 	--radius-lg: 12px;
 	--radius-xl: 16px;
 	--radius: 8px;
-	/* Material 3 Expressive corner steps above the ladder (ShapeTokens: LargeIncreased 20dp, ExtraLarge 28dp). */
-	--radius-lgi: 20px;
-	--radius-xxl: 28px;
-	/* A pill that can MORPH: a finite radius (a control is at most 44px tall), so a transition to a squarer corner starts at once; rounded-full is 1e7px and stays round until the last frame. */
-	--radius-pill: 22px;
 	--color-background: var(--background);
 	--color-foreground: var(--foreground);
 	--color-card: var(--card);
@@ -190,6 +220,10 @@
 	--color-input: var(--input);
 	--color-ring: var(--ring);
 	--color-line-strong: var(--lh-line-strong);
+	--color-raised: var(--lh-raised);
+	--color-raised-strong: var(--lh-raised-strong);
+	--color-sidebar-fill: var(--lh-sidebar);
+	--color-focus: var(--lh-focus-ring);
 	--color-error: var(--lh-error);
 	--color-success: var(--lh-success);
 	--color-warning: var(--lh-warning);
@@ -199,48 +233,173 @@
 	border-color: var(--color-border);
 }
 
-/* Motion (Material 3 Expressive, 2026-10-29): the expressive scheme's six springs (androidx ExpressiveMotionTokens:
-   damping, stiffness, mass 1) sampled into CSS linear() curves, each with the time it takes to settle. SPATIAL springs
-   move or reshape things (position, size, corner radius) and may overshoot; EFFECTS springs fade colour and opacity and
-   never do. Regenerate with the formula x = 1 - e^(-ζωt)(cos ωd·t + ζω/ωd · sin ωd·t), ω = √stiffness. */
+/* Motion (UI round 1, 2026-11-25, SPEC §5; replaces the Material 3 Expressive springs of 2026-10-29): one calm
+   ease-out curve, no overshoot. Hover 120ms, popovers and dialogs 180ms (opacity + scale 0.98 → 1), the sidebar 220ms.
+   The --lh-spring-* names stay as aliases (plugins or older call sites may read them); they now carry the same curve. */
 :root {
-	--lh-spring-spatial-fast: linear(0, 0.064, 0.216, 0.405, 0.595, 0.762, 0.895, 0.991, 1.052, 1.085, 1.095, 1.09, 1.076, 1.058, 1.04, 1.024, 1.011, 1.002, 0.995, 0.992, 0.991, 0.991, 0.993, 0.994, 1); /* ζ 0.6, k 800: 9.5% overshoot */
-	--lh-spring-spatial-fast-duration: 330ms;
-	--lh-spring-spatial: linear(0, 0.04, 0.137, 0.26, 0.39, 0.515, 0.628, 0.724, 0.803, 0.867, 0.915, 0.951, 0.977, 0.994, 1.005, 1.011, 1.014, 1.015, 1.015, 1.013, 1.011, 1.009, 1.007, 1.006, 1); /* ζ 0.8, k 380 */
-	--lh-spring-spatial-duration: 380ms;
-	--lh-spring-spatial-slow: linear(0, 0.04, 0.135, 0.257, 0.386, 0.511, 0.623, 0.72, 0.799, 0.863, 0.912, 0.949, 0.975, 0.993, 1.004, 1.011, 1.014, 1.015, 1.015, 1.013, 1.011, 1.009, 1.008, 1.006, 1); /* ζ 0.8, k 200 */
-	--lh-spring-spatial-slow-duration: 520ms;
-	--lh-spring-effects-fast: linear(0, 0.045, 0.145, 0.265, 0.386, 0.497, 0.595, 0.678, 0.746, 0.802, 0.846, 0.881, 0.909, 0.93, 0.947, 0.96, 0.97, 0.977, 0.983, 0.987, 0.99, 0.993, 0.995, 0.996, 1); /* ζ 1, k 3800 */
-	--lh-spring-effects-fast-duration: 130ms;
-	--lh-spring-effects: linear(0, 0.041, 0.133, 0.246, 0.361, 0.47, 0.566, 0.649, 0.719, 0.777, 0.824, 0.862, 0.893, 0.917, 0.935, 0.95, 0.962, 0.971, 0.978, 0.983, 0.987, 0.99, 0.992, 0.994, 1); /* ζ 1, k 1600 */
-	--lh-spring-effects-duration: 190ms;
-	--lh-spring-effects-slow: linear(0, 0.041, 0.134, 0.248, 0.364, 0.472, 0.569, 0.652, 0.722, 0.78, 0.826, 0.864, 0.894, 0.918, 0.937, 0.951, 0.963, 0.971, 0.978, 0.983, 0.987, 0.99, 0.993, 0.994, 1); /* ζ 1, k 800 */
-	--lh-spring-effects-slow-duration: 270ms;
+	--lh-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+	--lh-duration-hover: 120ms;
+	--lh-duration-pop: 180ms;
+	--lh-duration-sidebar: 220ms;
+	--lh-spring-spatial-fast: var(--lh-ease);
+	--lh-spring-spatial-fast-duration: var(--lh-duration-pop);
+	--lh-spring-spatial: var(--lh-ease);
+	--lh-spring-spatial-duration: var(--lh-duration-pop);
+	--lh-spring-spatial-slow: var(--lh-ease);
+	--lh-spring-spatial-slow-duration: var(--lh-duration-sidebar);
+	--lh-spring-effects-fast: var(--lh-ease);
+	--lh-spring-effects-fast-duration: var(--lh-duration-hover);
+	--lh-spring-effects: var(--lh-ease);
+	--lh-spring-effects-duration: var(--lh-duration-hover);
+	--lh-spring-effects-slow: var(--lh-ease);
+	--lh-spring-effects-slow-duration: var(--lh-duration-pop);
 }
 
-/* A control that answers a press: its shape and size ride the fast spatial spring (a press shrinks it a little and the
-   release springs back past rest), its colours the fast effects spring. Add the class and, where the shape should
-   morph too, an active:rounded-* utility. Not for controls inside dense rows: it is the primary actions' feel. */
+/* A control that answers a press: its colours ease on the hover curve. No press scale (SPEC §3: only the primary
+   button scales, to 0.98, in components/ui/button.tsx). */
 .lh-press {
-	transition-property: border-radius, transform, background-color, color, border-color, opacity;
-	transition-duration:
-		var(--lh-spring-spatial-fast-duration), var(--lh-spring-spatial-fast-duration),
-		var(--lh-spring-effects-duration), var(--lh-spring-effects-duration), var(--lh-spring-effects-duration),
-		var(--lh-spring-effects-duration);
-	transition-timing-function:
-		var(--lh-spring-spatial-fast), var(--lh-spring-spatial-fast),
-		var(--lh-spring-effects), var(--lh-spring-effects), var(--lh-spring-effects), var(--lh-spring-effects);
-}
-.lh-press:active:not(:disabled) {
-	transform: scale(0.94);
+	transition-property: background-color, color, border-color, opacity, box-shadow;
+	transition-duration: var(--lh-duration-hover);
+	transition-timing-function: var(--lh-ease);
 }
 @media (prefers-reduced-motion: reduce) {
 	.lh-press {
 		transition-duration: 0.01ms !important;
 	}
-	.lh-press:active:not(:disabled) {
-		transform: none;
+}
+
+/* Floating layers open with a short fade + settle (SPEC §5): menus, popovers, dialogs. */
+@keyframes lh-pop-in {
+	from {
+		opacity: 0;
+		scale: 0.98;
 	}
+	to {
+		opacity: 1;
+		scale: 1;
+	}
+}
+.lh-pop-in {
+	animation: lh-pop-in var(--lh-duration-pop) var(--lh-ease);
+}
+@media (prefers-reduced-motion: reduce) {
+	.lh-pop-in {
+		animation: none;
+	}
+}
+
+/* THE FLOATING-LAYER SURFACES (SPEC §3), shared by every menu, popover and dialog:
+   - .lh-popover: radius 12, hairline border, the popover fill, the pop shadow (the site sets padding and text).
+   - .lh-menu: a .lh-popover with 4px inner padding and 13px text.
+   - .lh-menu-item: 30px tall, radius 6, 13px; hover = the raised fill. Destructive items add .lh-menu-item-danger.
+   - .lh-scrim: the dialog backdrop (black 32% light / 60% dark, a 2px blur), never a milky page-coloured wash.
+   - .lh-dialog: radius 12, hairline border, the pop shadow, the card fill.
+   Unlayered: they beat a site's leftover utilities (padding, radius) on purpose. */
+.lh-popover,
+.lh-menu {
+	border-radius: 12px;
+	border: 1px solid var(--border);
+	background: var(--popover);
+	color: var(--popover-foreground);
+	box-shadow: var(--lh-shadow-pop);
+}
+.lh-menu {
+	padding: 0.25rem;
+	font-size: 13px;
+	line-height: 18px;
+}
+.lh-menu-item {
+	display: flex;
+	min-height: 1.875rem;
+	align-items: center;
+	gap: 0.5rem;
+	border-radius: 6px;
+	padding: 0 0.5rem;
+	font-size: 13px;
+	text-align: left;
+	transition: background-color var(--lh-duration-hover) var(--lh-ease), color var(--lh-duration-hover) var(--lh-ease);
+}
+.lh-menu-item:hover:not(:disabled),
+.lh-menu-item[data-highlighted] {
+	background: var(--lh-raised);
+}
+.lh-menu-item:disabled {
+	opacity: 0.45;
+}
+.lh-menu-item-danger {
+	color: var(--destructive);
+}
+.lh-scrim {
+	background: var(--lh-scrim);
+	-webkit-backdrop-filter: blur(2px);
+	backdrop-filter: blur(2px);
+}
+.lh-dialog {
+	border-radius: 12px;
+	border: 1px solid var(--border);
+	background: var(--card);
+	color: var(--card-foreground);
+	box-shadow: var(--lh-shadow-pop);
+	animation: lh-pop-in var(--lh-duration-pop) var(--lh-ease);
+}
+/* Menus and popovers fade only: MenuShell measures them on mount, and a scale would skew the measured rect. */
+@keyframes lh-fade-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+.lh-popover,
+.lh-menu {
+	animation: lh-fade-in var(--lh-duration-hover) var(--lh-ease);
+}
+.lh-scrim {
+	animation: lh-fade-in var(--lh-duration-pop) var(--lh-ease);
+}
+@media (prefers-reduced-motion: reduce) {
+	.lh-dialog,
+	.lh-popover,
+	.lh-menu,
+	.lh-scrim {
+		animation: none;
+	}
+}
+
+/* Type roles that need more than a size (SPEC §1). */
+.lh-eyebrow {
+	font-size: 11px;
+	line-height: 16px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+.lh-page-title {
+	font-family: var(--font-title);
+	font-size: 24px;
+	line-height: 1.25;
+	font-weight: 650;
+	letter-spacing: -0.02em;
+}
+.lh-bar-title {
+	font-family: var(--font-title);
+	font-size: 15px;
+	line-height: 20px;
+	font-weight: 600;
+	letter-spacing: -0.005em;
+}
+.lh-section-title {
+	font-size: 15px;
+	line-height: 20px;
+	font-weight: 600;
+}
+.lh-big-number {
+	font-size: 28px;
+	line-height: 32px;
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	font-variant-numeric: tabular-nums;
 }
 
 /* A 60px page header band that also clears the top safe-area inset (M5).
@@ -256,6 +415,9 @@ body {
 	background: var(--color-background);
 	color: var(--color-foreground);
 	font-family: var(--font-ui);
+	/* body-ui 14/20 (SPEC §1): what unsized chrome text inherits. */
+	font-size: 14px;
+	line-height: calc(20 / 14);
 }
 
 /* Touch targets (owner goal 2026-10-27: usable on a phone): the controls that were 19-32 px tall get a 44 px floor on
@@ -324,19 +486,16 @@ html.lh-native-ink body > *:not([data-testid="sketch-view"]) {
 	max-width: calc(var(--lh-transcript-max) + 1rem);
 }
 
-/* Session-name weight (owner, fix wave round 3): with the serif toggle
-   OFF, --font-title resolves to the prose font — Source Sans 3 is loaded
-   as a VARIABLE font, and without an explicit weight the titles render at
-   400, a whisper next to CMU's bold-only face. Request 900: the variable
-   font takes it, and CMU (a single 700 face) snaps to its nearest
-   available weight — the same rendering it already had. */
+/* Session-name / title weight (UI round 1, 2026-11-25): 600, no Black cut. --font-title is the system sans unless the
+   Appearance "session names in serif" option puts CMU Serif back (a single 700 face, which 600 snaps to). */
 .font-title {
-	font-weight: 900;
+	font-weight: 600;
 }
 
+/* strong = 600 in the bold ink (the text colour unless the theme or an override sets one). */
 .lh-prose :where(strong, b) {
 	color: var(--lh-ink-strong);
-	font-weight: 700;
+	font-weight: 600;
 }
 
 .lh-prose :where(em, i) {
@@ -353,14 +512,35 @@ html.lh-native-ink body > *:not([data-testid="sketch-view"]) {
 	padding-left: 1.5rem;
 }
 
-/* Markdown headings render at the font's BLACK weight (owner ask,
-   2026-09-19) — 900, not streamdown's font-semibold 600. The variable
-   Source Sans 3 axis spans 200–900 (next/font loads the full range), so
-   900 draws the real Black cut. Unlayered CSS beats the utility layer;
-   :where keeps specificity zero. Chrome titles (CMU Serif) don't live
-   under .lh-prose and stay untouched. */
+/* Markdown headings (UI round 1, SPEC §1): the sans family, sized from the reading size so the Appearance size knob
+   still scales the document (at the default 17px: h1 24/30, h2 20/26, h3–h6 17/24), 600 by default (Appearance →
+   heading weight still overrides). h2 opens a section: 28px above, 10px below. Unlayered CSS beats streamdown's
+   text-2xl/mt-6/mb-2 utilities; :where keeps specificity low. */
 .lh-prose :where(h1, h2, h3, h4, h5, h6) {
-	font-weight: var(--lh-heading-weight, 900);
+	font-family: var(--font-sans);
+	font-weight: var(--lh-heading-weight, 600);
+	margin-bottom: 0.625rem;
+}
+.lh-prose :where(h1) {
+	font-size: calc(var(--lh-prose-size) * 24 / 17);
+	line-height: 1.25;
+	letter-spacing: -0.02em;
+	margin-top: 1.75rem;
+}
+.lh-prose :where(h2) {
+	font-size: calc(var(--lh-prose-size) * 20 / 17);
+	line-height: 1.3;
+	letter-spacing: -0.015em;
+	margin-top: 1.75rem;
+}
+.lh-prose :where(h3, h4, h5, h6) {
+	font-size: var(--lh-prose-size);
+	line-height: calc(24 / 17);
+	margin-top: 1.25rem;
+	margin-bottom: 0.5rem;
+}
+.lh-prose :where(h1, h2, h3, h4, h5, h6):first-child {
+	margin-top: 0;
 }
 
 /* lh-input (owner, typography round 2): lh-prose's 1.5 READING leading
@@ -681,7 +861,7 @@ html.lh-native-ink body > *:not([data-testid="sketch-view"]) {
 }
 
 .settings-dialog-pop {
-	animation: settings-pop 150ms ease-out;
+	animation: settings-pop var(--lh-duration-pop) var(--lh-ease);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -826,20 +1006,19 @@ html.lh-native-ink body > *:not([data-testid="sketch-view"]) {
    utilities read these vars; Source Sans 3 remains the default/loading face. */
 @theme {
 	--font-prose: var(--font-sans3), ui-sans-serif, system-ui, sans-serif;
-	--font-title: "lh-cmu", serif;
-	/* The smallest text rung lives here, NOT in the inline block above, so a touch screen can raise it (owner, 2026-10-29:
-	   12px on touch only; the 11px floor stays on desktop). Inline tokens are baked into the utilities and cannot be overridden. */
-	--text-xs: 11px;
-	--text-xs--line-height: 1.4;
+	/* Titles = the chrome sans (UI round 1); Appearance → "session names in serif" sets CMU Serif back at runtime. */
+	--font-title: -apple-system, BlinkMacSystemFont, var(--font-inter), "Inter", "Segoe UI", system-ui, sans-serif;
+	/* The meta rung (12/16) lives here, NOT in the inline block above, so a touch screen can raise it. Inline tokens are
+	   baked into the utilities and cannot be overridden. (UI round 1: 12px everywhere; the 11px eyebrow is its own rung.) */
+	--text-xs: 12px;
+	--text-xs--line-height: calc(16 / 12);
 }
 
 @media (pointer: coarse) {
-	:root {
-		--text-xs: 12px;
-	}
-	/* the arbitrary 11px and 10px sizes (about 57 uses) follow the same floor */
+	/* the arbitrary small sizes follow the 12px touch floor */
 	.text-\[11px\],
-	.text-\[10px\] {
+	.text-\[10px\],
+	.text-eyebrow {
 		font-size: 12px;
 	}
 }

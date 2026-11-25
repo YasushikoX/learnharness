@@ -25,8 +25,8 @@ export function WorkerResultDetails({ heading, children, icon = <CheckIcon class
 			{disclosure === "chevron" ? (
 				<ChevronRight aria-hidden="true" className="size-3 shrink-0 opacity-50 transition-transform group-open:rotate-90" />
 			) : <>
-				<span className="ml-1 text-xs text-muted-foreground/70 group-open:hidden">{viewLabel}</span>
-				<span className="ml-1 hidden text-xs text-muted-foreground/70 group-open:inline">{hideLabel}</span>
+				<span className="ml-1 text-xs text-muted-foreground group-open:hidden">{viewLabel}</span>
+				<span className="ml-1 hidden text-xs text-muted-foreground group-open:inline">{hideLabel}</span>
 			</>}
 		</summary>
 	);

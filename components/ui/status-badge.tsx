@@ -1,13 +1,14 @@
 import { cn } from "@/lib/utils";
 
-/** Plain-text, noninteractive badge; callers supply any meaning and color. */
+/** Plain-text, noninteractive badge; callers supply any meaning and color. UI round 1 (SPEC §7): a 12px sentence-case
+ *  chip on the 6px radius, no uppercase mono. */
 export function StatusBadge({ text, color }: { text: string; color?: string }) {
 	return (
 		<span
 			data-slot="status-badge"
 			className={cn(
-				"rounded px-1.5 py-0.5 font-ui text-xs font-medium uppercase tracking-wide",
-				color === undefined && "bg-muted text-muted-foreground",
+				"rounded-sm px-1.5 py-0.5 text-xs font-medium",
+				color === undefined && "bg-raised text-muted-foreground",
 			)}
 			style={color === undefined ? undefined : {
 				color,
