@@ -14,9 +14,12 @@ import {
 	cleanText,
 	describeProfile,
 	draftConverterId,
+	keptAnswers,
+	keptReport,
 	plainLine,
 	replyShape,
 	reportForModel,
+	screenedAiText,
 	validateDraftProfile,
 	withAppFields,
 	type AppOwnedFields,
@@ -58,10 +61,13 @@ import { CONVERTER_TEST_DEADLINE_MS, validateConverter } from "./validator.ts";
  *   - its Test is the converter test (validator.ts) on the bundled PDFs, sent only to that URL's origin;
  *   - APPROVE is possible only after a passing Test of exactly the profile, URL and key there are now (an HMAC of the
  *     three with a per-process secret, held in memory: a restart, any edit, another URL or key needs a new Test) and
- *     for the profile the user was shown (`shown`, a digest of profile and URL the approval names); when the profile
- *     sends any fixed value beyond a bare path, the approval must also carry the acknowledgement of that same digest
- *     (a bare `true`, or the digest of an earlier version, is refused). Approval makes it an ordinary custom profile (custom-profiles.ts) with the
- *     URL and key moved to it, and never selects it: "Use for new PDFs" stays a separate step.
+ *     for the profile the user was shown (`shown`, the SHA-256 of profile and URL the approval names); the approval
+ *     must ALWAYS carry the acknowledgement of that same digest, for everything the profile sends (a bare `true`, or
+ *     the digest of an earlier version, is refused). Approval makes it an ordinary custom profile (custom-profiles.ts)
+ *     with the URL and key moved to it, and never selects it: "Use for new PDFs" stays a separate step;
+ *   - nothing a service writes is kept on disk or reaches the model as text: the draft file keeps the Test's checks in
+ *     the app's own words, the error kind and HTTP status, and the reduced shape of at most three answers (none when
+ *     the service echoed the key); the service's messages and page previews live only in memory for this run.
  *
  * The model is called only when the user presses Draft or "Ask AI to fix": one drafting call plus at most one repair
  * call, or one fix call (agent/subagents/converter-author.ts). Each call's usage is recorded on the draft and appended
@@ -117,6 +123,8 @@ interface DraftRecord {
 
 interface DraftState {
 	secret: Buffer;
+	/** Draft id → the last Test's whole report (the service's messages, page previews), for this run only. */
+	reports: Map<string, { at: string; report: ConverterValidationReport }>;
 	/** Draft id → the fingerprint of the profile, URL and key of its last PASSING Test. */
 	passes: Map<string, string>;
 	/** Draft ids with a model call or a Test running. */
@@ -129,7 +137,7 @@ const STATE_KEY = Symbol.for("learnharness.converterDrafts");
 
 function state(): DraftState {
 	const g = globalThis as Record<symbol, DraftState | undefined>;
-	g[STATE_KEY] ??= { secret: randomBytes(32), passes: new Map(), busy: new Set(), drafting: false };
+	g[STATE_KEY] ??= { secret: randomBytes(32), reports: new Map(), passes: new Map(), busy: new Set(), drafting: false };
 	return g[STATE_KEY];
 }
 
@@ -182,8 +190,8 @@ function recordOf(value: unknown, id: string): DraftRecord | undefined {
 		...(raw.profile !== undefined ? { profile: raw.profile } : {}),
 		errors: strings(raw.errors, 500),
 		...(Array.isArray(raw.fixErrors) ? { fixErrors: strings(raw.fixErrors, 500) } : {}),
-		...(str(raw.reason, DRAFT_NOTE_MAX_CHARS) ? { reason: plainLine(str(raw.reason, DRAFT_NOTE_MAX_CHARS)!, DRAFT_NOTE_MAX_CHARS) } : {}),
-		...(str(raw.note, DRAFT_NOTE_MAX_CHARS) ? { note: plainLine(str(raw.note, DRAFT_NOTE_MAX_CHARS)!, DRAFT_NOTE_MAX_CHARS) } : {}),
+		...(str(raw.reason, DRAFT_NOTE_MAX_CHARS) ? { reason: screenedAiText(str(raw.reason, DRAFT_NOTE_MAX_CHARS)!, "reason") } : {}),
+		...(str(raw.note, DRAFT_NOTE_MAX_CHARS) ? { note: screenedAiText(str(raw.note, DRAFT_NOTE_MAX_CHARS)!, "note") } : {}),
 		...(baseUrl ? { baseUrl } : {}),
 		usage: Array.isArray(raw.usage) ? (raw.usage as DraftUsage[]).slice(-MAX_USAGE_ENTRIES) : [],
 	};
@@ -195,7 +203,8 @@ function recordOf(value: unknown, id: string): DraftRecord | undefined {
 	const test = raw.lastTest as Partial<DraftTestRecord> | undefined;
 	const report = test?.report as Partial<ConverterValidationReport> | undefined;
 	if (test && typeof test === "object" && typeof test.shown === "string" && report && typeof report.ok === "boolean" && Array.isArray(report.checks) && Array.isArray(report.pages) && Array.isArray(report.warnings) && !profileShapeProblem(test)) {
-		record.lastTest = { at: str(test.at, 40) ?? "", shown: test.shown, report: test.report as ConverterValidationReport, answers: Array.isArray(test.answers) ? test.answers.slice(0, 6) : [] };
+		// only what the app keeps: the checks in its own words, never a service's text, even from a file edited on disk
+		record.lastTest = { at: str(test.at, 40) ?? "", shown: test.shown, report: keptReport(test.report as ConverterValidationReport), answers: Array.isArray(test.answers) ? keptAnswers(test.answers as TestAnswerShape[]) : [] };
 	}
 	// the profile is checked again on every read: an edit on disk cannot make an invalid draft usable
 	if (record.status !== "cannot_express") {
@@ -243,9 +252,9 @@ function profileText(record: DraftRecord): string {
 	return JSON.stringify(record.profile ?? null);
 }
 
-/** A public digest of the profile and URL on screen: approval names it, so it approves what the user saw. */
+/** A public digest (the whole SHA-256) of the profile and URL on screen: approval names it, so it approves what the user saw. */
 function shownDigest(record: DraftRecord): string {
-	return createHash("sha256").update(JSON.stringify([profileText(record), record.baseUrl ?? ""])).digest("hex").slice(0, 24);
+	return createHash("sha256").update(JSON.stringify([profileText(record), record.baseUrl ?? ""])).digest("hex");
 }
 
 /** The profile, URL and key, under a per-process secret (never stored, never sent). */
@@ -255,6 +264,18 @@ function fingerprint(record: DraftRecord): string {
 }
 
 // ── Views ────────────────────────────────────────────────────────────────
+
+/**
+ * The last Test as the wizard shows it: the whole report while this run has it, else the kept one (the checks in the
+ * app's words) without previews. `stale`: it no longer applies (another profile or URL, or a pass made void by another
+ * key or a restart).
+ */
+function testView(record: DraftRecord, current: boolean, shown: string): NonNullable<ConverterDraftView["test"]> {
+	const test = record.lastTest!;
+	const whole = state().reports.get(record.id);
+	const stale = test.shown !== shown || (test.report.ok && !current);
+	return whole && whole.at === test.at ? { report: whole.report, current, at: test.at, stale } : { report: test.report, current, at: test.at, stale, previews: false };
+}
 
 function viewOf(record: DraftRecord): ConverterDraftView {
 	const cid = draftConverterId(record.id);
@@ -289,8 +310,7 @@ function viewOf(record: DraftRecord): ConverterDraftView {
 		keyNeeded,
 		credential,
 		shown,
-		// stale: the report no longer applies (another profile or URL, or a pass made void by another key or a restart)
-		...(record.lastTest ? { test: { report: record.lastTest.report, current, at: record.lastTest.at, stale: record.lastTest.shown !== shown || (record.lastTest.report.ok && !current) } } : {}),
+		...(record.lastTest ? { test: testView(record, current, shown) } : {}),
 		approvable: approveBlocked === undefined,
 		...(approveBlocked ? { approveBlocked } : {}),
 		modelCalls: record.usage.length,
@@ -672,6 +692,7 @@ export function testConverterDraft(id: string, signal: AbortSignal, deadlineMs =
 		const secret = readConverterCredential(cid, record.baseUrl);
 		if (profile.auth && !secret) return { ok: false, error: "Save its API key first. Nothing was sent.", status: 409 };
 		const allowed = tokenAllowed(record.baseUrl, secret);
+		const statusPointer = profile.poll?.statusPointer;
 		const answers: TestAnswerShape[] = [];
 		let leaked = false;
 		let pdfIndex = -1;
@@ -681,8 +702,8 @@ export function testConverterDraft(id: string, signal: AbortSignal, deadlineMs =
 				onAnswer: (stage, answer) => {
 					if (stage === "submit") pdfIndex++;
 					if (!leaked && answerHoldsSecret(answer, secret)) leaked = true;
-					// only the shape is kept (in the draft file too): lengths for strings, markers for odd field names
-					if (answers.length < 6) answers.push({ pdf: pdfIndex <= 0 ? "two-page" : "blank-middle", stage, shape: replyShape(answer, allowed) });
+					// only the shape is kept (in the draft file too): lengths for strings, markers for numbers and odd names
+					if (answers.length < 12) answers.push({ pdf: pdfIndex <= 0 ? "two-page" : "blank-middle", stage, shape: replyShape(answer, { allowed, ...(stage === "poll" && statusPointer !== undefined ? { statusPointer } : {}) }) });
 				},
 			});
 		} catch (error) {
@@ -694,8 +715,13 @@ export function testConverterDraft(id: string, signal: AbortSignal, deadlineMs =
 		// the draft may have been discarded or edited while the Test ran: the pass is only for what was tested
 		const now = readDraft(id);
 		if (!now) return { ok: false, error: "The draft was discarded during the Test", status: 409 };
-		now.lastTest = { at: new Date().toISOString(), shown, report, answers };
+		const at = new Date().toISOString();
+		// the file keeps the checks in the app's words and the answers' shape, none when the service echoed the key;
+		// the whole report (the service's messages, page previews) stays in memory for this run
+		const echoed = leaked || report.checks.some((c) => c.id === "no_secret" && c.status === "fail");
+		now.lastTest = { at, shown, report: keptReport(report), answers: echoed ? [] : keptAnswers(answers) };
 		const s = state();
+		s.reports.set(id, { at, report });
 		if (report.ok && shownDigest(now) === shown && fingerprint(now) === print) s.passes.set(id, print);
 		else s.passes.delete(id);
 		writeDraft(now);
@@ -717,6 +743,7 @@ export function fixConverterDraft(id: string, signal: AbortSignal): Promise<Serv
 		const secret = record.baseUrl ? readConverterCredential(draftConverterId(record.id), record.baseUrl) : undefined;
 		const redact = addressRedactor(record.baseUrl, secret);
 		const allowed = tokenAllowed(record.baseUrl, secret);
+		const statusPointer = (record.profile as HttpConverterProfile | undefined)?.poll?.statusPointer;
 		const profileId = (record.profile as { id?: unknown } | undefined)?.id;
 		const own = ownFields(record, typeof profileId === "string" && /^[a-z0-9][a-z0-9-]{0,47}$/.test(profileId) ? profileId : freshProfileId(record.serviceName), new Date(record.createdAt));
 		const outcome = await fixConverterProfile(
@@ -726,7 +753,7 @@ export function fixConverterDraft(id: string, signal: AbortSignal): Promise<Serv
 				documentationCut: record.documentationCut,
 				...(record.sample ? { sample: record.sample } : {}),
 				previous: record.profile,
-				...(failedTest ? { report: reportForModel(failedTest.report, failedTest.answers, redact, allowed) } : { errors: record.errors.map(redact) }),
+				...(failedTest ? { report: reportForModel(failedTest.report, failedTest.answers, { allowed, ...(statusPointer !== undefined ? { statusPointer } : {}) }) } : { errors: record.errors.map(redact) }),
 			},
 			{ engine: model.engine, signal, own, onUsage: (usage, call) => record.usage.push(usageEntry(usage, call, model.id, record)) },
 		);
@@ -738,6 +765,7 @@ export function fixConverterDraft(id: string, signal: AbortSignal): Promise<Serv
 			delete record.fixErrors;
 			delete record.lastTest;
 			state().passes.delete(id);
+			state().reports.delete(id);
 		}
 		writeDraft(record);
 		return { ok: true, value: viewOf(readDraft(id) ?? record) };
@@ -760,8 +788,8 @@ export function parseApproveDraftBody(body: unknown): ServiceResult<ApproveDraft
 	const unknown = Object.keys(raw).find((k) => !["id", "shown", "acknowledged"].includes(k));
 	if (unknown) return { ok: false, error: `unknown field ${unknown}` };
 	if (typeof raw.id !== "string" || !CONVERTER_DRAFT_ID_PATTERN.test(raw.id)) return { ok: false, error: "id must be a draft id" };
-	if (typeof raw.shown !== "string" || !/^[0-9a-f]{24}$/.test(raw.shown)) return { ok: false, error: "shown must name the draft on screen" };
-	if (raw.acknowledged !== undefined && (typeof raw.acknowledged !== "string" || !/^[0-9a-f]{24}$/.test(raw.acknowledged))) return { ok: false, error: "acknowledged must name the version whose values were read" };
+	if (typeof raw.shown !== "string" || !/^[0-9a-f]{64}$/.test(raw.shown)) return { ok: false, error: "shown must name the draft on screen" };
+	if (raw.acknowledged !== undefined && (typeof raw.acknowledged !== "string" || !/^[0-9a-f]{64}$/.test(raw.acknowledged))) return { ok: false, error: "acknowledged must name the version whose values were read" };
 	return { ok: true, value: raw as unknown as ApproveDraftInput };
 }
 
@@ -776,8 +804,9 @@ export function approveConverterDraft(input: ApproveDraftInput): ServiceResult<{
 	const view = viewOf(record);
 	if (input.shown !== view.shown) return { ok: false, error: "The draft changed since it was shown: review it again.", status: 409 };
 	if (!view.approvable) return { ok: false, error: view.approveBlocked ?? "The draft cannot be approved yet", status: 409 };
-	// the acknowledgement belongs to what was read: the digest of exactly this profile and URL, never a bare "true"
-	if (view.preflight?.acknowledgeNeeded && input.acknowledged !== view.shown) {
+	// every drafted profile needs it: the acknowledgement belongs to what was read, the digest of exactly this profile
+	// and URL, never a bare "true"
+	if (input.acknowledged !== view.shown) {
 		return { ok: false, error: input.acknowledged ? "The values changed since you read them: read them again and switch on \"I have read these values\"." : "Read the values sent with every PDF and switch on \"I have read these values\" first.", status: 409 };
 	}
 	const profile = record.profile as HttpConverterProfile;
@@ -807,6 +836,7 @@ function removeDraftFiles(id: string): void {
 	writeProfileCredential(draftConverterId(id), "", undefined);
 	fs.rmSync(draftFile(id), { force: true });
 	state().passes.delete(id);
+	state().reports.delete(id);
 }
 
 /** Discard a draft: its file, its key and its Test pass. */

@@ -89,7 +89,7 @@ function refuseSelf(name: string, baseUrl: string): void {
 /**
  * A profile converter for the settings: the service URL SAVED in `services` (a profile's defaultBaseUrl is never
  * used here), its key from the store. `bundled` only for presets. `observe` lets the connector wizard's Test see each
- * answer (it keeps only a redacted, truncated shape for "Ask AI to fix").
+ * answer (it keeps only a reduced shape for "Ask AI to fix", none when the service echoed the key).
  */
 export function createProfileConverter(converterId: string, profile: HttpConverterProfile, settings: PdfConversionSettings, readCredential: CredentialReader, bundled = false, observe?: Pick<HttpConverterOptions, "onAnswer">): PdfConverter {
 	const baseUrl = settings.services?.[converterId]?.baseUrl;

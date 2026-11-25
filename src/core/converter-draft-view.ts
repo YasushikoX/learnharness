@@ -15,24 +15,25 @@ export interface ProfileLine {
 }
 
 /**
- * One fixed value a profile sends exactly as written, with every PDF (fix round 1: every one is listed and must be
- * acknowledged; the address and key heuristic only decides which are shown first, in red).
+ * One value a drafted profile decides that goes on the wire, exactly as it is sent (fix round 2: the list is built by
+ * walking the profile's schema, so a field the format gains later is listed by default; every drafted profile needs
+ * the acknowledgement of the whole list; the red rules only decide which come first, with a reason).
  */
 export interface FixedValue {
-	/** A fixed header, a fixed body or form field, a query parameter of a path, a key header's fixed text, or a path. */
-	kind: "header" | "field" | "query" | "auth" | "path";
-	/** The request that sends it ("every request" for headers). */
+	/** The method, a path, a query parameter, a fixed header, the key header (name and fixed text), the file field or
+	 *  file pointer, a fixed form field or JSON leaf, or any other field the format sends ("other"). */
+	kind: "method" | "path" | "query" | "header" | "auth" | "file" | "field" | "other";
+	/** The request that sends it ("every request" for headers and the key header). */
 	request: "submit" | "poll" | "result" | "every request";
-	/** The header name, the field's name or JSON Pointer, the parameter's decoded name, or which path. */
+	/** The header name, the field's name or JSON Pointer, the parameter's decoded name, or what it is. */
 	label: string;
-	/** The value as sent (a query parameter decoded; placeholders as <job id>, <separator>). */
+	/** The value as sent (a query parameter decoded; placeholders as <job id>, <separator>; the key as the mask; an
+	 *  invisible or control character as a visible escape such as \u{200B}). */
 	value: string;
 	/** As written in the profile, when that differs from what is shown (a percent-encoded query parameter: name=value). */
 	raw?: string;
-	/** Why it is shown in red (it looks like an address, a webhook, a key or an account), or absent. */
+	/** Why it is shown in red (an address, a key or an account, an opaque identifier, invisible characters), or absent. */
 	warning?: string;
-	/** Counts toward the acknowledgement (everything but a bare path and a parameter that is only {{JOB_ID}}). */
-	acknowledge: boolean;
 }
 
 export interface ProfilePreflight {
@@ -42,10 +43,9 @@ export interface ProfilePreflight {
 	body: string;
 	/** The one header that carries the key, its value with the key masked; absent for a keyless service. */
 	auth?: { header: string; value: string };
-	/** Every fixed value the profile sends exactly as written: red ones first, then the rest in profile order. */
+	/** Everything the profile decides that is sent, exactly as written: red ones first, then the rest in schema order.
+	 *  Approve always needs "I have read these values" for this version. */
 	fixed: FixedValue[];
-	/** A fixed value other than a bare path is sent, or one is red: Approve needs "I have read these values". */
-	acknowledgeNeeded: boolean;
 	/** Status checks, when the service works with a job id. */
 	poll?: string;
 	/** The separate result request. */
@@ -58,9 +58,11 @@ export interface ProfilePreflight {
 	origins: string[];
 }
 
-/** The heading of the fixed values on the Review step, and the switch Approve needs when there are any. */
+/** The heading of the fixed values on the Review step, and the switch Approve always needs. */
 export const FIXED_VALUES_HEADING = "Sent with every PDF, exactly as written";
 export const ACKNOWLEDGE_LABEL = "I have read these values";
+/** The preface of everything the AI wrote in words (its note, its "cannot be expressed" reason). */
+export const AI_TEXT_PREFACE = "From the AI, which read documentation that can be wrong or written to mislead it";
 
 export const NO_BASE_URL = "<your service URL>";
 
@@ -74,6 +76,9 @@ export interface ConverterDraftTest {
 	current: boolean;
 	/** The report no longer applies: it is for an earlier profile or URL, or its pass is void (another key, a restart). */
 	stale: boolean;
+	/** False when the service's own messages and the page previews are gone: they live only in memory, so after a
+	 *  restart the report is the checks in the app's own words (the draft file keeps no service text). */
+	previews?: false;
 	at: string;
 }
 
@@ -103,8 +108,8 @@ export interface ConverterDraftView {
 	origin?: string;
 	keyNeeded: boolean;
 	credential: CredentialStatus;
-	/** A digest of the profile and URL shown; approval must name it, so it approves what was on screen, and the
-	 *  acknowledgement of the fixed values is this digest (any change of the profile or URL voids it). */
+	/** A digest (SHA-256, hex) of the profile and URL shown; approval must name it, so it approves what was on screen,
+	 *  and the acknowledgement of the fixed values is this digest (any change of the profile or URL voids it). */
 	shown?: string;
 	test?: ConverterDraftTest;
 	/** Approve is possible now (a passing Test of exactly this profile, URL and key). */

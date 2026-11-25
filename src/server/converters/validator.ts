@@ -59,7 +59,7 @@ function comparable(text: string): string {
 	return text.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
-type Converted = { ok: true; result: ConvertResult } | { ok: false; kind: ConverterError["kind"] | "internal"; message: string; retryable: boolean; raw: string };
+type Converted = { ok: true; result: ConvertResult } | { ok: false; kind: ConverterError["kind"] | "internal"; message: string; retryable: boolean; raw: string; httpStatus?: number };
 
 export async function validateConverter(converter: PdfConverter, options: ValidateConverterOptions): Promise<ConverterValidationReport> {
 	const started = Date.now();
@@ -107,7 +107,7 @@ export async function validateConverter(converter: PdfConverter, options: Valida
 			if (leaks(raw) || (secrets.length > 0 && raw.includes(REDACTED))) leaked = true;
 			if (timedOut) return { ok: false, kind: "timeout", message: `The test did not finish within ${seconds(deadlineMs)}`, retryable: true, raw };
 			return error instanceof ConverterError
-				? { ok: false, kind: error.kind, message: redact(error.message), retryable: error.retryable, raw }
+				? { ok: false, kind: error.kind, message: redact(error.message), retryable: error.retryable, raw, ...(error.httpStatus !== undefined ? { httpStatus: error.httpStatus } : {}) }
 				: { ok: false, kind: "internal", message: redact(raw), retryable: true, raw };
 		}
 	}
@@ -134,7 +134,7 @@ export async function validateConverter(converter: PdfConverter, options: Valida
 		if (!first.ok) {
 			check("converted", "fail", `The conversion failed (${first.kind}): ${first.message}`);
 			skip(["markers", "page_1", "page_2", "own_pages", "blank_page"]);
-			return finish({ error: { kind: first.kind, message: first.message, retryable: first.retryable } });
+			return finish({ error: { kind: first.kind, message: first.message, retryable: first.retryable, ...(first.httpStatus !== undefined ? { httpStatus: first.httpStatus } : {}) } });
 		}
 		const result = first.result;
 		check("converted", "pass", `${converter.label ?? converter.id} answered for ${result.pages?.length ?? 0} pages.`);

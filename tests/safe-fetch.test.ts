@@ -45,6 +45,10 @@ describe("isPublicAddress", () => {
 			// fix round 1 (WP3a-3 review, finding 6): IPv4-compatible, IPv4-translated, site-local, Teredo, ORCHID
 			"::127.0.0.1", "::7f00:1", "::169.254.169.254", "[::a9fe:a9fe]", "::ffff:0:127.0.0.1", "::ffff:0:7f00:1",
 			"fec0::1", "feff::1", "2001::1", "2001:0:4136:e378::1", "2001:10::1", "2001:1f::1", "2001:20::1", "2001:2f::1",
+			// fix round 2 (review 2, finding 8): benchmarking, AMT, DRIP, the new documentation ranges, segment routing;
+			// the hex form of mapped loopback; and anything outside global unicast 2000::/3 (the allowlist)
+			"2001:2::1", "2001:2:0:ffff::1", "2001:3::1", "2001:3:ffff::1", "2001:30::1", "2001:3f::1", "2001:4:112::1",
+			"3fff::1", "3fff:fff::1", "5f00::1", "5f00:ffff::1", "::ffff:7f00:1", "4000::1", "8000::1", "e000::1",
 			"not an ip", "",
 		]) {
 			assert.equal(isPublicAddress(ip), false, ip);
@@ -52,7 +56,7 @@ describe("isPublicAddress", () => {
 	});
 
 	it("allows public IPv4 and IPv6 addresses", () => {
-		for (const ip of ["93.184.215.14", "8.8.8.8", "1.1.1.1", "172.32.0.1", "2606:4700:4700::1111", "2a00:1450:4001:80b::200e", "::ffff:8.8.8.8"]) {
+		for (const ip of ["93.184.215.14", "8.8.8.8", "1.1.1.1", "172.32.0.1", "2606:4700:4700::1111", "2a00:1450:4001:80b::200e", "::ffff:8.8.8.8", "::ffff:808:808", "2001:200::1", "2c0f:fb50::1"]) {
 			assert.equal(isPublicAddress(ip), true, ip);
 		}
 	});

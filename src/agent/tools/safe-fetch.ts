@@ -37,34 +37,41 @@ for (const [network, prefix] of [
 	["224.0.0.0", 4], // multicast
 	["240.0.0.0", 4], // reserved, broadcast
 ] as const) NON_PUBLIC.addSubnet(network, prefix, "ipv4");
+
+/**
+ * IPv6 is an ALLOWLIST: only global unicast (2000::/3) can be public, so everything else (unspecified, loopback,
+ * IPv4-compatible and -translated, NAT64, discard-only, unique local, link-local, site-local, multicast, 5f00::/16
+ * and any range assigned later outside 2000::/3) is refused without being listed. Inside 2000::/3, the special ranges
+ * below are refused too. This is safer than a list of bad ranges: a range the list forgot is refused, not allowed.
+ */
+const GLOBAL_UNICAST = new BlockList();
+GLOBAL_UNICAST.addSubnet("2000::", 3, "ipv6");
 for (const [network, prefix] of [
-	["::", 128], // unspecified
-	["::1", 128], // loopback
-	["::", 96], // IPv4-compatible (deprecated): ::127.0.0.1, ::169.254.169.254
-	["::ffff:0:0:0", 96], // IPv4-translated (SIIT): ::ffff:0:127.0.0.1
-	["64:ff9b::", 96], // NAT64
-	["64:ff9b:1::", 48], // local-use NAT64
-	["100::", 64], // discard-only
-	["2001::", 32], // Teredo (carries an IPv4 address)
-	["2001:10::", 28], // ORCHID (deprecated)
-	["2001:20::", 28], // ORCHIDv2
+	["2001::", 23], // IETF protocol assignments: Teredo 2001::/32, benchmarking 2001:2::/48, AMT 2001:3::/32,
+	// AS112 2001:4:112::/48, ORCHID 2001:10::/28, ORCHIDv2 2001:20::/28, DRIP 2001:30::/28, and the rest of the block
 	["2001:db8::", 32], // documentation
-	["2002::", 16], // 6to4
-	["fc00::", 7], // unique local
-	["fe80::", 10], // link-local
-	["fec0::", 10], // site-local (deprecated, still routed inside some networks)
-	["ff00::", 8], // multicast
+	["2002::", 16], // 6to4 (carries an IPv4 address)
+	["3fff::", 20], // documentation (RFC 9637)
 ] as const) NON_PUBLIC.addSubnet(network, prefix, "ipv6");
+
+/** The IPv4 address an IPv4-mapped IPv6 address carries (::ffff:a.b.c.d, or ::ffff:XXXX:XXXX as URLs write it). */
+function mappedIpv4(ip: string): string | undefined {
+	const dotted = ip.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i)?.[1];
+	if (dotted) return dotted;
+	const hex = ip.match(/^(?:0{0,4}:){0,5}:?ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+	if (!hex || isIP(ip) !== 6) return undefined;
+	const [hi, lo] = [Number.parseInt(hex[1]!, 16), Number.parseInt(hex[2]!, 16)];
+	return [hi >> 8, hi & 255, lo >> 8, lo & 255].join(".");
+}
 
 /** True when an IP address is on the public internet. IPv4-mapped IPv6
  *  (::ffff:a.b.c.d) is judged as the IPv4 address it carries. */
 export function isPublicAddress(address: string): boolean {
 	const unbracketed = address.replace(/^\[|\]$/g, "");
-	const mapped = unbracketed.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i)?.[1];
-	const ip = mapped ?? unbracketed;
+	const ip = mappedIpv4(unbracketed) ?? unbracketed;
 	const family = isIP(ip);
 	if (family === 4) return !NON_PUBLIC.check(ip, "ipv4");
-	if (family === 6) return !NON_PUBLIC.check(ip, "ipv6");
+	if (family === 6) return GLOBAL_UNICAST.check(ip, "ipv6") && !NON_PUBLIC.check(ip, "ipv6");
 	return false;
 }
 

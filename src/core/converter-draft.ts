@@ -31,17 +31,19 @@ export * from "./converter-draft-view.ts";
  *     no `defaultBaseUrl`, no credential headers, paths relative to the base URL only), after the app has set the
  *     fields it owns itself (`withAppFields`: id, name, version, description, docsUrl; never `unverified`).
  *   - what the profile would send is shown to the user in plain words before anything is sent (`describeProfile`),
- *     with the user's own origin joined to every path and the key masked; EVERY fixed value it sends exactly as
- *     written (headers, fields, every query parameter of every path, the paths) is listed (`fixedValues`), and when
- *     there is one beyond a bare path Approve needs "I have read these values", tied to the version on screen. A
- *     heuristic (`addressReason`, `nameReason`) only decides which are shown first, in red, with a reason.
- *   - a draft may not carry a key, a token or an account of its own (`draftCredentialProblems`): the page's
- *     credentials are never the user's.
+ *     with the user's own origin joined to every path and the key masked; EVERYTHING it decides that goes on the wire
+ *     is listed exactly as sent (`fixedValues`, found by walking the profile's schema: a field the format gains later
+ *     is listed by default), and Approve always needs "I have read these values", tied to the version on screen. Red
+ *     rules (`redReason`: addresses, account-like names, opaque runs, invisible characters) only decide which are
+ *     shown first, with a reason.
+ *   - a draft is refused only for a credential header of its own or a value that begins with a well-known key prefix
+ *     (`draftCredentialProblems`); the acknowledgement is the gate for everything else.
  *   - the format documentation the model reads (`profileFormatGuide`) is generated from the validator's schema and
  *     constants, so it cannot drift from what the validator accepts (a test checks every schema field is described).
- *   - after a failed Test, what the model is told about it (`reportForModel`) has the key and the user's address
- *     removed, and of the service's answers only their shape: a string is its length unless it is a short status
- *     token, a field name is a marker unless it is a plain identifier (`replyShape`).
+ *   - after a failed Test, what the model is told about it (`reportForModel`) is the checks in the app's own words,
+ *     the error kind and HTTP status, and of at most three answers only their shape (`replyShape`): nothing a service
+ *     wrote reaches it as text, and nothing at all of the answers when the service echoed the key.
+ *   - the model's note and reason are replaced by a fixed sentence when they carry an address (`screenedAiText`).
  *
  * Pure and browser-safe (the wizard renders `describeProfile` itself from the server's view).
  */
@@ -343,13 +345,28 @@ export function parseAuthorReply(reply: string): AuthorReply {
 	const extra = Object.keys(envelope).filter((k) => !allowed.includes(k));
 	if (extra.length) return { ok: false, errors: [`The reply has fields that are not allowed: ${extra.join(", ")} (only ${allowed.join(", ")})`] };
 	if (envelope.note !== undefined && typeof envelope.note !== "string") return { ok: false, errors: ["/note: must be a string"] };
-	const note = plainLine((envelope.note as string | undefined) ?? "", DRAFT_NOTE_MAX_CHARS);
+	const note = screenedAiText((envelope.note as string | undefined) ?? "", "note");
 	if (result === "cannot_express") {
 		if (typeof envelope.reason !== "string" || !envelope.reason.trim()) return { ok: false, errors: ["/reason: say why the service cannot be described"] };
-		return { ok: true, kind: "cannot_express", reason: plainLine(envelope.reason, DRAFT_NOTE_MAX_CHARS), note, droppedText };
+		return { ok: true, kind: "cannot_express", reason: screenedAiText(envelope.reason, "reason"), note, droppedText };
 	}
 	if (envelope.profile === null || typeof envelope.profile !== "object" || Array.isArray(envelope.profile)) return { ok: false, errors: ["/profile: must be a JSON object"] };
 	return { ok: true, kind: "profile", profile: envelope.profile, note, droppedText };
+}
+
+/** What replaces an AI note or reason that carried an address or an invisible character (ruling 5 of fix round 2). */
+export const NOTE_REMOVED = "The AI's note was removed because it contained an address.";
+export const REASON_REMOVED = "The AI says this service cannot be described by a connector profile. Its explanation was removed because it contained an address.";
+
+/**
+ * The model's note or "cannot be expressed" reason as the user may see it (pure; exported for tests): one plain line,
+ * or, when the text as written holds anything the address rules match (a scheme, a host-like token, an e-mail) or an
+ * invisible or control character (other than line breaks and tabs), the fixed sentence instead, whole. Applied when
+ * the reply is read and again whenever a draft file is read.
+ */
+export function screenedAiText(text: string, kind: "note" | "reason"): string {
+	if (text !== NOTE_REMOVED && text !== REASON_REMOVED && (UNSEEN_IN_PROSE.test(text) || addressReason(text) !== undefined)) return kind === "note" ? NOTE_REMOVED : REASON_REMOVED;
+	return plainLine(text, DRAFT_NOTE_MAX_CHARS);
 }
 
 export interface AppOwnedFields {
@@ -401,7 +418,7 @@ function urlFor(baseUrl: string | undefined, path: string): string {
 	return `${baseUrl.replace(/\/+$/, "")}${shown}`;
 }
 
-// ── Fixed values: every one is listed; the heuristic only puts some first, in red ──
+// ── What a drafted profile sends: every value it decides is listed; red rules only put some first ──
 
 const DECODE_ROUNDS = 2;
 
@@ -433,32 +450,64 @@ const ADDRESS_VALUE_RULES: readonly [RegExp, string][] = [
 	[new RegExp(`(?:^|[^\\w.-])(?:[a-z0-9-]+\\.)+(?:${COMMON_TLDS}|[a-z]{2})(?![\\w.-])`, "i"), "it is a host name"],
 ];
 
-/** Names (header names, field names, any segment of a JSON Pointer, query parameters) that suggest an address. */
-const ADDRESS_NAME = /callback|webhook|hook|notif|redirect|return_?(?:url|to|address)|url|uri|endpoint|e-?mail|mail_?to|forward|upload_?to|destination|^dest(?:ination)?$|target|bucket|^s3|sink|host|domain|server|address|^addr|recipient|channel|href|^link|send_?to|reply_?to|^to$|^cc$|^bcc$|^ip$|proxy|^ping/i;
-/** Names that suggest a key, a token or someone's account, workspace or channel. */
-const ACCOUNT_NAME = /key|token|secret|auth|passw|credential|tenant|account|organi[sz]ation|^org$|org_?id|workspace|project|^user|owner|customer|client_?id|team|session|signature|recipient|channel/i;
+/** Names (header names, field names, any segment of a JSON Pointer or path, query parameters) that suggest an address. */
+const ADDRESS_NAME = /callback|webhook|hook|notif|redirect|return_?(?:url|to|address)|url|uri|endpoint|e-?mail|mail_?to|forward|upload_?to|destination|^dest(?:ination)?$|target|bucket|^s3|sink|host|domain|server|address|^addr|recipient|channel|href|^link|send_?to|reply_?to|^to$|^cc$|^bcc$|^ip$|proxy|^ping|share/i;
+/** Names that suggest a key, a token, or someone's tenant, account, organisation, workspace, project, user, customer,
+ *  team, client or subscription (ruling 2 of fix round 2: red, never refused). */
+const ACCOUNT_NAME = /key|token|secret|auth|passw|credential|session|signature|tenant|account|acct|organi[sz]ation|^org$|org_?id|workspace|^ws$|project|user|customer|team|client|subscription|owner|recipient|channel/i;
+/** The same words without the ones every key header has (the key header's own name is judged by these). */
+const ACCOUNT_ONLY_NAME = /tenant|account|acct|organi[sz]ation|^org$|org_?id|workspace|^x-ws$|project|user|customer|team|client|owner|recipient|channel/i;
+/** The usual names of the one key header: not red as names. */
+const USUAL_KEY_HEADERS = new Set(["authorization", "x-api-key", "api-key", "apikey", "x-key", "key", "x-auth-token", "x-access-token", "x-api-token", "ocp-apim-subscription-key", "x-goog-api-key", "x-functions-key", "subscription-key"]);
+/** The usual words before the key in its header ("Bearer {{API_KEY}}"). */
+const USUAL_KEY_SCHEMES = new Set(["", "bearer", "token", "key", "apikey", "api-key", "jwt", "basic"]);
+
+/** Invisible, direction-changing and control characters (and other format characters): shown as visible escapes. */
+const UNSEEN = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb]|\p{Cf}/gu;
+/** The same, except line breaks and tabs (prose may have them; they become spaces). */
+const UNSEEN_IN_PROSE = new RegExp(UNSEEN.source.replace("\\u0000-\\u001f", "\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f"), "u");
+
+/** `text` with every invisible or control character written as a visible escape (`\u{200B}`), so it reads as sent. */
+export function visibleText(text: string): string {
+	return text.replace(UNSEEN, (c) => `\\u{${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}}`);
+}
 
 /** Why a value looks like an address (pure; exported for tests), or undefined. Checked as written and decoded. */
 export function addressReason(value: string): string | undefined {
-	const plain = value.replace(/\{\{(?:DELIMITER|JOB_ID)\}\}/g, "");
+	const plain = value.replace(/\{\{(?:DELIMITER|JOB_ID|API_KEY)\}\}/g, "");
 	for (const form of new Set([plain, percentDecoded(plain), percentDecoded(plain.replace(/\+/g, " "))])) {
 		for (const [rule, reason] of ADDRESS_VALUE_RULES) if (rule.test(form)) return reason;
 	}
 	return undefined;
 }
 
-/** Why a name (or one segment of a pointer) stands out, or undefined (pure; exported for tests). */
+const ACCOUNT_REASON = "this may send your documents to someone else's account";
+const OPAQUE_REASON = "this looks like an identifier or key chosen by the documentation";
+const UNSEEN_REASON = "it holds invisible or control characters (shown as \\u{…}), so it may read differently from what is sent";
+
+/** Why a name (or one segment of a pointer or path) stands out, or undefined (pure; exported for tests). */
 export function nameReason(name: string): string | undefined {
 	const decoded = percentDecoded(name);
 	if (ADDRESS_NAME.test(decoded)) return "its name suggests an address the service would send data to";
-	if (ACCOUNT_NAME.test(decoded)) return "its name suggests a key, a token or an account: your documents could go to someone else's account";
+	if (ACCOUNT_NAME.test(decoded)) return ACCOUNT_REASON;
 	return undefined;
+}
+
+/**
+ * Whether a value holds a long opaque run (pure; exported for tests): 24 or more letters, digits, `_`, `+` or `=`
+ * with at least two digits and two letters (hex and base64 keys and ids). Checked per value and per path segment,
+ * never across `/` or `-`, so an ordinary path or a hyphenated model name is not one run.
+ */
+export function opaqueRun(value: string): boolean {
+	return (value.match(/[A-Za-z0-9_+=]{24,}/g) ?? []).some((run) => (run.match(/\d/g)?.length ?? 0) >= 2 && (run.match(/[A-Za-z]/g)?.length ?? 0) >= 2);
 }
 
 /** The segments of a JSON Pointer, unescaped ("/a~1b/0" → ["a/b", "0"]). */
 function pointerSegments(pointer: string): string[] {
 	return pointer.split("/").slice(1).map((s) => s.replace(/~1/g, "/").replace(/~0/g, "~"));
 }
+
+const pointerPart = (key: string) => key.replace(/~/g, "~0").replace(/\//g, "~1");
 
 /** A query string split into its parameters: the name and value decoded (+ as a space), and the raw text of each. */
 export function queryParameters(path: string): { name: string; value: string; raw: string }[] {
@@ -477,53 +526,192 @@ export function queryParameters(path: string): { name: string; value: string; ra
 	});
 }
 
-/** The key header's value is only the key, or a one-word scheme and the key ("Bearer {{API_KEY}}"). */
-const PLAIN_AUTH_VALUE = /^(?:[A-Za-z]{1,16} )?\{\{API_KEY\}\}$/;
+/** Placeholders as the list shows them: what the app puts there. */
+function shownPlaceholders(text: string, key = KEY_MASK): string {
+	return text.replace(/\{\{JOB_ID\}\}/g, "<job id>").replace(/\{\{DELIMITER\}\}/g, "<separator>").replace(/\{\{API_KEY\}\}/g, key);
+}
 
-/**
- * Every fixed value a profile would send exactly as written (pure; exported for tests): fixed headers, a key header's
- * fixed text around the key, fixed form fields (each value of a list), every leaf of a fixed JSON body by its
- * pointer, every query parameter of every path (decoded, with the raw text when it differs), and the paths. Red ones
- * (by name or value) first; the order of the profile otherwise.
- */
-export function fixedValues(profile: HttpConverterProfile): FixedValue[] {
-	const out: FixedValue[] = [];
-	const add = (kind: FixedValue["kind"], request: FixedValue["request"], label: string, value: string, names: readonly string[], extra: { raw?: string; acknowledge?: boolean } = {}) => {
-		const byValue = addressReason(value) ?? (extra.raw !== undefined ? addressReason(extra.raw) : undefined);
-		const byName = names.map(nameReason).find((r) => r !== undefined);
-		const reason = byValue ? `its value looks like an address (${byValue}): a service told to send results or notifications there would send your documents' text to it` : byName;
-		out.push({ kind, request, label, value, ...(extra.raw !== undefined && extra.raw !== value ? { raw: extra.raw } : {}), ...(reason ? { warning: reason } : {}), acknowledge: extra.acknowledge ?? true });
-	};
-	for (const [name, value] of Object.entries(profile.submit.headers ?? {})) add("header", "every request", name, value, [name]);
-	if (profile.auth && !PLAIN_AUTH_VALUE.test(profile.auth.value)) add("auth", "every request", `${profile.auth.header} (the key header)`, profile.auth.value.replace("{{API_KEY}}", "<your key>"), [], { raw: profile.auth.value });
-	const body = profile.submit.body;
-	if (body.type === "multipart") {
-		for (const [name, value] of Object.entries(body.fields ?? {})) {
-			if (Array.isArray(value)) value.forEach((v, i) => add("field", "submit", `${name}[${i}]`, v, [name]));
-			else add("field", "submit", name, value, [name]);
+/** One thing a profile sends, before it is shown: what is checked by the red and refusal rules. */
+interface SentItem {
+	kind: FixedValue["kind"];
+	request: FixedValue["request"];
+	label: string;
+	value: string;
+	raw?: string;
+	/** Where it is in the profile (a JSON Pointer), for refusal messages. */
+	at: string;
+	/** Names it carries (a header or field name, pointer and path segments, parameter names). */
+	names: string[];
+	/** Values it carries as written (placeholders removed), each checked on its own. */
+	texts: string[];
+	/** A reason of its own kind (the key header's extra text, a file field that is not a plain name). */
+	reason?: string;
+}
+
+/** What a schema field is for the list: a function lists it, "covered" fields are listed by a neighbour's entry, and
+ *  "not sent" fields are read from the service's answers or kept by the app. Any field NOT named here is listed as
+ *  it is ("other"): a field the format gains later is shown and acknowledged until someone decides otherwise. */
+type FieldRule = "not sent" | "covered" | ((value: unknown, profile: HttpConverterProfile, out: SentItem[]) => void);
+
+const methodOf = (profile: HttpConverterProfile, request: "submit" | "poll" | "result") => (request === "submit" ? profile.submit.method : (profile[request]?.method ?? "GET"));
+
+function pathItems(request: "submit" | "poll" | "result") {
+	return (value: unknown, profile: HttpConverterProfile, out: SentItem[]) => {
+		const path = String(value);
+		const at = `/${request}/path`;
+		out.push({ kind: "method", request, label: `${request} method`, value: methodOf(profile, request), at: `/${request}/method`, names: [], texts: [] });
+		const bare = path.split("?")[0]!;
+		const names: string[] = [];
+		const texts: string[] = [];
+		for (const segment of bare.split("/")) {
+			if (!segment || /^\{\{\w+\}\}$/.test(segment)) continue;
+			const decoded = percentDecoded(segment).replace(/\{\{\w+\}\}/g, "");
+			texts.push(decoded);
+			for (const part of decoded.split(";")) {
+				const eq = part.indexOf("=");
+				names.push(eq < 0 ? part : part.slice(0, eq));
+				if (eq >= 0) texts.push(part.slice(eq + 1));
+			}
 		}
-	} else {
+		out.push({ kind: "path", request, label: `${request} path`, value: shownPlaceholders(bare), at, names, texts });
+		for (const q of queryParameters(path)) {
+			const raw = q.raw !== `${q.name}=${q.value}` ? q.raw : undefined;
+			out.push({ kind: "query", request, label: q.name, value: shownPlaceholders(q.value), ...(raw !== undefined ? { raw } : {}), at: `${at} (query parameter ${q.name})`, names: [q.name], texts: [q.value.replace(/\{\{\w+\}\}/g, "")] });
+		}
+	};
+}
+
+const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
+	// set by the app, or refused by the validator in a draft
+	format: "not sent", id: "not sent", name: "not sent", version: "not sent", description: "not sent", docsUrl: "not sent", defaultBaseUrl: "not sent", unverified: "not sent",
+	auth: (value, _profile, out) => {
+		const auth = value as { header: string; value: string };
+		const lower = auth.header.toLowerCase();
+		const around = auth.value.split("{{API_KEY}}").map((t) => t.trim()).filter(Boolean);
+		const usualScheme = around.length <= 1 && USUAL_KEY_SCHEMES.has((around[0] ?? "").toLowerCase()) && auth.value.trimStart().indexOf("{{API_KEY}}") >= auth.value.trimStart().length - "{{API_KEY}}".length;
+		const reason = !USUAL_KEY_HEADERS.has(lower) && (ACCOUNT_ONLY_NAME.test(lower) || ADDRESS_NAME.test(lower)) ? ACCOUNT_REASON
+			: !usualScheme ? "the key header sends text besides your key, chosen by the documentation: it may route your key or documents to someone else's account"
+			: undefined;
+		out.push({ kind: "auth", request: "every request", label: auth.header, value: shownPlaceholders(auth.value), at: "/auth", names: [], texts: around, ...(reason ? { reason } : {}) });
+	},
+	"auth.header": "covered", "auth.value": "covered",
+	// checked by the app before anything is sent
+	limits: "not sent", "limits.maxBytes": "not sent", "limits.maxPages": "not sent",
+	"submit.method": "covered",
+	"submit.path": pathItems("submit"),
+	"submit.headers": (value, _profile, out) => {
+		for (const [name, text] of Object.entries(value as Record<string, string>)) out.push({ kind: "header", request: "every request", label: name, value: text, at: `/submit/headers/${pointerPart(name)}`, names: [name], texts: [text] });
+	},
+	"submit.body.multipart.type": "covered",
+	"submit.body.multipart.fileField": (value, _profile, out) => {
+		const name = String(value);
+		out.push({ kind: "file", request: "submit", label: "submit file field", value: name, at: "/submit/body/fileField", names: [name], texts: [name], ...(/^[A-Za-z0-9_.-]{1,64}$/.test(name) ? {} : { reason: "the PDF's form field name is not one plain word: it could carry other form parameters" }) });
+	},
+	"submit.body.multipart.fields": (value, _profile, out) => {
+		for (const [name, item] of Object.entries(value as Record<string, string | string[]>)) {
+			const list = Array.isArray(item) ? item : [item];
+			list.forEach((v, i) => out.push({ kind: "field", request: "submit", label: Array.isArray(item) ? `${name}[${i}]` : name, value: shownPlaceholders(v), at: `/submit/body/fields/${pointerPart(name)}${Array.isArray(item) ? `/${i}` : ""}`, names: [name], texts: [v.replace(/\{\{\w+\}\}/g, "")] }));
+		}
+	},
+	"submit.body.json-base64.type": "covered",
+	"submit.body.json-base64.filePointer": (value, _profile, out) => {
+		const pointer = String(value);
+		out.push({ kind: "file", request: "submit", label: "submit file pointer", value: pointer, at: "/submit/body/filePointer", names: pointerSegments(pointer), texts: pointerSegments(pointer) });
+	},
+	"submit.body.json-base64.encoding": (value, _profile, out) => {
+		out.push({ kind: "file", request: "submit", label: "submit PDF encoding", value: String(value), at: "/submit/body/encoding", names: [], texts: [] });
+	},
+	"submit.body.json-base64.json": (value, profile, out) => {
+		const body = profile.submit.body;
+		const filePointer = body.type === "json-base64" ? body.filePointer : "";
 		const walk = (node: unknown, at: string) => {
 			if (node !== null && typeof node === "object") {
 				const entries = Array.isArray(node) ? node.map((v, i) => [String(i), v] as const) : Object.entries(node);
-				if (entries.length === 0) add("field", "submit", at || "/", Array.isArray(node) ? "[]" : "{}", pointerSegments(at));
-				for (const [key, value] of entries) walk(value, `${at}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`);
-			} else add("field", "submit", at, JSON.stringify(node) ?? "null", pointerSegments(at));
+				// an empty container is sent as it is, unless it is the body itself or the PDF goes into it
+				if (entries.length === 0 && at !== "" && !(filePointer === at || filePointer.startsWith(`${at}/`))) {
+					out.push({ kind: "field", request: "submit", label: at, value: Array.isArray(node) ? "[]" : "{}", at: `/submit/body/json${at}`, names: pointerSegments(at), texts: [] });
+				}
+				for (const [key, child] of entries) walk(child, `${at}/${pointerPart(key)}`);
+			} else {
+				const text = typeof node === "string" ? node : (JSON.stringify(node) ?? "null");
+				out.push({ kind: "field", request: "submit", label: at, value: typeof node === "string" ? shownPlaceholders(JSON.stringify(node)) : text, at: `/submit/body/json${at}`, names: pointerSegments(at), texts: [text.replace(/\{\{\w+\}\}/g, "")] });
+			}
 		};
-		walk(body.json ?? {}, "");
+		walk(value, "");
+	},
+	// read from the service's answers, or when to ask: never sent
+	"poll.jobIdPointer": "not sent", "poll.statusPointer": "not sent", "poll.done": "not sent", "poll.running": "not sent", "poll.failed": "not sent", "poll.errorPointer": "not sent", "poll.intervalMs": "not sent", "poll.maxPolls": "not sent",
+	"poll.method": "covered",
+	"poll.path": pathItems("poll"),
+	"result.method": "covered",
+	"result.path": pathItems("result"),
+	extract: "not sent",
+};
+
+/** Whether a schema path is decided by FIELD_RULES (itself or an ancestor). Exported for the drift test. */
+export function fieldRuleOf(schemaPath: string): FieldRule | undefined {
+	for (let at = schemaPath; at; at = at.includes(".") ? at.slice(0, at.lastIndexOf(".")) : "") {
+		if (FIELD_RULES[at] !== undefined) return at === schemaPath ? FIELD_RULES[at] : FIELD_RULES[at] === "not sent" ? "not sent" : "covered";
 	}
-	const paths: [FixedValue["request"], string | undefined][] = [["submit", profile.submit.path], ["poll", profile.poll?.path], ["result", profile.result?.path]];
-	for (const [request, path] of paths) {
-		if (path === undefined) continue;
-		for (const q of queryParameters(path)) add("query", request, q.name, q.value, [q.name], { ...(q.raw !== `${q.name}=${q.value}` ? { raw: q.raw } : {}), acknowledge: q.value !== "{{JOB_ID}}" });
-	}
-	for (const [request, path] of paths) {
-		if (path === undefined) continue;
-		const bare = path.split("?")[0]!;
-		const segments = bare.split("/").filter((s) => s && !/^\{\{\w+\}\}$/.test(s));
-		add("path", request, `${request} path`, bare, segments, { acknowledge: false });
-	}
-	for (const value of out) if (value.warning) value.acknowledge = true;
+	return undefined;
+}
+
+/** Every value of a profile that goes on the wire, by walking its schema (FIELD_RULES says what each field is). */
+function sentItems(profile: HttpConverterProfile): SentItem[] {
+	const out: SentItem[] = [];
+	const other = (schemaPath: string, value: unknown, at: string) => {
+		const text = typeof value === "string" ? value : (JSON.stringify(value) ?? "null");
+		const top = schemaPath.split(".")[0];
+		out.push({ kind: "other", request: top === "submit" || top === "poll" || top === "result" ? top : "every request", label: at, value: typeof value === "string" ? JSON.stringify(value) : text, at, names: pointerSegments(at), texts: [text] });
+	};
+	const walk = (node: SchemaNode, value: unknown, schemaPath: string, at: string) => {
+		const rule = schemaPath ? FIELD_RULES[schemaPath] : undefined;
+		if (rule === "not sent" || rule === "covered") return;
+		if (typeof rule === "function") return rule(value, profile, out);
+		if (node.anyOf?.some((n) => n.type === "object" && n.properties) && value !== null && typeof value === "object") {
+			const record = value as Record<string, unknown>;
+			const variant = node.anyOf.find((n) => n.properties?.type?.const !== undefined ? n.properties.type.const === record.type : n.required?.[0] !== undefined && n.required[0] in record);
+			if (variant) return walk(variant, value, `${schemaPath}.${variantName(variant)}`, at);
+			return other(schemaPath, value, at);
+		}
+		if (node.properties && value !== null && typeof value === "object" && !Array.isArray(value)) {
+			const record = value as Record<string, unknown>;
+			for (const key of Object.keys(node.properties)) if (record[key] !== undefined) walk(node.properties[key]!, record[key], schemaPath ? `${schemaPath}.${key}` : key, `${at}/${pointerPart(key)}`);
+			for (const key of Object.keys(record)) if (!(key in node.properties)) other(schemaPath ? `${schemaPath}.${key}` : key, record[key], `${at}/${pointerPart(key)}`);
+			return;
+		}
+		other(schemaPath, value, at);
+	};
+	walk(HTTP_CONVERTER_PROFILE_SCHEMA as unknown as SchemaNode, profile, "", "");
+	return out;
+}
+
+/** The first reason an item is red, or undefined. */
+function redReason(item: SentItem): string | undefined {
+	if ([item.label, item.value, item.raw ?? "", ...item.names, ...item.texts].some((t) => new RegExp(UNSEEN.source, "u").test(t))) return UNSEEN_REASON;
+	const address = item.texts.map(addressReason).find(Boolean) ?? (item.raw !== undefined ? addressReason(item.raw) : undefined) ?? item.names.map(addressReason).find(Boolean);
+	if (address) return `its value looks like an address (${address}): a service told to send results or notifications there would send your documents' text to it`;
+	if (item.reason) return item.reason;
+	const byName = item.names.map(nameReason).find(Boolean);
+	if (byName) return byName;
+	if ([...item.texts, ...item.names].some(opaqueRun)) return OPAQUE_REASON;
+	return undefined;
+}
+
+/**
+ * Everything a profile decides that is sent, exactly as written (pure; exported for tests), found by walking the
+ * profile's schema: the method and each path, every query parameter, the key header (its name and its value with the
+ * key masked), every fixed header, the PDF's form field or JSON pointer and encoding, every fixed form field and
+ * JSON leaf (a {{DELIMITER}} field with its text), and any field the format may gain. Invisible and control
+ * characters are shown as escapes. Red ones (with a reason) first; the schema's order otherwise.
+ */
+export function fixedValues(profile: HttpConverterProfile, credential?: CredentialStatus): FixedValue[] {
+	const mask = credential?.stored && credential.hint ? `${KEY_MASK}${credential.hint.replace(/^…/, "")}` : KEY_MASK;
+	const out = sentItems(profile).map((item): FixedValue => {
+		const warning = redReason(item);
+		const value = item.kind === "auth" ? item.value.replace(KEY_MASK, mask) : item.value;
+		return { kind: item.kind, request: item.request, label: visibleText(item.label), value: visibleText(value), ...(item.raw !== undefined ? { raw: visibleText(item.raw) } : {}), ...(warning ? { warning } : {}) };
+	});
 	return [...out.filter((v) => v.warning), ...out.filter((v) => !v.warning)];
 }
 
@@ -532,71 +720,55 @@ export function addressWarnings(profile: HttpConverterProfile): string[] {
 	return fixedValues(profile).filter((v) => v.warning).map((v) => `${v.label} (${KIND_WORDS[v.kind]}) = ${v.value}: ${v.warning}.`);
 }
 
-const KIND_WORDS: Record<FixedValue["kind"], string> = { header: "fixed header", field: "fixed field", query: "query parameter", auth: "key header", path: "path" };
+const KIND_WORDS: Record<FixedValue["kind"], string> = { method: "method", path: "path", query: "query parameter", header: "fixed header", auth: "key header", file: "the PDF's place", field: "fixed field", other: "field" };
 
-// ── Credentials in a drafted profile (refused; a hand-written import keeps its own rules) ──
+// ── Credentials in a drafted profile: a narrow refusal (a hand-written import keeps its own rules) ──
 
-/** Header names that commonly carry a key, refused as fixed headers of a draft. */
-export const DRAFT_CREDENTIAL_HEADER_NAMES = ["x-api-key", "api-key", "apikey", "x-auth-token", "x-access-token", "ocp-apim-subscription-key"] as const;
-/** A name containing one of these carries a key or routes to an account: refused in a draft as described below. */
-export const DRAFT_CREDENTIAL_NAME = /key|token|secret|auth|passw|tenant|account|organi[sz]ation/i;
-/** A value that is only a short enumerated word or number ("bearer", "json", "4096", "true"): allowed under such a name. */
-const SHORT_WORD = /^(?:[A-Za-z][A-Za-z_-]{0,15}|\d{1,6})$/;
-const SHORT_NUMBER = /^(?:\d{1,6}|true|false)$/;
-const KEY_PREFIX = /(?:^|[^A-Za-z0-9])(?:(?:sk|pk|rk)[-_](?:(?:live|test|proj|ant)[-_])?[A-Za-z0-9]{8,}|(?:Bearer|Basic|Token)\s+\S{8,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{20,}|AKIA[0-9A-Z]{16})/;
+/** Fixed header names refused in a draft (exactly, in any case), besides any name containing `secret` or `password`. */
+export const DRAFT_REFUSED_HEADER_NAMES = ["authorization", "proxy-authorization", "cookie", "x-api-key", "api-key", "apikey", "x-auth-token", "x-access-token", "ocp-apim-subscription-key"] as const;
 
 /**
- * Whether a fixed value looks like a key, whatever its name: a known key prefix (sk-…, Bearer …, ghp_…, AIza…, AKIA…),
- * or an unbroken run of 24 or more letters, digits, _, +, / or = holding at least two digits and two letters (hex and
- * base64 keys; a hyphenated model name such as "mistral-ocr-latest-2025" is not one run).
+ * The well-known key prefixes a drafted value may not begin with, each with the shape that must follow it (so a
+ * locale such as `sk-SK` or a word such as `xoxo` is not taken for a key).
  */
-export function looksLikeKey(value: string): boolean {
-	if (KEY_PREFIX.test(value)) return true;
-	return (value.match(/[A-Za-z0-9_+/=]{24,}/g) ?? []).some((run) => (run.match(/\d/g)?.length ?? 0) >= 2 && (run.match(/[A-Za-z]/g)?.length ?? 0) >= 2);
+export const DRAFT_KEY_PREFIXES: readonly (readonly [string, RegExp])[] = [
+	["sk-", /^sk-[A-Za-z0-9_-]{8,}/],
+	["Bearer ", /^Bearer\s+\S{8,}/i],
+	["ghp_", /^ghp_[A-Za-z0-9]{8,}/],
+	["gho_", /^gho_[A-Za-z0-9]{8,}/],
+	["AIza", /^AIza[0-9A-Za-z_-]{8,}/],
+	["AKIA", /^AKIA[0-9A-Z]{8,}/],
+	["xox", /^xox[a-z]-[A-Za-z0-9-]{4,}/],
+	["a JWT", /^eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/],
+];
+
+/** The key prefix a value begins with, or undefined (pure; exported for tests). */
+export function keyPrefixOf(value: string): string | undefined {
+	const text = value.trim();
+	return DRAFT_KEY_PREFIXES.find(([, rule]) => rule.test(text))?.[0];
 }
 
+const REFUSAL_ADVICE = "remove it, or, if the service really needs it, write the profile by hand and import it (the user's key goes only through auth, entered in the app)";
+
 /**
- * Why a DRAFTED profile may not send what it sends (pure; exported for tests). A model writes the draft from a page
- * that may be hostile, and a credential or an account it writes is the page's, never the user's, so:
- *   - a fixed header named like a key or an account (DRAFT_CREDENTIAL_HEADER_NAMES, or containing DRAFT_CREDENTIAL_NAME)
- *     is refused whatever its value (the one key header is `auth`, which the validator keeps out of the fixed headers);
- *   - a fixed field (any segment of its pointer) or query parameter with such a name is refused when its value is more
- *     than a short enumerated word (letters, _ and -, at most 16 characters) or a number of at most 6 digits; without
- *     `auth` it is refused unless it is such a number or true/false (no key, so no reason to name an account);
- *   - any fixed value that looks like a key (looksLikeKey) is refused, whatever its name.
- * Each message says what to remove, so the author's repair call can.
+ * Why a DRAFTED profile is refused (pure; exported for tests). The acknowledgement of everything it sends is the
+ * gate, so this is narrow: a fixed header named exactly like a credential header (DRAFT_REFUSED_HEADER_NAMES) or whose
+ * name contains `secret` or `password`; and any value or name, in any place, that begins with a well-known key
+ * prefix (DRAFT_KEY_PREFIXES). Everything else is listed, and at most red.
  */
 export function draftCredentialProblems(profile: HttpConverterProfile): string[] {
 	const errors: string[] = [];
-	const remove = "a drafted profile may not send a key, a token or an account of its own: remove it (the user's key goes only through auth, entered in the app)";
-	for (const [name, value] of Object.entries(profile.submit.headers ?? {})) {
-		const lower = name.toLowerCase();
-		if ((DRAFT_CREDENTIAL_HEADER_NAMES as readonly string[]).includes(lower) || DRAFT_CREDENTIAL_NAME.test(lower)) errors.push(`/submit/headers/${name}: this header carries a key or an account; ${remove}`);
-		else if (looksLikeKey(value)) errors.push(`/submit/headers/${name}: its value looks like a key; ${remove}`);
-	}
-	if (profile.auth && !PLAIN_AUTH_VALUE.test(profile.auth.value) && looksLikeKey(profile.auth.value.replace("{{API_KEY}}", ""))) errors.push(`/auth/value: holds a key besides {{API_KEY}}; ${remove}`);
-	const named = (where: string, names: readonly string[], scalar: unknown) => {
-		if (scalar === null || typeof scalar === "object") return;
-		const value = String(scalar);
-		if (looksLikeKey(value)) return void errors.push(`${where}: its value looks like a key; ${remove}`);
-		if (!names.some((n) => DRAFT_CREDENTIAL_NAME.test(percentDecoded(n)))) return;
-		const allowed = profile.auth ? SHORT_WORD.test(value) || value === "" : SHORT_NUMBER.test(value) || value === "";
-		if (!allowed || /\{\{/.test(value)) errors.push(`${where}: its name suggests a key or an account${profile.auth ? " and its value is more than a short word" : " and the profile takes no key"}; ${remove}`);
-	};
-	const body = profile.submit.body;
-	if (body.type === "multipart") {
-		for (const [name, value] of Object.entries(body.fields ?? {})) for (const v of Array.isArray(value) ? value : [value]) named(`/submit/body/fields/${name}`, [name], v);
-	} else {
-		const walk = (node: unknown, at: string) => {
-			if (node !== null && typeof node === "object") for (const [key, value] of Array.isArray(node) ? node.map((v, i) => [String(i), v] as const) : Object.entries(node)) walk(value, `${at}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`);
-			else named(`/submit/body/json${at}`, pointerSegments(at), node);
-		};
-		walk(body.json ?? {}, "");
-	}
-	for (const [where, path] of [["/submit/path", profile.submit.path], ["/poll/path", profile.poll?.path], ["/result/path", profile.result?.path]] as const) {
-		if (path === undefined) continue;
-		for (const q of queryParameters(path)) if (q.value !== "{{JOB_ID}}") named(`${where} (query parameter ${q.name})`, [q.name], q.value);
-		if (looksLikeKey(percentDecoded(path.split("?")[0]!))) errors.push(`${where}: holds what looks like a key; ${remove}`);
+	for (const item of sentItems(profile)) {
+		if (item.kind === "header") {
+			const lower = item.label.toLowerCase();
+			if ((DRAFT_REFUSED_HEADER_NAMES as readonly string[]).includes(lower) || /secret|password/.test(lower)) {
+				errors.push(`${item.at}: a drafted profile may not send a credential header of its own; ${REFUSAL_ADVICE}`);
+				continue;
+			}
+		}
+		const pieces = item.kind === "auth" ? item.texts.flatMap((t) => t.split(/[\s,;]+/)) : [...item.texts, ...item.names];
+		const prefix = pieces.map(keyPrefixOf).find(Boolean);
+		if (prefix) errors.push(`${item.at}: holds what looks like a key (it begins with ${prefix}); a drafted profile may not send a key of its own; ${REFUSAL_ADVICE}`);
 	}
 	return errors;
 }
@@ -613,77 +785,90 @@ function pagesSentence(profile: HttpConverterProfile): string {
 
 /**
  * What a valid profile would send and read, for the pre-flight screen: the user's base URL (or a placeholder when
- * none is saved yet) joined with each path, the key masked, and every fixed header and field. Pure.
+ * none is saved yet) joined with each path, the key masked, and everything the profile decides that is sent. Pure.
  */
 export function describeProfile(profile: HttpConverterProfile, baseUrl: string | undefined, credential?: CredentialStatus): ProfilePreflight {
 	const body = profile.submit.body;
-	const fixed = fixedValues(profile);
+	const fixed = fixedValues(profile, credential);
 	const masked = credential?.stored && credential.hint ? `${KEY_MASK}${credential.hint.replace(/^…/, "")}` : KEY_MASK;
 	const poll = profile.poll;
 	const statuses = poll ? `done: ${poll.done.map((v) => JSON.stringify(v)).join(", ")}; still working: ${poll.running.map((v) => JSON.stringify(v)).join(", ")}${poll.failed?.length ? `; failed: ${poll.failed.map((v) => JSON.stringify(v)).join(", ")}` : ""}` : "";
 	const origin = baseUrl ? new URL(baseUrl).origin : NO_BASE_URL;
 	return {
-		submit: `${profile.submit.method} ${urlFor(baseUrl, profile.submit.path)}`,
+		submit: `${profile.submit.method} ${visibleText(urlFor(baseUrl, profile.submit.path))}`,
 		body: body.type === "multipart"
-			? `The PDF is uploaded as the form field "${body.fileField}" (multipart/form-data).`
-			: `The PDF is sent inside a JSON body at ${body.filePointer}, as ${body.encoding === "data-url" ? "a base64 data URL" : "base64 text"}.`,
+			? `The PDF is uploaded as the form field "${visibleText(body.fileField)}" (multipart/form-data).`
+			: `The PDF is sent inside a JSON body at ${visibleText(body.filePointer)}, as ${body.encoding === "data-url" ? "a base64 data URL" : "base64 text"}.`,
 		...(profile.auth ? { auth: { header: profile.auth.header, value: profile.auth.value.replace("{{API_KEY}}", masked) } } : {}),
 		fixed,
-		acknowledgeNeeded: fixed.some((v) => v.acknowledge),
-		...(poll ? { poll: `The upload's answer holds a job id at ${poll.jobIdPointer}. Then ${poll.method ?? "GET"} ${urlFor(baseUrl, poll.path)} every ${((poll.intervalMs ?? POLL_DEFAULT_INTERVAL_MS) / 1000).toString()} s${poll.maxPolls ? `, at most ${poll.maxPolls} times` : ""}, reading the state at ${poll.statusPointer} (${statuses}).` } : {}),
-		...(profile.result ? { result: `${profile.result.method ?? "GET"} ${urlFor(baseUrl, profile.result.path)} fetches the finished answer.` } : {}),
-		pages: pagesSentence(profile),
+		...(poll ? { poll: visibleText(`The upload's answer holds a job id at ${poll.jobIdPointer}. Then ${poll.method ?? "GET"} ${urlFor(baseUrl, poll.path)} every ${((poll.intervalMs ?? POLL_DEFAULT_INTERVAL_MS) / 1000).toString()} s${poll.maxPolls ? `, at most ${poll.maxPolls} times` : ""}, reading the state at ${poll.statusPointer} (${statuses}).`) } : {}),
+		...(profile.result ? { result: visibleText(`${profile.result.method ?? "GET"} ${urlFor(baseUrl, profile.result.path)} fetches the finished answer.`) } : {}),
+		pages: visibleText(pagesSentence(profile)),
 		warnings: addressWarnings(profile),
 		origins: [origin],
 	};
 }
 
-// ── What the fix call is told about a failed Test ─────────────────────────────
+// ── What the fix call is told about a failed Test, and what the draft file keeps ──────
 
 /** The most values one reduced answer holds (the fix call needs the shape, not the content). */
-export const FIX_SHAPE_MAX_NODES = 200;
-/** A string value kept as it is: a short status-like token (`done`, `PROCESSING`, `page_count`, `v2`). */
-export const FIX_TOKEN = /^[A-Za-z0-9_-]{1,16}$/;
-/** A field name kept as it is: a plain identifier of at most 40 characters. */
-export const FIX_FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,39}$/;
+export const FIX_SHAPE_MAX_VALUES = 60;
+/** The most answers kept and sent. */
+export const FIX_MAX_ANSWERS = 3;
+/** A field name kept as it is: a plain identifier of at most 24 characters. */
+export const FIX_FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,23}$/;
+/** A value at the profile's own status pointer kept as it is: a word of at most 16 letters (`_` and `-` inside). */
+export const FIX_STATUS_TOKEN = /^[A-Za-z][A-Za-z_-]{0,15}$/;
 const STRING_MARKER = /^<text, \d+ chars>$/;
 const NAME_MARKER = /^<name \d+, \d+ chars>$/;
+const NUMBER_MARKER = "<number>";
+const MARKERS = new Set(["…", "[…]", "{…}", NUMBER_MARKER, "…(more than 9 entries)"]);
+
+export interface ShapeOptions {
+	/** Whether a kept token or name shares nothing with the user's address or key (drafts.ts tokenAllowed). */
+	allowed?: (text: string) => boolean;
+	/** The profile's status pointer, in a status answer: the only place a short word is kept as it is. */
+	statusPointer?: string;
+}
 
 /**
- * A JSON value reduced to its shape (pure), for the fix call: a string value becomes `<text, N chars>` unless it is a
- * short status-like token (FIX_TOKEN) that `allowed` accepts; a field name becomes `<name i, N chars>` unless it is
- * a plain identifier (FIX_FIELD_NAME) that `allowed` accepts; lists are cut to 3 entries plus a count, objects to 30
- * fields, depth to 8, and FIX_SHAPE_MAX_NODES values in all. Nothing of a free-form string reaches the model, only
- * its length. Reducing an already reduced shape changes nothing.
+ * A JSON value reduced to its shape (pure), for the fix call and the draft file: every string becomes
+ * `<text, N chars>`, except a short word (FIX_STATUS_TOKEN) at `statusPointer`; a number becomes `<number>` unless it
+ * is an integer from 0 to 9; a field name becomes `<name i, N chars>` unless it is a plain identifier of at most 24
+ * characters (FIX_FIELD_NAME); kept words and names must pass `allowed`. Lists are cut to 3 entries and a count (up to
+ * 9), objects to 30 fields, depth to 8, and FIX_SHAPE_MAX_VALUES values in all. Reducing a reduced shape again
+ * changes nothing that matters.
  */
-export function replyShape(value: unknown, allowed: (text: string) => boolean = () => true): unknown {
-	let budget = FIX_SHAPE_MAX_NODES;
-	const walk = (node: unknown, depth: number): unknown => {
+export function replyShape(value: unknown, options: ShapeOptions = {}): unknown {
+	const allowed = options.allowed ?? (() => true);
+	let budget = FIX_SHAPE_MAX_VALUES;
+	const walk = (node: unknown, depth: number, at: string): unknown => {
 		if (--budget < 0) return "…";
 		if (typeof node === "string") {
-			if (STRING_MARKER.test(node) || node === "…" || node === "[…]" || node === "{…}" || /^…\(\d+ entries in all\)$/.test(node)) return node;
-			return FIX_TOKEN.test(node) && allowed(node) ? node : `<text, ${node.length} chars>`;
+			if (STRING_MARKER.test(node) || MARKERS.has(node) || /^…\([1-9] entries in all\)$/.test(node)) return node;
+			return at === options.statusPointer && FIX_STATUS_TOKEN.test(node) && allowed(node) ? node : `<text, ${node.length} chars>`;
 		}
-		if (node === null || typeof node !== "object") return typeof node === "number" || typeof node === "boolean" ? node : null;
+		if (typeof node === "number") return Number.isInteger(node) && node >= 0 && node <= 9 ? node : NUMBER_MARKER;
+		if (node === null || typeof node !== "object") return typeof node === "boolean" ? node : null;
 		if (depth >= 8) return Array.isArray(node) ? "[…]" : "{…}";
 		if (Array.isArray(node)) {
-			const head = node.slice(0, 3).map((v) => walk(v, depth + 1));
-			return node.length > 3 ? [...head, `…(${node.length} entries in all)`] : head;
+			const head = node.slice(0, 3).map((v, i) => walk(v, depth + 1, `${at}/${i}`));
+			return node.length > 3 ? [...head, node.length <= 9 ? `…(${node.length} entries in all)` : "…(more than 9 entries)"] : head;
 		}
 		const out: Record<string, unknown> = {};
 		let fields = 0;
 		for (const key in node) {
 			if (!Object.hasOwn(node, key)) continue;
-			if (++fields > 30) {
-				out["…"] = "more fields";
+			if (++fields > 30 || budget <= 0) {
+				out["…"] = "…";
 				break;
 			}
 			const name = NAME_MARKER.test(key) || key === "…" || (FIX_FIELD_NAME.test(key) && allowed(key)) ? key : `<name ${fields}, ${key.length} chars>`;
-			Object.defineProperty(out, name, { value: walk((node as Record<string, unknown>)[key], depth + 1), enumerable: true, configurable: true, writable: true });
+			Object.defineProperty(out, name, { value: walk((node as Record<string, unknown>)[key], depth + 1, `${at}/${pointerPart(key)}`), enumerable: true, configurable: true, writable: true });
 		}
 		return out;
 	};
-	return walk(value, 0);
+	return walk(value, 0, "");
 }
 
 /** The service's answers seen during a Test, by request, already reduced to their shape. */
@@ -693,26 +878,96 @@ export interface TestAnswerShape {
 	shape: unknown;
 }
 
+/**
+ * The answers kept of a Test (pure): the final answer of each test PDF (the one the text is read from), and the first
+ * PDF's upload answer when that is another one; at most FIX_MAX_ANSWERS, in the order they came (so keeping the kept
+ * ones again changes nothing).
+ */
+export function keptAnswers(answers: readonly TestAnswerShape[]): TestAnswerShape[] {
+	const last = (pdf: TestAnswerShape["pdf"]) => answers.filter((a) => a.pdf === pdf).at(-1);
+	const firstUpload = answers.find((a) => a.pdf === "two-page" && a.stage === "submit");
+	const picked = new Set([last("two-page"), firstUpload, last("blank-middle")].filter((a): a is TestAnswerShape => a !== undefined).slice(0, FIX_MAX_ANSWERS));
+	return answers.filter((a) => picked.has(a));
+}
+
+/** Each check's meaning in the app's own fixed words (the only wording kept on disk and sent to the model). */
+export const CHECK_WORDS: Readonly<Record<string, Readonly<Record<"pass" | "fail" | "skipped", string>>>> = {
+	converted: { pass: "The service answered for the two-page test PDF.", fail: "The two-page test PDF could not be converted (see the error kind).", skipped: "Not checked." },
+	markers: { pass: "Both pages are present, in order, as valid page-marked Markdown.", fail: "The answer could not be placed on pages 1 and 2.", skipped: "Not checked, because an earlier check failed." },
+	page_1: { pass: "Page 1 has its own sentence.", fail: "Page 1 does not have its own sentence.", skipped: "Not checked, because an earlier check failed." },
+	page_2: { pass: "Page 2 has its own sentence.", fail: "Page 2 does not have its own sentence.", skipped: "Not checked, because an earlier check failed." },
+	own_pages: { pass: "Neither page has the other page's sentence.", fail: "Text is on the wrong page: the page numbers are shifted or page breaks are missing.", skipped: "Not checked, because an earlier check failed." },
+	blank_page: { pass: "A blank middle page stays blank and the page after it keeps its own text.", fail: "The three-page test PDF with a blank middle page failed, or its pages were not placed right.", skipped: "Not checked, because an earlier check failed." },
+	no_secret: { pass: "The API key does not appear in the answer.", fail: "The service echoed the API key.", skipped: "Not checked." },
+};
+
+/** Each error kind in the app's own words. */
+export const ERROR_KIND_WORDS: Readonly<Record<string, string>> = {
+	unreachable: "The service could not be reached, or failed (HTTP 5xx).",
+	auth: "The service refused the key.",
+	rate_limit: "The service's rate limit was reached.",
+	too_large: "The service refused the PDF as too large.",
+	too_many_pages: "The PDF has more pages than the service accepts.",
+	timeout: "The service did not answer in time.",
+	bad_response: "The service answered with something the profile cannot read.",
+	conversion_failed: "The service reported that the job failed.",
+	no_text: "No text was found.",
+	not_configured: "The profile could not be used as written.",
+	aborted: "The Test was cancelled.",
+	internal: "The Test failed inside the app.",
+};
+
+const checkWords = (id: string, status: string) => CHECK_WORDS[id]?.[status as "pass"] ?? "Not checked.";
+
+/**
+ * A Test report as the draft file keeps it (pure): the checks in the app's own words, the error's kind and HTTP status
+ * in the app's words, no page previews, warnings or version: nothing the service wrote. Reducing it again changes
+ * nothing.
+ */
+export function keptReport(report: ConverterValidationReport): ConverterValidationReport {
+	const error = report.error;
+	return {
+		ok: report.ok === true,
+		converterId: String(report.converterId ?? "").slice(0, 100),
+		checks: report.checks.filter((c) => typeof c?.id === "string" && c.id in CHECK_WORDS).slice(0, 10).map((c) => {
+			const status = c.status === "pass" || c.status === "fail" ? c.status : "skipped";
+			return { id: c.id, status, message: checkWords(c.id, status) };
+		}),
+		pages: [],
+		warnings: [],
+		...(error && typeof error.kind === "string" && error.kind in ERROR_KIND_WORDS
+			? { error: { kind: error.kind, message: ERROR_KIND_WORDS[error.kind]!, retryable: error.retryable === true, ...(Number.isInteger(error.httpStatus) && error.httpStatus! >= 100 && error.httpStatus! <= 599 ? { httpStatus: error.httpStatus } : {}) } }
+			: {}),
+		durationMs: Number.isFinite(report.durationMs) ? report.durationMs : 0,
+	};
+}
+
 export interface FixReport {
-	checks: { id: string; status: string; message: string }[];
-	error?: { kind: string; message: string };
-	pages: { page: number; chars: number }[];
-	warnings: string[];
+	/** Which checks passed or failed, by id, in the app's own words. */
+	checks: { id: string; status: string; meaning: string }[];
+	/** The error's kind (the app's names) and the service's HTTP status, never its message. */
+	error?: { kind: string; httpStatus?: number };
+	/** The service echoed the key: no answer is sent at all. */
+	keyEchoed?: true;
 	answers: TestAnswerShape[];
 }
 
 /**
- * What the fix call sees of a failed Test (pure): which checks failed and why, with every secret and the user's
- * service address removed, and the shape of the service's answers (replyShape: lengths, not strings). No page text.
+ * What the fix call sees of a failed Test (pure): which checks failed, by id, in the app's fixed words; the error kind
+ * and HTTP status; and the shape of at most three answers (replyShape). Nothing a service wrote reaches the model as
+ * text. When the service echoed the key, no answer at all: only that it did.
  */
-export function reportForModel(report: ConverterValidationReport, answers: readonly TestAnswerShape[], redact: (text: string) => string, allowed: (text: string) => boolean = () => true): FixReport {
-	const line = (text: string, max: number) => plainLine(redact(text), max);
+export function reportForModel(report: ConverterValidationReport, answers: readonly TestAnswerShape[], options: { allowed?: (text: string) => boolean; statusPointer?: string } = {}): FixReport {
+	const kept = keptReport(report);
+	const echoed = kept.checks.some((c) => c.id === "no_secret" && c.status === "fail");
 	return {
-		checks: report.checks.map((c) => ({ id: c.id, status: c.status, message: line(c.message, 300) })),
-		...(report.error ? { error: { kind: report.error.kind, message: line(report.error.message, 400) } } : {}),
-		pages: report.pages.map((p) => ({ page: p.page, chars: p.text.length })),
-		warnings: report.warnings.slice(0, 5).map((w) => line(w, 200)),
-		answers: answers.slice(0, 6).map((a) => ({ ...a, shape: replyShape(a.shape, allowed) })),
+		checks: kept.checks.map((c) => ({ id: c.id, status: c.status, meaning: c.message })),
+		...(kept.error ? { error: { kind: kept.error.kind, ...(kept.error.httpStatus !== undefined ? { httpStatus: kept.error.httpStatus } : {}) } } : {}),
+		...(echoed ? { keyEchoed: true as const } : {}),
+		answers: echoed ? [] : answers.slice(0, FIX_MAX_ANSWERS).map((a) => ({
+			pdf: a.pdf === "blank-middle" ? "blank-middle" : "two-page",
+			stage: a.stage === "poll" || a.stage === "result" ? a.stage : "submit",
+			shape: replyShape(a.shape, { ...(options.allowed ? { allowed: options.allowed } : {}), ...(a.stage === "poll" && options.statusPointer !== undefined ? { statusPointer: options.statusPointer } : {}) }),
+		})),
 	};
 }
-

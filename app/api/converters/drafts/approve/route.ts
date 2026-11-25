@@ -1,10 +1,10 @@
 /**
  * POST /api/converters/drafts/approve { id, shown, acknowledged? } (fork addition, 2026-11-25): the draft becomes an
  * ordinary custom profile (its URL and key move with it) → { id: "custom:<id>", overview }. Refused (409) unless
- * `shown` names the draft as it is now, its last Test passed for exactly this profile, URL and key, and, when the
- * profile sends any fixed value beyond a bare path, `acknowledged` is that same digest (the version whose values the
- * user read). Approval never selects the converter: "Use for new PDFs" is a
- * separate step. The body is read up to 4 KB.
+ * `shown` names the draft as it is now (the SHA-256 of its profile and URL), its last Test passed for exactly this
+ * profile, URL and key, and `acknowledged` is that same digest (the version whose values the user read; every drafted
+ * profile needs it). Approval never selects the converter: "Use for new PDFs" is a separate step. The body is read up
+ * to 4 KB.
  */
 import { CustomBodyLimitError, approveConverterDraft, noteAppRequest, parseApproveDraftBody, readBoundedJson } from "@/src/server";
 

@@ -12,7 +12,8 @@
  * a stored profile, the settings or any file of the data folder: its input is the format guide (generated from the
  * validator's schema), the service name the user typed, the documentation text and an optional sample, each quoted;
  * a repair call adds only its own previous reply and the validator's errors; a fix call adds the previous draft and
- * the redacted, truncated Test report.
+ * the Test report reduced to the app's own words and the structure of the answers (reportForModel): nothing a
+ * service wrote reaches it as text.
  *
  * The instructions are a constant here, deliberately NOT a prompt fragment of the app's prompt editor: the editor's
  * segments are the tutor's (teacher, prober, …), and an override of this prompt could weaken what keeps a hostile
@@ -60,7 +61,7 @@ THE ADDRESS IS THE USER'S, NOT YOURS
 The user types the service's base URL in the app (for example https://ocr.example.com). Never put an address in the profile: no defaultBaseUrl, no scheme or host in any path. Every path starts with "/" and is relative to that base URL: for a documented endpoint https://api.example.com/v1/convert the path is "/v1/convert". Add no fixed header, field or query parameter whose value is a URL, a host, an e-mail address, a webhook or a callback: the service could send the user's documents there. Add only the fixed fields the conversion needs (an output format, OCR on, a model name the documentation requires).
 
 THE KEY IS NEVER YOURS EITHER
-Never write a key, token, password, tenant, account, organization or workspace id: one written in the documentation belongs to someone else, and the app refuses a draft that sends a key or an account id. If the service takes a key, declare the ONE header that carries it in "auth", with {{API_KEY}} in its value ("Bearer {{API_KEY}}" for Authorization: Bearer). The user enters the key in the app; you never see it.
+Never write a key, token, password, tenant, account, organization or workspace id: one written in the documentation belongs to someone else. The app refuses a draft that sends a key, and shows the user every other value the profile sends, account and workspace ids in red. If the service takes a key, declare the ONE header that carries it in "auth", with {{API_KEY}} in its value ("Bearer {{API_KEY}}" for Authorization: Bearer). The user enters the key in the app; you never see it.
 
 The app sets "format", "id", "name", "version", "description" and "docsUrl" itself; you may omit them. Prefer a page list with page numbers over a delimiter; if only a delimiter exists and the service lets the caller choose it, use {"random": true} and send {{DELIMITER}} in the field the documentation names for it.
 
@@ -80,7 +81,7 @@ export interface AuthorInput {
 export interface FixInput extends AuthorInput {
 	/** The previous draft's profile (as stored; it may not be valid). */
 	previous: unknown;
-	/** The failed Test, redacted and truncated (core/converter-draft.ts reportForModel). */
+	/** The failed Test, reduced (core/converter-draft.ts reportForModel): no service text. */
 	report?: FixReport;
 	/** Or, for a draft that is not valid, the validator's errors. */
 	errors?: string[];
@@ -137,7 +138,7 @@ export function repairPrompt(input: AuthorInput, reply: string, errors: readonly
 export function fixPrompt(input: FixInput): string {
 	const failure = input.report
 		? [
-				"The app tested this profile against the service with two small PDFs: two pages with one sentence each, and three pages whose middle page is blank. It failed. What the test found (strings of the service's answers are cut short; the address and the key are removed):",
+				"The app tested this profile against the service with two small PDFs: two pages with one sentence each, and three pages whose middle page is blank. It failed. What the test found: which checks passed or failed, in the app's words; the kind of error and the service's HTTP status; and only the STRUCTURE of at most three of the service's answers (every string is replaced by its length, every number above 9 by <number>; a short word is kept only at the profile's status pointer). If keyEchoed is true, the service echoed the key and no answer is shown:",
 				"<test_report>",
 				quoteSafe(JSON.stringify(input.report, null, 1)),
 				"</test_report>",

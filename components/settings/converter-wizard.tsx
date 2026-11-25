@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ACKNOWLEDGE_LABEL, FIXED_VALUES_HEADING, sendLine, type ConverterDraftView, type ConverterDraftsOverview, type ConvertersOverview, type FixedValue } from "@/src/core";
+import { ACKNOWLEDGE_LABEL, AI_TEXT_PREFACE, FIXED_VALUES_HEADING, sendLine, type ConverterDraftView, type ConverterDraftsOverview, type ConvertersOverview, type FixedValue } from "@/src/core";
 import { Button } from "@/components/ui/button";
 import { SettingsRow, SettingsSegmentedControl, Toggle } from "./controls";
 import { DRAFT_TEST_CLIENT_TIMEOUT_MS, approveDraft, createDraft, discardDraft, fixDraft, loadDrafts, testDraft, updateDraft } from "./converter-wizard-client.ts";
@@ -12,13 +12,14 @@ import { DRAFT_TEST_CLIENT_TIMEOUT_MS, approveDraft, createDraft, discardDraft, 
  *   1 Describe   the service's name, its documentation's address (fetched once by the app) or pasted text, an
  *                optional sample, and a line that says exactly what is sent where before anything is;
  *   2 Review     the drafted profile in plain words (the method, the user's own URL joined with each path, how the
- *                PDF is sent, the key header with the key masked, every fixed header and field, how pages are
- *                found), its JSON behind a disclosure, the model's note shown as coming from untrusted documentation,
- *                and where the user enters the service URL and key;
+ *                PDF is sent, the key header with the key masked, everything the profile decides that is sent, how
+ *                pages are found), its JSON behind a disclosure, the model's note and reason shown as coming from
+ *                untrusted documentation, and where the user enters the service URL and key;
  *   3 Test       the converter test on the bundled PDFs (its checks, the blank-page one included, and page previews),
  *                with Cancel; on failure its diagnostics, "Ask AI to fix" (one model call) and "Edit JSON";
- *   4 Approve    enabled only after a passing Test of exactly the profile, URL and key on screen; it makes the draft
- *                an ordinary profile of your own. "Use for new PDFs" stays a separate step on the main screen.
+ *   4 Approve    enabled only after a passing Test of exactly the profile, URL and key on screen, and always only with
+ *                "I have read these values" for that version; it makes the draft an ordinary profile of your own.
+ *                "Use for new PDFs" stays a separate step on the main screen.
  *
  * The server does the work and enforces every rule (src/server/converters/drafts.ts); this screen only shows it.
  */
@@ -41,11 +42,13 @@ function keyHint(draft: ConverterDraftView): string {
 	return "Needed; not stored yet";
 }
 
-const KIND: Record<FixedValue["kind"], string> = { header: "header", field: "field", query: "query parameter", auth: "key header", path: "path" };
+const KIND: Record<FixedValue["kind"], string> = { method: "method", path: "path", query: "query parameter", header: "header", auth: "key header", file: "file", field: "field", other: "field" };
+/** Kinds whose label already says what they are ("submit path: /convert"). */
+const SELF_LABELLED = new Set<FixedValue["kind"]>(["method", "path", "file"]);
 
 /**
- * Every fixed value the draft sends exactly as written: the red ones (an address, a key, an account) first, each with
- * its reason, then the rest. A bare path is shown but needs no acknowledgement.
+ * Everything the draft decides that is sent, exactly as written: the red ones (an address, a key, an account, an
+ * opaque identifier, invisible characters) first, each with its reason, then the rest. All of it is acknowledged.
  */
 function FixedValues({ values }: { values: FixedValue[] }) {
 	if (values.length === 0) return null;
@@ -55,7 +58,7 @@ function FixedValues({ values }: { values: FixedValue[] }) {
 			{values.map((v, i) => (
 				<div key={`${v.kind}-${v.request}-${v.label}-${i}`} data-testid={v.warning ? "wizard-fixed-red" : "wizard-fixed-value"} data-kind={v.kind} className={`flex flex-col ${v.warning ? "text-error" : "text-foreground"}`}>
 					<span className="font-mono text-[11px]">
-						{v.kind === "path" ? `${v.label}: ` : `${v.request === "every request" ? "" : `${v.request} `}${KIND[v.kind]} ${v.label} = `}{v.value}
+						{SELF_LABELLED.has(v.kind) ? `${v.label}: ` : `${v.request === "every request" ? "" : `${v.request} `}${KIND[v.kind]} ${v.label} = `}{v.value}
 						{v.raw !== undefined && <span className="text-muted-foreground"> (written as {v.raw})</span>}
 					</span>
 					{v.warning && <span role="alert" data-testid="wizard-warning" className="text-xs">{v.warning}.</span>}
@@ -282,7 +285,6 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 	const urlChanged = url.trim() !== (draft.baseUrl ?? "");
 	const failed = !!report && !report.ok && !draft.test?.stale;
 	const canFix = busy === null && (draft.status === "invalid" || failed);
-	const ackNeeded = !!pre?.acknowledgeNeeded;
 	const read = !!draft.shown && acknowledged === draft.shown;
 	const editor = editing !== null && (
 		<div className="flex flex-col gap-1" data-testid="wizard-editor">
@@ -311,14 +313,15 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 			{draft.docsNotice && <p className={NOTE} data-testid="wizard-docs-notice">{draft.docsNotice}</p>}
 			{draft.note && (
 				<p className={NOTE} data-testid="wizard-note">
-					Note from the AI (it read the documentation, which can be wrong or written to mislead it): {draft.note}
+					{AI_TEXT_PREFACE}: {draft.note}
 				</p>
 			)}
 
 			{draft.status === "cannot_express" && (
-				<p data-testid="wizard-cannot" className="text-xs leading-relaxed text-foreground">
-					The AI found that this service cannot be described by a profile: {draft.reason}
-				</p>
+				<div data-testid="wizard-cannot" className="flex flex-col gap-0.5">
+					<p className="text-xs leading-relaxed text-foreground">The AI found that this service cannot be described by a profile.</p>
+					<p className={NOTE} data-testid="wizard-cannot-reason">{AI_TEXT_PREFACE}: {draft.reason}</p>
+				</div>
 			)}
 			{draft.status === "invalid" && (
 				<div data-testid="wizard-invalid" className="flex flex-col gap-0.5">
@@ -409,25 +412,26 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 					{report.pages.map((p) => (
 						<p key={p.page} data-testid="wizard-page-preview" className="truncate font-mono text-[11px] text-muted-foreground/80">Page {p.page}: {p.text || "(empty)"}</p>
 					))}
+					{draft.test?.previews === false && (
+						<p className={NOTE} data-testid="wizard-no-previews">The service&apos;s own messages and the page previews are kept only while the app runs. Run Test again to see them.</p>
+					)}
 				</div>
 			)}
 			{(draft.status === "invalid" || failed || draft.status === "cannot_express") && (
 				<div className="flex flex-wrap items-center gap-3" data-testid="wizard-repair">
 					{draft.status !== "cannot_express" && fixButton}
 					{editButton}
-					{draft.status !== "cannot_express" && <span className={NOTE}>Ask AI to fix sends the draft and what the Test found (without your key, your service&apos;s address or the PDFs&apos; text) to {overview.model ?? "the model"}, once.</span>}
+					{draft.status !== "cannot_express" && <span className={NOTE}>Ask AI to fix sends the draft and what the Test found (which checks failed, the kind of error and the structure of the service&apos;s answers; never your key, your service&apos;s address, the service&apos;s own text or the PDFs&apos; text) to {overview.model ?? "the model"}, once.</span>}
 				</div>
 			)}
 
 			{pre && (
 				<div className="flex flex-col gap-1" data-testid="wizard-approve-step">
-					{ackNeeded && (
-						<SettingsRow label={ACKNOWLEDGE_LABEL} hint={`Every value under "${FIXED_VALUES_HEADING}" above, for this version of the draft`} testid="wizard-ack-row">
-							<Toggle label={ACKNOWLEDGE_LABEL} checked={read} disabled={busy !== null} onChange={(on) => setAcknowledged(on && draft.shown ? draft.shown : null)} />
-						</SettingsRow>
-					)}
+					<SettingsRow label={ACKNOWLEDGE_LABEL} hint={`Every value under "${FIXED_VALUES_HEADING}" above, for this version of the draft`} testid="wizard-ack-row">
+						<Toggle label={ACKNOWLEDGE_LABEL} checked={read} disabled={busy !== null} onChange={(on) => setAcknowledged(on && draft.shown ? draft.shown : null)} />
+					</SettingsRow>
 					<div className="flex flex-wrap items-center gap-3">
-						<Button type="button" size="xs" variant="outline" className="lh-hit cursor-pointer disabled:cursor-not-allowed" disabled={busy !== null || !draft.approvable || (ackNeeded && !read)} onClick={() => void approve()} data-testid="wizard-approve">
+						<Button type="button" size="xs" variant="outline" className="lh-hit cursor-pointer disabled:cursor-not-allowed" disabled={busy !== null || !draft.approvable || !read} onClick={() => void approve()} data-testid="wizard-approve">
 							Approve
 						</Button>
 						<span className={NOTE} data-testid="wizard-approve-note">

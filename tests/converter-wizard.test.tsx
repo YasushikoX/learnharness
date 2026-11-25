@@ -69,7 +69,7 @@ function draft(over: Partial<ConverterDraftView> & { profile?: HttpConverterProf
 		preflight: describeProfile(p, baseUrl, credential),
 		keyNeeded: !!p.auth,
 		credential,
-		shown: "a".repeat(24),
+		shown: "a".repeat(64),
 		approvable: false,
 		approveBlocked: "Enter the service URL first.",
 		modelCalls: 1,
@@ -218,10 +218,10 @@ describe("Draft with AI: the wizard", () => {
 			assert.equal(ui.text("wizard-submit"), "POST <your service URL>/convert");
 			assert.equal(ui.text("wizard-auth"), `Key header: X-Api-Key: ${KEY_MASK} (your key, never shown)`);
 			assert.equal(ui.text("wizard-fixed").startsWith("Sent with every PDF, exactly as written:"), true);
-			assert.deepEqual(ui.all("wizard-fixed-value"), ["submit field format = markdown", "submit path: /convert"]);
+			assert.deepEqual(ui.all("wizard-fixed-value"), [`key header X-Api-Key = ${KEY_MASK}`, "submit method: POST", "submit path: /convert", "submit file field: document", "submit field format = markdown"]);
 			assert.equal(ui.all("wizard-fixed-red").length, 0);
 			assert.match(ui.text("wizard-pages"), /one entry per PDF page; each entry's page number is at \/n \(counted from 1\)/);
-			assert.match(ui.text("wizard-note"), /^Note from the AI \(it read the documentation, which can be wrong or written to mislead it\): Pages are numbered/);
+			assert.match(ui.text("wizard-note"), /^From the AI, which read documentation that can be wrong or written to mislead it: Pages are numbered/);
 			assert.match(ui.text("wizard-json"), /"pagesPointer": "\/result\/pages"/);
 			assert.equal(ui.disabled("wizard-test"), true);
 			assert.equal(ui.disabled("wizard-approve"), true);
@@ -263,7 +263,7 @@ describe("Draft with AI: the wizard", () => {
 			assert.match(ui.all("wizard-page-preview")[0]!, /^Page 1: The heron counted/);
 			assert.equal(ui.disabled("wizard-approve"), true);
 			assert.ok(ui.q("wizard-edit-json"));
-			assert.match(ui.text("wizard-repair"), /without your key, your service's address or the PDFs' text\) to Fixture Strong \(fixture\), once\./);
+			assert.match(ui.text("wizard-repair"), /never your key, your service's address, the service's own text or the PDFs' text\) to Fixture Strong \(fixture\), once\./);
 			await ui.click("wizard-fix");
 			assert.deepEqual(ui.calls.at(-1), { method: "POST", url: "/api/converters/drafts/fix", body: { id: "d0123456789ab" } });
 			assert.match(ui.text("wizard-note"), /Read the page list/);
@@ -300,7 +300,7 @@ describe("Draft with AI: the wizard", () => {
 			await ui.click("toggle-i-have-read-these-values");
 			assert.equal(ui.disabled("wizard-approve"), false);
 			await ui.click("wizard-approve");
-			assert.deepEqual(ui.calls.at(-1)!.body, { id: "d0123456789ab", shown: "a".repeat(24), acknowledged: "a".repeat(24) });
+			assert.deepEqual(ui.calls.at(-1)!.body, { id: "d0123456789ab", shown: "a".repeat(64), acknowledged: "a".repeat(64) });
 			assert.equal(ui.q("converter-wizard"), null, "the wizard closes");
 			assert.match(ui.text("converter-import-note"), /^Approved Acme OCR, shown above\. Choose Use for new PDFs to use it\.$/);
 			assert.match(ui.text("converter-destination"), /^If you use it, PDFs you upload will be sent to https:\/\/ocr\.acme\.example\./);
@@ -325,7 +325,7 @@ describe("Draft with AI: the wizard", () => {
 			await ui.click("toggle-i-have-read-these-values");
 			assert.equal(ui.disabled("wizard-approve"), false);
 			await ui.click("wizard-approve");
-			assert.equal((ui.calls.at(-1)!.body as { acknowledged: string }).acknowledged, "a".repeat(24));
+			assert.equal((ui.calls.at(-1)!.body as { acknowledged: string }).acknowledged, "a".repeat(64));
 		} finally {
 			ui.cleanup();
 		}
@@ -337,9 +337,9 @@ describe("Draft with AI: the wizard", () => {
 		const p3 = profile({ submit: { method: "POST", path: "/convert", body: { type: "multipart", fileField: "document", fields: { callback: "https://c.example/three" } } } });
 		const failedTest = { report: report(false), current: false, stale: false, at: "x" };
 		const passedTest = { report: report(true), current: true, stale: false, at: "x" };
-		const v1 = configured({ profile: p1, preflight: describeProfile(p1, BASE, { stored: true }), shown: "1".repeat(24), test: failedTest, approveBlocked: "The Test failed: fix the profile and run Test again." });
-		const v2 = configured({ profile: p2, preflight: describeProfile(p2, BASE, { stored: true }), shown: "2".repeat(24), test: passedTest, approvable: true, approveBlocked: undefined });
-		const v3 = configured({ profile: p3, preflight: describeProfile(p3, BASE, { stored: true }), shown: "3".repeat(24), test: passedTest, approvable: true, approveBlocked: undefined });
+		const v1 = configured({ profile: p1, preflight: describeProfile(p1, BASE, { stored: true }), shown: "1".repeat(64), test: failedTest, approveBlocked: "The Test failed: fix the profile and run Test again." });
+		const v2 = configured({ profile: p2, preflight: describeProfile(p2, BASE, { stored: true }), shown: "2".repeat(64), test: passedTest, approvable: true, approveBlocked: undefined });
+		const v3 = configured({ profile: p3, preflight: describeProfile(p3, BASE, { stored: true }), shown: "3".repeat(64), test: passedTest, approvable: true, approveBlocked: undefined });
 		const ui = await mount({
 			"GET /api/converters": () => ({ json: section() }),
 			"GET /api/converters/drafts": () => ({ json: drafts([v1]) }),
@@ -365,7 +365,7 @@ describe("Draft with AI: the wizard", () => {
 			assert.equal(ui.disabled("wizard-approve"), true);
 			await ui.click("toggle-i-have-read-these-values");
 			await ui.click("wizard-approve");
-			assert.equal((ui.calls.at(-1)!.body as { acknowledged: string }).acknowledged, "3".repeat(24), "the acknowledgement names the version read");
+			assert.equal((ui.calls.at(-1)!.body as { acknowledged: string }).acknowledged, "3".repeat(64), "the acknowledgement names the version read");
 		} finally {
 			ui.cleanup();
 		}
@@ -381,17 +381,18 @@ describe("Draft with AI: the wizard", () => {
 		try {
 			await ui.click("converter-wizard-open");
 			await ui.click("wizard-open-d0123456789ab");
-			const red = ui.all("wizard-fixed-red").map((t) => t.replace(/its (value|name).*$/, "").trim());
+			const red = ui.all("wizard-fixed-red").map((t) => t.replace(/(its (value|name)|this may send).*$/, "").trim());
+			// red first, then in the schema's order: the path's parameters before the body
 			assert.deepEqual(red, [
+				"submit query parameter webhook = https://attacker.example/steal",
+				"submit query parameter callback_url = https://attacker.example/cb",
+				"submit query parameter email = leak@attacker.example",
 				'submit field /sink = "exfil.ru/collect"',
 				'submit field /url/0 = "exfil.ru/hook"',
 				'submit field /target/host = "exfil.ru"',
 				'submit field /workspace_id = "ws_attacker_shared"',
-				"submit query parameter webhook = https://attacker.example/steal",
-				"submit query parameter callback_url = https://attacker.example/cb",
-				"submit query parameter email = leak@attacker.example",
 			]);
-			assert.deepEqual(ui.all("wizard-fixed-value"), ["submit field /ocr = false", "submit field /max_pages = 3", 'submit field /tier = "enterprise-max"', "submit path: /convert"]);
+			assert.deepEqual(ui.all("wizard-fixed-value"), [`key header Authorization = Bearer ${KEY_MASK}`, "submit method: POST", "submit path: /convert", "submit file pointer: /file", "submit PDF encoding: base64", "submit field /ocr = false", "submit field /max_pages = 3", 'submit field /tier = "enterprise-max"']);
 			assert.equal(ui.disabled("wizard-approve"), true);
 			assert.match(ui.text("wizard-ack-row"), /^I have read these values/);
 		} finally {
@@ -399,7 +400,7 @@ describe("Draft with AI: the wizard", () => {
 		}
 	});
 
-	it("a profile that sends no fixed value asks for no acknowledgement; a void pass is never a plain Passed", async () => {
+	it("even the plainest profile asks for the acknowledgement (fix round 2); a void pass is never a plain Passed", async () => {
 		const bare = profile({ submit: { method: "POST", path: "/convert", body: { type: "multipart", fileField: "document" } } });
 		const passed = configured({ profile: bare, preflight: describeProfile(bare, BASE, { stored: true }), test: { report: report(true), current: true, stale: false, at: "x" }, approvable: true, approveBlocked: undefined });
 		const voided = configured({ id: "d0123456789ac", test: { report: report(true), current: false, stale: true, at: "x" }, approveBlocked: "The profile, URL or key changed since the Test passed: run Test again." });
@@ -407,11 +408,28 @@ describe("Draft with AI: the wizard", () => {
 		try {
 			await ui.click("converter-wizard-open");
 			await ui.click("wizard-open-d0123456789ab");
-			assert.equal(ui.q("wizard-ack-row"), null);
+			assert.match(ui.text("wizard-ack-row"), /^I have read these values/);
+			assert.equal(ui.disabled("wizard-approve"), true, "there is no 'nothing to acknowledge' case");
+			await ui.click("toggle-i-have-read-these-values");
 			assert.equal(ui.disabled("wizard-approve"), false);
 			await ui.click("wizard-back");
 			await ui.click("wizard-open-d0123456789ac");
 			assert.match(ui.text("wizard-report-verdict"), /^This report is for an earlier version of the draft\. Passed/);
+		} finally {
+			ui.cleanup();
+		}
+	});
+
+	it("after a restart the Test shows the checks in the app's words, says the previews are gone and offers Test again (fix round 2)", async () => {
+		const kept = { ...report(false), pages: [] };
+		const restarted = configured({ test: { report: kept, current: false, stale: false, at: "x", previews: false }, approveBlocked: "The Test failed: fix the profile and run Test again." });
+		const ui = await mount({ "GET /api/converters": () => ({ json: section() }), "GET /api/converters/drafts": () => ({ json: drafts([restarted]) }) });
+		try {
+			await ui.click("converter-wizard-open");
+			await ui.click("wizard-open-d0123456789ab");
+			assert.equal(ui.all("wizard-page-preview").length, 0);
+			assert.equal(ui.text("wizard-no-previews"), "The service's own messages and the page previews are kept only while the app runs. Run Test again to see them.");
+			assert.equal(ui.disabled("wizard-test"), false, "Test is offered again");
 		} finally {
 			ui.cleanup();
 		}
@@ -424,7 +442,8 @@ describe("Draft with AI: the wizard", () => {
 		try {
 			await ui.click("converter-wizard-open");
 			await ui.click("wizard-open-d0123456789ab");
-			assert.equal(ui.text("wizard-cannot"), "The AI found that this service cannot be described by a profile: Uploads go to a presigned URL first.");
+			assert.equal(ui.text("wizard-cannot-reason"), "From the AI, which read documentation that can be wrong or written to mislead it: Uploads go to a presigned URL first.");
+			assert.match(ui.text("wizard-cannot"), /^The AI found that this service cannot be described by a profile\./);
 			assert.equal(ui.q("wizard-test"), null);
 			assert.equal(ui.q("wizard-approve"), null);
 			await ui.click("wizard-back");
