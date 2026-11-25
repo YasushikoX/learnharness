@@ -635,6 +635,18 @@ it("item 6: the timeline's longest gap includes the silence before the end, and 
 	assert.deepEqual(lines[0]?.thinkingSpans, [{ startMs: 800, durationMs: 4_200, source: "reported" }]);
 });
 
+it("re-check 2, finding 3: the timeline's longest gap includes the wait before the first event", () => {
+	const lines: TurnTimelineLine[] = [];
+	let now = 0;
+	const timeline = new TurnTimeline(identity, line => lines.push(line), () => now);
+	now = 40_000;
+	timeline.event({ type: "turn_start" });
+	now = 41_000;
+	timeline.finish(false);
+	assert.equal(lines[0]?.firstEventMs, 40_000);
+	assert.equal(lines[0]?.longestEventGapMs, 40_000);
+});
+
 it("item 7: the cut-off notice stays usable after a failed background sync", () => {
 	const idle = { localStream: false, turnInFlight: false, reconciliation: "failed" as const, compacting: false, retryingStream: false };
 	assert.equal(cutOffRecoveryDisabled(idle), false);

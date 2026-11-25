@@ -149,7 +149,9 @@ export class TurnTimeline {
 	event(event: AgentEvent) {
 		const now = this.now();
 		this.firstEvent ??= now;
-		if (this.lastEvent !== null) this.longestEventGap = Math.max(this.longestEventGap, now - this.lastEvent);
+		// The wait before the first event is a gap too (re-check 2, finding 3): a turn that stalls before the model says
+		// anything is the stall this number exists to show.
+		this.longestEventGap = Math.max(this.longestEventGap, now - (this.lastEvent ?? 0));
 		this.lastEvent = now;
 		if (event.type === "turn_start" && this.identity.thinking) this.modelWait = now;
 		if (event.type === "message_update") {
