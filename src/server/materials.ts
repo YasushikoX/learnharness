@@ -26,11 +26,13 @@ import {
 	canIndexMaterial,
 	dropStaleIndex,
 	indexPdfMaterial,
+	keptOrNone,
 	pendingIndexingError,
 	profileFromDigest,
 	retryPdfIndexing,
 	rewritePdfProfile,
 	rewriteRefusal,
+	unfinishedIndexingError,
 	type IndexMaterialOptions,
 } from "./material-indexing.ts";
 import { hasProfile } from "../agent/subagents/material-digest.ts";
@@ -105,13 +107,13 @@ const current = (ownerId: string, id: string) => stores.materialStore.list(owner
  * describes content.md (material-indexing.ts dropStaleIndex, THE INDEX INVARIANT) and, when no vision model is
  * configured, say that indexing is pending. Returns the material as stored now, or undefined once it was removed.
  */
-function settleAfterConversion(ownerId: string, id: string, forced: boolean, hasModel: boolean): { material: LessonMaterial; profileDropped: boolean } | undefined {
+function settleAfterConversion(ownerId: string, id: string, forced: boolean, hasModel: boolean): { material: LessonMaterial; profileDropped: boolean; describes: boolean } | undefined {
 	const material = current(ownerId, id);
 	if (!material) return undefined;
 	const settled = dropStaleIndex(ownerId, material, stores.materialStore, { forced });
 	if (!hasModel && settled.converted && !settled.describes) stores.materialStore.update(ownerId, id, { indexingError: pendingIndexingError(settled.invalidReason) });
 	const now = current(ownerId, id);
-	return now ? { material: now, profileDropped: settled.profileDropped } : undefined;
+	return now ? { material: now, profileDropped: settled.profileDropped, describes: settled.describes } : undefined;
 }
 
 /**
@@ -253,9 +255,16 @@ export function retryMaterialConversion(ownerId: string, id: string): Result<Les
 			if (!now.profile) stores.materialStore.update(ownerId, id, { status: "error", error: err instanceof Error ? err.message : String(err) });
 			return;
 		}
-		// without a profile the material is being read again (a turn waits for it; a restart resumes it)
+		// without a profile the material is being read again (a turn waits for it; a restart resumes it); with one it stays
+		// ready, and nothing resumes a quit during this indexing, so the note says it has not finished (review 5, finding 2),
+		// unless the stored index already describes the content (follow-ups 1, finding 7: nothing is left to finish)
+		const unfinished = now.profile && !settled.describes ? unfinishedIndexingError(keptOrNone(now)) : undefined;
 		if (!now.profile) stores.materialStore.update(ownerId, id, { status: "reading" });
+		else if (unfinished) stores.materialStore.update(ownerId, id, { indexingError: unfinished });
 		await indexAndProfile(ownerId, current(ownerId, id) ?? now, engine, signal, key, "when_missing");
+		// Every exit of the run replaces the note or clears it (concern 5): one that recorded no outcome (content.md gone,
+		// "not converted"; or a failed profile) must not leave "has not finished" behind. A stop (abort) keeps it: that is its use.
+		if (unfinished && !signal.aborted && current(ownerId, id)?.indexingError?.message === unfinished.message) stores.materialStore.update(ownerId, id, { indexingError: undefined });
 	})()
 		.catch(() => {})
 		.finally(() => runs().delete(key));

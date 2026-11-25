@@ -2389,7 +2389,7 @@ export function Chat({
 								onDraftDone={() => setAskDraft(null)}
 							/>
 							{openingError && <p role="alert" className="text-sm text-destructive">{OPENING_PROMPT_FAILURE}</p>}
-							{cutOffReply && <CutOffReplyNotice hasText={cutOffReply.hasText} blockedByCompaction={cutOffReply.blockedByCompaction}
+							{cutOffReply && <CutOffReplyNotice hasText={cutOffReply.hasText} blockedByCompaction={cutOffReply.blockedByCompaction} afterContinue={cutOffReply.afterContinue}
 								disabled={cutOffRecoveryDisabled({ localStream, turnInFlight, reconciliation, compacting, retryingStream })} recover={() => void recoverReply()} />}
 							{error && (
 								<div className="flex items-center justify-between gap-3 rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm">

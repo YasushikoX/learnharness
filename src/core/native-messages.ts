@@ -528,6 +528,15 @@ export function emptyCutOffIds(messages: readonly LhMessage[]): Set<string> {
 	return ids;
 }
 
+/** A kept cut-off that holds nothing but thinking (lhCutoffHasText: earlier send_to_user prose in its turn). Sent, it would
+ *  be an assistant turn of thinking alone: pi-ai serialises it as is, the Anthropic API has no documented acceptance of
+ *  that, and OpenAI-style APIs reject reasoning with no following item. Follow-ups 1: never sent, like an empty cut-off;
+ *  it stays in the record, and its Continue still works (the visible part is the earlier prose). */
+function thinkingOnlyCutOff(message: LhMessage): boolean {
+	// Concern 2: a whitespace-only text block counts as none (pi-ai strips it before sending, leaving thinking alone).
+	return message.role === "assistant" && message.stopReason === "length" && message.content.every(block => block.type === "thinking" || (block.type === "text" && !block.text.trim()));
+}
+
 /** The learner's explicit move-on signal (owner round 16): appended by
  *  the next input (the composer band's chip, or Enter on an empty
  *  composer during the between-problems pause). The content is the
@@ -1006,7 +1015,7 @@ export function toLlmMessages(messages: readonly AgentMessage[], opts: ToLlmOpti
 	for (let i = leading ? Math.max(start, 1) : start; i < messages.length; i++) {
 		const m = messages[i]!;
 		const role = (m as { role?: string }).role;
-		if (emptyCutOffs.has((m as LhMessage).id)) continue;
+		if (emptyCutOffs.has((m as LhMessage).id) || thinkingOnlyCutOff(m as LhMessage)) continue;
 		if (role === "custom") {
 			const marker = m as LhMarkerMessage;
 			// UI-only markers: plan blocks, and problem dismissals (the
@@ -1364,6 +1373,27 @@ export function reconstructRequestCause(messages: readonly LhMessage[]): Reconst
 		history.push(message);
 	}
 	return resolve();
+}
+
+/** Learner inputs stored as markers (nativeInputCause's "learner" customs: a practice submission, Next, a dispute,
+ *  Finish, Continue): each is owed a tutor reply until one follows. */
+const LEARNER_INPUT_MARKERS: ReadonlySet<string> = new Set(["practice-thinking", "plugin-problem-submission", "practice-next", "sketch-dispute", "lesson-finished", "reply-recovery"]);
+
+/** Fork (follow-ups 1, findings 2 and 3, concern 1): does the record end on something the tutor still owes a reply to?
+ *  A learner message, a learner input stored as a marker, or tool results the continuation fold says are owed (an
+ *  answered question). Never after an assistant message, and never after results that ended their turn on purpose (a
+ *  posed problem, a doubtful sketch read, a dismissal: needsContinuation's exclusions). Side-question and compaction
+ *  markers at the end change nothing (compaction lands its marker where the record ended). The ONE definition the
+ *  client's lost-turn recovery and the server's `continue` guard share, so the two cannot disagree. */
+export function owesTutorReply(record: readonly LhMessage[]): boolean {
+	let end = record.length;
+	while (end > 0 && (isSideQuestionMarker(record[end - 1]) || (record[end - 1]!.role === "custom" && (record[end - 1] as LhMarkerMessage).customType === "compaction"))) end--;
+	const messages = end === record.length ? record : record.slice(0, end);
+	const last = messages.at(-1);
+	if (!last) return false;
+	if (last.role === "user") return true;
+	if (last.role === "custom") return LEARNER_INPUT_MARKERS.has((last as LhMarkerMessage).customType);
+	return needsContinuation(messages);
 }
 
 export function needsContinuation(record: readonly LhMessage[]): boolean {

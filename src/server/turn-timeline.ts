@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import type { StopReason } from "@earendil-works/pi-ai";
 import { PATHS } from "../../config.ts";
+import { cliEndingOf, setClaudeCliObservationCapture, type ClaudeCliEnding, type ClaudeCliObservation } from "../agent/claude-code/constants.ts";
 import { sendToUserText } from "../core/native-messages.ts";
 import { normalizeConceptIds } from "../core/question-quality.ts";
 
@@ -41,7 +42,21 @@ export type TurnTimelineLine = Identity & {
 	/** WP5: in a session of a class with vocabulary coverage, the concept ids the turn's quiz/explain calls carried, and how
 	 *  many of them are not an item of the class (an id the model invented; ignored by the ledger). Absent otherwise. */
 	conceptIds?: { tagged: number; unknown: number };
+	/** How the claude CLI ended the turn's last assistant message; null for other providers (follow-ups 1). */
+	cliEnding: ClaudeCliEnding | null;
 };
+
+/** Written when the turn begins, so a turn abandoned mid-stall (reload, quit) still leaves a trace (follow-ups 1). The
+ *  finish line for the same turnId follows when it ends; the summary script lists starts that never got one. */
+export type TurnTimelineStartLine = Identity & { kind: "start"; startedAt: string };
+
+/** Written at once when the claude CLI adapter observes something odd mid-turn (follow-ups 1): ids, the time and a fixed
+ *  note, no text. Not at finish, since a turn that hits it may never finish; the summary script shows these beside the
+ *  turns that started and never finished. */
+export type TurnTimelineObservationLine = { kind: "observation"; turnId: string; chatId: string; at: string; note: ClaudeCliObservation };
+
+/** On disk a line also carries `writeFailures` once this process failed to write an earlier line: how many it lost so far. */
+export type TurnTimelineRecord = TurnTimelineLine | TurnTimelineStartLine | TurnTimelineObservationLine;
 
 /** Serialize rotation across turns and keep disk I/O off the settlement path. */
 export function createTurnTimelineWriter(file: string, maxBytes = TURN_TIMELINE_MAX_BYTES) {
@@ -49,11 +64,11 @@ export function createTurnTimelineWriter(file: string, maxBytes = TURN_TIMELINE_
 	let queued = 0;
 	let failures = 0;
 	return {
-		append(line: TurnTimelineLine) {
+		append(line: TurnTimelineRecord) {
 			if (queued >= MAX_QUEUED_WRITES) { failures++; return; }
 			queued++;
 			pending = pending.then(async () => {
-				const json = JSON.stringify(line) + "\n";
+				const json = JSON.stringify(failures ? { ...line, writeFailures: failures } : line) + "\n";
 				const bytes = Buffer.byteLength(json);
 				if (bytes > maxBytes) { failures++; return; }
 				await mkdir(dirname(file), { recursive: true, mode: 0o700 });
@@ -74,6 +89,12 @@ const runtime = globalThis as typeof globalThis & { __lhTurnTimelineWriter?: Ret
 const writer = runtime.__lhTurnTimelineWriter ??= createTurnTimelineWriter(timelineFile);
 export const turnTimelineWriteFailures = () => writer.failures;
 const context = new AsyncLocalStorage<TurnTimeline>();
+
+// The claude CLI adapter captures this when a turn's stream function is entered, inside that turn's context.
+setClaudeCliObservationCapture(() => {
+	const timeline = context.getStore();
+	return timeline ? (note) => timeline.observeCli(note) : undefined;
+});
 
 export async function observeTurnActivity<T>(activity: TurnActivity, run: () => Promise<T>): Promise<T> {
 	const end = context.getStore()?.beginActivity(activity);
@@ -99,6 +120,8 @@ export class TurnTimeline {
 	private stopReason: StopReason | null = null;
 	private clientDrops = 0;
 	private finished = false;
+	private begun = false;
+	private cliEnding: ClaudeCliEnding | null = null;
 	private modelWait: number | null = null;
 	private thinkingStart: number | null = null;
 	private textStart: number | null = null;
@@ -119,8 +142,10 @@ export class TurnTimeline {
 
 	constructor(
 		private identity: Identity,
-		private readonly write = process.env.NODE_ENV === "test" ? undefined : writer.append,
+		private readonly write: ((line: TurnTimelineLine) => void) | undefined = process.env.NODE_ENV === "test" ? undefined : writer.append,
 		private readonly clock = () => performance.now(),
+		private readonly writeStart: ((line: TurnTimelineStartLine) => void) | undefined = process.env.NODE_ENV === "test" ? undefined : writer.append,
+		private readonly writeObservation: ((line: TurnTimelineObservationLine) => void) | undefined = process.env.NODE_ENV === "test" ? undefined : writer.append,
 	) { this.start = clock(); }
 
 	private now() { return Math.round(this.clock() - this.start); }
@@ -131,6 +156,20 @@ export class TurnTimeline {
 	}
 
 	run<T>(run: () => T): T { return context.run(this, run); }
+
+	/** The start line: ids, provider, model and start time only, like the rest of the log (no prompt or answer text). Once. */
+	begin() {
+		if (this.begun || this.finished) return;
+		this.begun = true;
+		try { this.writeStart?.({ kind: "start", ...this.identity, startedAt: this.startedAt }); }
+		catch { /* Diagnostics cannot interfere with the turn. */ }
+	}
+
+	/** An observation line, written now (follow-ups 1). Ids, the time and the fixed note only; changes nothing else. */
+	observeCli(note: ClaudeCliObservation) {
+		try { this.writeObservation?.({ kind: "observation", turnId: this.identity.turnId, chatId: this.identity.chatId, at: new Date().toISOString(), note }); }
+		catch { /* Diagnostics cannot interfere with the turn. */ }
+	}
 
 	bindActivity(listener: (activity: TurnActivity | null) => void) {
 		this.onActivity = listener;
@@ -196,6 +235,7 @@ export class TurnTimeline {
 		if (event.type === "message_end" && event.message.role === "assistant") {
 			const message = event.message;
 			this.stopReason = message.stopReason;
+			this.cliEnding = cliEndingOf(message);
 			this.closeThinking(now);
 			this.closeText(now);
 			for (const block of message.content) {
@@ -259,7 +299,7 @@ export class TurnTimeline {
 				checkerSpans: this.checkerSpans, graderSpans: this.graderSpans, processingSpans: this.processingSpans, gateRefusals: Object.fromEntries(this.gateRefusals),
 				refusalBudgetPasses: Object.fromEntries(this.refusalBudgetPasses),
 				stopReason: this.stopReason, streamEnd, errorKind, clientDrops: this.clientDrops,
-				visibleTextChars: this.visibleTextChars, thinkingChars: this.thinkingChars,
+				visibleTextChars: this.visibleTextChars, thinkingChars: this.thinkingChars, cliEnding: this.cliEnding,
 				...(this.conceptIds ? { conceptIds: { ...this.conceptIds } } : {}),
 			});
 		} catch { /* Diagnostics cannot interfere with settlement. */ }
