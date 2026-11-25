@@ -104,6 +104,18 @@ Do not commit `.env.local`, credentials, or learning records. Do not copy a pers
 
 Read the relevant installed Next guide under `node_modules/next/dist/docs/` before framework-facing changes. The import restrictions live in `eslint.config.mjs`; they do not enforce every architectural convention. [Architecture's code map](architecture.md#code-boundaries) and [prompt composition](../src/agent/prompts/README.md) identify the main entry points. For plugins, start with the [authoring/capability map](plugin-authoring.md), [host source map and verification](plugin-architecture.md), [`examples/plugins/`](../examples/plugins/) templates and [`plugins/`](../plugins/) feature sources.
 
+## UI screenshots
+
+Install the dependencies with `npm ci` and `npm run plugins:setup`, then run the kit from the worktree.
+
+```sh
+node scripts/ui-shots/run.mjs --out /absolute/path/to/shots --port 3210 --themes dark,light --build
+```
+
+The runner builds and starts the production app on loopback, seeds disposable data and auth directories, and drives headless Chrome. It captures Default (dark) and Ivory (light) at 1440 × 900 and three additional dark screens at 1024 × 768, all at 2×. Open `index.md` in the output directory for the shot list. Pass `--themes dark` or `--themes light` for a single theme, or `--no-build` to reuse the worktree’s existing production build. Set `CHROME_PATH` if Chrome is installed outside `/Applications/Google Chrome.app`.
+
+The fixture uses fixed IDs, content, and dates relative to the UTC day of the run, so exams and reviews stay current across rounds. The PDF index, graph, and tutor transcript are authored locally. A synthetic provider key populates the model controls. The runner sends no model requests. A cold Next build can fetch the fonts declared by the app. At exit the runner stops the server and removes the fixture directories.
+
 ## Checking a change on a phone
 
 Run the PC's code in the Android app, with a throwaway data root (see above), instead of building the server bundle:
