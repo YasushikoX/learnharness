@@ -47,10 +47,11 @@ export const MISTRAL_OCR_PRESET: HttpConverterProfile = {
 export const PRESET_PROFILES: readonly HttpConverterProfile[] = [MISTRAL_OCR_PRESET];
 
 for (const preset of PRESET_PROFILES) {
-	const checked = validateHttpConverterProfile(preset);
+	const checked = validateHttpConverterProfile(preset, { bundled: true });
 	if (!checked.ok) throw new Error(`Invalid converter preset ${preset.id}: ${checked.errors.join("; ")}`);
 }
 
+/** A bundled preset by id (the only profiles that may carry defaultBaseUrl). */
 export function presetProfile(id: string): HttpConverterProfile | undefined {
 	return PRESET_PROFILES.find((p) => p.id === id);
 }

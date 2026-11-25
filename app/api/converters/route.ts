@@ -5,20 +5,30 @@
  *         of your own profiles) with its URL, where PDFs go, whether a key is stored (never the key) and its
  *         options; the profile files that failed validation.
  *   PUT { id, select?, baseUrl?, apiKey?, removeKey?, ocr?, formulaEnrichment? } → the new overview.
- *         A key is bound to the converter's URL; changing the URL without a key removes the stored one.
+ *         A key is bound to the converter's URL; changing the URL without a key removes the stored one. `select`
+ *         ("Use for new PDFs") is refused (409) until the converter is set up. The body is read up to 16 KB.
  */
-import { configureConverter, convertersOverview, parseConfigureBody } from "@/src/server";
+import { CustomBodyLimitError, configureConverter, convertersOverview, noteAppRequest, parseConfigureBody, readBoundedJson } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
 const NO_STORE = { "Cache-Control": "no-store" };
+const MAX_BODY_BYTES = 16 * 1024;
 
-export async function GET() {
+export async function GET(request?: Request) {
+	if (request) noteAppRequest(request.url);
 	return Response.json(convertersOverview(), { headers: NO_STORE });
 }
 
 export async function PUT(request: Request) {
-	const parsed = parseConfigureBody(await request.json().catch(() => null));
+	noteAppRequest(request.url);
+	let body: unknown = null;
+	try {
+		body = await readBoundedJson(request, MAX_BODY_BYTES);
+	} catch (error) {
+		if (error instanceof CustomBodyLimitError) return Response.json({ error: "The request is too large" }, { status: 413, headers: NO_STORE });
+	}
+	const parsed = parseConfigureBody(body);
 	if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400, headers: NO_STORE });
 	try {
 		const result = configureConverter(parsed.value);

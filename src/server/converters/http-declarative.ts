@@ -17,10 +17,16 @@ import {
 	CONVERTER_MAX_RESPONSE_BYTES,
 	CONVERTER_REQUEST_TIMEOUT_MS,
 	CONVERTER_UPLOAD_TIMEOUT_MS,
+	SECRET_REDACTED_WARNING,
+	storedKeyProblem,
 	badResponse,
+	buildHeaders,
 	delay,
+	redactConversion,
+	redactError,
 	requestServiceJson,
 	runConverterJob,
+	serviceMessage,
 	type ConverterJob,
 } from "./http-common.ts";
 
@@ -42,26 +48,30 @@ import {
  * whose paths leave it is refused when the converter is created, before anything is sent. The credential goes only
  * into the profile's one auth header, only on requests to that origin.
  *
- * PAGES. Page-array numbers come from the declared field; the host's normaliser rejects duplicates, gaps and
- * out-of-range numbers. A delimited answer must have exactly one segment per PDF page, or the conversion fails with
+ * PAGES. A page array must have exactly one entry per PDF page (checked before anything is mapped); its numbers come
+ * from the declared field and the host's normaliser rejects duplicates, gaps and out-of-range numbers. A delimited
+ * answer is split with a limit and must match the declared placement exactly: `between` gives one segment per page,
+ * `after` and `before` one more, which must be the empty last (after) or first (before) one. Anything else is
  * bad_response: a generic profile cannot tell a blank page from a missing break, so it never guesses.
  *
- * SECRETS. The key is removed from every page text, warning and error message (a service that echoes it is
- * reported through SECRET_REDACTED_WARNING, which the validator turns into a failure).
+ * SECRETS. The key is removed from every page text, page reason, warning, version and error message (before any
+ * message is shortened); a service that echoes it is reported through SECRET_REDACTED_WARNING, which the validator
+ * turns into a failure. A key that cannot be sent in a header is an `auth` error before anything is sent (never
+ * "unreachable", so it never falls back to the built-in reader quietly).
  */
 
 /** The interpreter's own version (part of every profile converter's version). */
 export const HTTP_ENGINE_VERSION = "1";
-/** The warning a conversion carries when the service's answer contained the API key (removed from the text). */
-export const SECRET_REDACTED_WARNING = "The service's answer contained the API key; it was removed from the text.";
-const REDACTED = "[redacted]";
+export { SECRET_REDACTED_WARNING };
 
 export interface HttpConverterOptions {
 	/** The settings id: a preset's id, or `custom:<id>`. */
 	converterId: string;
 	/** Validated again here, every time. */
 	profile: unknown;
-	/** The configured base URL (the profile's default when the settings name none). */
+	/** A bundled preset (the only kind that may carry defaultBaseUrl). Default false: validated as untrusted. */
+	bundled?: boolean;
+	/** The service URL saved in the settings (a profile's defaultBaseUrl is never used here). */
 	baseUrl: string;
 	apiKey?: string;
 	requestTimeoutMs?: number;
@@ -92,8 +102,39 @@ function pageNumber(value: unknown): number | undefined {
 	return undefined;
 }
 
+/**
+ * One Markdown string split into the PDF's pages at `delimiter`, by the declared placement, strictly (pure; exported
+ * for tests). `split` is given a limit, so a hostile answer full of delimiters cannot allocate millions of segments.
+ *   between  exactly pageCount segments;
+ *   after    exactly pageCount + 1, the last one empty (a delimiter after every page, the last one included);
+ *   before   exactly pageCount + 1, the first one empty.
+ * Anything else is bad_response saying the service did not mark every page.
+ */
+export function splitPages(markdown: string, delimiter: string, placement: "between" | "after" | "before", pageCount: number, name: string): string[] {
+	const expected = placement === "between" ? pageCount : pageCount + 1;
+	const limit = pageCount + 3;
+	const segments = markdown.split(delimiter, limit);
+	const counted = segments.length === limit ? `more than ${limit - 1}` : String(segments.length);
+	const fail = (detail: string): never =>
+		badResponse(`${name} did not mark every page: ${detail}, so its text cannot be placed on pages reliably`);
+	const pages = `${pageCount} ${pageCount === 1 ? "page" : "pages"}`;
+	if (segments.length !== expected) {
+		const what = placement === "between" ? "" : ` (a page break ${placement} every page gives ${expected})`;
+		fail(`its answer has ${counted} page ${segments.length === 1 ? "segment" : "segments"} for the PDF's ${pages}${what}`);
+	}
+	if (placement === "after") {
+		if (segments.at(-1)!.trim()) fail(`its answer does not end with a page break, though the profile says one follows every page (PDF of ${pages})`);
+		return segments.slice(0, -1);
+	}
+	if (placement === "before") {
+		if (segments[0]!.trim()) fail(`its answer does not start with a page break, though the profile says one precedes every page (PDF of ${pages})`);
+		return segments.slice(1);
+	}
+	return segments;
+}
+
 export function createHttpConverter(options: HttpConverterOptions): PdfConverter {
-	const checked = validateHttpConverterProfile(options.profile);
+	const checked = validateHttpConverterProfile(options.profile, { bundled: options.bundled === true });
 	if (!checked.ok) notConfigured(`The converter profile is not valid: ${checked.errors.join("; ")}`);
 	const profile = checked.profile;
 	const name = profile.name;
@@ -102,7 +143,9 @@ export function createHttpConverter(options: HttpConverterOptions): PdfConverter
 	const origin = new URL(baseUrl).origin;
 	const apiKey = options.apiKey?.trim() || undefined;
 	if (profile.auth && !apiKey) notConfigured(`${name} needs an API key for ${origin}`);
-	if (apiKey && /[\r\n\0]/.test(apiKey)) notConfigured(`The ${name} key contains a line break`);
+	const secrets = apiKey ? [apiKey] : [];
+	/** Checked when a conversion starts, as an auth error: a stored key that cannot be sent is never "unreachable". */
+	const keyProblem = profile.auth && apiKey ? storedKeyProblem(apiKey) : undefined;
 
 	// Every URL the profile can produce, checked before anything is sent.
 	let submitUrl: string;
@@ -122,14 +165,19 @@ export function createHttpConverter(options: HttpConverterOptions): PdfConverter
 	const maxPages = Math.min(profile.limits?.maxPages ?? PDF_MAX_PAGES, PDF_MAX_PAGES);
 	const version = profileConverterVersion(profile);
 
-	const baseHeaders: Record<string, string> = { Accept: "application/json", ...(profile.submit.headers ?? {}) };
-	if (profile.auth && apiKey) baseHeaders[profile.auth.header] = fillPlaceholders(profile.auth.value, { API_KEY: apiKey });
-
-	const redact = (text: string): string => (apiKey && text.includes(apiKey) ? text.split(apiKey).join(REDACTED) : text);
+	/** Every request's headers, built and checked before anything is sent (a Headers object, never a plain record). */
+	const headersFor = (extra: readonly (readonly [string, string])[] = []): Headers => {
+		const fixed = buildHeaders([["Accept", "application/json"], ...Object.entries(profile.submit.headers ?? {}), ...extra], name);
+		if (profile.auth && apiKey) {
+			const credential = buildHeaders([[profile.auth.header, fillPlaceholders(profile.auth.value, { API_KEY: apiKey })]], name, "auth");
+			credential.forEach((value, header) => fixed.set(header, value));
+		}
+		return fixed;
+	};
 
 	/** One request to a path under the base URL; the URL is checked again right before it is sent. */
-	const request = (job: ConverterJob, url: string, init: RequestInit, timeoutMs: number) =>
-		requestServiceJson(job, url, { ...init, headers: { ...baseHeaders, ...(init.headers as Record<string, string> | undefined) } }, { timeoutMs, maxResponseBytes });
+	const request = (job: ConverterJob, url: string, init: RequestInit, timeoutMs: number, extra: readonly (readonly [string, string])[] = []) =>
+		requestServiceJson(job, url, { ...init, headers: headersFor(extra) }, { timeoutMs, maxResponseBytes });
 
 	const urlFor = (template: string, jobId?: string): string => {
 		try {
@@ -139,7 +187,7 @@ export function createHttpConverter(options: HttpConverterOptions): PdfConverter
 		}
 	};
 
-	function submitBody(input: { bytes: Uint8Array; filename: string }, delimiter: string | undefined): { body: BodyInit; headers?: Record<string, string> } {
+	function submitBody(input: { bytes: Uint8Array; filename: string }, delimiter: string | undefined): { body: BodyInit; headers?: [string, string][] } {
 		const fill = (text: string) => (delimiter !== undefined && text.includes("{{DELIMITER}}") ? fillPlaceholders(text, { DELIMITER: delimiter }) : text);
 		const body = profile.submit.body;
 		if (body.type === "multipart") {
@@ -158,7 +206,7 @@ export function createHttpConverter(options: HttpConverterOptions): PdfConverter
 		const json = fillDeep(structuredClone(body.json ?? {})) as Record<string, unknown>;
 		const base64 = Buffer.from(input.bytes).toString("base64");
 		jsonPointerSet(json, body.filePointer, body.encoding === "data-url" ? `data:application/pdf;base64,${base64}` : base64);
-		return { body: JSON.stringify(json), headers: { "Content-Type": "application/json" } };
+		return { body: JSON.stringify(json), headers: [["Content-Type", "application/json"]] };
 	}
 
 	function extractPages(answer: unknown, pageCount: number, delimiter: string | undefined): PageResult[] {
@@ -167,6 +215,9 @@ export function createHttpConverter(options: HttpConverterOptions): PdfConverter
 		if (extract.type === "pages") {
 			const list = jsonPointerGet(answer, extract.pagesPointer);
 			if (!Array.isArray(list)) badResponse(`${name}'s answer has no page list at ${extract.pagesPointer || "its top level"}`);
+			if (list.length !== pageCount) {
+				badResponse(`${name}'s answer lists ${list.length} ${list.length === 1 ? "page" : "pages"} for the PDF's ${pageCount} ${pageCount === 1 ? "page" : "pages"}, so its text cannot be placed on pages reliably`);
+			}
 			return list.map((item, i): PageResult => {
 				const number = pageNumber(jsonPointerGet(item, extract.numberPointer));
 				if (number === undefined) badResponse(`${name}'s page entry ${i} has no page number at ${extract.numberPointer}`);
@@ -179,13 +230,7 @@ export function createHttpConverter(options: HttpConverterOptions): PdfConverter
 		}
 		const markdown = jsonPointerGet(answer, extract.markdownPointer);
 		if (typeof markdown !== "string") badResponse(`${name}'s answer has no Markdown text at ${extract.markdownPointer || "its top level"}`);
-		let segments = markdown.split(delimiter!);
-		const placement = extract.placement ?? "between";
-		if (placement === "after" && segments.length > 1 && !segments.at(-1)!.trim()) segments = segments.slice(0, -1);
-		if (placement === "before" && segments.length > 1 && !segments[0]!.trim()) segments = segments.slice(1);
-		if (segments.length !== pageCount) {
-			badResponse(`${name} did not mark every page: its answer has ${segments.length} page ${segments.length === 1 ? "segment" : "segments"} for the PDF's ${pageCount} ${pageCount === 1 ? "page" : "pages"}, so its text cannot be placed on pages reliably`);
-		}
+		const segments = splitPages(markdown, delimiter!, extract.placement ?? "between", pageCount, name);
 		return segments.map((segment, i): PageResult => {
 			const text = segment.replace(/\r\n?/g, "\n").trim();
 			return text ? { page: i + 1, status: "ok", markdown: text } : { page: i + 1, status: "empty", reason: noText };
@@ -204,7 +249,7 @@ export function createHttpConverter(options: HttpConverterOptions): PdfConverter
 		} catch (error) {
 			throw new ConverterError("not_configured", `${name}: the request body could not be built (${(error as Error).message}); nothing was sent`, false);
 		}
-		let answer = await request(job, submitUrl, { method: profile.submit.method, body: submit.body, headers: submit.headers }, uploadTimeoutMs);
+		let answer = await request(job, submitUrl, { method: profile.submit.method, body: submit.body }, uploadTimeoutMs, submit.headers);
 
 		const poll = profile.poll;
 		let jobId: string | undefined;
@@ -223,10 +268,10 @@ export function createHttpConverter(options: HttpConverterOptions): PdfConverter
 				if (poll.done.some((v) => sameScalar(v, status))) break;
 				if ((poll.failed ?? []).some((v) => sameScalar(v, status))) {
 					const reason = poll.errorPointer === undefined ? undefined : jsonPointerGet(answer, poll.errorPointer);
-					const message = typeof reason === "string" && reason ? reason.slice(0, 300) : reason !== undefined && reason !== null ? JSON.stringify(reason).slice(0, 300) : "no reason given";
+					const message = typeof reason === "string" && reason ? serviceMessage(reason, secrets) : reason !== undefined && reason !== null ? serviceMessage(JSON.stringify(reason), secrets) : "no reason given";
 					throw new ConverterError("conversion_failed", `${name} could not convert the PDF: ${message}`, false);
 				}
-				if (!poll.running.some((v) => sameScalar(v, status))) badResponse(`${name} returned unknown job status ${JSON.stringify(status) ?? "(none)"} at ${poll.statusPointer}`);
+				if (!poll.running.some((v) => sameScalar(v, status))) badResponse(`${name} returned unknown job status ${serviceMessage(JSON.stringify(status) ?? "(none)", secrets)} at ${poll.statusPointer}`);
 				ctx.onProgress("converting", undefined, total);
 			}
 		}
@@ -236,14 +281,8 @@ export function createHttpConverter(options: HttpConverterOptions): PdfConverter
 		}
 
 		const pages = extractPages(answer, total, delimiter);
-		let echoed = false;
-		const clean = pages.map((page): PageResult => {
-			if (page.status !== "ok" || !apiKey || !page.markdown.includes(apiKey)) return page;
-			echoed = true;
-			return { ...page, markdown: redact(page.markdown) };
-		});
 		ctx.onProgress("complete", total, total);
-		return { converterVersion: version, pages: clean, ...(echoed ? { warnings: [SECRET_REDACTED_WARNING] } : {}) };
+		return redactConversion({ converterVersion: version, pages }, secrets);
 	}
 
 	return {
@@ -256,14 +295,12 @@ export function createHttpConverter(options: HttpConverterOptions): PdfConverter
 		async convert(input, ctx) {
 			if (input.bytes.byteLength > maxBytes) throw new ConverterError("too_large", `PDF exceeds ${name}'s size limit of ${Math.floor(maxBytes / 1024 / 1024)} MB`, false);
 			if (input.pageCount > maxPages) throw new ConverterError("too_many_pages", `PDF exceeds ${name}'s limit of ${maxPages} pages`, false);
+			if (keyProblem) throw new ConverterError("auth", `${keyProblem.replace("The API key", `The stored ${name} key`)}; enter the key again in Settings → PDF conversion. Nothing was sent.`, false);
+			headersFor(); // a header fetch would refuse fails here, before the upload, as a configuration error
 			try {
-				return await runConverterJob({ name, baseUrl }, ctx.signal, jobDeadlineMs, (job) => run(job, input, ctx));
+				return await runConverterJob({ name, baseUrl, secrets }, ctx.signal, jobDeadlineMs, (job) => run(job, input, ctx));
 			} catch (error) {
-				if (error instanceof ConverterError) {
-					const message = redact(error.message);
-					throw message === error.message ? error : new ConverterError(error.kind, message, error.retryable);
-				}
-				throw error;
+				throw error instanceof ConverterError ? redactError(error, secrets) : error;
 			}
 		},
 	};

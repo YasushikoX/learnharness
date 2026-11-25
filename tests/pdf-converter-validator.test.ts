@@ -26,6 +26,12 @@ function fake(answer: () => ConvertResult | Promise<ConvertResult>): PdfConverte
 
 const status = (report: ConverterValidationReport) => Object.fromEntries(report.checks.map((c) => [c.id, c.status]));
 
+/** The page texts of an uploaded test PDF (sent as base64 in a JSON body): its sentences, "" for a blank page. */
+function sentencesOf(body: string): string[] {
+	const pdf = Buffer.from((JSON.parse(body) as { file: { data: string } }).file.data, "base64").toString("latin1");
+	return [...pdf.matchAll(/stream\n(.*?)\nendstream/gs)].map((m) => /\((.*)\) Tj/.exec(m[1]!)?.[1] ?? "");
+}
+
 describe("the converter test PDF", () => {
 	it("is built byte for byte the same every time, equals the committed fixture, and has two pages", async () => {
 		const built = validationPdf();
@@ -41,14 +47,14 @@ describe("validateConverter", () => {
 	it("the built-in reader passes every check", async () => {
 		const report = await validateConverter(pdfjsConverter, { signal: signal() });
 		assert.equal(report.ok, true, JSON.stringify(report.checks));
-		assert.deepEqual(status(report), { converted: "pass", markers: "pass", page_1: "pass", page_2: "pass", own_pages: "pass", no_secret: "pass" });
+		assert.deepEqual(status(report), { converted: "pass", markers: "pass", page_1: "pass", page_2: "pass", own_pages: "pass", blank_page: "pass", no_secret: "pass" });
 		assert.match(report.pages[0]!.text, /heron/);
 		assert.match(report.pages[1]!.text, /kettle/);
 	});
 
 	it("a profile service that places each page's text correctly passes", async () => {
 		const service = routes({
-			"POST /api/convert": (_q, r, body) => json(r, { markdown: [`# ${S1}`, S2.toUpperCase()].join((JSON.parse(body) as { page_separator: string }).page_separator) }),
+			"POST /api/convert": (_q, r, body) => json(r, { markdown: sentencesOf(body).map((s, i) => (i === 0 ? `# ${s}` : s.toUpperCase())).join((JSON.parse(body) as { page_separator: string }).page_separator) }),
 		});
 		await withServer(service, async (baseUrl) => {
 			const converter = createHttpConverter({ converterId: "custom:d", profile: delimitedProfile(), baseUrl, apiKey: KEY });
@@ -60,7 +66,7 @@ describe("validateConverter", () => {
 	it("fail: the conversion throws (the reason is shown, the key removed, later checks skipped)", async () => {
 		const report = await validateConverter(fake(() => { throw new ConverterError("auth", `refused ${KEY}`, false); }), { signal: signal(), secrets: [KEY] });
 		assert.equal(report.ok, false);
-		assert.deepEqual(status(report), { converted: "fail", markers: "skipped", page_1: "skipped", page_2: "skipped", own_pages: "skipped", no_secret: "fail" });
+		assert.deepEqual(status(report), { converted: "fail", markers: "skipped", page_1: "skipped", page_2: "skipped", own_pages: "skipped", blank_page: "skipped", no_secret: "fail" });
 		assert.equal(JSON.stringify(report).includes(KEY), false);
 		assert.equal(report.error?.kind, "auth");
 	});

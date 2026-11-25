@@ -36,7 +36,7 @@ function errorsOf(value: unknown): string {
 
 describe("converter profile validation", () => {
 	it("accepts every preset and good custom profiles (page array, delimiter with a random delimiter, keyless)", () => {
-		for (const preset of PRESET_PROFILES) assert.equal(validateHttpConverterProfile(preset).ok, true, preset.id);
+		for (const preset of PRESET_PROFILES) assert.equal(validateHttpConverterProfile(preset, { bundled: true }).ok, true, preset.id);
 		assert.equal(validateHttpConverterProfile(goodProfile()).ok, true);
 		const delimited = goodProfile({
 			auth: undefined,
@@ -52,7 +52,7 @@ describe("converter profile validation", () => {
 	});
 
 	it("parses text and reports invalid JSON and oversized profiles", () => {
-		assert.equal(parseHttpConverterProfile(JSON.stringify(MISTRAL_OCR_PRESET)).ok, true);
+		assert.equal(parseHttpConverterProfile(JSON.stringify(MISTRAL_OCR_PRESET), { bundled: true }).ok, true);
 		assert.match(errorsOfText("{not json"), /Not valid JSON/);
 		assert.match(errorsOfText(" ".repeat(70 * 1024)), /at most 64 KB/);
 	});

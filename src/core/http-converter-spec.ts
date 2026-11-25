@@ -25,6 +25,14 @@ import { normalizeBaseUrl } from "./settings.ts";
  * scheme, `//`, `\`, dot segments or fragment), so a profile cannot send a PDF or a key anywhere else. The
  * interpreter checks each built URL again before its request.
  *
+ * A profile is untrusted input (an import, a file on disk, later a draft an AI wrote from a web page), so:
+ *   - only a BUNDLED preset may name its service address (`defaultBaseUrl`); every other profile is refused when it
+ *     has one, because its destination must be the address the user types in Settings;
+ *   - its size (64 KB, measured on its canonical JSON), nesting depth and node count are checked iteratively before
+ *     anything walks it recursively;
+ *   - header names and values are checked for what fetch would refuse, and credential headers (Authorization,
+ *     Cookie, Proxy-Authorization) can never be fixed headers.
+ *
  * validateHttpConverterProfile is the one gate (presets, files on disk, an import, the later AI wizard).
  */
 
@@ -35,6 +43,10 @@ export const CONVERTER_PROFILE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
 export const CUSTOM_CONVERTER_PREFIX = "custom:";
 /** The largest profile accepted (a file on disk or an import). */
 export const HTTP_CONVERTER_PROFILE_MAX_BYTES = 64 * 1024;
+/** The deepest nesting a profile may have (objects and arrays), checked before any recursive walk. */
+export const HTTP_CONVERTER_PROFILE_MAX_DEPTH = 32;
+/** The most values (objects, arrays, strings, numbers, …) a profile may hold, checked before any recursive walk. */
+export const HTTP_CONVERTER_PROFILE_MAX_NODES = 2_000;
 export const POLL_MIN_INTERVAL_MS = 500;
 export const POLL_MAX_INTERVAL_MS = 60_000;
 export const POLL_DEFAULT_INTERVAL_MS = 2_000;
@@ -162,7 +174,10 @@ export const HTTP_CONVERTER_PROFILE_SCHEMA = Type.Object(
 		description: Type.Optional(Type.String({ maxLength: 500 })),
 		/** Shown in Settings; never fetched by the interpreter. */
 		docsUrl: Type.Optional(Type.String({ maxLength: 500 })),
-		/** The base URL when the settings name none (a hosted service). */
+		/**
+		 * BUNDLED PRESETS ONLY: the hosted service's address, offered in Settings and saved as the service URL once the
+		 * user chooses the preset. Any other profile that has it is refused (its address is entered in Settings).
+		 */
 		defaultBaseUrl: Type.Optional(Type.String({ maxLength: 500 })),
 		/** Written from documentation without a real call; Settings says so. */
 		unverified: Type.Optional(Type.Boolean()),
@@ -189,6 +204,11 @@ export const HTTP_CONVERTER_PROFILE_SCHEMA = Type.Object(
 export type HttpConverterProfile = Static<typeof HTTP_CONVERTER_PROFILE_SCHEMA>;
 
 export type ProfileValidation = { ok: true; profile: HttpConverterProfile } | { ok: false; errors: string[] };
+
+export interface ProfileValidationOptions {
+	/** A profile bundled with the app (presets.ts): the only kind that may carry `defaultBaseUrl`. Default false. */
+	bundled?: boolean;
+}
 
 const MAX_ERRORS = 12;
 
@@ -317,14 +337,57 @@ export function profileUrl(baseUrl: string, template: string, jobId?: string): s
 // ── Headers ────────────────────────────────────────────────────────────────
 
 const HEADER_NAME = /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,100}$/;
-/** Set by the host itself, or never sent to a service. */
-const RESERVED_HEADERS = new Set(["host", "content-length", "content-type", "transfer-encoding", "connection", "cookie", "keep-alive", "upgrade", "te", "trailer", "proxy-authorization", "origin", "referer"]);
+/** Set by the host itself, never sent to a service, or names that mean something to a JavaScript object. */
+const RESERVED_HEADERS = new Set([
+	"host", "content-length", "content-type", "transfer-encoding", "connection", "cookie", "keep-alive", "upgrade", "te", "trailer", "proxy-authorization", "origin", "referer",
+	"__proto__", "constructor", "prototype",
+]);
+/** Credentials: never a fixed header of a profile (Authorization only through `auth`). */
+const CREDENTIAL_HEADERS = new Set(["authorization", "cookie", "proxy-authorization"]);
+
+/**
+ * Why a value cannot be sent as an HTTP header value, or undefined (pure). Control characters (line breaks, tab, DEL,
+ * …) and characters outside Latin-1 are refused: fetch would throw on them, and that must never read as an
+ * unreachable service.
+ */
+export function headerValueProblem(value: string): string | undefined {
+	for (let i = 0; i < value.length; i++) {
+		const code = value.charCodeAt(i);
+		if (code < 0x20 || code === 0x7f) return "contains a control character (a line break, tab or similar)";
+		if (code > 0xff) return "contains a character that cannot be sent in an HTTP header (only Latin-1 letters, digits and symbols)";
+	}
+	return undefined;
+}
 
 function headerProblem(name: string, value: string): string | undefined {
 	if (!HEADER_NAME.test(name)) return `header name ${JSON.stringify(name)} is not a valid HTTP header name`;
 	if (RESERVED_HEADERS.has(name.toLowerCase())) return `header ${name} is set by the app and cannot be set by a profile`;
-	if (/[\r\n\0]/.test(value)) return `header ${name} has a line break in its value`;
+	const problem = headerValueProblem(value);
+	if (problem) return `header ${name}'s value ${problem}`;
 	return undefined;
+}
+
+// ── Size and shape, before any recursive walk ──────────────────────────────
+
+/** Why a parsed value is too deep or too large to walk, or undefined. Iterative: never recurses (pure). */
+export function profileShapeProblem(value: unknown): string | undefined {
+	const stack: [unknown, number][] = [[value, 1]];
+	let nodes = 1;
+	while (stack.length) {
+		const [node, depth] = stack.pop()!;
+		if (node === null || typeof node !== "object") continue;
+		if (depth > HTTP_CONVERTER_PROFILE_MAX_DEPTH) return `A profile is nested at most ${HTTP_CONVERTER_PROFILE_MAX_DEPTH} levels deep`;
+		for (const child of Array.isArray(node) ? node : Object.values(node)) {
+			if (++nodes > HTTP_CONVERTER_PROFILE_MAX_NODES) return `A profile holds at most ${HTTP_CONVERTER_PROFILE_MAX_NODES} values`;
+			stack.push([child, depth + 1]);
+		}
+	}
+	return undefined;
+}
+
+/** The size of a profile's canonical serialisation (compact JSON, UTF-8), as stored and counted against the cap. */
+export function canonicalProfileBytes(value: unknown): number {
+	return new TextEncoder().encode(JSON.stringify(value) ?? "").byteLength;
 }
 
 // ── The validator ──────────────────────────────────────────────────────────
@@ -346,7 +409,7 @@ function allowedPlaceholders(at: string, randomDelimiter: boolean): readonly Pla
 	return [];
 }
 
-function semanticProblems(p: HttpConverterProfile): string[] {
+function semanticProblems(p: HttpConverterProfile, bundled: boolean): string[] {
 	const errors: string[] = [];
 	const randomDelimiter = p.extract.type === "delimited" && "random" in p.extract.delimiter;
 	const seen = new Map<Placeholder, string[]>();
@@ -359,12 +422,16 @@ function semanticProblems(p: HttpConverterProfile): string[] {
 		}
 	});
 
-	if (p.defaultBaseUrl !== undefined && !normalizeBaseUrl(p.defaultBaseUrl)) errors.push("/defaultBaseUrl: must be an absolute HTTP(S) URL without credentials, query or fragment");
+	if (p.defaultBaseUrl !== undefined) {
+		if (!bundled) errors.push("/defaultBaseUrl: a profile you import cannot name its service address; remove defaultBaseUrl and enter the address in Settings → PDF conversion after importing");
+		else if (normalizeBaseUrl(p.defaultBaseUrl) !== p.defaultBaseUrl) errors.push("/defaultBaseUrl: must be a canonical absolute HTTP(S) URL without credentials, query, fragment or trailing slash");
+	}
 	if (p.docsUrl !== undefined && !/^https?:\/\/[^\s]+$/.test(p.docsUrl)) errors.push("/docsUrl: must be an http(s) URL");
 
 	if (p.auth) {
 		const problem = headerProblem(p.auth.header, p.auth.value);
 		if (problem) errors.push(`/auth/header: ${problem}`);
+		else if (p.auth.header.toLowerCase() === "cookie" || p.auth.header.toLowerCase() === "proxy-authorization") errors.push(`/auth/header: ${p.auth.header} cannot carry the key`);
 		if (!seen.get("API_KEY")?.includes("/auth/value")) errors.push("/auth/value: must contain {{API_KEY}}");
 	}
 
@@ -389,7 +456,7 @@ function semanticProblems(p: HttpConverterProfile): string[] {
 		const problem = headerProblem(name, value);
 		if (problem) errors.push(`/submit/headers: ${problem}`);
 		if (p.auth && name.toLowerCase() === p.auth.header.toLowerCase()) errors.push(`/submit/headers: ${name} is the credential header; it is set from auth only`);
-		if (name.toLowerCase() === "authorization" && !p.auth) errors.push("/submit/headers: Authorization is set from auth only");
+		else if (CREDENTIAL_HEADERS.has(name.toLowerCase())) errors.push(`/submit/headers: ${name} carries credentials and can never be a fixed header (a key goes in auth)`);
 	}
 
 	const pointers: [string, string][] = [];
@@ -429,8 +496,14 @@ function semanticProblems(p: HttpConverterProfile): string[] {
 	return errors;
 }
 
-/** Validate a parsed profile: shape (unknown fields refused), then every rule above. Pure. */
-export function validateHttpConverterProfile(value: unknown): ProfileValidation {
+/**
+ * Validate a parsed profile: depth, node count and size first (iteratively), then shape (unknown fields refused),
+ * then every rule above. Pure; never throws for any JSON value.
+ */
+export function validateHttpConverterProfile(value: unknown, options: ProfileValidationOptions = {}): ProfileValidation {
+	const shape = profileShapeProblem(value);
+	if (shape) return { ok: false, errors: [shape] };
+	if (canonicalProfileBytes(value) > HTTP_CONVERTER_PROFILE_MAX_BYTES) return { ok: false, errors: [`A profile is at most ${HTTP_CONVERTER_PROFILE_MAX_BYTES / 1024} KB`] };
 	if (!Value.Check(HTTP_CONVERTER_PROFILE_SCHEMA, value)) {
 		const errors = [...Value.Errors(HTTP_CONVERTER_PROFILE_SCHEMA, value)]
 			.map((e) => {
@@ -440,12 +513,12 @@ export function validateHttpConverterProfile(value: unknown): ProfileValidation 
 		return { ok: false, errors: [...new Set(errors)].slice(0, MAX_ERRORS) };
 	}
 	const profile = structuredClone(value);
-	const errors = semanticProblems(profile);
+	const errors = semanticProblems(profile, options.bundled === true);
 	return errors.length ? { ok: false, errors: errors.slice(0, MAX_ERRORS) } : { ok: true, profile };
 }
 
 /** Parse and validate profile text (a file or a paste). Pure. */
-export function parseHttpConverterProfile(text: string): ProfileValidation {
+export function parseHttpConverterProfile(text: string, options: ProfileValidationOptions = {}): ProfileValidation {
 	if (new TextEncoder().encode(text).byteLength > HTTP_CONVERTER_PROFILE_MAX_BYTES) return { ok: false, errors: [`A profile is at most ${HTTP_CONVERTER_PROFILE_MAX_BYTES / 1024} KB`] };
 	let value: unknown;
 	try {
@@ -453,11 +526,16 @@ export function parseHttpConverterProfile(text: string): ProfileValidation {
 	} catch (error) {
 		return { ok: false, errors: [`Not valid JSON: ${(error as Error).message}`] };
 	}
-	return validateHttpConverterProfile(value);
+	return validateHttpConverterProfile(value, options);
 }
 
-/** The origin a profile sends PDFs to, for a base URL (or its default); undefined when it has none. */
-export function profileOrigin(profile: HttpConverterProfile, baseUrl: string | undefined): string | undefined {
-	const canonical = normalizeBaseUrl(baseUrl ?? profile.defaultBaseUrl ?? "");
+/** The origin of a saved service URL; undefined when there is none. */
+export function serviceOrigin(baseUrl: string | undefined): string | undefined {
+	const canonical = normalizeBaseUrl(baseUrl ?? "");
 	return canonical ? new URL(canonical).origin : undefined;
+}
+
+/** Whether two service URLs are the same once canonicalised (an absent or invalid URL equals only another one). */
+export function sameServiceUrl(a: string | undefined, b: string | undefined): boolean {
+	return normalizeBaseUrl(a ?? "") === normalizeBaseUrl(b ?? "");
 }

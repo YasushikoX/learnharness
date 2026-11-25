@@ -10,16 +10,21 @@ import { importProfile, saveConverter } from "../components/settings/converters-
 /**
  * Settings → PDF conversion (components/settings/converters-section.tsx), rendered against a fetch stub. Pinned:
  * where PDFs go for each kind of converter, the unverified note, the key row that shows only whether a key is
- * stored, Docling's options, the Test report, a selection change, invalid profile files and a missing selection.
- * (Typing cannot be simulated in linkedom: the requests behind the text fields are tested on the client below.)
+ * stored, Docling's options, the Test report (Cancel, a switch while it runs), choosing an entry only shows it and
+ * "Use for new PDFs" selects it, the import flow, the URL-change warning, invalid profile files and a missing
+ * selection. (Typing works in linkedom once `document.oninput` exists, so React uses input events.)
  */
 
-const pdfjs: ConverterEntry = { id: "pdfjs", kind: "builtin", name: "Built-in reader", local: true, key: "none", credential: { stored: false } };
+const pdfjs: ConverterEntry = { id: "pdfjs", kind: "builtin", name: "Built-in reader", local: true, ready: true, key: "none", credential: { stored: false } };
 const docling = (over: Partial<ConverterEntry> = {}): ConverterEntry => ({
-	id: "docling", kind: "docling", name: "Docling (self-hosted)", local: false, key: "optional", credential: { stored: false }, options: { ocr: true, formulaEnrichment: false }, ...over,
+	id: "docling", kind: "docling", name: "Docling (self-hosted)", local: false, ready: false, setup: "Save the Docling service URL first.", key: "optional", credential: { stored: false }, options: { ocr: true, formulaEnrichment: false }, ...over,
 });
 const mistral = (over: Partial<ConverterEntry> = {}): ConverterEntry => ({
-	id: "mistral-ocr", kind: "preset", name: "Mistral OCR", local: false, unverified: true, defaultBaseUrl: "https://api.mistral.ai", origin: "https://api.mistral.ai", key: "required", credential: { stored: false }, ...over,
+	id: "mistral-ocr", kind: "preset", name: "Mistral OCR", local: false, unverified: true, defaultBaseUrl: "https://api.mistral.ai", origin: "https://api.mistral.ai", ready: false, setup: "Save its API key first.", key: "required", credential: { stored: false }, ...over,
+});
+const mistralReady = (over: Partial<ConverterEntry> = {}) => mistral({ baseUrl: "https://api.mistral.ai", ready: true, setup: undefined, credential: { stored: true, hint: "…WXYZ" }, ...over });
+const acme = (over: Partial<ConverterEntry> = {}): ConverterEntry => ({
+	id: "custom:acme", kind: "custom", name: "Acme OCR", local: false, ready: false, setup: "Save the Acme OCR service URL first.", key: "required", credential: { stored: false }, ...over,
 });
 const view = (selected: string, converters: ConverterEntry[] = [pdfjs, docling(), mistral()], invalidProfiles: ConvertersOverview["invalidProfiles"] = []): ConvertersOverview => ({ selected, converters, invalidProfiles });
 
@@ -27,9 +32,12 @@ interface Call {
 	method: string;
 	url: string;
 	body: unknown;
+	signal?: AbortSignal;
 }
 
-async function mount(routes: Record<string, (call: Call) => { status?: number; json: unknown }>) {
+type Reply = { status?: number; json: unknown };
+
+async function mount(routes: Record<string, (call: Call) => Reply | Promise<Reply>>) {
 	const dom = parseHTML("<html><body><div id='root'></div></body></html>");
 	const globals = globalThis as Record<string, unknown>;
 	const previous = new Map<string, PropertyDescriptor | undefined>();
@@ -43,17 +51,24 @@ async function mount(routes: Record<string, (call: Call) => { status?: number; j
 		CustomEvent: dom.window.CustomEvent,
 		IS_REACT_ACT_ENVIRONMENT: true,
 		fetch: async (url: string, init?: RequestInit) => {
-			const call: Call = { method: init?.method ?? "GET", url, body: init?.body ? JSON.parse(String(init.body)) : undefined };
+			const call: Call = { method: init?.method ?? "GET", url, body: init?.body ? JSON.parse(String(init.body)) : undefined, ...(init?.signal ? { signal: init.signal } : {}) };
 			calls.push(call);
 			const route = routes[`${call.method} ${url}`];
 			assert.ok(route, `unexpected request: ${call.method} ${url}`);
-			const r = route(call);
+			// like fetch: an aborted request rejects, whenever its answer would have come
+			const aborted = new Promise<never>((_, reject) => {
+				if (init?.signal?.aborted) reject(new DOMException("aborted", "AbortError"));
+				init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+			});
+			const r = await Promise.race([Promise.resolve(route(call)), aborted]);
 			return new Response(JSON.stringify(r.json), { status: r.status ?? 200 });
 		},
 	})) {
 		previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
 		Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
 	}
+	// linkedom's document has no `oninput`: without it React would not use input events for text fields
+	(dom.document as unknown as Record<string, unknown>).oninput = null;
 	const { createRoot } = await import("react-dom/client");
 	const root = createRoot(document.getElementById("root")!);
 	await act(async () => {
@@ -78,6 +93,29 @@ async function mount(routes: Record<string, (call: Call) => { status?: number; j
 			select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
 		});
 	};
+	const type = async (id: string, value: string) => {
+		await act(async () => {
+			const input = q<HTMLInputElement>(id)!;
+			let proto: object | null = Object.getPrototypeOf(input);
+			let setter: ((v: string) => void) | undefined;
+			while (proto && !setter) {
+				setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+				proto = Object.getPrototypeOf(proto);
+			}
+			setter!.call(input, value);
+			input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+		});
+	};
+	const chooseFile = async (file: File) => {
+		await act(async () => {
+			const input = q<HTMLInputElement>("converter-import-file")!;
+			Object.defineProperty(input, "files", { configurable: true, value: [file] });
+			input.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+		});
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+	};
 	const cleanup = () => {
 		act(() => root.unmount());
 		for (const [key, descriptor] of previous) {
@@ -85,7 +123,7 @@ async function mount(routes: Record<string, (call: Call) => { status?: number; j
 			else delete globals[key];
 		}
 	};
-	return { q, text, click, choose, calls, cleanup };
+	return { q, text, click, choose, type, chooseFile, calls, cleanup };
 }
 
 describe("Settings → PDF conversion", () => {
@@ -104,9 +142,17 @@ describe("Settings → PDF conversion", () => {
 	});
 
 	it("a preset: where PDFs are sent, the unverified note, a key that is needed and not stored", async () => {
+		const ready = await mount({ "GET /api/converters": () => ({ json: view("mistral-ocr", [pdfjs, docling(), mistralReady()]) }) });
+		try {
+			assert.equal(ready.text("converter-destination"), "PDFs you upload are sent to https://api.mistral.ai. The built-in reader keeps PDFs on this computer.");
+			assert.equal(ready.text("converter-active"), "In use for new PDFs");
+		} finally {
+			ready.cleanup();
+		}
 		const ui = await mount({ "GET /api/converters": () => ({ json: view("mistral-ocr") }) });
 		try {
-			assert.equal(ui.text("converter-destination"), "PDFs you upload are sent to https://api.mistral.ai. The built-in reader keeps PDFs on this computer.");
+			// in use (chosen elsewhere) but not set up: nothing is sent, and the screen says so
+			assert.equal(ui.text("converter-destination"), "Not set up yet, so nothing is sent to https://api.mistral.ai: the built-in reader converts PDFs on this computer. Save its API key first.");
 			assert.match(ui.text("converter-unverified"), /has not been tried against the real service/);
 			assert.match(ui.text("converter-key-row"), /Needed; not stored yet/);
 			assert.equal(ui.q("converter-key-remove"), null);
@@ -118,13 +164,13 @@ describe("Settings → PDF conversion", () => {
 	});
 
 	it("Docling with a stored key: only its status and last characters, Remove, and the OCR options", async () => {
-		const stored = docling({ baseUrl: "http://docling.lan:5001", origin: "http://docling.lan:5001", credential: { stored: true, hint: "…WXYZ" } });
+		const stored = docling({ baseUrl: "http://docling.lan:5001", origin: "http://docling.lan:5001", ready: true, setup: undefined, credential: { stored: true, hint: "…WXYZ" } });
 		let removed: unknown;
 		const ui = await mount({
 			"GET /api/converters": () => ({ json: view("docling", [pdfjs, stored, mistral()]) }),
 			"PUT /api/converters": (call) => {
 				removed = call.body;
-				return { json: view("docling", [pdfjs, docling({ baseUrl: "http://docling.lan:5001", origin: "http://docling.lan:5001" }), mistral()]) };
+				return { json: view("docling", [pdfjs, docling({ baseUrl: "http://docling.lan:5001", origin: "http://docling.lan:5001", ready: true, setup: undefined }), mistral()]) };
 			},
 		});
 		try {
@@ -175,15 +221,124 @@ describe("Settings → PDF conversion", () => {
 		}
 	});
 
-	it("choosing another converter selects it and shows its settings", async () => {
+	it("choosing another converter only shows it; Use for new PDFs, beside the destination, selects it", async () => {
 		const ui = await mount({
-			"GET /api/converters": () => ({ json: view("pdfjs") }),
-			"PUT /api/converters": () => ({ json: view("mistral-ocr") }),
+			"GET /api/converters": () => ({ json: view("pdfjs", [pdfjs, docling(), mistralReady()]) }),
+			"PUT /api/converters": () => ({ json: view("mistral-ocr", [pdfjs, docling(), mistralReady()]) }),
 		});
 		try {
+			assert.equal(ui.text("converter-active"), "In use for new PDFs");
+			assert.match(ui.text("converter-select"), /Built-in reader — in use/);
 			await ui.choose("mistral-ocr");
-			assert.deepEqual(ui.calls.at(-1), { method: "PUT", url: "/api/converters", body: { id: "mistral-ocr", select: true } });
+			assert.equal(ui.calls.length, 1, "choosing in the list sends nothing");
 			assert.ok(ui.q("converter-unverified"));
+			assert.equal(ui.text("converter-destination"), "If you use it, PDFs you upload will be sent to https://api.mistral.ai. The built-in reader keeps PDFs on this computer.");
+			assert.equal(ui.q("converter-active"), null);
+			const use = ui.q<HTMLButtonElement>("converter-use")!;
+			assert.equal(use.textContent, "Use for new PDFs");
+			assert.equal(use.parentElement, ui.q("converter-destination")!.parentElement, "the action sits beside the destination line");
+			await ui.click("converter-use");
+			assert.deepEqual(ui.calls.at(-1), { method: "PUT", url: "/api/converters", body: { id: "mistral-ocr", select: true } });
+			assert.equal(ui.text("converter-active"), "In use for new PDFs");
+			assert.equal(ui.text("converter-destination"), "PDFs you upload are sent to https://api.mistral.ai. The built-in reader keeps PDFs on this computer.");
+			assert.match(ui.text("converter-select"), /Mistral OCR \(unverified\) — in use/);
+		} finally {
+			ui.cleanup();
+		}
+	});
+
+	it("Use for new PDFs stays off until the converter is set up, and says what is missing", async () => {
+		const ui = await mount({ "GET /api/converters": () => ({ json: view("pdfjs") }) });
+		try {
+			await ui.choose("mistral-ocr");
+			assert.equal(ui.q<HTMLButtonElement>("converter-use")!.disabled, true);
+			assert.equal(ui.text("converter-setup"), "Not set up yet: Save its API key first.");
+			await ui.choose("docling");
+			assert.equal(ui.q<HTMLButtonElement>("converter-use")!.disabled, true);
+			assert.equal(ui.text("converter-destination"), "Save the service URL first. Nothing is sent until then.");
+		} finally {
+			ui.cleanup();
+		}
+	});
+
+	it("import: a chosen file is imported and shown, not used; validation errors are listed", async () => {
+		let imported = 0;
+		const ui = await mount({
+			"GET /api/converters": () => ({ json: view("pdfjs") }),
+			"POST /api/converters/profiles": (call) => {
+				imported++;
+				const text = (call.body as { profile: string }).profile;
+				if (text.includes("defaultBaseUrl")) return { status: 400, json: { error: "The profile is not valid", errors: ["/defaultBaseUrl: a profile you import cannot name its service address"] } };
+				return { json: { id: "custom:acme", replaced: false, overview: view("pdfjs", [pdfjs, docling(), mistral(), acme()]) } };
+			},
+		});
+		try {
+			await ui.chooseFile(new File(['{"id":"acme","defaultBaseUrl":"http://127.0.0.1:3000"}'], "acme.json", { type: "application/json" }));
+			assert.match(ui.text("converter-import-errors"), /cannot name its service address/);
+			assert.equal(ui.q("converter-import-note"), null);
+			await ui.chooseFile(new File(['{"id":"acme"}'], "acme.json", { type: "application/json" }));
+			assert.equal(imported, 2);
+			assert.equal(ui.q("converter-import-errors"), null);
+			assert.match(ui.text("converter-import-note"), /Imported Acme OCR, shown above\. Nothing is sent until you save its service URL and key and choose Use for new PDFs\./);
+			assert.equal(ui.q<HTMLSelectElement>("converter-select")!.value, "custom:acme");
+			assert.equal(ui.text("converter-destination"), "Save the service URL first. Nothing is sent until then.");
+			assert.equal(ui.q<HTMLButtonElement>("converter-use")!.disabled, true);
+			assert.equal(ui.calls.filter((c) => c.method === "PUT").length, 0, "importing never selects");
+		} finally {
+			ui.cleanup();
+		}
+	});
+
+	it("typing another URL for a converter with a stored key warns that saving removes the key", async () => {
+		const stored = docling({ baseUrl: "http://docling.lan:5001", origin: "http://docling.lan:5001", ready: true, setup: undefined, credential: { stored: true } });
+		let saved: unknown;
+		const ui = await mount({
+			"GET /api/converters": () => ({ json: view("docling", [pdfjs, stored, mistral()]) }),
+			"PUT /api/converters": (call) => {
+				saved = call.body;
+				return { json: view("docling", [pdfjs, docling({ baseUrl: "http://other.lan:5001", origin: "http://other.lan:5001", ready: true, setup: undefined }), mistral()]) };
+			},
+		});
+		try {
+			assert.equal(ui.q("converter-url-key-note"), null);
+			await ui.type("converter-url-input", "http://other.lan:5001");
+			assert.match(ui.text("converter-url-key-note"), /Saving another URL removes the stored key/);
+			await ui.click("converter-url-save");
+			assert.deepEqual(saved, { id: "docling", baseUrl: "http://other.lan:5001" });
+			assert.equal(ui.q("converter-url-key-note"), null);
+			assert.match(ui.text("converter-key-row"), /Optional; not stored/);
+		} finally {
+			ui.cleanup();
+		}
+	});
+
+	it("Test can be cancelled; a switch to another converter while it runs cancels it and its late report is never shown", async () => {
+		const report: ConverterValidationReport = {
+			ok: true, converterId: "mistral-ocr", durationMs: 5, warnings: [], pages: [],
+			checks: [{ id: "converted", status: "pass", message: "Mistral OCR answered for 2 pages." }],
+		};
+		const pending: { resolve: (r: Reply) => void; signal?: AbortSignal }[] = [];
+		const ui = await mount({
+			"GET /api/converters": () => ({ json: view("mistral-ocr", [pdfjs, docling(), mistralReady()]) }),
+			"POST /api/converters/test": (call) => new Promise<Reply>((resolve) => pending.push({ resolve, ...(call.signal ? { signal: call.signal } : {}) })),
+		});
+		try {
+			await ui.click("converter-test");
+			assert.equal(ui.text("converter-test"), "Testing…");
+			assert.ok(pending[0]!.signal, "the request carries an abort signal");
+			await ui.click("converter-test-cancel");
+			assert.equal(pending[0]!.signal!.aborted, true, "Cancel aborts the request");
+			assert.equal(ui.text("converter-test"), "Test");
+			await act(async () => pending[0]!.resolve({ json: report }));
+			assert.equal(ui.q("converter-report"), null);
+
+			await ui.click("converter-test");
+			await ui.choose("pdfjs");
+			assert.equal(pending[1]!.signal!.aborted, true, "showing another converter aborts the running test");
+			await act(async () => pending[1]!.resolve({ json: report }));
+			assert.equal(ui.q("converter-report"), null, "a report started for another converter is not shown");
+			assert.equal(ui.q("converter-error"), null);
+			assert.equal(ui.text("converter-test"), "Test");
 		} finally {
 			ui.cleanup();
 		}

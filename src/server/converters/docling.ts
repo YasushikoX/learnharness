@@ -7,9 +7,14 @@ import {
 	CONVERTER_MAX_RESPONSE_BYTES,
 	CONVERTER_REQUEST_TIMEOUT_MS,
 	CONVERTER_UPLOAD_TIMEOUT_MS,
+	storedKeyProblem,
 	asRecord,
 	badResponse,
+	buildHeaders,
 	delay,
+	redactConversion,
+	redactError,
+	redactSecrets,
 	requestServiceJson,
 	runConverterJob,
 	type ConverterJob as Job,
@@ -29,6 +34,11 @@ import {
  * and timeout, as a stream capped at CONVERTER_MAX_RESPONSE_BYTES. The upload
  * has its own longer timeout; the job deadline covers everything. That request
  * discipline is shared with the declarative HTTP converters (http-common.ts).
+ *
+ * SECRETS. The key is removed (http-common.ts redactSecrets) from everything that leaves this client: error messages
+ * (before a service message is shortened), the version from /version, warnings, page text and page reasons. A
+ * server that echoes it is reported through SECRET_REDACTED_WARNING. A stored key that cannot be sent in a header is
+ * an `auth` error before anything is sent, never "unreachable".
  *
  * PAGES. Docling writes the placeholder only between pages that have content,
  * so the Markdown segments are matched, in order, to the pages that hold at
@@ -166,14 +176,28 @@ export function createDoclingConverter(options: DoclingConverterOptions): PdfCon
 	const maxResponseBytes = options.maxResponseBytes ?? CONVERTER_MAX_RESPONSE_BYTES;
 	const ocr = options.ocr ?? true;
 	const formulaEnrichment = options.formulaEnrichment ?? false;
-	const headers: Record<string, string> = options.apiKey ? { "X-Api-Key": options.apiKey } : {};
+	const apiKey = options.apiKey?.trim() || undefined;
+	const secrets = apiKey ? [apiKey] : [];
+	const keyProblem = apiKey ? storedKeyProblem(apiKey) : undefined;
+	/** Built per request, checked before anything is sent: a key fetch would refuse is an auth error, not "unreachable". */
+	const headersFor = (): Headers => {
+		if (keyProblem) throw new ConverterError("auth", `${keyProblem.replace("The API key", "The stored Docling key")}; enter the key again in Settings → PDF conversion. Nothing was sent.`, false);
+		return buildHeaders(apiKey ? [["X-Api-Key", apiKey]] : [], "Docling", "auth");
+	};
 
-	const service = { name: "Docling", baseUrl };
-	const asJob = <T>(parent: AbortSignal, deadlineMs: number, work: (job: Job) => Promise<T>): Promise<T> => runConverterJob(service, parent, deadlineMs, work);
+	const service = { name: "Docling", baseUrl, secrets };
+	const asJob = async <T>(parent: AbortSignal, deadlineMs: number, work: (job: Job) => Promise<T>): Promise<T> => {
+		headersFor();
+		try {
+			return await runConverterJob(service, parent, deadlineMs, work);
+		} catch (error) {
+			throw error instanceof ConverterError ? redactError(error, secrets) : error;
+		}
+	};
 
 	/** One request and its whole body, as JSON, under the job, its own timeout and the size cap. */
 	const requestJson = (job: Job, route: string, init: RequestInit, timeoutMs: number, accept404 = false): Promise<unknown> =>
-		requestServiceJson(job, `${baseUrl}${route}`, { ...init, headers }, { timeoutMs, maxResponseBytes, accept404 });
+		requestServiceJson(job, `${baseUrl}${route}`, { ...init, headers: headersFor() }, { timeoutMs, maxResponseBytes, accept404 });
 
 	const fetchVersion = async (job: Job) => {
 		const body = await requestJson(job, "/version", { method: "GET" }, requestTimeoutMs, true);
@@ -199,8 +223,8 @@ export function createDoclingConverter(options: DoclingConverterOptions): PdfCon
 		options: { ocr, formulaEnrichment },
 		maxBytes: MATERIAL_MAX_BYTES,
 		maxPages: PDF_MAX_PAGES,
-		serverVersion(signal) {
-			return asJob(signal, requestTimeoutMs, fetchVersion);
+		async serverVersion(signal) {
+			return redactSecrets(await asJob(signal, requestTimeoutMs, fetchVersion), secrets);
 		},
 		async convert(input, ctx: ConvertContext): Promise<ConvertResult> {
 			if (input.bytes.byteLength > MATERIAL_MAX_BYTES) throw new ConverterError("too_large", "PDF exceeds the material size limit", false);
@@ -260,7 +284,7 @@ export function createDoclingConverter(options: DoclingConverterOptions): PdfCon
 					else pages[index] = { page: page as number, status: "unreadable", reason: message };
 				}
 				ctx.onProgress("complete", total, total);
-				return { converterVersion, pages, ...(warnings.length ? { warnings } : {}) };
+				return redactConversion({ converterVersion, pages, ...(warnings.length ? { warnings } : {}) }, secrets);
 			});
 		},
 	};

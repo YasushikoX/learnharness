@@ -3,24 +3,27 @@
  *
  *   POST { profile }   profile: the JSON text or the parsed object. Validated (core/http-converter-spec.ts) and
  *                      stored as <dataDir>/converters/<id>.json, replacing one with the same id → { id, replaced,
- *                      overview }; 400 { error, errors } when it is not valid. Profiles are data; nothing in them runs.
+ *                      overview }; 400 { error, errors } when it is not valid (a profile may not name its own
+ *                      service address: that is entered in Settings). Profiles are data; nothing in them runs.
+ *                      The body is refused before it is buffered when its Content-Length is over the limit, and
+ *                      read with a byte limit otherwise (413).
  *   DELETE ?id=custom:<id>   removes the file, its key and its URL; a selected profile falls back to the built-in reader.
  */
-import { deleteConverterProfile, importConverterProfile } from "@/src/server";
+import { CustomBodyLimitError, deleteConverterProfile, importConverterProfile, noteAppRequest, readBoundedJson } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
 const NO_STORE = { "Cache-Control": "no-store" };
-/** The request body: a 64 KB profile, JSON-escaped inside { profile } (the profile itself is capped by the validator). */
-const MAX_BODY_CHARS = 256 * 1024;
+/** The request body in bytes: a 64 KB profile, JSON-escaped inside { profile } (the profile itself is capped by the validator). */
+const MAX_BODY_BYTES = 256 * 1024;
 
 export async function POST(request: Request) {
-	const text = await request.text().catch(() => "");
-	if (text.length > MAX_BODY_CHARS) return Response.json({ error: "The profile is too large", errors: [] }, { status: 413, headers: NO_STORE });
+	noteAppRequest(request.url);
 	let body: { profile?: unknown } | null = null;
 	try {
-		body = JSON.parse(text) as { profile?: unknown };
-	} catch {
+		body = (await readBoundedJson(request, MAX_BODY_BYTES)) as { profile?: unknown } | null;
+	} catch (error) {
+		if (error instanceof CustomBodyLimitError) return Response.json({ error: "The profile is too large", errors: [] }, { status: 413, headers: NO_STORE });
 		body = null;
 	}
 	if (!body || typeof body !== "object" || body.profile === undefined) return Response.json({ error: "Send { profile }", errors: [] }, { status: 400, headers: NO_STORE });
@@ -30,6 +33,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+	noteAppRequest(request.url);
 	const id = new URL(request.url).searchParams.get("id") ?? "";
 	try {
 		const result = deleteConverterProfile(id);

@@ -1,5 +1,6 @@
+import { headerValueProblem } from "../../core/http-converter-spec.ts";
 import { MATERIAL_MAX_BYTES } from "../../core/materials.ts";
-import { ConverterError } from "../../core/pdf-converter.ts";
+import { ConverterError, type ConvertResult, type PageResult } from "../../core/pdf-converter.ts";
 
 /**
  * The request discipline every remote converter shares (fork addition, 2026-11-25; factored out of the Docling
@@ -10,8 +11,104 @@ import { ConverterError } from "../../core/pdf-converter.ts";
  *   - every response body read inside its request as a stream, capped (declared and actual size);
  *   - redirects never followed: a redirect is bad_response;
  *   - one mapping of HTTP statuses and network failures to ConverterError kinds;
- *   - nothing here retries, so an upload is never sent twice.
+ *   - nothing here retries, so an upload is never sent twice;
+ *   - every secret (the API key) is removed from everything that leaves a converter: error messages (before any
+ *     truncation), the converter version, warnings, page text and page reasons (redactSecrets, redactConversion).
  */
+
+// ── Secrets ────────────────────────────────────────────────────────────────
+
+/** What replaces a secret in any text. */
+export const REDACTED = "[redacted]";
+/** The warning a conversion carries when the service's answer contained the API key (removed from the text). */
+export const SECRET_REDACTED_WARNING = "The service's answer contained the API key; it was removed from the text.";
+/** The shortest API key the app stores: a shorter one could not be removed from text without mangling ordinary words. */
+export const API_KEY_MIN_LENGTH = 8;
+export const API_KEY_MAX_LENGTH = 4096;
+
+/**
+ * Every form a secret can take in a service's text: as is, URL-encoded (encodeURIComponent, and the form encoding
+ * with + for a space), and base64 (standard with and without padding, and base64url). A secret base64-encoded
+ * together with other text (for example `user:key` in Basic auth) is not covered: its base64 depends on what
+ * precedes it.
+ */
+export function secretForms(secret: string): string[] {
+	if (!secret) return [];
+	const base64 = Buffer.from(secret, "utf8").toString("base64");
+	const forms = new Set([secret, encodeURIComponent(secret), encodeURIComponent(secret).replace(/%20/g, "+"), base64, base64.replace(/=+$/, ""), Buffer.from(secret, "utf8").toString("base64url")]);
+	return [...forms].filter((form) => form.length > 0).sort((a, b) => b.length - a.length);
+}
+
+/** `text` with every form of every secret replaced by [redacted]. Empty secrets are ignored; any other length is removed. */
+export function redactSecrets(text: string, secrets: readonly (string | undefined)[]): string {
+	let out = text;
+	for (const secret of secrets) {
+		if (!secret) continue;
+		for (const form of secretForms(secret)) if (out.includes(form)) out = out.split(form).join(REDACTED);
+	}
+	return out;
+}
+
+/** Whether `text` holds any form of any secret. */
+export function containsSecret(text: string, secrets: readonly (string | undefined)[]): boolean {
+	return secrets.some((secret) => !!secret && secretForms(secret).some((form) => text.includes(form)));
+}
+
+/** Every string inside a JSON-like value with the secrets removed (a new value; the input is not changed). */
+export function redactDeep<T>(value: T, secrets: readonly (string | undefined)[]): T {
+	if (!secrets.some(Boolean)) return value;
+	const walk = (node: unknown): unknown =>
+		typeof node === "string" ? redactSecrets(node, secrets)
+		: Array.isArray(node) ? node.map(walk)
+		: node !== null && typeof node === "object" ? Object.fromEntries(Object.entries(node).map(([k, v]) => [k, walk(v)]))
+		: node;
+	return walk(value) as T;
+}
+
+/** A ConverterError with the secrets removed from its message (the same error when there was nothing to remove). */
+export function redactError(error: ConverterError, secrets: readonly (string | undefined)[]): ConverterError {
+	const message = redactSecrets(error.message, secrets);
+	return message === error.message ? error : new ConverterError(error.kind, message, error.retryable);
+}
+
+/**
+ * A conversion's answer with the secrets removed from its version, warnings, page text and page reasons. A service
+ * that echoed a secret is reported through SECRET_REDACTED_WARNING (the converter test turns it into a failure).
+ */
+export function redactConversion(result: ConvertResult, secrets: readonly (string | undefined)[]): ConvertResult {
+	if (!secrets.some(Boolean)) return result;
+	let echoed = false;
+	const clean = (text: string): string => {
+		const out = redactSecrets(text, secrets);
+		if (out !== text) echoed = true;
+		return out;
+	};
+	const pages = result.pages.map((page): PageResult => {
+		if (page.status === "ok") return { ...page, markdown: clean(page.markdown) };
+		return page.reason === undefined ? page : { ...page, reason: clean(page.reason) };
+	});
+	const converterVersion = clean(result.converterVersion);
+	const warnings = (result.warnings ?? []).map(clean);
+	if (echoed && !warnings.includes(SECRET_REDACTED_WARNING)) warnings.push(SECRET_REDACTED_WARNING);
+	return { ...result, converterVersion, pages, ...(warnings.length ? { warnings } : {}) };
+}
+
+export { headerValueProblem };
+
+/** Why a stored key cannot be sent (checked when it is used: characters fetch would refuse), or undefined. */
+export function storedKeyProblem(key: string): string | undefined {
+	const problem = headerValueProblem(key.trim());
+	return problem ? `The API key ${problem}` : undefined;
+}
+
+/** Why an API key cannot be stored (checked when it is saved: length and characters), or undefined. */
+export function apiKeyProblem(key: string): string | undefined {
+	const trimmed = key.trim();
+	if (trimmed.length < API_KEY_MIN_LENGTH) return `An API key must be at least ${API_KEY_MIN_LENGTH} characters long`;
+	if (trimmed.length > API_KEY_MAX_LENGTH) return `An API key must be at most ${API_KEY_MAX_LENGTH} characters long`;
+	const problem = headerValueProblem(trimmed);
+	return problem ? `The API key ${problem}` : undefined;
+}
 
 /** One ordinary request (version, poll, result). */
 export const CONVERTER_REQUEST_TIMEOUT_MS = 30_000;
@@ -30,6 +127,8 @@ export interface ConverterService {
 	name: string;
 	/** Where it was configured to be (the base URL), for "Could not reach …". */
 	baseUrl: string;
+	/** Removed from every message before it is shortened or leaves the job (the API key). */
+	secrets?: readonly (string | undefined)[];
 }
 
 export function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -87,17 +186,25 @@ export async function readCapped(response: Response, signal: AbortSignal, maxByt
 	return Buffer.concat(chunks).toString("utf8");
 }
 
-/** A short reason from an error body (FastAPI's `detail`, or a `message`). */
-export function errorDetail(text: string): string {
+/** The longest service message quoted in an error. */
+export const SERVICE_MESSAGE_CHARS = 300;
+
+/** A service's message, secrets removed first, then shortened (so no prefix of a secret survives the cut). */
+export function serviceMessage(text: string, secrets: readonly (string | undefined)[] = []): string {
+	return redactSecrets(text, secrets).slice(0, SERVICE_MESSAGE_CHARS);
+}
+
+/** A short reason from an error body (FastAPI's `detail`, or a `message`), secrets removed before it is shortened. */
+export function errorDetail(text: string, secrets: readonly (string | undefined)[] = []): string {
 	try {
 		const body = asRecord(JSON.parse(text));
 		const detail = body?.detail ?? body?.message;
-		if (typeof detail === "string") return detail.slice(0, 300);
-		if (detail !== undefined) return JSON.stringify(detail).slice(0, 300);
+		if (typeof detail === "string") return serviceMessage(detail, secrets);
+		if (detail !== undefined) return serviceMessage(JSON.stringify(detail), secrets);
 	} catch {
 		// not JSON
 	}
-	return text.trim().slice(0, 300);
+	return serviceMessage(text.trim(), secrets);
 }
 
 export function delay(ms: number, signal: AbortSignal): Promise<void> {
@@ -123,6 +230,8 @@ export interface ConverterJob {
 	parent: AbortSignal;
 	deadlineElapsed(): boolean;
 	deadlineMs: number;
+	/** The service's secrets removed from a text. */
+	redact(text: string): string;
 }
 
 export function classifyConverterFailure(error: unknown, job: ConverterJob, requestElapsed: boolean, timeoutMs: number): ConverterError {
@@ -132,7 +241,7 @@ export function classifyConverterFailure(error: unknown, job: ConverterJob, requ
 	if (job.deadlineElapsed()) return new ConverterError("timeout", `${name} did not finish within the ${seconds(job.deadlineMs)} job deadline`, true, { cause: error });
 	if (requestElapsed) return new ConverterError("timeout", `${name} did not answer within ${seconds(timeoutMs)}`, true, { cause: error });
 	const reason = error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error);
-	return new ConverterError("unreachable", `Could not reach ${name} at ${baseUrl}: ${reason}`, true, { cause: error });
+	return new ConverterError("unreachable", `Could not reach ${name} at ${baseUrl}: ${job.redact(reason)}`, true, { cause: error });
 }
 
 /** Run `work` as one job: the caller's signal plus the job deadline. Every failure leaves as a ConverterError. */
@@ -146,11 +255,12 @@ export async function runConverterJob<T>(service: ConverterService, parent: Abor
 		elapsed = true;
 		controller.abort(new Error(`${service.name} job deadline elapsed`));
 	}, deadlineMs);
-	const job: ConverterJob = { service, signal: controller.signal, parent, deadlineElapsed: () => elapsed, deadlineMs };
+	const secrets = service.secrets ?? [];
+	const job: ConverterJob = { service, signal: controller.signal, parent, deadlineElapsed: () => elapsed, deadlineMs, redact: (text) => redactSecrets(text, secrets) };
 	try {
 		return await work(job);
 	} catch (error) {
-		throw classifyConverterFailure(error, job, false, 0);
+		throw redactError(classifyConverterFailure(error, job, false, 0), secrets);
 	} finally {
 		clearTimeout(deadline);
 		parent.removeEventListener("abort", onParent);
@@ -164,8 +274,12 @@ export interface ServiceRequestOptions {
 	accept404?: boolean;
 }
 
-/** One request and its whole body, as JSON, under the job, its own timeout and the size cap. Never follows a redirect. */
-export async function requestServiceJson(job: ConverterJob, url: string, init: RequestInit, options: ServiceRequestOptions): Promise<unknown> {
+/**
+ * One request and its whole body, as JSON, under the job, its own timeout and the size cap. Never follows a redirect.
+ * `init.headers` must already be a Headers object (built by the caller, so a value fetch would refuse fails there,
+ * as a configuration problem, never as an unreachable service).
+ */
+export async function requestServiceJson(job: ConverterJob, url: string, init: RequestInit & { headers?: Headers }, options: ServiceRequestOptions): Promise<unknown> {
 	const { name } = job.service;
 	const controller = new AbortController();
 	let elapsed = false;
@@ -181,7 +295,7 @@ export async function requestServiceJson(job: ConverterJob, url: string, init: R
 		if ((response.status >= 300 && response.status < 400) || response.type === "opaqueredirect") {
 			await response.body?.cancel().catch(() => {});
 			const location = response.headers.get("location");
-			badResponse(`${name} answered with a redirect (HTTP ${response.status}${location ? ` to ${location}` : ""}); set the ${name} URL to the address the service itself answers at`);
+			badResponse(`${name} answered with a redirect (HTTP ${response.status}${location ? ` to ${serviceMessage(location, job.service.secrets)}` : ""}); set the ${name} URL to the address the service itself answers at`);
 		}
 		if (options.accept404 && response.status === 404) {
 			await response.body?.cancel().catch(() => {});
@@ -190,7 +304,7 @@ export async function requestServiceJson(job: ConverterJob, url: string, init: R
 		if (!response.ok) {
 			const detail = await readCapped(response, controller.signal, ERROR_BODY_BYTES, name).catch(() => "");
 			controller.signal.throwIfAborted();
-			throw httpStatusError(name, response.status, errorDetail(detail));
+			throw httpStatusError(name, response.status, errorDetail(detail, job.service.secrets));
 		}
 		if (/zip/i.test(response.headers.get("content-type") ?? "")) {
 			await response.body?.cancel().catch(() => {});
@@ -208,4 +322,23 @@ export async function requestServiceJson(job: ConverterJob, url: string, init: R
 		clearTimeout(timer);
 		job.signal.removeEventListener("abort", onJob);
 	}
+}
+
+/**
+ * The headers of a request as a Headers object, every value checked first. A value fetch would refuse is a
+ * configuration problem (`kind`, default not_configured), raised before anything is sent, so it never reads as an
+ * unreachable service and never triggers the fallback to the built-in reader.
+ */
+export function buildHeaders(entries: readonly (readonly [string, string])[], name: string, kind: "auth" | "not_configured" = "not_configured"): Headers {
+	const headers = new Headers();
+	for (const [header, value] of entries) {
+		const problem = headerValueProblem(value);
+		if (problem) throw new ConverterError(kind, `${name}: the ${header} header ${problem}; nothing was sent`, false);
+		try {
+			headers.set(header, value);
+		} catch {
+			throw new ConverterError(kind, `${name}: the ${header} header cannot be sent; nothing was sent`, false);
+		}
+	}
+	return headers;
 }

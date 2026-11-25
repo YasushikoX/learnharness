@@ -26,12 +26,19 @@ export interface ConverterEntry {
 	/** A preset written from documentation without a real call. */
 	unverified?: boolean;
 	docsUrl?: string;
-	/** The profile's default base URL (presets). */
+	/** A bundled preset's own address, offered until a URL is saved (saved as the service URL when it is chosen). */
 	defaultBaseUrl?: string;
-	/** The base URL saved in the settings (absent: the default, or none). */
+	/** The service URL saved in the settings (absent: none saved yet). */
 	baseUrl?: string;
-	/** Where PDFs are sent with the current settings; absent when no URL is set. */
+	/** Where PDFs go when this converter is used: the saved URL's origin (a preset: else its own address's). */
 	origin?: string;
+	/**
+	 * Choosing it now would make it send PDFs: a saved URL (a preset's own address counts, it is saved when chosen),
+	 * a stored key when it needs one, and not this app's own address. The built-in reader is always ready.
+	 */
+	ready: boolean;
+	/** Why it is not ready, as a plain instruction ("Save its API key first."). */
+	setup?: string;
 	key: "required" | "optional" | "none";
 	credential: CredentialStatus;
 	/** Docling's options. */
@@ -46,7 +53,7 @@ export interface ConvertersOverview {
 	invalidProfiles: { file: string; errors: string[] }[];
 }
 
-export type ValidationCheckId = "converted" | "markers" | "page_1" | "page_2" | "own_pages" | "no_secret";
+export type ValidationCheckId = "converted" | "markers" | "page_1" | "page_2" | "own_pages" | "blank_page" | "no_secret";
 
 export interface ValidationCheck {
 	id: ValidationCheckId;
@@ -66,9 +73,10 @@ export interface ConverterValidationReport {
 	durationMs: number;
 }
 
-/** The plain sentence about where PDFs go, for a converter entry. */
-export function destinationLine(entry: ConverterEntry): string {
-	if (entry.local) return "PDFs stay on this computer: the built-in reader converts them here.";
-	if (!entry.origin) return "Set the service URL first. Until then PDFs are read by the built-in reader on this computer.";
-	return `PDFs you upload are sent to ${entry.origin}.`;
+/** The plain sentence about where PDFs go, for a converter entry; `active` when it is the one used for new PDFs. */
+export function destinationLine(entry: ConverterEntry, active = true): string {
+	if (entry.local) return active ? "PDFs stay on this computer: the built-in reader converts them here." : "If you use it, PDFs stay on this computer: the built-in reader converts them here.";
+	if (!entry.origin) return "Save the service URL first. Nothing is sent until then.";
+	if (active && !entry.ready) return `Not set up yet, so nothing is sent to ${entry.origin}: the built-in reader converts PDFs on this computer.${entry.setup ? ` ${entry.setup}` : ""}`;
+	return active ? `PDFs you upload are sent to ${entry.origin}.` : `If you use it, PDFs you upload will be sent to ${entry.origin}.`;
 }

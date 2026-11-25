@@ -97,12 +97,18 @@ describe("profile converter credentials", () => {
 });
 
 describe("presets and custom profiles in the registry", () => {
-	it("a preset without a key falls back to pdfjs with a warning; with its key it resolves at its default URL", () => {
-		const without = resolvePdfConverter({ converter: "mistral-ocr" }, credentials.readConverterCredential);
+	it("a preset without a saved URL or without a key falls back to pdfjs with a warning; with both it resolves", () => {
+		credentials.writeProfileCredential("mistral-ocr", "https://api.mistral.ai", KEY);
+		const unsaved = resolvePdfConverter({ converter: "mistral-ocr" }, credentials.readConverterCredential);
+		assert.equal(unsaved.converter.id, "pdfjs", "the preset's own address counts only once it is saved");
+		assert.match(unsaved.warnings[0]!, /Mistral OCR is not set up: no service URL is saved for it .*; the built-in reader \(pdfjs\) was used instead\./);
+		credentials.writeProfileCredential("mistral-ocr", "", undefined);
+		const saved = { converter: "mistral-ocr", services: { "mistral-ocr": { baseUrl: "https://api.mistral.ai" } } };
+		const without = resolvePdfConverter(saved, credentials.readConverterCredential);
 		assert.equal(without.converter.id, "pdfjs");
 		assert.match(without.warnings[0]!, /Mistral OCR needs an API key for https:\/\/api\.mistral\.ai; the built-in reader \(pdfjs\) was used instead\./);
 		credentials.writeProfileCredential("mistral-ocr", "https://api.mistral.ai", KEY);
-		const withKey = resolvePdfConverter({ converter: "mistral-ocr" }, credentials.readConverterCredential);
+		const withKey = resolvePdfConverter(saved, credentials.readConverterCredential);
 		assert.equal(withKey.converter.id, "mistral-ocr");
 		assert.equal(withKey.converter.label, "Mistral OCR");
 		const moved = resolvePdfConverter({ converter: "mistral-ocr", services: { "mistral-ocr": { baseUrl: "https://proxy.example" } } }, credentials.readConverterCredential);
@@ -227,7 +233,7 @@ describe("Settings API: /api/converters", () => {
 		assert.equal(pdfjs.ok, true);
 		const unconfigured = await post("mistral-ocr");
 		assert.equal(unconfigured.status, 400);
-		assert.match(((await unconfigured.json()) as { error: string }).error, /needs an API key/);
+		assert.match(((await unconfigured.json()) as { error: string }).error, /Mistral OCR is not set up/);
 		writeProfileFile("pages-svc.json", pageArrayProfile());
 		await withServer(routes({ "POST /convert": (_q, r) => json(r, pagesAnswer([`${KEY} oops`, "nothing"])) }), async (baseUrl) => {
 			await put({ id: "custom:pages-svc", baseUrl, apiKey: KEY });

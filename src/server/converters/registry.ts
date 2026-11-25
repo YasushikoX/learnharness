@@ -5,6 +5,7 @@ import { createDoclingConverter } from "./docling.ts";
 import { createHttpConverter } from "./http-declarative.ts";
 import { pdfjsConverter } from "./pdfjs.ts";
 import { PRESET_PROFILES } from "./presets.ts";
+import { selfOriginProblem } from "./self-origin.ts";
 
 /**
  * The PDF converter registry (fork addition, 2026-11-24). A converter is
@@ -23,6 +24,14 @@ import { PRESET_PROFILES } from "./presets.ts";
  * `custom:<id>`, loaded and validated on every resolve through the
  * CustomProfileLoader its caller passes in (a missing or invalid file falls
  * back to pdfjs with a warning, like an unknown id).
+ *
+ * NOTHING IS SENT BEFORE SETUP (review 1, finding 2). A service converter
+ * sends nothing until the user has saved a service URL for it in the
+ * settings (a preset's own address counts only once it has been saved, which
+ * choosing the preset in Settings does) and, when it takes a key, a key is
+ * stored for that URL. A URL that is this app's own address is refused
+ * (self-origin.ts). Each is `not_configured`: the conversion falls back to
+ * the built-in reader with a warning, and no request is made.
  *
  * No store import here (settings-body.ts imports this module, and test
  * files import that before isolating their data folder): a converter's key
@@ -71,11 +80,21 @@ export function isRegisteredPdfConverter(id: string): boolean {
 	return factories.has(id) || customProfileIdOf(id) !== undefined;
 }
 
-/** A profile converter for the settings: the base URL from `services` (else the profile's default), its key from the store. */
-export function createProfileConverter(converterId: string, profile: HttpConverterProfile, settings: PdfConversionSettings, readCredential: CredentialReader): PdfConverter {
-	const baseUrl = settings.services?.[converterId]?.baseUrl || profile.defaultBaseUrl;
-	if (!baseUrl) throw new ConverterError("not_configured", `${profile.name} is selected but no service URL is configured`, false);
-	return createHttpConverter({ converterId, profile, baseUrl, apiKey: readCredential(converterId, baseUrl) });
+/** Refuse a service URL that is this app's own address, before any request. */
+function refuseSelf(name: string, baseUrl: string): void {
+	const problem = selfOriginProblem(baseUrl);
+	if (problem) throw new ConverterError("not_configured", `${name} is not set up: ${problem}; nothing was sent`, false);
+}
+
+/**
+ * A profile converter for the settings: the service URL SAVED in `services` (a profile's defaultBaseUrl is never
+ * used here), its key from the store. `bundled` only for presets.
+ */
+export function createProfileConverter(converterId: string, profile: HttpConverterProfile, settings: PdfConversionSettings, readCredential: CredentialReader, bundled = false): PdfConverter {
+	const baseUrl = settings.services?.[converterId]?.baseUrl;
+	if (!baseUrl) throw new ConverterError("not_configured", `${profile.name} is not set up: no service URL is saved for it in Settings → PDF conversion`, false);
+	refuseSelf(profile.name, baseUrl);
+	return createHttpConverter({ converterId, profile, bundled, baseUrl, apiKey: readCredential(converterId, baseUrl) });
 }
 
 registerPdfConverter({ id: pdfjsConverter.id, create: () => pdfjsConverter });
@@ -84,6 +103,7 @@ registerPdfConverter({
 	create(settings, readCredential) {
 		const baseUrl = settings.docling?.baseUrl;
 		if (!baseUrl) throw new ConverterError("not_configured", "Docling is selected but no Docling URL is configured", false);
+		refuseSelf("Docling", baseUrl);
 		return createDoclingConverter({
 			baseUrl,
 			apiKey: readCredential("docling", baseUrl),
@@ -93,7 +113,7 @@ registerPdfConverter({
 	},
 });
 for (const preset of PRESET_PROFILES) {
-	registerPdfConverter({ id: preset.id, create: (settings, readCredential) => createProfileConverter(preset.id, preset, settings, readCredential) });
+	registerPdfConverter({ id: preset.id, create: (settings, readCredential) => createProfileConverter(preset.id, preset, settings, readCredential, true) });
 }
 
 /** The converter the settings select, built once. Never throws for configuration: it falls back to pdfjs with a warning. */

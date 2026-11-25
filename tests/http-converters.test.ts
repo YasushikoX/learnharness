@@ -72,7 +72,7 @@ describe("declarative HTTP converter: submit and extract", () => {
 			},
 		});
 		await withServer(service, async (baseUrl, log) => {
-			const result = await createHttpConverter({ converterId: "mistral-ocr", profile: MISTRAL_OCR_PRESET, baseUrl, apiKey: KEY }).convert(input, context());
+			const result = await createHttpConverter({ converterId: "mistral-ocr", profile: MISTRAL_OCR_PRESET, bundled: true, baseUrl, apiKey: KEY }).convert(input, context());
 			assert.deepEqual(texts(result.pages), ["# Page A", "Page B"]);
 			const sent = bodyJson(log[0]!);
 			assert.equal(sent.model, "mistral-ocr-latest");
@@ -116,7 +116,7 @@ describe("declarative HTTP converter: submit and extract", () => {
 	});
 
 	it("a missing page list or page number is bad_response", async () => {
-		await withServer(routes({ "POST /convert": (_q, r) => json(r, { result: { pages: [{ text: "x" }] } }) }), async (baseUrl) => {
+		await withServer(routes({ "POST /convert": (_q, r) => json(r, { result: { pages: [{ text: "x" }, { text: "y" }] } }) }), async (baseUrl) => {
 			await rejectsWith(make(baseUrl, pageArrayProfile()).convert(input, context()), "bad_response", /no page number at \/n/);
 		});
 		await withServer(routes({ "POST /convert": (_q, r) => json(r, { other: true }) }), async (baseUrl) => {
