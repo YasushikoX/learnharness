@@ -13,8 +13,9 @@ import {
 
 /**
  * A pathological input must cost time in proportion to its length. Measured as growth, not as a wall-clock bound: a
- * bound in milliseconds fails when the machine is busy (the full suite beside another build took four times as long).
- * Quadruple the input: linear work takes about 4 times as long, quadratic work 16 times. Best of three runs each.
+ * bound in milliseconds fails when the machine is busy. The input grows 16 times: linear work takes about 16 times as
+ * long, quadratic work 256 times; the test fails above 64, four times away from either. (A factor of 4 with a limit
+ * of 10 was too tight: under load a linear run measured 10.5.) Best of three runs each.
  */
 function assertLinearTime(what: string, run: (n: number) => { length: number }, n: number): void {
 	const best = (size: number) => {
@@ -26,9 +27,9 @@ function assertLinearTime(what: string, run: (n: number) => { length: number }, 
 		}
 		return ms;
 	};
-	const small = best(n / 4);
+	const small = best(Math.floor(n / 16));
 	const large = best(n);
-	assert.ok(large < Math.max(small, 5) * 10, `${what}: ${n / 4} repetitions took ${small.toFixed(1)}ms, ${n} took ${large.toFixed(1)}ms (more than 10 times as long: not linear)`);
+	assert.ok(large < Math.max(small, 5) * 64, `${what}: ${Math.floor(n / 16)} repetitions took ${small.toFixed(1)}ms, ${n} took ${large.toFixed(1)}ms (more than 64 times as long: not linear)`);
 }
 
 describe("latexToSpeech", () => {
