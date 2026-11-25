@@ -1506,6 +1506,7 @@ function QuestionDockForm({
 								kind={kind as "quiz" | "ask" | "explain"}
 								multi={qd.mode === "multi-select"}
 								options={qd.options}
+								optionOrder={qd.optionOrder}
 								sel={sel}
 								onToggle={toggle}
 								onDontKnow={() =>
