@@ -432,7 +432,7 @@ describe("Practice settings API and effective prompt loading", () => {
 	// Review finding 5: the route listed only prober, teacher and practice although the runtime composes Placement.
 	it("GET also exposes Placement's own base and its shared subset, as composed at runtime", async () => {
 		const view = await (await getPromptSegments()).json();
-		assert.deepEqual(Object.keys(view).sort(), ["placement", "practice", "prober", "teacher"]);
+		assert.deepEqual(Object.keys(view).sort(), ["ask", "placement", "practice", "prober", "teacher"]);
 		assert.deepEqual(view.placement, effectivePromptSegments("placement", readSettingsRecord()?.agent?.prompts ?? {}));
 		const paths = view.placement.map((s: { path: string }) => s.path);
 		assert.equal(paths[0], "placement/00-base.md");

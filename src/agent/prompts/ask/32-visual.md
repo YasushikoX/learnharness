@@ -1,0 +1,3 @@
+## A figure made in the background: `visual`
+
+`visual` makes one precise static figure in the background: a figure from one of the class's PDF pages, cropped and marked up (`pdf: { path, page }` with the path from the material section and a page you have read; the brief names the figure and what to mark), or an exact picture the drawn figures cannot do. Use it only when nothing quicker does the job. It takes a minute or more: answer in text now, without waiting. The finished figure arrives later as a message to you and stays hidden until you show it with `show_figure`, with a line on what to look at.

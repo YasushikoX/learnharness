@@ -191,7 +191,8 @@ interface SegmentInfo {
 	shared: boolean;
 }
 
-type PromptView = Record<"teacher" | "prober" | "practice" | "placement", SegmentInfo[]>;
+/** `ask` (2026-11-25) is optional so a view without it (an older server, a test fixture) still sections. */
+type PromptView = Record<"teacher" | "prober" | "practice" | "placement", SegmentInfo[]> & { ask?: SegmentInfo[] };
 type PromptRow = SegmentInfo & { usageHint?: string };
 
 /** Compose: one tool toggled, the rest of the section carried verbatim.
@@ -339,20 +340,23 @@ export function sectionedSegments(view: PromptView): PromptSection[] {
 		{ id: "prober", label: "Prober" },
 		{ id: "practice", label: "Practice" },
 		{ id: "placement", label: "Placement" },
+		{ id: "ask", label: "Ask" },
 	] as const;
 	const shared = new Map<string, SegmentInfo>();
-	for (const { id } of agents) {
-		for (const segment of view[id]) {
+	const listed = agents.filter(({ id }) => view[id] !== undefined);
+	const of = (id: (typeof agents)[number]["id"]): SegmentInfo[] => view[id] ?? [];
+	for (const { id } of listed) {
+		for (const segment of of(id)) {
 			if (segment.shared && !shared.has(segment.path)) shared.set(segment.path, segment);
 		}
 	}
 	return [
-		...agents.map(({ id, label }) => ({ id, label, segments: view[id].filter((s) => !s.shared) })),
+		...listed.map(({ id, label }) => ({ id, label, segments: of(id).filter((s) => !s.shared) })),
 		{
 			id: "shared",
 			label: "Shared",
 			segments: [...shared.values()].map((segment) => {
-				const users = agents.filter(({ id }) => view[id].some((s) => s.path === segment.path)).map(({ label }) => label);
+				const users = listed.filter(({ id }) => of(id).some((s) => s.path === segment.path)).map(({ label }) => label);
 				const usage = users.length > 1 ? `${users.slice(0, -1).join(", ")} and ${users.at(-1)}` : users[0];
 				return { ...segment, usageHint: `Used by ${usage}` };
 			}),
@@ -591,7 +595,7 @@ export function AgentSection({
 				// Only the acknowledged version changes; don't clear/dim the list
 				// while its ordinary canonical refresh catches up.
 				const update = (segments: SegmentInfo[]) => segments.map(s => s.path === path ? { ...s, enabled: on } : s);
-				setPrompts(view => view && { teacher: update(view.teacher), prober: update(view.prober), practice: update(view.practice), placement: update(view.placement) });
+				setPrompts(view => view && { teacher: update(view.teacher), prober: update(view.prober), practice: update(view.practice), placement: update(view.placement), ...(view.ask ? { ask: update(view.ask) } : {}) });
 			} else setSwitchError(path);
 			switchingPrompt.current = false;
 			void readPrompts(saved);

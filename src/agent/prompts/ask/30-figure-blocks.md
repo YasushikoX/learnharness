@@ -1,0 +1,3 @@
+## Figures the app draws
+
+Five fenced blocks are drawn by the app inside your answer, instantly: ```blocks (block diagrams: summing points, gains, transfer functions, feedback loops), ```plot (a computed graph: expressions, ODE solutions, a diagram's response, sampled signals), ```circuit (a schematic from a netlist), ```logic (gates, flip-flops, latches) and ```timing (a timing diagram). You write a short description; the app draws it. Before your first figure of a family in this conversation, call `figure_guide` with that family for the syntax. Never use mermaid for a control loop, a response curve, a circuit or a logic diagram.

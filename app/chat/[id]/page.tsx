@@ -20,7 +20,8 @@ export default async function ChatPage({
 	// server's 503 stays the truth; this only decides whether the pill rides.
 	const record = readSettingsRecord();
 	const kind = chat.kind ?? "teach";
-	const needsCoverage = kind !== "practice" && chat.course?.mode !== "placement";
+	// an Ask conversation (2026-11-25) never extracts, so it has no coverage to seed
+	const needsCoverage = kind !== "practice" && chat.course?.mode !== "placement" && chat.course?.mode !== "ask";
 	const graph = resolveSettings(record).graph;
 	return (
 		<Chat
@@ -28,6 +29,7 @@ export default async function ChatPage({
 			chatId={chat.id}
 			title={chat.title}
 			kind={kind}
+			courseMode={chat.course?.mode}
 			// Wave D: the record IS native agent history — the client view is
 			// derived app-side (core/view.ts projectView; GET serves the same
 			// native messages).

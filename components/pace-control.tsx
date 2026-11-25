@@ -21,7 +21,7 @@ import { chatSettingsGeneration, fetchChatSettings, updateChatSettings, useChatS
  * course session (a test usually covers several concepts), where this menu
  * only points at it. Practice sessions are not paced, so the pill hides.
  */
-type SessionView = { settings?: ChatSettings; kind?: string; course?: unknown };
+type SessionView = { settings?: ChatSettings; kind?: string; course?: { mode?: string } | null };
 
 export function PaceControl({ chatId, variant = "edge" }: { chatId: string; variant?: ControlVariant }) {
 	const seed = useChatSettingsSeed(chatId);
@@ -54,6 +54,8 @@ export function PaceControl({ chatId, variant = "edge" }: { chatId: string; vari
 	usePopoverDismiss(containerRef, open, () => setOpen(false));
 
 	if (view?.kind === "practice") return null;
+	// An Ask conversation (2026-11-25, review 1 finding 6) is not paced: its prompt is the same at every pace.
+	if (view?.course?.mode === "ask") return null;
 	const current = resolvePace(view?.settings);
 	const hasCourse = view?.course !== undefined && view?.course !== null;
 

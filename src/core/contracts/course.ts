@@ -139,10 +139,11 @@ export const CURRENT_COURSE_VERSION = 1;
  *  practice sessions whose concluded problems move the skills' boxes ·
  *  check: the context check (owner) — a SHORT practice session
  *  on a skill the learner already has from another course, confirming it
- *  works in this one. */
-export type CourseMode = "learn" | "practice" | "review" | "placement" | "check";
+ *  works in this one. ask: an open conversation about the class (agent/ask-agent.ts) — no skills, no
+ *  questions, no grades; it is never course evidence and never feeds the knowledge graph. */
+export type CourseMode = "learn" | "practice" | "review" | "placement" | "check" | "ask";
 
-export const COURSE_MODES: readonly CourseMode[] = ["learn", "practice", "review", "placement", "check"];
+export const COURSE_MODES: readonly CourseMode[] = ["learn", "practice", "review", "placement", "check", "ask"];
 
 /** Stamped at creation by the course-session route; never changed. */
 export interface ChatCourseLink {

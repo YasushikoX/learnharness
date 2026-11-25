@@ -1174,6 +1174,13 @@ export function createExtractionPipeline(deps: ExtractionPipelineDeps): Extracti
 		try {
 			const record = chatStore.getChat(chatId);
 			if (!record) throw new Error(`Chat not found: ${chatId}`);
+			// An Ask conversation (2026-11-25, review 1 finding 2) never feeds the graph, whoever calls: the turn trigger and
+			// the manual route skip it already, and here the backfill script and any later caller are refused too, before
+			// any stage, usage or ledger write.
+			if (record.course?.mode === "ask") {
+				console.info(`[extraction ${chatId}] an Ask conversation — not extracted`);
+				return { nodes: 0, chains: 0 };
+			}
 			// BYOK per-need gate (owner, 2026-09-22) + key presence
 			// (2026-09-25): the write channel needs extractor + auditor
 			// engines AND their providers' keys; a refusal lands BEFORE any
