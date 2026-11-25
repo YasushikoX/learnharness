@@ -5,14 +5,14 @@ import { useEffect, useState } from "react";
 import { ChevronRightIcon, Loader2Icon, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { LessonMaterial, Pace } from "@/src/core";
-import { CoursePace } from "@/components/course-pace";
+import { CoursePace, CourseSettingRow } from "@/components/course-pace";
 import { ExamSettings, type ExamPlanSectionProps } from "@/components/exam-plan";
 import { LanguageControl } from "@/components/language-control";
 import { MaterialsControl } from "@/components/materials-control";
-import { SECTION_HEAD } from "@/components/section-heads";
 
-/** UI round 1 (SPEC §3): ordinary actions are secondary sm Buttons; the region's one emphasised action is primary. */
-const BTN = buttonVariants({ variant: "secondary", size: "sm" });
+/** UI round 1b (SPEC §3): settings actions are 32px outline buttons, level with the 32px select and date field. The
+ *  Sources and language pills grow to 32px inside this panel too (.lh-course-controls in app/globals.css). */
+const BTN = buttonVariants({ variant: "outline" });
 
 /**
  * Everything about a course that is set up rarely, behind one closed line under the page header (owner, 2026-11-14):
@@ -74,53 +74,70 @@ export function CourseSettings({
 			onToggle={(e) => {
 				if (e.currentTarget.open !== open) setOpen(e.currentTarget.open);
 			}}
-			className={cn("group", open && "rounded-xl border border-border/60 px-4 pb-4", controlled && !open && "hidden")}
+			className={cn("group", open && "rounded-lg border border-border bg-card px-5 pb-2", controlled && !open && "hidden")}
 			data-testid="course-settings"
 		>
 			<summary
 				className={cn(
-					"flex cursor-pointer list-none items-center justify-between transition-colors [&::-webkit-details-marker]:hidden",
-					open ? "lh-touch py-2 text-base font-semibold text-foreground" : "rounded-lg border border-border/60 px-3 py-2 text-sm text-muted-foreground hover:bg-muted/50",
+					"flex cursor-pointer list-none items-center justify-between gap-3 transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) outline-none focus-visible:ring-2 focus-visible:ring-focus [&::-webkit-details-marker]:hidden",
+					open
+						? "lh-touch -mx-1 rounded-md px-1 pt-4 pb-1 lh-section-title text-foreground"
+						: "h-10 rounded-lg border border-border px-4 text-sm text-muted-foreground hover:bg-raised hover:text-foreground",
 				)}
 			>
-				<span className="flex items-center gap-2">
+				<span className="flex min-w-0 items-center gap-2">
 					Course settings
 					{drafting && (
-						<span className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground" data-testid="course-drafting">
-							<Loader2Icon className="size-3.5 animate-spin" />
-							The course planner is reading the curriculum…
+						<span className="flex min-w-0 items-center gap-1.5 text-meta font-normal text-muted-foreground" data-testid="course-drafting">
+							<Loader2Icon className="size-3.5 shrink-0 animate-spin" />
+							<span className="truncate">The course planner is reading the curriculum…</span>
 						</span>
 					)}
 				</span>
-				{open ? <XIcon className="size-4 text-muted-foreground" aria-label="Close" /> : <ChevronRightIcon className="size-4" aria-hidden />}
+				{open ? (
+					<span className={cn(buttonVariants({ variant: "ghost", size: "icon-sm" }), "pointer-events-none text-muted-foreground")}>
+						<XIcon aria-label="Close" />
+					</span>
+				) : (
+					<ChevronRightIcon className="size-4 shrink-0" aria-hidden />
+				)}
 			</summary>
-			<div className="space-y-4 pt-2">
+			<div className="lh-course-controls divide-y divide-border">
 				<CoursePace courseId={courseId} pace={pace} onSaved={() => onChanged?.()} />
-				<section data-testid="course-curriculum">
-					<div className={SECTION_HEAD}>Curriculum</div>
-					<div className="flex flex-wrap items-center gap-2">
-						<MaterialsControl courseId={courseId} onChange={onMaterials} />
-						<LanguageControl courseId={courseId} />
-						<button type="button" className={BTN} disabled={busy || drafting || materialCount === 0} data-testid="course-draft-button" onClick={onDraft}>
-							{hasSkills || hasDraft ? "Re-draft skill map" : "Draft skill map"}
-						</button>
-					</div>
-					{materialCount === 0 && !drafting && <p className="mt-2 text-xs text-muted-foreground">Add the curriculum (PDFs, notes or links), then draft the skill map.</p>}
-					{courseError && !drafting && (
-						<p className="mt-2 text-xs text-error" data-testid="course-error">
-							Drafting failed: {courseError}
-						</p>
-					)}
-					{error && <p className="mt-2 text-xs text-error">{error}</p>}
-				</section>
+				<CourseSettingRow
+					testid="course-curriculum"
+					label="Curriculum"
+					description={
+						materialCount === 0 && !drafting
+							? "Add the curriculum (PDFs, notes or links), then draft the skill map."
+							: "What the course teaches. The course planner turns it into the skill map."
+					}
+					note={
+						(courseError && !drafting) || error ? (
+							<>
+								{courseError && !drafting && (
+									<p className="text-error" data-testid="course-error">
+										Drafting failed: {courseError}
+									</p>
+								)}
+								{error && <p className="text-error">{error}</p>}
+							</>
+						) : undefined
+					}
+				>
+					<MaterialsControl courseId={courseId} onChange={onMaterials} />
+					<LanguageControl courseId={courseId} />
+					<button type="button" className={BTN} disabled={busy || drafting || materialCount === 0} data-testid="course-draft-button" onClick={onDraft}>
+						{hasSkills || hasDraft ? "Re-draft skill map" : "Draft skill map"}
+					</button>
+				</CourseSettingRow>
 				{exam && <ExamSettings courseId={courseId} busy={busy} onChanged={() => onChanged?.()} {...exam} />}
 				{hasSkills && (
-					<div>
-						<div className={SECTION_HEAD}>Starting point</div>
+					<CourseSettingRow label="Starting point" description="Credit what you already know, so lessons start at your weak spots.">
 						<button type="button" className={BTN} disabled={busy} data-testid="course-placement" onClick={onPlacement}>
 							Placement test
 						</button>
-					</div>
+					</CourseSettingRow>
 				)}
 			</div>
 		</details>

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { ExpandIcon, MaximizeIcon, MinusIcon, PlusIcon, ShrinkIcon } from "lucide-react";
+import { ExpandIcon, LockIcon, MaximizeIcon, MinusIcon, PlusIcon, ShrinkIcon } from "lucide-react";
+import { buttonVariants } from "@/components/ui/button";
 import type { PlanNodeStatus } from "@/src/core";
 import { GRAPH_PAD, PlanDiagram, PlanLayoutProbe, usePlanLayout } from "@/components/plan-block";
 import { NODE_W_MIN, type LayoutNode } from "@/components/plan-layout";
@@ -176,8 +177,8 @@ export function SkillMap({
 	};
 
 	const inlineHeight = mapViewportHeight(box, size.w, fitted);
-	const control =
-		"pointer-events-auto flex size-7 items-center justify-center rounded-md border border-border/70 bg-card/80 text-muted-foreground backdrop-blur transition-colors hover:bg-accent hover:text-foreground";
+	// UI round 1b: the map's tools are 28px outline icon Buttons on the card fill (SPEC §3).
+	const control = cn(buttonVariants({ variant: "outline", size: "icon-sm" }), "pointer-events-auto bg-card text-muted-foreground hover:text-foreground");
 
 	return (
 		<div
@@ -185,14 +186,15 @@ export function SkillMap({
 			data-testid="skill-map"
 			data-expanded={expanded}
 			className={cn(
-				expanded && "lh-no-drag fixed inset-x-0 bottom-0 top-13 z-40 flex flex-col bg-background/95 p-4 pb-[calc(1rem+var(--lh-safe-bottom))] backdrop-blur-sm",
+				"lh-skill-map",
+				expanded && "lh-no-drag fixed inset-x-0 bottom-0 top-13 z-40 flex flex-col bg-background p-4 pb-[calc(1rem+var(--lh-safe-bottom))]",
 			)}
 		>
 			<div
 				ref={viewportRef}
 				data-testid="skill-map-viewport"
 				className={cn(
-					"relative overflow-hidden rounded-xl border border-border/60 select-none",
+					"relative overflow-hidden rounded-lg border border-border select-none",
 					// Inline, one finger scrolls the page (pan-y); expanded, the map owns every touch.
 					expanded ? "min-h-0 flex-1 touch-none" : "touch-pan-y",
 					atFloor ? "cursor-default" : panning ? "cursor-grabbing" : "cursor-grab",
@@ -210,6 +212,21 @@ export function SkillMap({
 				>
 					<PlanLayoutProbe probe={plan.probe} />
 					<PlanDiagram layout={layout} nodes={nodes} edges={edges} statusOf={statusOf} markerId={markerId} pad={PAD} naturalSize />
+					{/* A lock badge on each locked skill's corner (UI round 1b, SPEC §7): the label stays readable, the icon says why. */}
+					{nodes
+						.filter((n) => statusOf(n.id) === "upcoming" && layout.x.has(n.id))
+						.map((n) => (
+							<span
+								key={n.id}
+								role="img"
+								aria-label="locked"
+								data-testid={`skill-map-lock-${n.id}`}
+								className="absolute flex size-4 items-center justify-center rounded-full border border-input bg-background text-muted-foreground"
+								style={{ left: layout.x.get(n.id)! - (layout.originX ?? 0) + PAD - 8, top: layout.y.get(n.id)! - (layout.originY ?? 0) + PAD - 8 }}
+							>
+								<LockIcon className="size-2.5" strokeWidth={2} aria-hidden />
+							</span>
+						))}
 				</div>
 				<div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 p-2">
 					<span className="truncate text-xs text-muted-foreground">

@@ -486,7 +486,8 @@ describe("the exam plan on the page", () => {
 
 	it("shows how many skills fade before the exam and a retest row only when something is to check (owner, 2026-11-16)", () => {
 		const html = renderToStaticMarkup(<examUi.ExamPlanSection {...props({ plan: { ...basePlan, reviewFading: 3, retestCount: 5 }, onRetest: () => {} })} />);
-		assert.match(html, /data-testid="course-review-fading"[^>]*>· 3 fading before the exam/);
+		// UI round 1b: a meta line under the review, so it never wraps with a leading middot
+		assert.match(html, /data-testid="course-review-fading"[^>]*>3 fading before the exam/);
 		assert.match(html, /data-testid="course-next-retest"[\s\S]*Retest what I know · 5 to check[\s\S]*>Retest</);
 		const quiet = renderToStaticMarkup(<examUi.ExamPlanSection {...props({ plan: { ...basePlan, retestCount: 0 }, onRetest: () => {} })} />);
 		assert.ok(!quiet.includes("course-next-retest") && !quiet.includes("course-review-fading"));

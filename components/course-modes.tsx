@@ -9,13 +9,16 @@
  */
 
 import { buttonVariants } from "@/components/ui/button";
-import { BookOpenIcon, DumbbellIcon, MessageCircleQuestionIcon } from "lucide-react";
+import { BookOpenIcon, DumbbellIcon, MessageCircleQuestionIcon, PlusIcon } from "lucide-react";
 import type { CourseView } from "@/src/core";
 import { cn } from "@/lib/utils";
 
-/** UI round 1 (SPEC §3): ordinary actions are secondary sm Buttons; the region's one emphasised action is primary. */
-const BTN = buttonVariants({ variant: "secondary", size: "sm" });
-const CARD = "flex min-w-0 flex-col gap-2 rounded-xl border border-border/60 bg-card/50 p-4";
+/** UI round 1b (SPEC §7 "Course page"): each way in is ONE whole-card button, no button inside a card. The card is a
+ *  hairline surface that takes one fill step on hover; an unavailable card keeps its line readable (it says what is
+ *  needed first) and only its icon and title go quiet. Ask's "New" sits beside the card button, not inside it. */
+const CARD =
+	"lh-touch group/mode flex h-full w-full min-w-0 flex-col items-start gap-1 rounded-lg border border-border bg-card p-4 text-left outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) enabled:hover:bg-raised enabled:active:bg-raised-strong focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-default";
+const NEW_BTN = buttonVariants({ variant: "secondary", size: "xs" });
 
 type ModesData = Pick<CourseView, "course" | "skills" | "nextUp" | "notExamined" | "learning" | "known" | "plan" | "sessions"> & { drafting?: boolean };
 
@@ -90,41 +93,50 @@ export function CourseModes({
 		start: () => void,
 		extra?: React.ReactNode,
 	) => (
-		<div className={CARD} data-testid={`course-mode-${id}`} data-available={state.available ? "true" : "false"}>
-			<div className="flex items-center justify-between gap-2">
-				<button
-					type="button"
-					className={cn(BTN, "lh-touch flex items-center gap-1.5 text-sm", state.available && "bg-raised-strong")}
-					disabled={busy || !state.available}
-					data-testid={`course-mode-${id}-start`}
-					onClick={start}
+		<div className="relative min-w-0" data-testid={`course-mode-${id}`} data-available={state.available ? "true" : "false"}>
+			<button type="button" className={CARD} disabled={busy || !state.available} data-testid={`course-mode-${id}-start`} onClick={start}>
+				<span
+					aria-hidden
+					className={cn(
+						"mb-2 flex size-7 items-center justify-center rounded-sm bg-secondary [&_svg]:size-4",
+						state.available ? "text-foreground" : "text-muted-foreground",
+					)}
 				>
 					{icon}
-					{label}
-				</button>
-				{extra}
-			</div>
-			<p className="text-xs leading-relaxed text-muted-foreground" data-testid={`course-mode-${id}-line`}>
-				{state.line}
-			</p>
+				</span>
+				<span className={cn("w-full truncate whitespace-nowrap text-body font-semibold", !state.available && "text-muted-foreground")}>{label}</span>
+				<span className="text-sm text-muted-foreground" data-testid={`course-mode-${id}-line`}>
+					{state.line}
+				</span>
+			</button>
+			{extra && <span className="absolute top-4 right-4">{extra}</span>}
 		</div>
 	);
 	return (
 		<section data-testid="course-modes" aria-label="Ways to study this class" className="grid gap-3 sm:grid-cols-3">
-			{card("learn", <BookOpenIcon className="size-3.5" aria-hidden />, "Learn", states.learn, () => target && onLearn(target))}
+			{card("learn", <BookOpenIcon strokeWidth={1.75} />, "Learn", states.learn, () => target && onLearn(target))}
 			{card(
 				"ask",
-				<MessageCircleQuestionIcon className="size-3.5" aria-hidden />,
+				<MessageCircleQuestionIcon strokeWidth={1.75} />,
 				"Ask about this class",
 				states.ask,
 				() => onAsk?.(states.ask.reopen),
 				states.ask.reopen ? (
-					<button type="button" className={cn(BTN, "lh-touch")} disabled={busy || !onAsk} data-testid="course-mode-ask-new" onClick={() => onAsk?.()}>
+					<button
+						type="button"
+						className={cn(NEW_BTN, "lh-touch")}
+						disabled={busy || !onAsk}
+						aria-label="New conversation about this class"
+						title="Start a new conversation"
+						data-testid="course-mode-ask-new"
+						onClick={() => onAsk?.()}
+					>
+						<PlusIcon aria-hidden />
 						New
 					</button>
 				) : undefined,
 			)}
-			{card("practice", <DumbbellIcon className="size-3.5" aria-hidden />, "Practice", states.practice, onPractice)}
+			{card("practice", <DumbbellIcon strokeWidth={1.75} />, "Practice", states.practice, onPractice)}
 		</section>
 	);
 }
