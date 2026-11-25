@@ -17,7 +17,9 @@ function assertTiles(doc: string, batches: readonly MaterialBatch[]): void {
 		assert.equal(b.charStart, at, `batch ${i} starts where the previous ended`);
 		assert.ok(b.charEnd > b.charStart, `batch ${i} is not empty`);
 		assert.equal(b.text, doc.slice(b.charStart, b.charEnd));
-		assert.ok(b.pageStart <= b.pageEnd);
+		// pageEnd < pageStart only when markers run backwards; the page list always holds both
+		assert.ok(b.pages.includes(b.pageStart) && b.pages.includes(b.pageEnd));
+		assert.deepEqual(b.pages, [...new Set(b.pages)].sort((x, y) => x - y));
 		at = b.charEnd;
 	});
 	assert.equal(at, doc.length, "the last batch ends at the document's end");
@@ -172,4 +174,132 @@ describe("splitMaterial", () => {
 		assert.equal(batches[0]!.headingPath[0], "Tittel");
 		assert.equal(batches.at(-1)!.pageEnd, 2);
 	});
+
+	// Review 1, defect 8: a fenced example of a page marker and a heading gave pageCount 99, a fake section and a missed
+	// real heading.
+	it("a page marker and a heading inside a fenced code block are content, for pages, counting, cuts and heading paths", () => {
+		const doc = "--- Page 1 ---\n\n# Intro\n\nText.\n\n```md\n--- Page 99 ---\n# Fake\n```\n\n# Real\n\nBody after the fence.\n";
+		assert.equal(pageCountOf(doc), 1);
+		for (const budgetTokens of [3, 5, 8, 12, 1_000]) {
+			const batches = splitMaterial(doc, { budgetTokens });
+			assertTiles(doc, batches);
+			for (const b of batches) {
+				assert.deepEqual([b.pageStart, b.pageEnd, b.pages], [1, 1, [1]], `budget ${budgetTokens}`);
+				assert.ok(!b.headingPath.includes("Fake"));
+			}
+			const last = batches.at(-1)!;
+			if (budgetTokens < 1_000) assert.deepEqual(last.headingPath, ["Real"], "the real heading after the fence is found");
+		}
+		// a fenced section is not cut off as a section of its own: with room for the sections, Real starts a batch
+		const sections = splitMaterial(doc, { budgetTokens: 12 });
+		assert.ok(sections.some((b) => b.text.startsWith("# Real")));
+		assert.ok(!sections.some((b) => b.text.startsWith("# Fake")));
+		// ~~~ fences too, and a longer closing fence closes a shorter opening one
+		const tilde = "--- Page 3 ---\nA\n~~~\n--- Page 98 ---\n~~~~\n--- Page 4 ---\nB\n";
+		assert.equal(pageCountOf(tilde), 4);
+		const tildeBatches = splitMaterial(tilde, { budgetTokens: 4 });
+		assertTiles(tilde, tildeBatches);
+		assert.deepEqual([...new Set(tildeBatches.flatMap((b) => b.pages))].sort((a, b) => a - b), [3, 4]);
+	});
+
+	it("a fence that is never closed is not a fence: the page markers after it still count", () => {
+		const doc = "--- Page 1 ---\nIntro\n```python\nprint(1)\n--- Page 2 ---\n# Kapittel 2\nTwo\n--- Page 3 ---\nThree\n";
+		assert.equal(pageCountOf(doc), 3);
+		const batches = splitMaterial(doc, { budgetTokens: 4 });
+		assertTiles(doc, batches);
+		assert.equal(batches.at(-1)!.pageEnd, 3);
+		assert.ok(batches.some((b) => b.headingPath[0] === "Kapittel 2"));
+	});
+
+	// Review 1, defect 4 (the splitter half): the validator needs the pages actually present in a batch.
+	it("each batch lists the pages its text is on: skipped numbers absent, backward markers kept, a mid-page start inherits its page", () => {
+		const skipped = "--- Page 2 ---\n\nTwo\n\n--- Page 5 ---\n\nFive\n";
+		assert.deepEqual(splitMaterial(skipped).map((b) => b.pages), [[2, 5]]);
+		const backward = "--- Page 5 ---\nFive\n--- Page 2 ---\nTwo\n";
+		const [one] = splitMaterial(backward);
+		assert.deepEqual([one!.pageStart, one!.pageEnd, one!.pages], [5, 2, [2, 5]]);
+		const midPage = `--- Page 7 ---\n${prose("Sju", 300)}\n\n${prose("Mer", 300)}\n--- Page 8 ---\nAtte\n`;
+		const batches = splitMaterial(midPage, { budgetTokens: 100 });
+		assertTiles(midPage, batches);
+		const second = batches[1]!;
+		assert.ok(!second.text.startsWith("--- Page"), "the second batch starts mid-page");
+		assert.equal(second.pages[0], 7, "it inherits page 7");
+		assert.ok(batches.at(-1)!.pages.includes(8));
+	});
+
+	// Review 1, defect 11: every line rescanned every marker (2,000 pages 170 ms, 4,000 pages 653 ms, quadratic).
+	it("splits a 20,000-page document in linear time", () => {
+		const pages: string[] = [];
+		for (let n = 1; n <= 20_000; n++) pages.push(`--- Page ${n} ---\n\nLine a ${n}\nLine b\n\nPara ${"x".repeat(1_000)}`);
+		const doc = pages.join("\n\n");
+		const started = performance.now();
+		const batches = splitMaterial(doc);
+		const ms = performance.now() - started;
+		assertTiles(doc, batches);
+		assert.equal(batches.at(-1)!.pageEnd, 20_000);
+		// quadratic behaviour took about 16 s here; linear takes tens of milliseconds
+		assert.ok(ms < 3_000, `took ${Math.round(ms)} ms`);
+	});
+
+	it("property: seeded random documents (markers, fences, CRLF, empty pages, very long lines, emoji) always tile", () => {
+		let checks = 0;
+		for (let seed = 1; seed <= 400; seed++) {
+			const rand = mulberry32(seed);
+			const pick = <T>(items: readonly T[]): T => items[Math.floor(rand() * items.length)]!;
+			const nl = rand() < 0.3 ? "\r\n" : "\n";
+			const parts: string[] = [];
+			let page = 0;
+			const count = 1 + Math.floor(rand() * 40);
+			for (let i = 0; i < count; i++) {
+				const kind = pick(["marker", "marker", "text", "text", "text", "heading", "fence", "blank", "long", "emoji", "empty-page", "backward"] as const);
+				if (kind === "marker") parts.push(`--- Page ${(page += 1 + Math.floor(rand() * 2))} ---${nl}${rand() < 0.5 ? nl : ""}`);
+				else if (kind === "backward") parts.push(`--- Page ${Math.max(1, page - 1 - Math.floor(rand() * 3))} ---${nl}`);
+				else if (kind === "empty-page") parts.push(`--- Page ${++page} ---${nl}${nl}--- Page ${++page} ---${nl}`);
+				else if (kind === "text") parts.push(`${prose(`Tekst ${i}`, 1 + Math.floor(rand() * 400))}${nl}`);
+				else if (kind === "heading") parts.push(`${"#".repeat(1 + Math.floor(rand() * 6))} Heading ${i}${nl}`);
+				else if (kind === "fence") {
+					// always closed (an unclosed fence is not a fence: its own test), the closer as long or longer
+					const open = pick(["```", "~~~", "````"]);
+					const close = rand() < 0.3 ? `${open}${open[0]}` : open;
+					parts.push(`${open}md${nl}--- Page ${900 + i} ---${nl}# FencedFake ${i}${nl}code ${i}${nl}${close}${nl}`);
+				}
+				else if (kind === "blank") parts.push(pick([nl, `${nl}${nl}`, `  ${nl}`]));
+				else if (kind === "long") parts.push(`${"L".repeat(1 + Math.floor(rand() * 60_000))}${nl}`);
+				else parts.push(`${"🙂".repeat(1 + Math.floor(rand() * 30))}${nl}`);
+			}
+			const doc = parts.join("");
+			const budgetTokens = pick([1, 2, 7, 50, 300, 2_000, 8_000]);
+			const opts = rand() < 0.2 ? { budgetTokens, estimateTokens: (t: string) => Math.ceil([...t].length / 3) } : { budgetTokens };
+			const estimate = opts.estimateTokens ?? estimateTextTokens;
+			const batches = splitMaterial(doc, opts);
+			if (doc.length === 0) {
+				assert.deepEqual(batches, []);
+				continue;
+			}
+			assertTiles(doc, batches);
+			const realPages = new Set([...doc.matchAll(/^--- Page (\d+) ---\r?$/gm)].map((m) => Number(m[1])).filter((n) => n < 900));
+			for (const b of batches) {
+				assert.ok(estimate(b.text) <= budgetTokens || [...b.text].length === 1, `seed ${seed}: batch ${b.index} over the budget`);
+				assert.ok(!/[\ud800-\udbff]$/.test(b.text), `seed ${seed}: a surrogate pair is cut`);
+				assert.ok(b.pages.includes(b.pageStart) && b.pages.includes(b.pageEnd), `seed ${seed}: pages hold start and end`);
+				for (const p of b.pages) assert.ok(p < 900 && (realPages.size === 0 ? p === 1 : realPages.has(p)), `seed ${seed}: page ${p} is a real marker`);
+				assert.ok(!b.headingPath.some((h) => h.startsWith("FencedFake")), `seed ${seed}: a fenced heading in a path`);
+				checks++;
+			}
+			assert.ok(pageCountOf(doc) < 900, `seed ${seed}: fenced markers are not counted`);
+		}
+		assert.ok(checks > 1_000, `${checks} batch checks`);
+	});
 });
+
+/** A seeded PRNG (mulberry32): the property test's documents are the same on every run. */
+function mulberry32(seed: number): () => number {
+	let a = seed >>> 0;
+	return () => {
+		a = (a + 0x6d2b79f5) >>> 0;
+		let t = a;
+		t = Math.imul(t ^ (t >>> 15), t | 1);
+		t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
+}

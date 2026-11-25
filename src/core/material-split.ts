@@ -10,8 +10,16 @@
  * document without markers (a text note, a web page) is all page 1. Text
  * before the first marker belongs to the first marker's page.
  *
- * Headings are ATX Markdown headings (`#` to `######` and a space), outside
- * fenced code blocks; they may be absent (slide decks).
+ * Headings are ATX Markdown headings (`#` to `######` and a space); they may be
+ * absent (slide decks).
+ *
+ * Fenced code blocks (``` or ~~~, CommonMark rules: a closing fence of the same
+ * character, at least as long, with nothing after it) are content: a marker-like
+ * line or a heading inside one is neither a page break nor a heading, for page
+ * numbers, page counting, cutting and heading paths alike. A fence that is never
+ * closed is not a fence (one stray ``` line must not swallow the rest of the
+ * document's page markers). Converters must not emit page markers inside fences
+ * (contracts/material-digest.ts).
  *
  * The plan: cut the document into sections at its headings, keep each section
  * that fits the budget whole, and pack consecutive pieces greedily up to the
@@ -20,6 +28,10 @@
  * line over the budget at a character offset. INVARIANT: the batches tile the
  * document exactly (the first starts at 0, each starts where the previous ended,
  * the last ends at its length), so no text is lost or repeated.
+ *
+ * Cost: one scan of the lines, then binary searches over sorted offsets; no
+ * per-line rescan of the markers (linear in the document apart from the token
+ * estimates of the pieces).
  */
 
 /** The batch budget in estimated tokens (the design's "about 8,000"). */
@@ -47,6 +59,11 @@ export interface MaterialBatch {
 	pageStart: number;
 	/** The page its last character is on. */
 	pageEnd: number;
+	/**
+	 * Every page number the batch's text is on, ascending, unique: the page it starts on (inherited when it starts
+	 * mid-page) and each page whose marker is inside it. Numbers a converter skipped (an image-only page) are absent.
+	 */
+	pages: number[];
 	/** The heading titles in force where the batch starts, outermost first ([] before any heading). */
 	headingPath: string[];
 	/** contentMd.slice(charStart, charEnd). */
@@ -58,29 +75,14 @@ export interface MaterialBatch {
 /** A page marker line, exactly as the converters write it. */
 const PAGE_MARKER = /^--- Page (\d+) ---[ \t]*\r?$/;
 const HEADING = /^(#{1,6})[ \t]+(.*?)[ \t#]*\r?$/;
-const FENCE = /^[ \t]{0,3}(`{3,}|~{3,})/;
-
-interface Line {
-	start: number;
-	/** The line's text without its newline (a trailing \r is kept). */
-	text: string;
-}
-
-function linesOf(text: string): Line[] {
-	const out: Line[] = [];
-	let start = 0;
-	while (start < text.length) {
-		const nl = text.indexOf("\n", start);
-		const end = nl < 0 ? text.length : nl;
-		out.push({ start, text: text.slice(start, end) });
-		start = end + 1;
-	}
-	return out;
-}
+const FENCE_OPEN = /^[ \t]{0,3}(`{3,}|~{3,})/;
+const FENCE_CLOSE = /^[ \t]{0,3}(`{3,}|~{3,})[ \t]*\r?$/;
 
 interface PageMark {
 	start: number;
 	page: number;
+	/** The start of the first non-blank line after the marker line (the document's length when there is none). */
+	firstContent: number;
 }
 
 interface HeadingMark {
@@ -90,79 +92,136 @@ interface HeadingMark {
 }
 
 interface Structure {
-	pages: PageMark[];
-	headings: HeadingMark[];
-	/** Starts of lines that follow a blank line (paragraph starts). */
-	paragraphs: number[];
-	/** Starts of every line after the first. */
+	/** Line starts, ascending (the first is 0). */
 	lineStarts: number[];
+	/** contentBefore[i]: how many content lines (not blank, not a page marker, not a heading outside a fence) precede line i. */
+	contentBefore: number[];
+	/** The page markers outside fences, in document order. */
+	pages: PageMark[];
+	/** The headings outside fences, in document order. */
+	headings: HeadingMark[];
+	/** Starts of lines that follow a blank line (paragraph starts), ascending. */
+	paragraphs: number[];
 }
 
-/** The page markers, headings and paragraph starts of a document. Pure. */
+/** The lines of a document: their starts and texts (without the newline; a trailing \r is kept). */
+function linesOf(text: string): { starts: number[]; texts: string[] } {
+	const starts: number[] = [];
+	const texts: string[] = [];
+	let start = 0;
+	while (start < text.length) {
+		const nl = text.indexOf("\n", start);
+		const end = nl < 0 ? text.length : nl;
+		starts.push(start);
+		texts.push(text.slice(start, end));
+		start = end + 1;
+	}
+	return { starts, texts };
+}
+
+/** fenced[i]: line i is a fence delimiter of a closed fence or inside one. */
+function fencedLines(texts: readonly string[]): boolean[] {
+	const fenced = texts.map(() => false);
+	// The closing-fence candidates, in order: an opener looks only at these.
+	const closers: { line: number; char: string; length: number }[] = [];
+	texts.forEach((t, line) => {
+		const m = FENCE_CLOSE.exec(t);
+		if (m) closers.push({ line, char: m[1]![0]!, length: m[1]!.length });
+	});
+	let from = 0; // closers before this index are behind the scan
+	for (let i = 0; i < texts.length; i++) {
+		const open = FENCE_OPEN.exec(texts[i]!);
+		if (!open) continue;
+		// a backtick fence's info string may not contain a backtick (CommonMark)
+		if (open[1]![0] === "`" && texts[i]!.slice(open[0].length).includes("`")) continue;
+		while (from < closers.length && closers[from]!.line <= i) from++;
+		let close = -1;
+		for (let c = from; c < closers.length; c++) {
+			if (closers[c]!.char === open[1]![0] && closers[c]!.length >= open[1]!.length) {
+				close = closers[c]!.line;
+				break;
+			}
+		}
+		if (close < 0) continue; // never closed: not a fence
+		for (let j = i; j <= close; j++) fenced[j] = true;
+		i = close;
+	}
+	return fenced;
+}
+
+/** The page markers, headings, paragraph starts and content lines of a document, fences respected. Pure. */
 function structureOf(text: string): Structure {
+	const { starts, texts } = linesOf(text);
+	const fenced = fencedLines(texts);
 	const pages: PageMark[] = [];
 	const headings: HeadingMark[] = [];
 	const paragraphs: number[] = [];
-	const lineStarts: number[] = [];
-	let fence: string | null = null;
+	const contentBefore: number[] = [];
+	let content = 0;
 	let prevBlank = false;
-	for (const line of linesOf(text)) {
-		if (line.start > 0) lineStarts.push(line.start);
-		const blank = line.text.trim() === "";
-		if (!blank && prevBlank && line.start > 0) paragraphs.push(line.start);
+	/** Markers still waiting for their first non-blank line. */
+	let waiting: PageMark[] = [];
+	for (let i = 0; i < texts.length; i++) {
+		const start = starts[i]!;
+		const line = texts[i]!;
+		contentBefore.push(content);
+		const blank = line.trim() === "";
+		if (!blank && prevBlank && start > 0) paragraphs.push(start);
 		prevBlank = blank;
-		const marker = PAGE_MARKER.exec(line.text);
+		if (blank) continue;
+		for (const w of waiting) w.firstContent = start;
+		waiting = [];
+		if (fenced[i]) {
+			content++;
+			continue;
+		}
+		const marker = PAGE_MARKER.exec(line);
 		if (marker) {
-			pages.push({ start: line.start, page: Number(marker[1]) });
-			fence = null; // a page never continues a code fence the converter left open
+			const mark = { start, page: Number(marker[1]), firstContent: text.length };
+			pages.push(mark);
+			waiting.push(mark);
 			continue;
 		}
-		const fenceOpen = FENCE.exec(line.text);
-		if (fenceOpen) {
-			const mark = fenceOpen[1]!;
-			if (fence === null) fence = mark;
-			else if (mark[0] === fence[0] && mark.length >= fence.length) fence = null;
+		const heading = HEADING.exec(line);
+		if (heading) {
+			const title = heading[2]!.trim();
+			if (title) headings.push({ start, level: heading[1]!.length, title });
 			continue;
 		}
-		if (fence !== null) continue;
-		const heading = HEADING.exec(line.text);
-		if (heading && heading[2]!.trim()) headings.push({ start: line.start, level: heading[1]!.length, title: heading[2]!.trim() });
+		content++;
 	}
-	return { pages, headings, paragraphs, lineStarts };
+	contentBefore.push(content);
+	return { lineStarts: starts, contentBefore, pages, headings, paragraphs };
 }
 
-/** The page a character offset is on. */
-function pageAt(pages: readonly PageMark[], offset: number): number {
-	if (pages.length === 0) return 1;
-	let page = pages[0]!.page;
-	for (const mark of pages) {
-		if (mark.start > offset) break;
-		page = mark.page;
+/** The index of the last element of an ascending array that is <= value (-1 when none). */
+function lastAtOrBefore(sorted: readonly number[], value: number): number {
+	let lo = 0;
+	let hi = sorted.length; // the first index with sorted[i] > value
+	while (lo < hi) {
+		const mid = (lo + hi) >> 1;
+		if (sorted[mid]! <= value) lo = mid + 1;
+		else hi = mid;
 	}
-	return page;
+	return lo - 1;
 }
 
-/** The heading titles in force at a character offset (a heading starting there counts). */
-function headingPathAt(headings: readonly HeadingMark[], offset: number): string[] {
-	const stack: HeadingMark[] = [];
-	for (const h of headings) {
-		if (h.start > offset) break;
-		while (stack.length > 0 && stack[stack.length - 1]!.level >= h.level) stack.pop();
-		stack.push(h);
-	}
-	return stack.map((h) => h.title);
+/** The elements of an ascending array strictly inside (start, end). */
+function inside(sorted: readonly number[], start: number, end: number): number[] {
+	const from = lastAtOrBefore(sorted, start) + 1;
+	const to = lastAtOrBefore(sorted, end - 1) + 1;
+	return sorted.slice(from, to);
 }
 
-/** The highest page marker number in a document; 1 without markers. Pure. */
+/** The highest page marker number in a document (markers in fenced code are not markers); 1 without markers. Pure. */
 export function pageCountOf(contentMd: string): number {
 	const { pages } = structureOf(contentMd);
 	return pages.reduce((max, p) => Math.max(max, p.page), 1);
 }
 
-/** [start, end) ranges cut at the given points inside (start, end). */
+/** [start, end) ranges cut at the given ascending points, all inside (start, end). */
 function cutAt(start: number, end: number, points: readonly number[]): [number, number][] {
-	const inside = [...new Set(points.filter((p) => p > start && p < end))].sort((a, b) => a - b);
-	const bounds = [start, ...inside, end];
+	const bounds = [start, ...points, end];
 	const out: [number, number][] = [];
 	for (let i = 0; i + 1 < bounds.length; i++) out.push([bounds[i]!, bounds[i + 1]!]);
 	return out;
@@ -174,24 +233,39 @@ export function splitMaterial(contentMd: string, opts: SplitOptions = {}): Mater
 	const estimate = opts.estimateTokens ?? estimateTextTokens;
 	if (contentMd.length === 0) return [];
 	const structure = structureOf(contentMd);
+	const markerStarts = structure.pages.map((p) => p.start);
 	const fits = (start: number, end: number) => estimate(contentMd.slice(start, end)) <= budget;
+
+	/** The last page marker strictly before an offset. */
+	const markerBefore = (offset: number): PageMark | undefined => structure.pages[lastAtOrBefore(markerStarts, offset - 1)];
+	/** The page a character offset is on. */
+	const pageAt = (offset: number): number => {
+		if (structure.pages.length === 0) return 1;
+		return (structure.pages[lastAtOrBefore(markerStarts, offset)] ?? structure.pages[0]!).page;
+	};
 
 	// A cut never separates a page marker from its page's first text (the marker alone would end the previous batch).
 	const markerOnlyBefore = (point: number) => {
-		const marker = structure.pages.filter((p) => p.start < point).at(-1);
-		return marker !== undefined && contentMd.slice(marker.start, point).replace(/^[^\n]*\n?/, "").trim() === "";
+		const marker = markerBefore(point);
+		return marker !== undefined && point <= marker.firstContent;
 	};
-	// The finer cut levels for a range over the budget: pages, paragraphs, lines.
+	// The finer cut levels for a range over the budget: pages, paragraphs, lines (each ascending).
 	const levels: readonly (readonly number[])[] = [
-		structure.pages.map((p) => p.start),
+		markerStarts,
 		structure.paragraphs.filter((p) => !markerOnlyBefore(p)),
-		structure.lineStarts.filter((p) => !markerOnlyBefore(p)),
+		structure.lineStarts.filter((p) => p > 0 && !markerOnlyBefore(p)),
 	];
 
-	/** The longest prefix of [start, end) that fits, at least one character, never inside a surrogate pair. */
+	/**
+	 * The longest prefix of [start, end) that fits, at least one character, never inside a surrogate pair. Gallops from
+	 * the start (1, 2, 4, … characters) before the binary search, so each probe costs about the piece's own length.
+	 */
 	function hardCut(start: number, end: number): number {
 		let lo = start + 1;
-		let hi = end;
+		let step = 1;
+		while (start + step * 2 <= end && fits(start, start + step * 2)) step *= 2;
+		lo = Math.max(lo, start + step);
+		let hi = Math.min(end, start + step * 2);
 		while (lo < hi) {
 			const mid = Math.ceil((lo + hi) / 2);
 			if (fits(start, mid)) lo = mid;
@@ -206,8 +280,8 @@ export function splitMaterial(contentMd: string, opts: SplitOptions = {}): Mater
 	function pieces(start: number, end: number, level: number): [number, number][] {
 		if (fits(start, end)) return [[start, end]];
 		for (let l = level; l < levels.length; l++) {
-			const parts = cutAt(start, end, levels[l]!);
-			if (parts.length > 1) return parts.flatMap(([s, e]) => pieces(s, e, l + 1));
+			const points = inside(levels[l]!, start, end);
+			if (points.length > 0) return cutAt(start, end, points).flatMap(([s, e]) => pieces(s, e, l + 1));
 		}
 		const out: [number, number][] = [];
 		let at = start;
@@ -222,18 +296,14 @@ export function splitMaterial(contentMd: string, opts: SplitOptions = {}): Mater
 	// A heading that opens its page ("--- Page 3 ---\n\n# Chapter 2") cuts before the page's marker, so the marker
 	// starts the heading's section instead of ending the previous one.
 	const sectionStart = (h: HeadingMark) => {
-		const marker = structure.pages.filter((p) => p.start < h.start).at(-1);
-		if (!marker) return h.start;
-		const between = contentMd.slice(marker.start, h.start).replace(/^[^\n]*\n?/, "");
-		return between.trim() === "" ? marker.start : h.start;
+		const marker = markerBefore(h.start);
+		return marker && marker.firstContent === h.start ? marker.start : h.start;
 	};
 	// A section of headings and markers only ("# Kapittel 2" straight above "## 2.1") stays with the next one, so a
-	// title is never packed onto the end of the previous batch away from its text.
+	// title is never packed onto the end of the previous batch away from its text. Cuts are line starts.
+	const lineIndex = (offset: number) => lastAtOrBefore(structure.lineStarts, offset);
 	const contentless = (start: number, end: number) =>
-		contentMd
-			.slice(start, end)
-			.split("\n")
-			.every((line) => line.trim() === "" || PAGE_MARKER.test(line) || HEADING.test(line));
+		structure.contentBefore[lineIndex(end - 1) + 1]! - structure.contentBefore[lineIndex(start)]! === 0;
 	const cuts: number[] = [];
 	for (const cut of structure.headings.map(sectionStart)) {
 		if (cut <= (cuts.at(-1) ?? 0)) continue;
@@ -256,17 +326,38 @@ export function splitMaterial(contentMd: string, opts: SplitOptions = {}): Mater
 
 	/** Where a batch's own content starts: past a leading page marker line and blank lines (its heading may follow). */
 	const contentStart = (start: number, end: number) => {
-		const lead = /^(?:--- Page \d+ ---[ \t]*\r?\n)?\s*/.exec(contentMd.slice(start, Math.min(end, start + 200)));
-		return Math.min(end - 1, start + (lead?.[0].length ?? 0));
+		const marker = markerBefore(start + 1);
+		if (marker && marker.start === start) return Math.min(end - 1, marker.firstContent);
+		let line = lineIndex(start);
+		if (structure.lineStarts[line] !== start) return start; // a hard cut inside a line
+		while (line < structure.lineStarts.length && contentMd.slice(structure.lineStarts[line]!, structure.lineStarts[line + 1] ?? contentMd.length).trim() === "") line++;
+		return Math.min(end - 1, structure.lineStarts[line] ?? contentMd.length);
 	};
 
-	return ranges.map(([charStart, charEnd], index) => ({
-		index,
-		pageStart: pageAt(structure.pages, charStart),
-		pageEnd: pageAt(structure.pages, charEnd - 1),
-		headingPath: headingPathAt(structure.headings, contentStart(charStart, charEnd)),
-		text: contentMd.slice(charStart, charEnd),
-		charStart,
-		charEnd,
-	}));
+	// Heading paths by one sweep: the batches' content starts ascend.
+	const stack: HeadingMark[] = [];
+	let nextHeading = 0;
+	const headingPathAt = (offset: number): string[] => {
+		while (nextHeading < structure.headings.length && structure.headings[nextHeading]!.start <= offset) {
+			const h = structure.headings[nextHeading++]!;
+			while (stack.length > 0 && stack[stack.length - 1]!.level >= h.level) stack.pop();
+			stack.push(h);
+		}
+		return stack.map((h) => h.title);
+	};
+
+	return ranges.map(([charStart, charEnd], index) => {
+		const pageStart = pageAt(charStart);
+		const within = inside(markerStarts, charStart - 1, charEnd).map((s) => structure.pages[lastAtOrBefore(markerStarts, s)]!.page);
+		return {
+			index,
+			pageStart,
+			pageEnd: pageAt(charEnd - 1),
+			pages: [...new Set([pageStart, ...within])].sort((a, b) => a - b),
+			headingPath: headingPathAt(contentStart(charStart, charEnd)),
+			text: contentMd.slice(charStart, charEnd),
+			charStart,
+			charEnd,
+		};
+	});
 }
