@@ -606,6 +606,33 @@ export interface CompactionSettings {
 	includeReasoning?: boolean;
 }
 
+export interface PdfConversionSettings {
+	/** Registered converter id. Absent selects the built-in pdfjs converter. */
+	converter?: string;
+	docling?: {
+		baseUrl?: string;
+		ocr?: boolean;
+		formulaEnrichment?: boolean;
+	};
+}
+
+function sanitizePdfConversion(raw: Record<string, unknown>): PdfConversionSettings {
+	const out: PdfConversionSettings = {};
+	if (typeof raw.converter === "string" && raw.converter.trim()) out.converter = raw.converter.trim();
+	if (raw.docling !== null && typeof raw.docling === "object" && !Array.isArray(raw.docling)) {
+		const docling = raw.docling as Record<string, unknown>;
+		const cleaned: NonNullable<PdfConversionSettings["docling"]> = {};
+		if (typeof docling.baseUrl === "string") {
+			const baseUrl = normalizeBaseUrl(docling.baseUrl);
+			if (baseUrl) cleaned.baseUrl = baseUrl;
+		}
+		if (typeof docling.ocr === "boolean") cleaned.ocr = docling.ocr;
+		if (typeof docling.formulaEnrichment === "boolean") cleaned.formulaEnrichment = docling.formulaEnrichment;
+		out.docling = cleaned;
+	}
+	return out;
+}
+
 /** THE record. Every section optional (delta); unknown top-level keys are
  *  preserved verbatim by the sanitizer (forward-compat with newer records). */
 export interface UserSettings {
@@ -623,6 +650,8 @@ export interface UserSettings {
 	profiles?: ProfilesSettings;
 	/** The custom OpenAI-compatible endpoint (non-secret config only). */
 	customProvider?: CustomProviderSettings;
+	/** Uploaded PDF conversion (non-secret service configuration only). */
+	pdfConversion?: PdfConversionSettings;
 	appearance?: AppearanceSettings;
 	graph?: GraphSettings;
 	compaction?: CompactionSettings;
@@ -1106,6 +1135,9 @@ export function sanitizeUserSettings(raw: unknown): UserSettings | null {
 	}
 	if (r.customProvider !== null && typeof r.customProvider === "object" && !Array.isArray(r.customProvider)) {
 		out.customProvider = sanitizeCustomProvider(r.customProvider as Record<string, unknown>);
+	}
+	if (r.pdfConversion !== null && typeof r.pdfConversion === "object" && !Array.isArray(r.pdfConversion)) {
+		out.pdfConversion = sanitizePdfConversion(r.pdfConversion as Record<string, unknown>);
 	}
 	if (r.graph !== null && typeof r.graph === "object" && !Array.isArray(r.graph)) {
 		out.graph = sanitizeGraph(r.graph as Record<string, unknown>);

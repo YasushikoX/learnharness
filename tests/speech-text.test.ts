@@ -11,6 +11,26 @@ import {
 	splitSpeechUtterances,
 } from "../src/core/speech-text.ts";
 
+/**
+ * A pathological input must cost time in proportion to its length. Measured as growth, not as a wall-clock bound: a
+ * bound in milliseconds fails when the machine is busy (the full suite beside another build took four times as long).
+ * Quadruple the input: linear work takes about 4 times as long, quadratic work 16 times. Best of three runs each.
+ */
+function assertLinearTime(what: string, run: (n: number) => { length: number }, n: number): void {
+	const best = (size: number) => {
+		let ms = Infinity;
+		for (let i = 0; i < 3; i++) {
+			const t0 = performance.now();
+			assert.ok(run(size).length > 0);
+			ms = Math.min(ms, performance.now() - t0);
+		}
+		return ms;
+	};
+	const small = best(n / 4);
+	const large = best(n);
+	assert.ok(large < Math.max(small, 5) * 10, `${what}: ${n / 4} repetitions took ${small.toFixed(1)}ms, ${n} took ${large.toFixed(1)}ms (more than 10 times as long: not linear)`);
+}
+
 describe("latexToSpeech", () => {
 	it("verbalises fractions, powers, subscripts, roots, Greek letters, and operators", () => {
 		assert.equal(latexToSpeech(String.raw`\frac{1}{2}`), "one half");
@@ -245,14 +265,7 @@ describe("markdownToSpeech", () => {
 	});
 
 	it("runs in linear time on pathological repeated emphasis characters (Item 7)", () => {
-		for (const pattern of ["*a", "_a", "~a", "**a", "~~a"]) {
-			const input = pattern.repeat(50_000);
-			const t0 = performance.now();
-			const out = markdownToSpeech(input);
-			const elapsed = performance.now() - t0;
-			assert.ok(out.length > 0);
-			assert.ok(elapsed < 1500, `markdownToSpeech(${pattern} x 50000) took ${elapsed.toFixed(1)}ms (expected < 1500ms)`);
-		}
+		for (const pattern of ["*a", "_a", "~a", "**a", "~~a"]) assertLinearTime(`markdownToSpeech(${pattern})`, (n) => markdownToSpeech(pattern.repeat(n)), 50_000);
 	});
 });
 
@@ -493,15 +506,8 @@ describe("markdownToSpeech: review-2 findings", () => {
 		assert.match(markdownToSpeech("<details open><summary>A</summary><summary>Shown</summary>body</details>"), /A.*Shown.*body/);
 	});
 
-	it("handles 100,000 repetitions of the footnote and command patterns well under a second (finding 4)", () => {
-		for (const pattern of ["[^", "\\a{"]) {
-			const input = pattern.repeat(100_000);
-			const t0 = performance.now();
-			const out = buildQuestionSpeech({ question: input });
-			const elapsed = performance.now() - t0;
-			assert.ok(out.length > 0);
-			assert.ok(elapsed < 1000, `buildQuestionSpeech(${JSON.stringify(pattern)} x 100000) took ${elapsed.toFixed(1)}ms (expected < 1000ms)`);
-		}
+	it("handles 100,000 repetitions of the footnote and command patterns in linear time (finding 4)", () => {
+		for (const pattern of ["[^", "\\a{"]) assertLinearTime(`buildQuestionSpeech(${JSON.stringify(pattern)})`, (n) => buildQuestionSpeech({ question: pattern.repeat(n) }), 100_000);
 	});
 
 	it("uses the renderer's sanitise schema, plus stripping style (review-2 concern)", () => {

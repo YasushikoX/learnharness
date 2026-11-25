@@ -294,7 +294,7 @@ describe("SETTINGS_SECTIONS (the route's section map)", () => {
 		// connected through POST /api/custom-provider.
 		assert.deepEqual(
 			Object.keys(SETTINGS_SECTIONS),
-			["general", "chat", "agent", "appearance", "graph", "compaction", "learner", "models", "dictation", "claudeCode", "sync"],
+			["general", "chat", "agent", "appearance", "graph", "compaction", "learner", "models", "pdfConversion", "dictation", "claudeCode", "sync"],
 		);
 	});
 });

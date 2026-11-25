@@ -8,7 +8,7 @@
  * The server (src/server/keys.ts) is the only intended writer: it applies
  * shape validation before setAuthVar and env precedence on top of
  * authVars(). Ordinary reads never throw (absent/corrupt file = {} =
- * "no keys yet"); custom-only pair reads/writes below are deliberately
+ * "no keys yet"); URL-bound credential reads/writes below are deliberately
  * strict so an unreadable private record is never overwritten as {}.
  * Ordinary writes preserve unknown string vars verbatim
  * (forward-compat: future entries — e.g. a plans-login token — ride along
@@ -21,6 +21,7 @@ import { AUTH_FILE } from "../../config.ts";
 import type { AuthStore } from "../core/ports.ts";
 import { CUSTOM_PROVIDER } from "../core/auth-keys.ts";
 import { CUSTOM_AUTH_BINDING, parseCustomAuthBinding, type CustomAuthBinding } from "../core/custom-provider-auth.ts";
+import { DOCLING_API_KEY, DOCLING_AUTH_BINDING } from "../core/pdf-converter.ts";
 import { writeFileAtomicSync } from "./atomic-write.ts";
 
 /** The flat string→string map, or {} for absent/corrupt/non-object. */
@@ -64,9 +65,9 @@ export const authStore: AuthStore = {
 	},
 };
 
-/** Custom writes must never turn an unreadable/corrupt private file into {}.
+/** URL-bound writes must never turn an unreadable/corrupt private file into {}.
  * Other providers retain their existing adapter semantics. Unknown JSON values
- * survive custom-only updates, not just the ordinary string projection. */
+ * survive these updates, not just the ordinary string projection. */
 function readCustomMap(): Record<string, unknown> {
 	let text: string;
 	try { text = fs.readFileSync(AUTH_FILE, "utf8"); }
@@ -81,6 +82,7 @@ function readCustomMap(): Record<string, unknown> {
 }
 function assertOrdinaryVar(name: string): void {
 	if (name === CUSTOM_AUTH_BINDING || name === CUSTOM_PROVIDER.envVar) throw new Error("Use the custom endpoint editor");
+	if (name === DOCLING_AUTH_BINDING || name === DOCLING_API_KEY) throw new Error("Use the Docling credential writer");
 }
 /** One immutable file snapshot. Keyless callers never invoke fileKey(). */
 export function readCustomAuth() {
@@ -95,5 +97,25 @@ export function writeCustomAuth(binding: CustomAuthBinding | undefined, fileKey:
 	else Object.defineProperty(map, CUSTOM_PROVIDER.envVar, { value: fileKey, enumerable: true, configurable: true, writable: true });
 	if (binding === undefined) delete map[CUSTOM_AUTH_BINDING];
 	else Object.defineProperty(map, CUSTOM_AUTH_BINDING, { value: JSON.stringify(binding), enumerable: true, configurable: true, writable: true });
+	writeMap(map);
+}
+
+export function readDoclingAuth(): { baseUrl?: string; apiKey?: string } {
+	const map = readCustomMap();
+	return {
+		...(typeof map[DOCLING_AUTH_BINDING] === "string" ? { baseUrl: map[DOCLING_AUTH_BINDING] as string } : {}),
+		...(typeof map[DOCLING_API_KEY] === "string" ? { apiKey: map[DOCLING_API_KEY] as string } : {}),
+	};
+}
+
+export function writeDoclingAuth(baseUrl: string, apiKey: string | undefined): void {
+	const map = readCustomMap();
+	if (apiKey === undefined) {
+		delete map[DOCLING_AUTH_BINDING];
+		delete map[DOCLING_API_KEY];
+	} else {
+		map[DOCLING_AUTH_BINDING] = baseUrl;
+		map[DOCLING_API_KEY] = apiKey;
+	}
 	writeMap(map);
 }

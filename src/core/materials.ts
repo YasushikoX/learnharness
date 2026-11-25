@@ -13,6 +13,8 @@
  * notes' provenance, graph/sources.json) — a different thing.
  */
 
+import type { MaterialConversionError, MaterialConversionProgress } from "./pdf-converter.ts";
+
 export type MaterialKind = "pdf" | "text" | "image" | "web";
 
 /** reading: being profiled · ready: profiled · error: profiling failed
@@ -38,12 +40,58 @@ export interface LessonMaterial {
 	addedMidLesson?: boolean;
 	status: MaterialStatus;
 	error?: string;
+	/** PDFs: the conversion to content.md failed (the material still works through pdfjs). */
+	conversionError?: MaterialConversionError;
+	/** PDFs: what the user should know about a conversion that worked (a fallback, pages that look scanned). */
+	conversionWarnings?: string[];
+	/** DERIVED on read, never stored: the running conversion's progress. */
+	conversionProgress?: MaterialConversionProgress;
+	/** PDFs: the whole-document index (digest.json) has no usable profile or could not be built; the profile was read the old way. */
+	indexingError?: MaterialIndexingError;
+	/** PDFs: what the user should know about an index that was built (parts that could not be indexed). */
+	indexingWarnings?: string[];
+	/** PDFs: the model calls that produced the current digest.json (its indexing run plus any profile rewrites since). */
+	indexingCalls?: number;
+	/** DERIVED on read, never stored: the running indexing's progress. */
+	indexingProgress?: MaterialIndexingProgress;
 	/** The reading profile (Markdown, page-cited for PDFs). */
 	profile?: string;
+	/**
+	 * PDFs: the profile was written by the whole-document index (digest.json), so it describes the content.md that
+	 * index was built from and is removed or replaced whenever that content changes (server/material-indexing.ts,
+	 * dropStaleIndex). Absent for a profile the old profiler read from the original.
+	 */
+	profileFromDigest?: boolean;
 	/** DERIVED on read, never stored: the material's name, profile and text
 	 *  arrived by sync but its original file is on the device it was uploaded
 	 *  to. The profile still works; reading or searching the original does not. */
 	originalElsewhere?: boolean;
+}
+
+/**
+ * Why a PDF's whole-document index did not give its profile (server/material-indexing.ts). failed: indexing threw;
+ * no_profile: the index was built but its profile step failed (the extracted terms are kept); interrupted: the app
+ * stopped during indexing twice in a row, so it is not started a third time; pending: the PDF has converted text but
+ * no current index, and none can be built until a vision model is configured.
+ */
+export interface MaterialIndexingError {
+	kind: "failed" | "no_profile" | "interrupted" | "pending";
+	/** Shown to the user. */
+	message: string;
+	retryable: boolean;
+}
+
+/** A running indexing's progress (derived on read from the live run, never stored). */
+export interface MaterialIndexingProgress {
+	stage: "part" | "profile";
+	/** 1-based, with stage "part". */
+	part?: number;
+	parts?: number;
+}
+
+/** "indexing: part 3 of 15" / "indexing: writing the profile". Pure. */
+export function indexingProgressLine(p: MaterialIndexingProgress): string {
+	return p.stage === "profile" ? "indexing: writing the profile" : `indexing: part ${p.part ?? "?"} of ${p.parts ?? "?"}`;
 }
 
 /** Upload ceiling: textbooks are big, but a lesson's copy is local disk. */
