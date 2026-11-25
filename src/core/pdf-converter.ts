@@ -37,13 +37,16 @@ export type ConverterErrorKind =
 
 export class ConverterError extends Error {
 	readonly name = "ConverterError";
+	/** The service's HTTP status, for an error made from one (the connector wizard reports it without the message). */
+	readonly httpStatus?: number;
 	constructor(
 		readonly kind: ConverterErrorKind,
 		message: string,
 		readonly retryable: boolean,
-		options?: { cause?: unknown },
+		options?: { cause?: unknown; httpStatus?: number },
 	) {
-		super(message, options);
+		super(message, options?.cause === undefined ? undefined : { cause: options.cause });
+		if (options?.httpStatus !== undefined) this.httpStatus = options.httpStatus;
 	}
 }
 

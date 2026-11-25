@@ -2,7 +2,7 @@ import { ConverterError, type ConvertContext, type ConvertInput, type ConvertRes
 import type { PdfConversionSettings } from "../../core/settings.ts";
 import { customProfileIdOf, type HttpConverterProfile } from "../../core/http-converter-spec.ts";
 import { createDoclingConverter } from "./docling.ts";
-import { createHttpConverter } from "./http-declarative.ts";
+import { createHttpConverter, type HttpConverterOptions } from "./http-declarative.ts";
 import { pdfjsConverter } from "./pdfjs.ts";
 import { PRESET_PROFILES } from "./presets.ts";
 import { selfOriginProblem } from "./self-origin.ts";
@@ -88,13 +88,14 @@ function refuseSelf(name: string, baseUrl: string): void {
 
 /**
  * A profile converter for the settings: the service URL SAVED in `services` (a profile's defaultBaseUrl is never
- * used here), its key from the store. `bundled` only for presets.
+ * used here), its key from the store. `bundled` only for presets. `observe` lets the connector wizard's Test see each
+ * answer (it keeps only a reduced shape for "Ask AI to fix", none when the service echoed the key).
  */
-export function createProfileConverter(converterId: string, profile: HttpConverterProfile, settings: PdfConversionSettings, readCredential: CredentialReader, bundled = false): PdfConverter {
+export function createProfileConverter(converterId: string, profile: HttpConverterProfile, settings: PdfConversionSettings, readCredential: CredentialReader, bundled = false, observe?: Pick<HttpConverterOptions, "onAnswer">): PdfConverter {
 	const baseUrl = settings.services?.[converterId]?.baseUrl;
 	if (!baseUrl) throw new ConverterError("not_configured", `${profile.name} is not set up: no service URL is saved for it in Settings → PDF conversion`, false);
 	refuseSelf(profile.name, baseUrl);
-	return createHttpConverter({ converterId, profile, bundled, baseUrl, apiKey: readCredential(converterId, baseUrl) });
+	return createHttpConverter({ converterId, profile, bundled, baseUrl, apiKey: readCredential(converterId, baseUrl), ...observe });
 }
 
 registerPdfConverter({ id: pdfjsConverter.id, create: () => pdfjsConverter });

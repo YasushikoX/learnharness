@@ -69,7 +69,8 @@ export interface ConverterValidationReport {
 	pages: { page: number; text: string }[];
 	converterVersion?: string;
 	warnings: string[];
-	error?: { kind: ConverterErrorKind | "internal"; message: string; retryable: boolean };
+	/** `httpStatus`: the service's HTTP status when the error was an HTTP answer. */
+	error?: { kind: ConverterErrorKind | "internal"; message: string; retryable: boolean; httpStatus?: number };
 	durationMs: number;
 }
 

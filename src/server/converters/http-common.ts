@@ -95,7 +95,8 @@ export function redactError(error: ConverterError, secrets: readonly (string | u
 	const message = redactSecrets(error.message, secrets);
 	const cause = error.cause === undefined ? "" : causeText(error.cause);
 	if (message === error.message && !containsSecret(cause, secrets)) return error;
-	return new ConverterError(error.kind, message, error.retryable, containsSecret(cause, secrets) ? undefined : { cause: error.cause });
+	const httpStatus = error.httpStatus === undefined ? {} : { httpStatus: error.httpStatus };
+	return new ConverterError(error.kind, message, error.retryable, containsSecret(cause, secrets) ? httpStatus : { cause: error.cause, ...httpStatus });
 }
 
 /**
@@ -175,12 +176,13 @@ export function seconds(ms: number): string {
 
 export function httpStatusError(name: string, status: number, detail: string): ConverterError {
 	const suffix = detail ? `: ${detail}` : "";
-	if (status === 401 || status === 403) return new ConverterError("auth", `${name} refused the key (HTTP ${status})${suffix}`, false);
-	if (status === 429) return new ConverterError("rate_limit", `${name} rate limit reached (HTTP 429)${suffix}`, true);
-	if (status === 413) return new ConverterError("too_large", `${name} rejected the PDF as too large (HTTP 413)${suffix}`, false);
-	if (status === 408 || status === 504) return new ConverterError("timeout", `${name} timed out (HTTP ${status})${suffix}`, true);
-	if (status >= 500) return new ConverterError("unreachable", `${name} failed (HTTP ${status})${suffix}`, true);
-	return new ConverterError("bad_response", `${name} rejected the request (HTTP ${status})${suffix}`, false);
+	const http = { httpStatus: status };
+	if (status === 401 || status === 403) return new ConverterError("auth", `${name} refused the key (HTTP ${status})${suffix}`, false, http);
+	if (status === 429) return new ConverterError("rate_limit", `${name} rate limit reached (HTTP 429)${suffix}`, true, http);
+	if (status === 413) return new ConverterError("too_large", `${name} rejected the PDF as too large (HTTP 413)${suffix}`, false, http);
+	if (status === 408 || status === 504) return new ConverterError("timeout", `${name} timed out (HTTP ${status})${suffix}`, true, http);
+	if (status >= 500) return new ConverterError("unreachable", `${name} failed (HTTP ${status})${suffix}`, true, http);
+	return new ConverterError("bad_response", `${name} rejected the request (HTTP ${status})${suffix}`, false, http);
 }
 
 /** A response body as text: declared and actual size capped, every read under `signal`. */

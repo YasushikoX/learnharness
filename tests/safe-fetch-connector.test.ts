@@ -44,11 +44,12 @@ it("checks a hostname's actual peer again when DNS changes on a new connection",
 it("HTTPS preserves certificate/SNI validation and refuses a private peer before HTTP dispatch", async () => {
 	const cert = readFileSync(new URL("./fixtures/security-tls/cert.pem", import.meta.url));
 	const key = readFileSync(new URL("./fixtures/security-tls/key.pem", import.meta.url));
-	let hits = 0, handshakes = 0;
+	let hits = 0, handshakes = 0, tcp = 0;
 	const names: (string | false | null)[] = [];
 	const server = https.createServer({ cert, key }, (_request, response) => { hits++; response.end("owned TLS fixture"); });
 	server.on("secureConnection", socket => { handshakes++; names.push(socket.servername); });
 	server.on("tlsClientError", () => {}); // expected untrusted/name-mismatch controls
+	server.on("connection", () => tcp++);
 	await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
 	const options = { ca: cert, lookup: lookup(() => "127.0.0.1") };
 	const refused = createAddressCheckedAgent(isPublicAddress, options);
@@ -58,9 +59,10 @@ it("HTTPS preserves certificate/SNI validation and refuses a private peer before
 		const port = (server.address() as AddressInfo).port;
 		await assert.rejects(safeFetch(`https://research.invalid:${port}/`, {}, refused), /refusing to connect/);
 		assert.equal(hits, 0);
+		assert.equal(tcp, 0, "refused on the DNS answer: no TCP connection and no TLS hello naming the host");
 		assert.equal(await (await safeFetch(`https://research.invalid:${port}/`, {}, allowed)).text(), "owned TLS fixture");
 		assert.equal(hits, 1);
-		assert.ok(handshakes >= 1, "TLS contact is allowed before the HTTP policy check");
+		assert.ok(handshakes >= 1, "an allowed address completes TLS before the HTTP policy check");
 		assert.ok(names.every(name => name === "research.invalid"), "original SNI is retained");
 		await assert.rejects(safeFetch(`https://wrong.invalid:${port}/`, {}, allowed), error => {
 			assert.equal((error as { cause?: { code?: string } }).cause?.code, "ERR_TLS_CERT_ALTNAME_INVALID");
@@ -70,6 +72,25 @@ it("HTTPS preserves certificate/SNI validation and refuses a private peer before
 		assert.equal(hits, 1, "untrusted or wrong-name TLS never sends HTTP");
 	} finally {
 		await Promise.all([refused.close(), allowed.close(), untrusted.close()]);
+		await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+	}
+});
+
+it("a name that resolves only to refused addresses gets no connection at all; a literal neither", async () => {
+	let connections = 0, hits = 0;
+	const server = http.createServer((_request, response) => { hits++; response.end("must not be read"); });
+	server.on("connection", () => connections++);
+	await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+	const refused = createAddressCheckedAgent(isPublicAddress, { lookup: lookup(() => "127.0.0.1") });
+	try {
+		const port = (server.address() as AddressInfo).port;
+		await assert.rejects(safeFetch(`http://research.invalid:${port}/`, {}, refused), /refusing to connect to a private or local address \(research\.invalid\)/);
+		await assert.rejects(safeFetch(`http://127.0.0.1:${port}/`, {}, refused), /refusing to connect/);
+		await new Promise(resolve => setTimeout(resolve, 50));
+		assert.equal(connections, 0, "no TCP handshake");
+		assert.equal(hits, 0);
+	} finally {
+		await refused.close();
 		await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
 	}
 });
