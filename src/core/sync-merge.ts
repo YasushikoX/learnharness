@@ -27,7 +27,7 @@
  * changes nothing produces no diff.
  */
 
-import { CURRENT_CHAT_VERSION } from "./contracts/chat.ts";
+import { NEWEST_CHAT_VERSION, chatVersionFor } from "./contracts/chat.ts";
 
 export type Side = "local" | "remote";
 
@@ -165,7 +165,9 @@ const idOf = (v: unknown): string | null => (isObj(v) ? str(v.id) : null);
 // upstream's bump to 2: every chat both devices had changed was then held back as "written by a newer version", on
 // every round. mergeChat merges fields BY NAME: tests/sync-merge.test.ts pins the schema number it was last reviewed
 // against, so the next bump fails a test until this function has been read again.
-const CHAT_VERSION = CURRENT_CHAT_VERSION;
+// An Ask chat (2026-11-25) is stamped ASK_CHAT_VERSION and keeps it through a merge (chatVersionFor below), so a build
+// without Ask goes on refusing it.
+const CHAT_VERSION = NEWEST_CHAT_VERSION;
 
 /** A side thread both devices hold: the longer message list when one continues the other; null when they differ. */
 function mergeSideThread(mine: Obj, theirs: Obj): Obj | null {
@@ -280,7 +282,7 @@ function mergeChat(i: MergeInput & { local: string; remote: string }): MergeResu
 		}
 	}
 	out.updatedAt = maxIso(l.updatedAt, r.updatedAt);
-	out.version = CHAT_VERSION;
+	out.version = chatVersionFor(out);
 	return result(pretty(out), { loser, notes });
 }
 

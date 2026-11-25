@@ -255,6 +255,9 @@ export interface SessionCoverage {
 export function sessionCoverage(chatId: string): SessionCoverage | null {
 	const record = stores.chatStore.getChat(chatId);
 	if (!record) return null;
+	// An Ask conversation (2026-11-25, review 1 finding 4) is never extracted, so it has no coverage: every consumer (the
+	// chat's ring, the sidebar's coverage block and its Extract button) sees it as ineligible.
+	if (record.course?.mode === "ask") return null;
 	const entries = stores.graphStore.readCoverage();
 	// Wave B: the record is native history — coverage reads through the
 	// projection (same view the extraction pipeline folds).

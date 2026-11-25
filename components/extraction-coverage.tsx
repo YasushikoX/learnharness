@@ -81,19 +81,22 @@ export async function fetchGraphRead(): Promise<GraphRead | null> {
 	}
 }
 
-/** The manual-extract seam, shared by both surfaces. 409 is BENIGN (the
- *  run is already in flight) — returns "running" so the caller flips to the
- *  optimistic/running state instead of an error. Returns false only on a
- *  real failure, where the caller reverts. */
-async function requestExtract(chatId: string): Promise<boolean> {
+/** The manual-extract seam, shared by both surfaces. A 409 that says a run
+ *  is already in flight (`running: true`) is BENIGN — returns "running" so
+ *  the caller flips to the optimistic/running state instead of an error.
+ *  Any other refusal (an Ask conversation, 2026-11-25: never extracted) is a
+ *  failure, where the caller reverts. Exported for tests. */
+export async function requestExtract(chatId: string): Promise<boolean> {
 	try {
 		const res = await fetch("/api/graph/coverage/extract", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ chatId }),
 		});
-		if (!res.ok && res.status !== 409) return false;
-		return true; // 202 started, or 409 already-running — both "running"
+		if (res.ok) return true; // 202 started
+		if (res.status !== 409) return false;
+		const body = (await res.json().catch(() => null)) as { running?: unknown } | null;
+		return body?.running === true; // 409 already-running only
 	} catch {
 		return false;
 	}

@@ -65,7 +65,12 @@ const SHORT_DATE = (iso: string) => {
 };
 
 /** The prompt section: one line per lecture, newest first, the older ones folded. "" when no lecture has been read. */
-export function lectureIndexSection(lectures: readonly IndexedLecture[]): string {
+/** The Ask conversation's version (2026-11-25): what the list is; its own prompt fragment (agent/prompts/ask/) says how
+ *  to use the notes, since a selection clarification has no lookup tools. */
+export const ASK_LECTURE_NOTES_RULES =
+	"The learner's own handwritten notes from this course's lectures, read to text, one line per lecture. Cite a lecture by its title and date.";
+
+export function lectureIndexSection(lectures: readonly IndexedLecture[], rules: string = LECTURE_NOTES_RULES): string {
 	const read = lectures.filter((l) => l.digest !== "");
 	if (read.length === 0) return "";
 	const sorted = [...read].sort((a, b) => b.date.localeCompare(a.date) || a.title.localeCompare(b.title));
@@ -76,7 +81,7 @@ export function lectureIndexSection(lectures: readonly IndexedLecture[]): string
 		const oldest = folded[folded.length - 1]!.date;
 		lines.push(`- +${folded.length} earlier lecture${folded.length === 1 ? "" : "s"} (${SHORT_DATE(oldest)} to ${SHORT_DATE(folded[0]!.date)}), searchable`);
 	}
-	return `## The learner's lecture notes\n${LECTURE_NOTES_RULES}\n\n${lines.join("\n")}`;
+	return `## The learner's lecture notes\n${rules}\n\n${lines.join("\n")}`;
 }
 
 // ─── lookup ─────────────────────────────────────────────────────────────────

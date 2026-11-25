@@ -322,7 +322,7 @@ export function coursePromptSection(mode: CourseMode, courseTitle: string, skill
 	const body: string[] = [];
 	if (mode === "ask") {
 		// Ask (2026-11-25): its doctrine is the editable prompts/ask/ fragments; the section only names the class.
-		body.push(`This conversation belongs to the course "${courseTitle}". It is an Ask conversation: the learner's own questions about the class. Nothing in it is graded or tracked.`);
+		body.push(`This conversation belongs to the course "${courseTitle}". It is an Ask conversation: the learner's own questions about the class. Nothing here counts toward their progress.`);
 	} else if (mode === "learn") {
 		const skill = skills[0];
 		body.push(

@@ -27,7 +27,7 @@ export interface ModeState {
 /** Why Learn and Practice cannot start yet while the course has no approved skill map (the page's own states). */
 function noMapReason(data: ModesData): string {
 	if (data.drafting || data.course.status === "drafting") return "Waits for the skill map, which is being drafted now.";
-	if (data.course.draft) return "Waits for the skill map: review and approve the draft in Course settings.";
+	if (data.course.draft) return "Waits for the skill map: review and approve the draft below.";
 	if (data.course.status === "error") return "Waits for the skill map: drafting failed, see Course settings.";
 	return "Waits for a skill map: add the class's sources and draft one in Course settings.";
 }

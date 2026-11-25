@@ -27,10 +27,11 @@ export async function POST(request: Request) {
 	}
 	// An Ask conversation (2026-11-25) never feeds the knowledge graph, by hand either.
 	if (getChat(chatId)?.course?.mode === "ask") {
-		return Response.json({ error: "Ask conversations are not added to the knowledge graph" }, { status: 409 });
+		return Response.json({ error: "Ask conversations are not added to the knowledge graph", running: false }, { status: 409 });
 	}
+	// `running: true` is what the client reads as "already running" (components/extraction-coverage.tsx requestExtract).
 	if (extractionStatuses().some((run) => run.kind === "chat" && run.chatId === chatId)) {
-		return Response.json({ error: "An extraction run is already in flight for this session" }, { status: 409 });
+		return Response.json({ error: "An extraction run is already in flight for this session", running: true }, { status: 409 });
 	}
 	// Fire-and-forget, like the trigger: the dock + the coverage panel's
 	// running flags track progress; the promise never blocks the response.

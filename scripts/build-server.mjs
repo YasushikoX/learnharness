@@ -163,5 +163,15 @@ for (const asset of [
 		process.exit(1);
 	}
 }
+// The Ask agent's fragments (2026-11-25): every one the checkout has must ship (a missing one composes silently away).
+const ASK_PROMPTS = path.join("src", "agent", "prompts", "ask");
+const askFragments = exists(path.join(ROOT, ASK_PROMPTS)) ? fs.readdirSync(path.join(ROOT, ASK_PROMPTS)).filter((f) => /^\d+-[\w.-]+\.md$/.test(f)) : [];
+for (const file of askFragments) {
+	const asset = path.join(ASK_PROMPTS, file);
+	if (!exists(path.join(STANDALONE, asset))) {
+		console.error(`[build-server] prompt asset missing from the trace: ${asset}`);
+		process.exit(1);
+	}
+}
 
 console.log("[build-server] server payload ready:", STANDALONE);

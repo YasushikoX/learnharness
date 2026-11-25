@@ -48,10 +48,11 @@ const PRACTICE_SHARED_FRAGMENTS = ["10-voice.md", "15-accuracy.md", "16-mental-m
  *  base — it measures, never teaches. */
 const PLACEMENT_SHARED_FRAGMENTS = ["10-voice.md", "15-accuracy.md", "18-sketches.md", "20-question-tools.md", "25-confidence.md", "40-formatting.md", "45-figures.md"];
 
-/** Shared fragments the ASK agent composes (2026-11-25, agent/ask-agent.ts): voice, accuracy, side conversations,
- *  formatting and figures. No teaching base and no question, confidence, sketch or file mechanics — it has none of
- *  those tools. Its own ask/ fragments say where they override the formatting guide. */
-const ASK_SHARED_FRAGMENTS = ["10-voice.md", "15-accuracy.md", "35-side-conversations.md", "40-formatting.md", "45-figures.md"];
+/** Shared fragments the ASK agent composes (2026-11-25, agent/ask-agent.ts): none. The shared voice, accuracy,
+ *  formatting and figure fragments are written for lessons (judging answers, quiz options, session endings, structured
+ *  documents), so Ask carries its own short versions of what applies in its own directory (review 1, prompt
+ *  assessment). Which of its fragments compose on a turn depends on the tools that turn offers (agent/ask-prompt.ts). */
+const ASK_SHARED_FRAGMENTS: readonly string[] = [];
 
 /** Absolute path for an override file (unchecked — validate first). */
 function overrideFileFor(segmentPath: string): string {

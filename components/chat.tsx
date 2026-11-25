@@ -677,9 +677,10 @@ export function Chat({
 	const course = useMemo(() => courseOfView(messages), [messages]);
 	const isLesson = course?.mode === "learn";
 	const lessonSkill = isLesson ? course.skills[0]?.name : undefined;
-	const sessionFinished = course !== undefined && sessionFinishOf(nativeMessages) !== null;
-	// An Ask conversation (2026-11-25): no phase arc, no graph extraction, no finish.
+	// An Ask conversation (2026-11-25): no phase arc, no graph extraction, no finish. Read from the persisted course link
+	// (the transcript of an Ask chat carries no course marker, and a forged one must not make it a lesson).
 	const askSession = courseMode === "ask";
+	const sessionFinished = !askSession && course !== undefined && sessionFinishOf(nativeMessages) !== null;
 
 	// The attach handoff (stream-reattach wave): the moment a resumed
 	// stream takes over the rendering — the SDK left "ready", so
@@ -2049,7 +2050,7 @@ export function Chat({
 							initialGraph={initialGraph}
 						/>
 					)}
-					{course && (
+					{course && !askSession && (
 						<FinishLessonButton
 							lesson={isLesson}
 							finished={sessionFinished}

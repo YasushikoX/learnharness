@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { applyPortableSettings, mergeFile, portableSettings, type MergeInput } from "../src/core/sync-merge.ts";
-import { CURRENT_CHAT_VERSION } from "../src/core/contracts/chat.ts";
+import { CURRENT_CHAT_VERSION, NEWEST_CHAT_VERSION } from "../src/core/contracts/chat.ts";
 
 const j = (v: unknown) => JSON.stringify(v, null, "\t");
 const lines = (...recs: unknown[]) => recs.map((r) => JSON.stringify(r)).join("\n") + "\n";
@@ -100,7 +100,8 @@ describe("mergeFile: chats", () => {
 	});
 
 	it("leaves a chat from a newer app version alone, whichever side has it", () => {
-		const newer = j(chat({ version: CURRENT_CHAT_VERSION + 1, title: "x" }));
+		// newer than any format this build reads (an Ask chat is stamped NEWEST_CHAT_VERSION, 2026-11-25)
+		const newer = j(chat({ version: NEWEST_CHAT_VERSION + 1, title: "x" }));
 		const r = merge("chats/chat_1.json", { local: j(chat({})), remote: newer });
 		assert.match(r.skipped ?? "", /newer version/);
 		assert.equal(r.content, j(chat({})), "this device's copy is not rewritten");
@@ -124,6 +125,18 @@ describe("mergeFile: chats", () => {
 		// mergeChat merges fields by name. A schema bump can add a field it copies whole from the newer side (losing the
 		// other device's part), which is how side threads and image snapshots arrived unnoticed.
 		assert.equal(CURRENT_CHAT_VERSION, 2);
+		// Ask chats (2026-11-25) are stamped 3 only so builds without Ask refuse them; their fields are schema 2's.
+		assert.equal(NEWEST_CHAT_VERSION, 3);
+	});
+
+	it("keeps an Ask chat's stamp through a merge, so a build without Ask goes on refusing it", () => {
+		const ask = { course: { courseId: "c", mode: "ask", skillIds: [] }, version: NEWEST_CHAT_VERSION };
+		const r = merge("chats/chat_1.json", {
+			local: j(chat({ ...ask, messages: [msg("m1")] })),
+			remote: j(chat({ ...ask, updatedAt: "2026-01-03T00:00:00Z", messages: [msg("m1"), msg("m2")] })),
+		});
+		assert.equal(r.skipped, null);
+		assert.equal(parse(r.content).version, NEWEST_CHAT_VERSION);
 	});
 
 	it("unions image snapshots by key, also when the newer copy is the shorter one", () => {

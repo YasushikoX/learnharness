@@ -277,4 +277,22 @@ describe("desktop standalone payload", () => {
 			assert.match(String(result.stderr), /prompt asset missing/);
 		});
 	});
+
+	// Ask (2026-11-25, review 1): every Ask fragment the checkout has must ship, or the Ask agent would compose its
+	// generated sections alone.
+	it("refuses a payload missing an Ask prompt fragment the checkout has, and ships one that carries them", () => {
+		const fragment = path.join("src", "agent", "prompts", "ask", "00-base.md");
+		withPayload(({ write, run }) => {
+			write(fragment);
+			const result = run();
+			assert.equal(result.status, 1);
+			assert.match(String(result.stderr), /prompt asset missing from the trace: src[\\/]agent[\\/]prompts[\\/]ask[\\/]00-base\.md/);
+		});
+		withPayload(({ write, run }) => {
+			write(fragment);
+			write(path.join(STANDALONE, fragment));
+			const result = run();
+			assert.equal(result.status, 0, String(result.stderr));
+		});
+	});
 });

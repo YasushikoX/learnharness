@@ -135,6 +135,12 @@ async function runTurn(chatId: string, input: unknown, factory: Parameters<typeo
 	if (handle) await new Response(handle.subscribe()).text();
 }
 
+/** Every Ask fragment, in composition order (the conditional ones compose only when their source or tool is offered). */
+const ASK_FRAGMENTS = [
+	"ask/00-base.md", "ask/10-answers.md", "ask/20-grounding.md", "ask/21-class-material.md", "ask/22-lecture-notes.md",
+	"ask/23-no-sources.md", "ask/24-no-tools.md", "ask/30-figure-blocks.md", "ask/31-circuits.md", "ask/32-visual.md", "ask/33-demo.md",
+];
+
 const NOT_ASK = ["probe_done", "plan_init", "finish_session", "finish_lesson", "problem", "conclude", "read_sketch", "send_to_user", "probe", "recall", "read", "ls", "find", "grep", "show_image", "research", "pdf"];
 
 // ─── session birth ───────────────────────────────────────────────────────────
@@ -225,18 +231,16 @@ describe("the Ask agent", () => {
 		assert.deepEqual(bare.state.tools.map((t) => t.name).sort(), ["circuit_solve", "figure_guide", "show_figure"]);
 	});
 
-	it("composes prompts/ask/ plus voice, accuracy, side conversations, formatting and figures — no teaching base, no question mechanics", () => {
+	// Review 1 prompt assessment: the shared fragments are written for lessons, so Ask composes its own directory only.
+	it("composes prompts/ask/ only — no shared fragment, no teaching base, no question mechanics", () => {
 		const paths = effectivePromptSegments("ask", {}).map((s) => s.path);
-		assert.deepEqual(paths, [
-			"ask/00-base.md", "ask/10-answers.md", "ask/20-grounding.md", "ask/30-visuals.md",
-			"shared/10-voice.md", "shared/15-accuracy.md", "shared/35-side-conversations.md", "shared/40-formatting.md", "shared/45-figures.md",
-		]);
+		assert.deepEqual(paths, ASK_FRAGMENTS);
 		const prompt = composeInstructions("ask");
 		assert.match(prompt, /^# Ask — questions about the class/);
 		assert.match(prompt, /Answer first\./);
 		assert.match(prompt, /\(name, p\. N\)/, "the materials' citation form, with pages");
-		assert.match(prompt, /Not from the class material:/);
 		assert.doesNotMatch(prompt, /ask_user_question|probe_done|plan_init/, "no question or plan mechanics");
+		assert.match(agentSystemPrompt("ask", { language: "en" }), /\*\*Not from the class material:\*\*/, "the label, in the course's language");
 		// the course's language directive, the material and the course section join it per turn, like the other agents
 		const nb = agentSystemPrompt("ask", { language: "nb", course: { section: session.coursePromptSection("ask", "Signals", []) } });
 		assert.match(nb, /<course>\nThis conversation belongs to the course "Signals"\. It is an Ask conversation/);
@@ -458,7 +462,8 @@ describe("the course page: Learn, Ask, Practice", () => {
 		const states: Array<[string, CoursePayload, RegExp]> = [
 			["new", noMap(), /add the class&#x27;s sources and draft one in Course settings/],
 			["drafting", noMap({ drafting: true }), /being drafted now/],
-			["draft", noMap({ course: { id: "course_a", title: "Calc", createdAt: "t", updatedAt: "t", status: "draft", skills: [], draft: { createdAt: "t", summary: "s", skills: [] } } }), /review and approve the draft in Course settings/],
+			// review 1: the Approve button is in the draft review below the card, not in Course settings
+			["draft", noMap({ course: { id: "course_a", title: "Calc", createdAt: "t", updatedAt: "t", status: "draft", skills: [], draft: { createdAt: "t", summary: "s", skills: [] } } }), /review and approve the draft below/],
 			["error", noMap({ course: { id: "course_a", title: "Calc", createdAt: "t", updatedAt: "t", status: "error", skills: [], error: "boom" } }), /drafting failed, see Course settings/],
 		];
 		for (const [name, data, reason] of states) {
@@ -504,19 +509,22 @@ describe("the prompt editor lists the Ask fragments", () => {
 	it("GET /api/settings/prompts carries ask, as composed at runtime", async () => {
 		const view = (await (await promptsRoute.GET()).json()) as Record<string, Array<{ path: string; shared: boolean }>>;
 		assert.deepEqual(view.ask, JSON.parse(JSON.stringify(effectivePromptSegments("ask", {}))));
-		assert.deepEqual(view.ask!.filter((s) => !s.shared).map((s) => s.path), ["ask/00-base.md", "ask/10-answers.md", "ask/20-grounding.md", "ask/30-visuals.md"]);
-		assert.ok(!view.ask!.some((s) => s.path === "system-prompt.md"));
-		for (const p of ["ask/00-base.md", "ask/30-visuals.md"]) assert.ok(allSegmentPaths().includes(p), p);
+		assert.deepEqual(view.ask!.map((s) => s.path), ASK_FRAGMENTS, "every Ask fragment, conditional ones included, and nothing shared");
+		assert.ok(!view.ask!.some((s) => s.shared || s.path === "system-prompt.md"));
+		for (const p of ASK_FRAGMENTS) assert.ok(allSegmentPaths().includes(p), p);
 	});
 
-	it("an Ask section, and the shared fragments it composes say \"… and Ask\"", async () => {
+	it("an Ask section with its own fragments; no shared fragment's usage label names Ask (it composes none)", async () => {
 		const view = (await (await promptsRoute.GET()).json()) as Parameters<typeof sectionedSegments>[0];
 		const sections = sectionedSegments(view);
 		assert.deepEqual(sections.map((s) => s.id), ["teacher", "prober", "practice", "placement", "ask", "shared"]);
-		assert.equal(sections.find((s) => s.id === "ask")!.label, "Ask");
+		const ask = sections.find((s) => s.id === "ask")!;
+		assert.equal(ask.label, "Ask");
+		assert.deepEqual(ask.segments.map((s) => s.path), ASK_FRAGMENTS);
 		const shared = sections.at(-1)!.segments;
-		assert.match(shared.find((s) => s.path === "shared/40-formatting.md")!.usageHint!, /and Ask$/);
-		assert.doesNotMatch(shared.find((s) => s.path === "shared/20-question-tools.md")!.usageHint!, /Ask/, "Ask does not compose question mechanics");
+		assert.ok(shared.length > 0);
+		for (const s of shared) assert.doesNotMatch(s.usageHint!, /Ask/, s.path);
+		assert.match(shared.find((s) => s.path === "shared/40-formatting.md")!.usageHint!, /Placement$/, "the others keep theirs");
 	});
 
 	it("an Ask fragment can be overridden through the same route and switch as the others", async () => {
@@ -530,5 +538,451 @@ describe("the prompt editor lists the Ask fragments", () => {
 		assert.match(composeInstructions("ask", { "ask/10-answers.md": true }), /SYNTHETIC ASK OVERRIDE/);
 		assert.equal((await promptTextRoute.DELETE(new Request("http://test", { method: "DELETE" }), { params: Promise.resolve({ segment }) })).status, 200);
 		assert.doesNotMatch(composeInstructions("ask", { "ask/10-answers.md": true }), /SYNTHETIC ASK OVERRIDE/);
+	});
+});
+
+// ─── review 1 regressions (2026-11-25) ─────────────────────────────────────────
+
+const { ASK_CHAT_VERSION, CURRENT_CHAT_VERSION, NEWEST_CHAT_VERSION, chatVersionFor } = await import("../src/core/contracts/chat.ts");
+const { mergeFile } = await import("../src/core/sync-merge.ts");
+const { createExtractionPipeline } = await import("../src/agent/subagents/extraction.ts");
+const { createSourceDirectory } = await import("../src/server/source-organization.ts");
+const { stores } = await import("../src/server/stores.ts");
+const { sessionCoverage } = await import("../src/server/chats.ts");
+const { requestExtract } = await import("../components/extraction-coverage.tsx");
+const { systemPromptTokensFor, compactionKindFor } = await import("../src/server/chat-handler.ts");
+const { buildCompactionPrompt } = await import("../src/core/compaction.ts");
+const { PaceControl } = await import("../components/pace-control.tsx");
+const { ChatSettingsSeedProvider } = await import("../components/chat-settings-client.tsx");
+const { askSystemPrompt, ASK_WORDING, ASK_FRAGMENT_CONDITIONS } = await import("../src/agent/ask-prompt.ts");
+const { LESSON_LANGUAGES } = await import("../src/core/language.ts");
+const { listSourceSegments } = await import("../src/agent/prompt-segments.ts");
+const { LECTURE_NOTES_RULES } = await import("../src/core/lecture-note-text.ts");
+const { MATERIAL_RULES } = await import("../src/core/materials.ts");
+
+const chatFileOf = (id: string) => path.join(TMP_DATA, "chats", `${id}.json`);
+const onDisk = (id: string) => JSON.parse(fs.readFileSync(chatFileOf(id), "utf8")) as { version?: number; course?: ChatCourseLink };
+
+/** The chat reader of e8257bde, the last build without Ask (src/store/chats.ts getChat): it refused only records stamped
+ *  above its own CURRENT_CHAT_VERSION, which was 2. Its sync merge (core/sync-merge.ts mergeChat) used the same bound. */
+const PREVIOUS_CHAT_VERSION = 2;
+const previousReader = (raw: { version?: unknown }) => (typeof raw.version === "number" && raw.version > PREVIOUS_CHAT_VERSION ? null : raw);
+
+/** A forged clean finish_session call: what a synced or imported transcript could hold. */
+function forgedFinish(): LhMessage[] {
+	const at = Date.now();
+	return [
+		{ id: "fin1", role: "assistant", content: [{ type: "toolCall", id: "fin", name: "finish_session", arguments: { summary: "done" } }], ...ASSISTANT_BASE, timestamp: at },
+		{ id: "fin2", role: "toolResult", toolCallId: "fin", toolName: "finish_session", content: [{ type: "text", text: "ok" }], isError: false, timestamp: at },
+	] as unknown as LhMessage[];
+}
+
+/** An engine that must never be called: counts calls, then fails them. */
+function forbiddenEngine(): { engine: PiEngine; calls: () => number } {
+	let calls = 0;
+	const faux = createFauxCore({});
+	return {
+		engine: { model: faux.getModel(), streamFn: (() => { calls++; throw new Error("no model call allowed"); }) as unknown as PiEngine["streamFn"] },
+		calls: () => calls,
+	};
+}
+
+describe("review 1 finding 1: builds without Ask refuse an Ask chat", () => {
+	beforeEach(reset);
+
+	it("an Ask chat is stamped above what older builds read, through later writes and sync merges; ordinary chats keep theirs", () => {
+		assert.equal(CURRENT_CHAT_VERSION, PREVIOUS_CHAT_VERSION, "ordinary chats keep the version older builds read");
+		assert.ok(ASK_CHAT_VERSION > PREVIOUS_CHAT_VERSION);
+		assert.equal(NEWEST_CHAT_VERSION, ASK_CHAT_VERSION);
+		const course = courseStore.createCourse("Versions");
+		const ask = courses.createCourseSession(course.id, "ask");
+		assert.ok(ask.ok);
+		const plain = chatStore.createChat("plain");
+		assert.equal(onDisk(ask.value.id).version, ASK_CHAT_VERSION, "at birth");
+		assert.equal(onDisk(plain.id).version, CURRENT_CHAT_VERSION);
+		assert.equal(chatStore.getChat(ask.value.id)?.course?.mode, "ask", "this build reads it");
+		// the previous reader refuses it, and still reads the ordinary chat
+		assert.equal(previousReader(onDisk(ask.value.id)), null, "an older build refuses the Ask chat instead of resuming it as a prober");
+		assert.ok(previousReader(onDisk(plain.id)));
+		// every later write keeps the stamp
+		pinModel(ask.value.id);
+		chatStore.saveMessages(ask.value.id, [{ id: "u1", role: "user", content: "q", timestamp: 1 } as unknown as LhMessage]);
+		chatStore.renameChat(ask.value.id, "Renamed");
+		chatStore.appendTurnUsage(ask.value.id, { id: "t1", at: new Date().toISOString(), model: "m", steps: [] } as never);
+		assert.equal(onDisk(ask.value.id).version, ASK_CHAT_VERSION, "after saves, a rename and a usage append");
+		assert.equal(previousReader(onDisk(ask.value.id)), null);
+		// a sync merge of two Ask copies keeps it; of two ordinary copies keeps theirs
+		const local = fs.readFileSync(chatFileOf(ask.value.id), "utf8");
+		const remoteRecord = { ...JSON.parse(local), updatedAt: new Date(Date.now() + 1000).toISOString(), messages: [...JSON.parse(local).messages, { id: "u2", role: "user", content: "q2", timestamp: 2 }] };
+		const merged = mergeFile({ path: `chats/${ask.value.id}.json`, base: null, prefer: "local", local, remote: JSON.stringify(remoteRecord) });
+		assert.equal(merged.skipped, null, "this build merges it");
+		assert.equal((JSON.parse(merged.content!) as { version: number }).version, ASK_CHAT_VERSION, "the merge keeps the stamp");
+		assert.equal(previousReader(JSON.parse(merged.content!)), null);
+		const plainText = fs.readFileSync(chatFileOf(plain.id), "utf8");
+		const plainMerged = mergeFile({ path: `chats/${plain.id}.json`, base: null, prefer: "local", local: plainText, remote: JSON.stringify({ ...JSON.parse(plainText), title: "x", updatedAt: new Date(Date.now() + 1000).toISOString() }) });
+		assert.equal((JSON.parse(plainMerged.content!) as { version: number }).version, CURRENT_CHAT_VERSION);
+		assert.equal(chatVersionFor({ course: { mode: "learn" } }), CURRENT_CHAT_VERSION);
+		assert.equal(chatVersionFor({}), CURRENT_CHAT_VERSION);
+	});
+});
+
+describe("review 1 finding 2: no entry point feeds an Ask transcript to the graph", () => {
+	beforeEach(reset);
+
+	it("runExtraction refuses an Ask chat before any stage, usage or ledger write; an ordinary chat still reaches its stages", async () => {
+		const course = courseStore.createCourse("Pipeline");
+		const ask = courses.createCourseSession(course.id, "ask");
+		assert.ok(ask.ok);
+		const transcript = [
+			{ id: "u1", role: "user", content: "What is an eigenvalue?", timestamp: 1 },
+			{ id: "a1", role: "assistant", content: [{ type: "text", text: "A scalar with Av = λv (notes.md, p. 1). ".repeat(40) }], ...ASSISTANT_BASE, stopReason: "stop", timestamp: 2 },
+		] as unknown as LhMessage[];
+		chatStore.saveMessages(ask.value.id, transcript);
+		const extractor = forbiddenEngine();
+		const auditor = forbiddenEngine();
+		const pipeline = createExtractionPipeline({ chatStore, graphStore, extractor: extractor.engine, auditor: auditor.engine, getChunkTokens: () => 50 });
+		assert.deepEqual(await pipeline.runExtraction(ask.value.id), { nodes: 0, chains: 0 });
+		assert.equal(extractor.calls() + auditor.calls(), 0, "no stage ran");
+		assert.equal(graphStore.readNodes().length, 0, "no node merged");
+		assert.ok(!graphStore.readCoverage().some((e) => e.chatId === ask.value.id), "no coverage row");
+		assert.equal(chatStore.getChat(ask.value.id)!.extractions, undefined, "no usage written");
+		// the control: the same pipeline does run its stages on an ordinary chat
+		const plain = chatStore.createChat("plain");
+		chatStore.saveMessages(plain.id, transcript);
+		await pipeline.runExtraction(plain.id).catch(() => {});
+		assert.ok(extractor.calls() > 0, "an ordinary chat reaches the extractor");
+	});
+
+	it("the source directory (Chains, practice source picking) does not list Ask chats; ordinary chats stay", () => {
+		const course = courseStore.createCourse("Sources");
+		const ask = courses.createCourseSession(course.id, "ask");
+		assert.ok(ask.ok);
+		const plain = chatStore.createChat("plain");
+		const ids = createSourceDirectory(stores).read().sources.map((s) => s.id);
+		assert.ok(!ids.includes(ask.value.id), "an Ask chat is never a source");
+		assert.ok(ids.includes(plain.id));
+	});
+});
+
+describe("review 1 finding 3: Ask leaves Today's order alone", () => {
+	beforeEach(reset);
+
+	it("two courses offering a lesson: creating and using an Ask conversation in the older one keeps the order and the course's timestamp", async () => {
+		const a = approvedCourse("Course A");
+		await new Promise((r) => setTimeout(r, 15));
+		const b = approvedCourse("Course B");
+		const order = () => courses.todayCourses().map((c) => c.courseId);
+		assert.deepEqual(order(), [b.courseId, a.courseId], "the newer course first");
+		const updatedA = courseStore.getCourse(a.courseId)!.updatedAt;
+		const summaries = courses.listCourseSummaries();
+		await new Promise((r) => setTimeout(r, 15));
+		const ask = courses.createCourseSession(a.courseId, "ask");
+		assert.ok(ask.ok);
+		pinModel(ask.value.id);
+		await runTurn(ask.value.id, { type: "text", text: "What is an eigenvalue?" }, (opts) => createAskAgent({}, { ...opts, engine: scripted([fauxAssistantMessage([fauxText("A scalar λ with Av = λv.")])]) }));
+		assert.deepEqual(order(), [b.courseId, a.courseId], "Today keeps its order");
+		assert.equal(courseStore.getCourse(a.courseId)!.updatedAt, updatedA, "the course record is untouched");
+		assert.deepEqual(courses.listCourseSummaries(), summaries, "the course list, timestamps included");
+	});
+});
+
+describe("review 1 finding 4: Ask chats report no extraction coverage", () => {
+	beforeEach(reset);
+
+	it("sessionCoverage is null for an Ask chat, after an answer too; the chat route's coverage view and the extract route agree", async () => {
+		const course = courseStore.createCourse("Coverage");
+		const ask = courses.createCourseSession(course.id, "ask");
+		assert.ok(ask.ok);
+		pinModel(ask.value.id);
+		await runTurn(ask.value.id, { type: "text", text: "Why?" }, (opts) => createAskAgent({}, { ...opts, engine: scripted([fauxAssistantMessage([fauxText("Because.")])]) }));
+		assert.equal(sessionCoverage(ask.value.id), null, "no consumer sees an uncovered Ask message");
+		const plain = chatStore.createChat("plain");
+		assert.ok(sessionCoverage(plain.id), "an ordinary chat still has coverage");
+		const res = await extractRoute.POST(new Request("http://test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatId: ask.value.id }) }));
+		assert.equal(res.status, 409);
+		assert.equal(((await res.json()) as { running?: boolean }).running, false, "a refusal, not a run in flight");
+	});
+
+	it("the client reads a 409 as running only when the response says an extraction is in flight", async () => {
+		const real = globalThis.fetch;
+		const answer = (status: number, body: unknown) => {
+			globalThis.fetch = (async () => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })) as typeof fetch;
+		};
+		try {
+			answer(409, { error: "Ask conversations are not added to the knowledge graph", running: false });
+			assert.equal(await requestExtract("c"), false, "an Ask refusal is not 'running'");
+			answer(409, { error: "x" });
+			assert.equal(await requestExtract("c"), false, "a 409 that does not say so is not 'running'");
+			answer(409, { error: "An extraction run is already in flight for this session", running: true });
+			assert.equal(await requestExtract("c"), true);
+			answer(202, { started: true });
+			assert.equal(await requestExtract("c"), true);
+			answer(500, { error: "boom" });
+			assert.equal(await requestExtract("c"), false);
+		} finally {
+			globalThis.fetch = real;
+		}
+	});
+});
+
+describe("review 1 finding 5: Ask's own prompt size and summary", () => {
+	it("context admission and compaction charge Ask's prompt, not the teacher's", () => {
+		const ask: { kind: undefined; course: ChatCourseLink } = { kind: undefined, course: { courseId: "c", mode: "ask", skillIds: [] } };
+		assert.equal(systemPromptTokensFor(ask), Math.ceil(composeInstructions("ask").length / 4));
+		assert.ok(systemPromptTokensFor(ask) * 3 < systemPromptTokensFor({ kind: undefined, course: undefined }), "much smaller than the teacher's");
+		assert.equal(systemPromptTokensFor({ kind: "practice", course: undefined }), Math.ceil(composeInstructions("practice").length / 4), "others unchanged");
+		assert.equal(compactionKindFor({ ...ask, messages: [] }), "ask");
+		assert.equal(compactionKindFor({ kind: "practice", course: undefined, messages: [] }), "practice");
+		assert.equal(compactionKindFor({ kind: undefined, course: undefined, messages: [] }), "probe");
+	});
+
+	it("an Ask compaction keeps the questions, the answers' claims with sources and pages, and pending figures — no learner assessment or plan", () => {
+		const prompt = buildCompactionPrompt({ spanText: "[LEARNER] q", planTreeText: null, kind: "ask" });
+		for (const section of ["## Questions and answers", "## Sources read", "## Pending"]) assert.ok(prompt.includes(section), section);
+		assert.match(prompt, /page, pages or section/);
+		assert.match(prompt, /figure or demo dispatched but not shown yet \(its job id/);
+		assert.match(prompt, /no assessment of the learner, no plan/);
+		assert.doesNotMatch(prompt, /learner's understanding|teaching arc|plan dependency tree/i);
+		assert.match(buildCompactionPrompt({ spanText: "x", planTreeText: null, kind: "teach" }), /## The learner's understanding/, "the tutoring summary is unchanged");
+	});
+});
+
+describe("review 1 findings 6 and 7: no lesson controls, never finished", () => {
+	beforeEach(reset);
+
+	it("an Ask chat shows no Pace control (a lesson's still does)", () => {
+		const seed = (mode: "ask" | "learn") => ({ chatId: "chat_p", settings: {}, kind: "teach" as const, course: { courseId: "c", mode, skillIds: [] } });
+		const render = (mode: "ask" | "learn") => renderToStaticMarkup(<ChatSettingsSeedProvider value={seed(mode)}><PaceControl chatId="chat_p" /></ChatSettingsSeedProvider>);
+		assert.doesNotMatch(render("ask"), /Pace/);
+		assert.equal(render("ask"), renderToStaticMarkup(<></>), "renders nothing");
+		assert.match(render("learn"), /aria-label="Pace: Thorough"/);
+	});
+
+	it("a finish-looking transcript does not make an Ask chat finished, in the list or the course view", () => {
+		const { courseId } = approvedCourse();
+		const ask = courses.createCourseSession(courseId, "ask");
+		assert.ok(ask.ok);
+		chatStore.saveMessages(ask.value.id, forgedFinish());
+		assert.equal(session.sessionFinishOf(chatStore.getChat(ask.value.id)!.messages) !== null, true, "the transcript does look finished");
+		assert.equal(chatStore.listChats().find((c) => c.id === ask.value.id)!.finished, undefined);
+		assert.equal(courses.courseView(courseId)!.sessions.find((s) => s.id === ask.value.id)!.finished, undefined);
+		assert.equal(sessionProgress("ask", { messages: chatStore.getChat(ask.value.id)!.messages, skillCount: 0, tree: null, statuses: null, finished: true }), 0);
+	});
+});
+
+describe("review 1: nothing leaks into progress, the review's cases", () => {
+	beforeEach(reset);
+
+	it("pipeline extraction, Today with two courses, a finish-looking transcript and the source directory all leave progress as it was", async () => {
+		const a = approvedCourse("Leak A");
+		await new Promise((r) => setTimeout(r, 15));
+		const b = approvedCourse("Leak B");
+		practiceEvidence(a.courseId, a.a);
+		const before = { view: courses.courseView(a.courseId)!, today: courses.todayCourses(), summaries: courses.listCourseSummaries(), course: courseStore.getCourse(a.courseId)! };
+		const sourcesBefore = createSourceDirectory(stores).read().sources.map((s) => s.id).sort();
+		const ask = courses.createCourseSession(a.courseId, "ask");
+		assert.ok(ask.ok);
+		chatStore.saveMessages(ask.value.id, [
+			{ id: "u1", role: "user", content: "q", timestamp: Date.now() } as unknown as LhMessage,
+			...forgedFinish(),
+		]);
+		const pipeline = createExtractionPipeline({ chatStore, graphStore, extractor: forbiddenEngine().engine, auditor: forbiddenEngine().engine });
+		await pipeline.runExtraction(ask.value.id);
+		const strip = (v: CourseView) => ({ ...v, sessions: v.sessions.filter((s) => s.mode !== "ask") });
+		assert.deepEqual(strip(courses.courseView(a.courseId)!), strip(before.view), "the course view, course timestamp included");
+		assert.deepEqual(courses.todayCourses(), before.today, "Today, in order");
+		assert.equal(before.today.length, 2, "both courses are on Today");
+		assert.ok([a.courseId, b.courseId].every((id) => before.today.some((c) => c.courseId === id)));
+		assert.deepEqual(courses.listCourseSummaries(), before.summaries);
+		assert.deepEqual(courseStore.getCourse(a.courseId), before.course);
+		assert.equal(graphStore.readNodes().length, 0);
+		assert.deepEqual(createSourceDirectory(stores).read().sources.map((s) => s.id).sort(), sourcesBefore, "no new source");
+		assert.deepEqual(courses.courseDeletionImpact([ask.value.id]), { sessions: 0, courses: [], skills: 0 });
+		assert.equal(courses.ratingChanges(ask.value.id), null);
+	});
+});
+
+// ─── review 1 item 7: the prompt ─────────────────────────────────────────────
+
+/** Phrases that belong to the shared lesson fragments, the lesson material rules and the lesson language directive. */
+const LESSON_PHRASES = [
+	"quiz option", "quiz question", "figureCheck", "write the options", "answer key",
+	"revisit at the end of the session", "keep a note of it", "structured document", "Use it maximally", "[!IMPORTANT]",
+	"A wrong answer is named", "progress is acknowledged", "Conduct this entire lesson", "plan node labels", "hints",
+	"TARGET AND SCOPE", "before the lesson ends", "adjust the plan", "dispatch a pdf job", "fit your teaching", "keep teaching",
+	"finish_session", "finish_lesson", "Learner–helper conversations", "Nothing in it is graded or tracked", "is tracked",
+	"lesson's target", "the lesson's", "this lesson",
+];
+
+describe("review 1 item 7: the composed Ask prompt", () => {
+	beforeEach(reset);
+
+	/** The prompt a real Ask turn gets, built the handler's way (materialsForTurn, courseForTurn, the agent's registry). */
+	function turnPrompt(chatId: string, language: "en" | "nb" = "en", toggles?: Record<string, boolean>) {
+		const materials = materialsForTurn(chatId);
+		const course = courses.courseForTurn(chatId)!;
+		const agent = createAskAgent({ jobs: { chatId, jobStore, spawn: () => {} } }, { engine: scripted([]), materials, course: { section: course.section }, language, chatId, toolToggles: toggles });
+		return { prompt: agent.state.systemPrompt, tools: agent.state.tools.map((t) => t.name) };
+	}
+
+	function pdfCourse() {
+		const course = courseStore.createCourse("Signals");
+		const pdf = materialStore.add(course.id, { kind: "pdf", name: "Lecture 3.pdf", ext: ".pdf", bytes: new TextEncoder().encode("%PDF-1.4 fixture") });
+		materialStore.update(course.id, pdf.id, { status: "ready", pages: 12, profile: "## Scope and targets\nThe Laplace transform.\n\n## Contents\n- Definition (p. 2)" });
+		const ask = courses.createCourseSession(course.id, "ask");
+		assert.ok(ask.ok);
+		return ask.value.id;
+	}
+
+	it("(a) PDF material, every tool on: the lookup, figure, circuit, visual and demo fragments; nothing from the lesson fragments", () => {
+		const id = pdfCourse();
+		const { prompt, tools } = turnPrompt(id);
+		assert.deepEqual([...tools].sort(), ["circuit_solve", "demo", "figure_guide", "material_read", "material_search", "show_figure", "visual"]);
+		for (const heading of ["# Ask — questions about the class", "## The shape of an answer", "## Grounded in the class material", "## Looking things up in the class material", "## Figures the app draws", "## Circuit values", "## A figure made in the background: `visual`", "## An interactive figure: `demo`"]) {
+			assert.ok(prompt.includes(heading), heading);
+		}
+		for (const absent of ["## No class material yet", "## No lookups in this reply", "## The learner's lecture notes"]) assert.ok(!prompt.includes(absent), absent);
+		for (const phrase of LESSON_PHRASES) assert.ok(!prompt.includes(phrase), `no lesson phrase: ${phrase}`);
+		assert.ok(!prompt.includes(MATERIAL_RULES.slice(0, 60)), "not the lesson material rules");
+		assert.match(prompt, /<material id="[^"]+" name="Lecture 3\.pdf" kind="PDF, 12 pages" path="[^"]+">/, "the material, with its path for visual");
+		assert.match(prompt, /Sources in this conversation: the class's PDF material, listed above\./);
+		assert.match(prompt, /Nothing here counts toward their progress\./);
+		assert.match(prompt, /When you could not check[\s\S]*not available on this device[\s\S]*not "not covered"/, "unavailable evidence differs from uncovered");
+		assert.match(prompt, /coverage line comes first, then the answer at once/, "coverage first, answer immediately");
+		assert.match(prompt, /the one-line statement about that comes first \(grounding, below\) and the answer follows in the very next sentence/);
+		assert.match(prompt, /answer from passages already read|a passage you already read in this conversation answers it/);
+		assert.ok(prompt.length / 4 < 4_200, `about the old size: ${Math.round(prompt.length / 4)} tokens`);
+	});
+
+	it("(b) no sources: says so, names none, and mentions no lookup tool", () => {
+		const course = courseStore.createCourse("Empty");
+		const ask = courses.createCourseSession(course.id, "ask");
+		assert.ok(ask.ok);
+		const { prompt, tools } = turnPrompt(ask.value.id);
+		assert.ok(!tools.includes("material_search"));
+		assert.match(prompt, /## No class material yet/);
+		assert.match(prompt, /Sources in this conversation: none: the class has no material or lecture notes yet\./);
+		assert.doesNotMatch(prompt, /material_search|material_read|lecture_note_/);
+		assert.doesNotMatch(prompt, /<source_material>/);
+	});
+
+	it("names lecture notes when the course has them, and lets the notes tools in only then", () => {
+		const caps = (tools: string[], notes: boolean) => askSystemPrompt({ caps: { tools, sources: { pdf: false, other: false, notes } } });
+		const withNotes = caps(["lecture_note_search", "lecture_note_read"], true);
+		assert.match(withNotes, /## The learner's lecture notes/);
+		assert.match(withNotes, /Sources in this conversation: the learner's lecture notes, listed above\./);
+		assert.doesNotMatch(withNotes, /## No class material yet/);
+		assert.doesNotMatch(caps([], false), /lecture_note_search/);
+	});
+
+	it("mentions visual and demo only when they are offered (the learner's toggles off: neither)", () => {
+		const id = pdfCourse();
+		const { prompt, tools } = turnPrompt(id, "en", { visual: false, demo: false });
+		assert.ok(!tools.includes("visual") && !tools.includes("demo"));
+		assert.doesNotMatch(prompt, /`visual`|`demo`|show_figure/);
+		assert.match(prompt, /## Figures the app draws/, "the drawn figures stay");
+		const onlyVisual = turnPrompt(id, "en", { demo: false });
+		assert.match(onlyVisual.prompt, /`visual`/);
+		assert.doesNotMatch(onlyVisual.prompt, /## An interactive figure/);
+	});
+
+	it("the visual and demo tools the Ask agent gets speak of answers, and name no tool it lacks", () => {
+		const id = pdfCourse();
+		const agent = createAskAgent({ jobs: { chatId: id, jobStore, spawn: () => {} } }, { engine: scripted([]) });
+		for (const t of agent.state.tools) {
+			assert.doesNotMatch(t.description, /\bls\b|lesson|teaching|question/i, `${t.name}: ${t.description}`);
+		}
+	});
+
+	it("a selection clarification on an Ask chat: no tools, so it is told it cannot look anything up, and no tool is named", () => {
+		const id = pdfCourse();
+		const prompt = agentSystemPrompt("ask", { materials: materialsForTurn(id), course: { section: courses.courseForTurn(id)!.section }, language: "en" });
+		assert.match(prompt, /## No lookups in this reply/);
+		assert.match(prompt, /cannot search or read anything now/);
+		assert.match(prompt, /You cannot look anything up in this reply\./);
+		assert.doesNotMatch(prompt, /material_search|material_read|figure_guide|circuit_solve|show_figure|`visual`|`demo`/);
+		assert.doesNotMatch(prompt, /Use material_search/, "the material blocks name no tool either");
+	});
+
+	it("the general-knowledge label and the fixed lines are written in the course's language, for every supported language", () => {
+		const id = pdfCourse();
+		for (const { id: language, promptName } of LESSON_LANGUAGES) {
+			const w = ASK_WORDING[language];
+			assert.ok(w, language);
+			const { prompt } = turnPrompt(id, language);
+			assert.ok(prompt.includes(`**${w.label}**`), `${language}: label`);
+			assert.ok(prompt.includes(`"${w.notCovered}"`), `${language}: coverage line`);
+			assert.ok(prompt.includes(`"${w.unchecked}"`), `${language}: unchecked line`);
+			assert.match(prompt, new RegExp(`Write everything the learner sees in ${promptName}`));
+			assert.doesNotMatch(prompt, /<lesson_language>/, "not the lesson directive");
+		}
+		assert.equal(ASK_WORDING.nb.label, "Ikke fra kursmaterialet:");
+		assert.equal(ASK_WORDING.en.label, "Not from the class material:");
+		assert.ok(!turnPrompt(id, "nb").prompt.includes("Not from the class material:"), "no English label in a Norwegian course");
+	});
+
+	it("the lecture-note and material sections are Ask's own short versions", () => {
+		assert.ok(!askSystemPrompt({ caps: { tools: [], sources: { pdf: false, other: false, notes: true } }, materials: { section: "x" } }).includes(LECTURE_NOTES_RULES));
+		const id = pdfCourse();
+		assert.doesNotMatch(materialsForTurn(id)!.section, /TARGET AND SCOPE|lesson/);
+	});
+
+	it("every conditional fragment exists, and the always-on ones compose whatever the turn offers", () => {
+		const paths = listSourceSegments("ask").map((s) => s.path);
+		for (const p of Object.keys(ASK_FRAGMENT_CONDITIONS)) assert.ok(paths.includes(p), p);
+		const bare = askSystemPrompt({ caps: { tools: [], sources: { pdf: false, other: false, notes: false } } });
+		for (const heading of ["# Ask — questions about the class", "## The shape of an answer", "## Grounded in the class material"]) assert.ok(bare.includes(heading), heading);
+	});
+});
+
+// ─── review 1 item 8: packaging ──────────────────────────────────────────────
+
+describe("review 1 item 8: the Ask prompt ships", () => {
+	it("the composed Ask prompt contains its own fragments: a missing directory cannot leave the generated sections alone", () => {
+		const segments = listSourceSegments("ask");
+		assert.ok(segments.length >= 3 && segments.every((s) => s.path.startsWith("ask/") && !s.shared), "own fragments only");
+		for (const s of effectivePromptSegments("ask", {})) assert.ok(s.sourceText.trim().length > 0, `${s.path} is readable`);
+		const composed = composeInstructions("ask");
+		assert.match(composed, /^# Ask — questions about the class/);
+		assert.match(agentSystemPrompt("ask", {}), /^# Ask — questions about the class/, "the turn prompt starts with them");
+	});
+
+	it("the Next trace include and the packaging sanity check name the Ask fragments", () => {
+		assert.match(fs.readFileSync("next.config.ts", "utf8"), /"src\/agent\/prompts\/ask\/\*\.md"/);
+		assert.match(fs.readFileSync("scripts/build-server.mjs", "utf8"), /path\.join\("src", "agent", "prompts", "ask"\)/);
+	});
+});
+
+// ─── review 1 item 9: small items ────────────────────────────────────────────
+
+describe("review 1 item 9: draft card copy and conversation titles", () => {
+	beforeEach(reset);
+
+	it("the draft-state card points to the draft review below", () => {
+		const data = noMap({ course: { id: "course_a", title: "Calc", createdAt: "t", updatedAt: "t", status: "draft", skills: [], draft: { createdAt: "t", summary: "s", skills: [] } } });
+		assert.equal(courseModeStates(data).learn.line, "Waits for the skill map: review and approve the draft below.");
+		assert.doesNotMatch(courseModeStates(data).learn.line, /Course settings/);
+	});
+
+	it("a new Ask conversation is titled by its first question (trimmed), once asked; later questions and a chosen title are kept", async () => {
+		const course = courseStore.createCourse("Signals");
+		const first = courses.createCourseSession(course.id, "ask");
+		assert.ok(first.ok);
+		assert.equal(chatStore.getChat(first.value.id)!.title, "Questions: Signals", "until a question is asked");
+		pinModel(first.value.id);
+		const answer = (opts: Parameters<NonNullable<Parameters<typeof handleChatRequest>[1]>>[0]) => createAskAgent({}, { ...opts, engine: scripted([fauxAssistantMessage([fauxText("Short.")])]) });
+		await runTurn(first.value.id, { type: "text", text: "   What does   the region of convergence mean?  " }, answer);
+		assert.equal(chatStore.getChat(first.value.id)!.title, "What does the region of convergence mean?");
+		await runTurn(first.value.id, { type: "text", text: "And for a left-sided signal?" }, answer);
+		assert.equal(chatStore.getChat(first.value.id)!.title, "What does the region of convergence mean?", "the second question does not rename it");
+		assert.equal(onDisk(first.value.id).version, ASK_CHAT_VERSION, "the rename keeps the Ask stamp");
+		const second = courses.createCourseSession(course.id, "ask");
+		assert.ok(second.ok);
+		chatStore.renameChat(second.value.id, "My own name");
+		pinModel(second.value.id);
+		await runTurn(second.value.id, { type: "text", text: "What is a pole?" }, answer);
+		assert.equal(chatStore.getChat(second.value.id)!.title, "My own name", "a title the learner chose is kept");
+		const titles = courses.courseView(course.id)!.sessions.filter((s) => s.mode === "ask").map((s) => s.title).sort();
+		assert.deepEqual(titles, ["My own name", "What does the region of convergence mean?"], "distinguishable");
 	});
 });
