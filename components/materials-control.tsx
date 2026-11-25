@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CameraIcon, FileTextIcon, ImageIcon, LinkIcon, Loader2Icon, PaperclipIcon, XIcon } from "lucide-react";
 import { usePopoverDismiss } from "./popover-dismiss.ts";
-import { MATERIAL_ACCEPT, isMaterialUrl, type LessonMaterial } from "@/src/core";
+import { MATERIAL_ACCEPT, indexingProgressLine, isMaterialUrl, type LessonMaterial } from "@/src/core";
 import { MenuShell } from "@/components/menu-shell";
 import { useCamera } from "@/components/use-camera";
 import { Hint } from "@/components/ui/hint";
@@ -34,13 +34,18 @@ import {
  *                       endpoint; `onChange` tells the course page.
  */
 
+/** What the user should know about a material's conversion and indexing. Pure. */
+function materialNotes(m: LessonMaterial): string[] {
+	return [m.conversionError?.message, ...(m.conversionWarnings ?? []), m.indexingError?.message, ...(m.indexingWarnings ?? [])].filter((s): s is string => Boolean(s));
+}
+
 /** One row's status line. Pure — exported for pins. */
 export function materialStatusLine(m: LessonMaterial): string {
 	const p = m.conversionProgress;
-	const converting = p ? `converting: ${p.stage}${p.donePages !== undefined && p.totalPages ? ` ${p.donePages}/${p.totalPages}` : ""}` : undefined;
+	const converting = p ? `converting: ${p.stage}${p.donePages !== undefined && p.totalPages ? ` ${p.donePages}/${p.totalPages}` : ""}` : m.indexingProgress ? indexingProgressLine(m.indexingProgress) : undefined;
 	if (m.status === "reading") return converting ? `reading… · ${converting}` : "reading…";
 	if (converting) return converting;
-	const notes = [m.conversionError?.message, ...(m.conversionWarnings ?? [])].filter((s): s is string => Boolean(s));
+	const notes = materialNotes(m);
 	const note = notes.length > 0 ? ` · ${notes.join(" · ")}` : "";
 	if (m.status === "error") return `not read${m.error ? ` — ${m.error}` : ""}${note}`;
 	const base = m.kind === "pdf" && m.pages ? `${m.pages} pages` : m.kind === "web" ? "web page" : m.kind === "image" ? "image" : "text";
@@ -203,7 +208,7 @@ export function MaterialsControl({
 										<span className="block truncate text-foreground" title={m.url ?? m.name}>
 											{m.name}
 										</span>
-										<span className={`block truncate ${m.status === "error" ? "text-error" : "text-muted-foreground"}`} title={m.conversionProgress ? materialStatusLine(m) : ([m.error, m.conversionError?.message, ...(m.conversionWarnings ?? [])].filter(Boolean).join(" · ") || undefined)}>
+										<span className={`block truncate ${m.status === "error" ? "text-error" : "text-muted-foreground"}`} title={m.conversionProgress || m.indexingProgress ? materialStatusLine(m) : ([m.error, ...materialNotes(m)].filter(Boolean).join(" · ") || undefined)}>
 											{materialStatusLine(m)}
 										</span>
 									</span>

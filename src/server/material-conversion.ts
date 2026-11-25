@@ -98,7 +98,7 @@ export async function probePdfInput(bytes: Uint8Array, filename: string, signal:
 	}
 }
 
-function readSidecar(file: string): PdfConversionSidecar | undefined {
+export function readSidecar(file: string): PdfConversionSidecar | undefined {
 	try {
 		const value = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<PdfConversionSidecar> | null;
 		if (!value || value.version !== 2 || typeof value.sourceHash !== "string" || !value.requested || typeof value.requested.converterId !== "string") return undefined;

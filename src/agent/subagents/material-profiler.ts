@@ -21,7 +21,12 @@ import type { MaterialKind } from "../../core/materials.ts";
  * Runs on the pdfReader role (the vision slot): every kind may need eyes.
  */
 
-const PROFILE_DELIVERABLE = `Your FINAL message is a SOURCE PROFILE of this material. A teacher keeps it in front of them for the whole lesson: it sets the lesson's target and keeps the teaching in line with the material. Markdown, these sections (leave one out only when the material has nothing for it):
+/**
+ * THE PROFILE FORMAT, the one definition (the indexer's reduce step, material-digest.ts, builds its prompt from these
+ * two parts too): what a profile is for and its sections, then the rules for citing and length. A prompt puts its own
+ * opening sentence before the sections ("Your FINAL message is a SOURCE PROFILE of this material.").
+ */
+export const PROFILE_FORMAT_SECTIONS = `A teacher keeps it in front of them for the whole lesson: it sets the lesson's target and keeps the teaching in line with the material. Markdown, these sections (leave one out only when the material has nothing for it):
 
 ## Scope and targets
 What a learner who has mastered this material can do — concrete, checkable targets, each cited.
@@ -34,9 +39,14 @@ Symbols, sign and naming conventions, units, and the forms formulas are written 
 ## Approach and order
 How the material builds the topic: what it assumes, what comes first, how it argues or derives.
 ## Exercises
-The kinds of problems it poses and what they test, if any.
+The kinds of problems it poses and what they test, if any.`;
 
-Cite every claim: (p. N) for a PDF, the section heading otherwise. Keep the material's own language for its terms — never translate them. 400-1200 words, dense, no filler. If the material is not teaching material (a single figure, a photo of a board), describe what it shows and what it means for a lesson on it.`;
+/** The format's closing rules (see PROFILE_FORMAT_SECTIONS). */
+export const PROFILE_FORMAT_RULES = `Cite every claim: (p. N) for a PDF, the section heading otherwise. Keep the material's own language for its terms — never translate them. 400-1200 words, dense, no filler. If the material is not teaching material (a single figure, a photo of a board), describe what it shows and what it means for a lesson on it.`;
+
+const PROFILE_DELIVERABLE = `Your FINAL message is a SOURCE PROFILE of this material. ${PROFILE_FORMAT_SECTIONS}
+
+${PROFILE_FORMAT_RULES}`;
 
 const PDF_PROFILE_INSTRUCTIONS = `${PDF_READING_DOCTRINE}
 

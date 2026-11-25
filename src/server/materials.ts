@@ -9,6 +9,7 @@ import {
 	materialsPromptSection,
 	readMaterialIds,
 	type LessonMaterial,
+	type MaterialIndexingProgress,
 } from "../core/materials.ts";
 import { resolveRoleSpec } from "../core/settings-resolution.ts";
 import { piEngineForSpec } from "../agent/models.ts";
@@ -19,6 +20,7 @@ import type { MaterialStore } from "../core/ports.ts";
 import { lectureNotesForTurn } from "./lecture-notes.ts";
 import { convertPdfMaterial } from "./material-conversion.ts";
 import type { MaterialConversionProgress } from "../core/pdf-converter.ts";
+import { canIndexMaterial, canRewriteProfile, indexPdfMaterial, profileFromDigest, retryPdfIndexing, rewritePdfProfile, type IndexMaterialOptions } from "./material-indexing.ts";
 import { stores } from "./stores.ts";
 
 /**
@@ -42,6 +44,7 @@ interface Run {
 	promise: Promise<void>;
 	controller: AbortController;
 	progress?: MaterialConversionProgress;
+	indexing?: MaterialIndexingProgress;
 }
 const KEY = Symbol.for("lh.materialRuns");
 function runs(): Map<string, Run> {
@@ -54,6 +57,12 @@ const runKey = (chatId: string, id: string) => `${chatId}/${id}`;
 const progressTo = (key: string) => (progress: MaterialConversionProgress | undefined) => {
 	const run = runs().get(key);
 	if (run) run.progress = progress;
+};
+
+/** An indexing's progress onto its live run (material-indexing.ts). */
+const indexingTo = (key: string) => (progress: MaterialIndexingProgress | undefined) => {
+	const run = runs().get(key);
+	if (run) run.indexing = progress;
 };
 
 /** How many materials are being read right now (the idle check reads this). */
@@ -93,6 +102,12 @@ function startProfile(chatId: string, material: LessonMaterial): Promise<void> {
 			return;
 		}
 		try {
+			// A converted PDF is indexed whole (material-indexing.ts); its digest's profile replaces the skim profiler below.
+			const engine = piEngineForSpec(spec);
+			const indexed = material.kind === "pdf" ? await indexPdfMaterial(chatId, material, { signal: controller.signal, store: materialStore, model: { engine, chatId }, onProgress: indexingTo(key) }) : undefined;
+			if (controller.signal.aborted) return;
+			const digest = indexed?.digest;
+			if (digest?.profile) return void materialStore.update(chatId, material.id, profileFromDigest({ ...digest, profile: digest.profile }));
 			// The profiler's model requests pass the process-wide worker-request admission (the one background-LLM pool).
 			const result = await profileMaterial(
 				{
@@ -101,7 +116,7 @@ function startProfile(chatId: string, material: LessonMaterial): Promise<void> {
 					path: materialStore.filePath(chatId, material),
 					mimeType: material.mimeType,
 				},
-				{ engine: piEngineForSpec(spec), abortSignal: controller.signal, chatId },
+				{ engine, abortSignal: controller.signal, chatId },
 			);
 			if (result.transcript !== undefined) {
 				fs.writeFileSync(materialStore.auxPath(chatId, material.id, "content.md"), result.transcript, "utf8");
@@ -130,8 +145,8 @@ export function listMaterials(chatId: string): LessonMaterial[] {
 	for (const m of materials) if (m.status === "reading" && !runs().has(runKey(chatId, m.id))) void startProfile(chatId, m);
 	// Source files do not sync (owner decision, 2026-11-02): a material that arrived from another device has no original here.
 	return materials.map((stored) => {
-		const progress = runs().get(runKey(chatId, stored.id))?.progress;
-		const m = progress ? { ...stored, conversionProgress: progress } : stored;
+		const run = runs().get(runKey(chatId, stored.id));
+		const m = run?.progress || run?.indexing ? { ...stored, conversionProgress: run.progress, indexingProgress: run.indexing } : stored;
 		return m.status !== "reading" && !fs.existsSync(stores.materialStore.filePath(chatId, m)) ? { ...m, originalElsewhere: true } : m;
 	});
 }
@@ -154,6 +169,38 @@ export function retryMaterialConversion(ownerId: string, id: string): Result<Les
 		.finally(() => runs().delete(key));
 	runs().set(key, { promise, controller });
 	return { ok: true, value: material };
+}
+
+/** Start an indexing run the user asked for (retry or rewrite), on the profiler's slot, aborted by a removal. */
+function startIndexing(ownerId: string, id: string, ready: (m: LessonMaterial) => boolean, refusal: string, work: (m: LessonMaterial, opts: Omit<IndexMaterialOptions, "force">) => Promise<void>): Result<LessonMaterial> {
+	const material = stores.materialStore.list(ownerId).find((m) => m.id === id);
+	if (!material) return { ok: false, status: 404, error: "Unknown material" };
+	if (!ready(material)) return { ok: false, status: 409, error: refusal };
+	const key = runKey(ownerId, id);
+	if (runs().has(key)) return { ok: false, status: 409, error: `${material.name} is still being read` };
+	const spec = resolveRoleSpec("pdfReader", stores.settingsStore.readSettings());
+	if (!spec) return { ok: false, status: 409, error: "no vision model is configured (Settings → Agent: the vision slot reads source material)" };
+	let engine: ReturnType<typeof piEngineForSpec>;
+	try {
+		engine = piEngineForSpec(spec);
+	} catch (err) {
+		return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };
+	}
+	const controller = new AbortController();
+	const opts = { signal: controller.signal, store: stores.materialStore, model: { engine, chatId: ownerId }, onProgress: indexingTo(key) };
+	const promise = work(material, opts).then(() => {}, () => {}).finally(() => runs().delete(key));
+	runs().set(key, { promise, controller });
+	return { ok: true, value: material };
+}
+
+/** Index a converted PDF again on purpose (failed parts, no profile, an interrupted run): the whole document. */
+export function retryMaterialIndexing(ownerId: string, id: string): Result<LessonMaterial> {
+	return startIndexing(ownerId, id, (m) => canIndexMaterial(ownerId, m, stores.materialStore), "Only a converted PDF is indexed: convert it first", (m, opts) => retryPdfIndexing(ownerId, m, opts));
+}
+
+/** Write a PDF's profile again from its stored index (the profile step alone, no part re-read). */
+export function rewriteMaterialProfile(ownerId: string, id: string): Result<LessonMaterial> {
+	return startIndexing(ownerId, id, (m) => canRewriteProfile(ownerId, m, stores.materialStore), "This material has no current index: retry the indexing first", (m, opts) => rewritePdfProfile(ownerId, m, opts));
 }
 
 /** Add an uploaded file. */

@@ -13,6 +13,7 @@ import {
 } from "../../core/contracts/material-digest.ts";
 import { conceptId, pickDefinition, slugOf, unifyByAlias } from "../../core/glossary.ts";
 import { pageCountOf, splitMaterial, type MaterialBatch, type SplitOptions } from "../../core/material-split.ts";
+import { PROFILE_FORMAT_RULES, PROFILE_FORMAT_SECTIONS } from "./material-profiler.ts";
 
 /**
  * The material indexer (fork addition, 2026-11-24): reads the WHOLE of one
@@ -126,23 +127,13 @@ export type BatchTerm = BatchNotes["terms"][number];
 /** The six section headings of a profile (material-profiler.ts PROFILE_DELIVERABLE), kept literal in every language. */
 export const PROFILE_HEADINGS = ["Scope and targets", "Contents", "Definitions and terminology", "Notation and conventions", "Approach and order", "Exercises"] as const;
 
-/** The profile format of material-profiler.ts PROFILE_DELIVERABLE (the catalog cuts its "## " sections, core/materials.ts). */
-const PROFILE_FORMAT = `A SOURCE PROFILE of this material. A teacher keeps it in front of them for the whole lesson: it sets the lesson's target and keeps the teaching in line with the material. Markdown, these sections (leave one out only when the material has nothing for it):
+/**
+ * The profile format: material-profiler.ts's one definition (the catalog cuts its "## " sections, core/materials.ts),
+ * with the headings pinned to English because this profile is validated by them (validateProfile).
+ */
+const PROFILE_FORMAT = `A SOURCE PROFILE of this material. ${PROFILE_FORMAT_SECTIONS}
 
-## Scope and targets
-What a learner who has mastered this material can do — concrete, checkable targets, each cited.
-## Contents
-The outline (chapters, sections), with page ranges for a PDF.
-## Definitions and terminology
-The key terms exactly as the material defines them (quote short definitions verbatim), cited.
-## Notation and conventions
-Symbols, sign and naming conventions, units, and the forms formulas are written in.
-## Approach and order
-How the material builds the topic: what it assumes, what comes first, how it argues or derives.
-## Exercises
-The kinds of problems it poses and what they test, if any.
-
-Write the section headings exactly as above, in English, whatever the material's language. Cite every claim: (p. N) for a PDF, the section heading otherwise. Keep the material's own language for its terms — never translate them. 400-1200 words, dense, no filler. If the material is not teaching material (a single figure, a photo of a board), describe what it shows and what it means for a lesson on it.`;
+Write the section headings exactly as above, in English, whatever the material's language. ${PROFILE_FORMAT_RULES}`;
 
 const EXTRACTION_RULES = `You are an indexing specialist inside a learning application. You read one part of a student's course material (a slide deck, a textbook chapter, notes) and index it completely, so that nothing a student must learn from it is missed.
 
