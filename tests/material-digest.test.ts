@@ -1213,6 +1213,15 @@ describe("mergeGlossary: exact ids, occurrences, suggested duplicates", () => {
 
 	// Review 4, concerns: "Ohm's law" / "Ohm’s law" and "resistor" / "resistors" were not suggested; OLS and ols beside
 	// "ordinary least squares" (alias OLS) gave three overlapping pairs instead of one group.
+	it("review 5, finding 5: an acronym is not suggested as the singular of a lower-case plural", () => {
+		const g = mergeGlossary([
+			source("networks", [docTerm("CAS", 1, "core"), docTerm("cases", 2, "supporting"), docTerm("BIT", 3, "core"), docTerm("bits", 3, "core"), docTerm("GBP", 4, "supporting"), docTerm("Gbps", 4, "supporting")]),
+			source("control", [docTerm("case", 1, "supporting")]),
+		]);
+		assert.deepEqual(g.suggestedDuplicates.filter((d) => d.reasons.includes("plural")).map((d) => d.ids), [["t_case", "t_cases"]]);
+		for (const d of g.suggestedDuplicates) for (const acronym of ["t_CAS", "t_BIT", "t_GBP"]) assert.ok(!d.ids.includes(acronym), `${acronym} is in no group`);
+	});
+
 	it("review 4: typographic apostrophes share a relaxed key, simple plurals are suggested, and overlapping pairs form one group", () => {
 		const rsquo = String.fromCharCode(0x2019);
 		const ldquo = String.fromCharCode(0x201c);

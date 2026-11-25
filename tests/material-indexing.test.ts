@@ -696,6 +696,32 @@ describe("review 4, finding 1: a conversion run leaves no stale index, whichever
 		assertIndexInvariant(course.id, m.id, "converted again, unchanged");
 	});
 
+	it("review 5, finding 1: a copy without the original PDF refuses a conversion retry and keeps its profile", async () => {
+		const course = courseStore.createCourse("Retry on a synced copy");
+		const m = await upload(course.id, "synced.pdf", SINGLE);
+		assert.equal(m.profileFromDigest, true);
+		// what a second device holds: the record and content.md, not the original
+		fs.rmSync(materialStore.filePath(course.id, m));
+		const refused = service.retryMaterialConversion(course.id, m.id);
+		assert.equal(refused.ok, false);
+		assert.equal(!refused.ok && refused.status, 409);
+		assert.match(!refused.ok ? refused.error : "", /not on this device/);
+		await idle();
+		const after = find(course.id, m.id);
+		assert.equal(after.status, "ready");
+		assert.equal(after.profile, m.profile);
+		assert.equal(after.profileFromDigest, true);
+		assert.equal(after.indexingCalls, m.indexingCalls);
+	});
+
+	it("review 5, finding 3: a converter version with stray whitespace, or none, is stored in a form the digest reader accepts", () => {
+		assert.equal(indexing.storedConverterVersion("docling 2.61.1\n"), "docling 2.61.1");
+		assert.equal(indexing.storedConverterVersion("docling "), "docling");
+		assert.equal(indexing.storedConverterVersion(""), "unknown");
+		assert.equal(indexing.storedConverterVersion("   "), "unknown");
+		assert.equal(indexing.storedConverterVersion(undefined), "unknown");
+	});
+
 	it("converted, without a vision model: no stale digest or profile from one is left, and indexing is shown as pending", async () => {
 		const course = courseStore.createCourse("Retry no model");
 		const m = await upload(course.id, "nomodel.pdf", SINGLE);

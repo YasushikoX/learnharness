@@ -220,6 +220,11 @@ export function retryMaterialConversion(ownerId: string, id: string): Result<Les
 	const material = current(ownerId, id);
 	if (!material) return { ok: false, status: 404, error: "Unknown material" };
 	if (material.kind !== "pdf") return { ok: false, status: 400, error: "Only a PDF is converted" };
+	// A synced copy has the record and content.md but not the original PDF (review 5, finding 1): a conversion here
+	// could only fail, and its clean-up would take the profile with it and sync that back to the device that has the file.
+	if (!fs.existsSync(stores.materialStore.filePath(ownerId, material))) {
+		return { ok: false, status: 409, error: `The original of ${material.name} is not on this device, so it cannot be converted here` };
+	}
 	const key = runKey(ownerId, id);
 	if (runs().has(key)) return { ok: false, status: 409, error: `${material.name} is still being read` };
 	const controller = new AbortController();
