@@ -69,22 +69,24 @@ describe("stats bar", () => {
 		const html = renderToStaticMarkup(
 			<StatsBar turns={[turn({ model: "nope/unknown" })]} contextTokens={11_000} pricing={sessionCost({ turns: [turn({ model: "nope/unknown" })] })} />,
 		);
-		assert.match(html, /data-testid="stats-cost">—</);
+		// UI round 2: an unknown cost is left out of the bar (never a fake $0, and no lone "—" either)
+		assert.equal(html.includes('data-testid="stats-cost"'), false);
 		// unknown model: no catalog limit exists, but the footprint is
 		// still an honest reading — usage-only (never "—" theater over
 		// real data, never a fake window)
 		assert.match(html, /data-testid="stats-context">11k</);
 	});
 
-	it("unknown context is explicit; changing the selected limit preserves the measurement", () => {
+	it("unknown context stays out of the bar (UI round 2); changing the selected limit preserves the measurement", () => {
 		assert.equal(formatContextMeasurement(null, 100_000), "? / 100k");
 		assert.equal(formatContextMeasurement(83_000, 100_000), "83k / 100k");
 		assert.equal(formatContextMeasurement(83_000, 200_000), "83k / 200k");
 		assert.equal(formatContextMeasurement(83_000, null), "83k");
 		const html = renderToStaticMarkup(<StatsBar chatId="fixture" turns={[turn()]} contextTokens={null} />);
-		assert.match(html, /data-testid="stats-context">\?</);
+		assert.equal(html.includes('data-testid="stats-context"'), false);
+		assert.equal(html.includes('data-testid="stats-summary"'), false, "nothing known: no summary at all");
 		const empty = renderToStaticMarkup(<StatsBar chatId="fixture" turns={[]} />);
-		assert.match(empty, /data-testid="stats-context">\?</);
+		assert.equal(empty.includes('data-testid="stats-context"'), false);
 	});
 
 	it("prettyModel strips only the vendor path, preserving versions, dates and variants", () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CameraIcon, FileTextIcon, ImageIcon, LinkIcon, Loader2Icon, PaperclipIcon, XIcon } from "lucide-react";
+import { BookOpenIcon, CameraIcon, FileTextIcon, ImageIcon, LinkIcon, Loader2Icon, XIcon } from "lucide-react";
 import { usePopoverDismiss } from "./popover-dismiss.ts";
 import { MATERIAL_ACCEPT, indexingProgressLine, isMaterialUrl, type LessonMaterial } from "@/src/core";
 import { MenuShell } from "@/components/menu-shell";
@@ -177,7 +177,7 @@ export function MaterialsControl({
 					}}
 					className={CONTROL_CLASS[variant]}
 				>
-					{reading > 0 ? <Loader2Icon className="size-3.5 animate-spin" /> : <PaperclipIcon className="size-3.5 text-muted-foreground" />}
+					{reading > 0 ? <Loader2Icon className="size-3.5 animate-spin" /> : <BookOpenIcon className="size-3.5 text-muted-foreground" />}
 					<span className="text-card-foreground">{sourcesLabel(count, chatId ? reading : 0)}</span>
 				</button>
 			</Hint>

@@ -81,7 +81,8 @@ import { MermaidOverlay, SessionMermaidContext, type SessionImage } from "@/comp
 import { DemoOverlay } from "@/components/demo-overlay";
 import { AbortTurnDialog, type AbortMode } from "@/components/abort-turn-dialog";
 import { upstreamSelectionTools } from "@/components/fork-switches";
-import { ArrowRightIcon, ClipboardCheckIcon, DumbbellIcon, MessageCircleQuestionIcon, WaypointsIcon } from "lucide-react";
+import { ArrowRightIcon, ClipboardCheckIcon, DumbbellIcon, MessageCircleQuestionIcon, NotebookPenIcon, WaypointsIcon } from "lucide-react";
+import { CONTROL_CLASS } from "@/components/control-variant";
 import type { PlanBlockData } from "@/src/core";
 import { QuestionDock } from "@/components/question-dock";
 import { PluginQuestionDock } from "./plugin-question-dock";
@@ -187,8 +188,10 @@ const DOCK = "mx-auto w-full max-w-[46rem] px-4 [@media(pointer:coarse)_and_(ori
 // mounted while the question owns the band so widening fades it back.
 const MARGIN_GAP = 16;
 const MARGIN_MIN_W = 220;
-// The dock overlay's gradient band (h-24) — part of the reserved tail.
-const GRADIENT_H = 96;
+// The dock overlay's gradient band (h-6) — part of the reserved tail. UI round 2: 24px, not 96: the tall fade washed
+// out prose and equations that still fit, and left a ~130px gap above the dock. The reserve adds exactly this band,
+// so at rest the last line sits just above the fade (the dock follows the content with a 24px gap).
+const GRADIENT_H = 24;
 // Fold thresholds (owner, scroll round 1, tuned round 3): pixel distance
 // from the bottom — position, not velocity. Leave the bottom → the box
 // folds (visual only); reach it again → it re-opens. 96 (was 64, owner
@@ -2959,7 +2962,14 @@ export function DockOverlay({
 
 	const pendingId = pluginQuestion ? pluginQuestionOccurrenceKey(pluginQuestion.occurrence) : unreadablePlugin ? "unreadable-plugin-question" : pending?.key ?? null;
 	const readingInputRef = useRef<HTMLDivElement>(null);
-	const ownsDock = !!pending || !!pluginQuestion || unreadablePlugin || !!practice;
+	// UI round 2: under a native teach check the reading-thinking field is folded behind a compact "Thinking" button in
+	// the dock's edge row instead of being a row of its own. It stays MOUNTED while folded (dictation still lands in it,
+	// and a field that holds text shows itself). Per question: the next check starts folded again.
+	const [readingOpenFor, setReadingOpenFor] = useState<string | null>(null);
+	const readingInEdge = !!pending && !pluginQuestion && requiresReveal;
+	const readingOpen = readingOpenFor !== null && readingOpenFor === pendingId;
+	const readingShown = !readingInEdge || readingOpen || readingThinking.trim() !== "";
+	const ownsDock =!!pending || !!pluginQuestion || unreadablePlugin || !!practice;
 	const initialPendingRef = useRef(pendingId);
 	// Stable reader objects with `changed` from the start (React's development
 	// server renderer seals useRef objects, so assigning `changed` onto refs
@@ -3376,7 +3386,7 @@ export function DockOverlay({
 
 	return (
 		<div className="pointer-events-none absolute inset-x-0 bottom-0" style={{ right: sbInset }}>
-			<div className="h-24 bg-gradient-to-t from-background via-background/85 to-transparent" />
+			<div className="h-6 bg-gradient-to-t from-background to-transparent" />
 			{/* sm:px-8 (UI round 1b): with the dock's own px-4 that is the transcript's 48px gutters, so when the
 			    window is narrower than the reading column the card still lines up with the prose edge to edge. */}
 			<div ref={blockRef} data-dock-block="" className="relative bg-background pb-[calc(1.25rem+var(--lh-safe-bottom))] sm:px-8">
@@ -3400,6 +3410,7 @@ export function DockOverlay({
 					    UI round 1b: the shell's top edge (a compact one-line row over a
 					    hairline that opens up in place), not a second stacked box. */}
 					{(pending || pluginQuestion) && requiresReveal && (
+						<div className={readingShown ? undefined : "hidden"}>
 						<ReadingThinkingField
 							inputRef={readingInputRef}
 							value={readingThinking}
@@ -3417,6 +3428,7 @@ export function DockOverlay({
 							}
 							claim={revealPending}
 						/>
+						</div>
 					)}
 						{/* Include descendant margins (notably practice thinking's
 						    bottom margin) in the natural content measurement. */}
@@ -3491,7 +3503,30 @@ export function DockOverlay({
 						    never moves while an answer is dictated. */}
 						{(pending || practice) && (
 							<div className={wordingOnly ? "hidden" : "px-1.5 pb-1.5"}>
-								<ComposerEdge chatId={chatId} mic={dictationSlot} />
+								<ComposerEdge
+									chatId={chatId}
+									mic={dictationSlot}
+									leading={readingInEdge && (
+										<button
+											type="button"
+											data-testid="reading-thinking-toggle"
+											aria-pressed={readingShown}
+											title="Thinking while reading"
+											onClick={() => {
+												if (readingShown && readingThinking.trim() === "") {
+													setReadingOpenFor(null);
+													return;
+												}
+												setReadingOpenFor(pendingId);
+												requestAnimationFrame(() => readingInputRef.current?.focus());
+											}}
+											className={cn(CONTROL_CLASS.edge, readingShown && "bg-raised text-foreground")}
+										>
+											<NotebookPenIcon className="size-3.5" />
+											Thinking
+										</button>
+									)}
+								/>
 							</div>
 						)}
 					</div>
