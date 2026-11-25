@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { ChatSettings, FallbackTarget } from "@/src/core";
 import { turnErrorDisplay } from "@/src/core";
+import { fetchChatSettings } from "@/components/chat-settings-client";
 
 /**
  * The chat banner's text for a failed turn (owner, 2026-11-13). A provider failure used to show as its raw JSON; a
@@ -34,7 +35,7 @@ export function RetryOnFallback({ chatId, target, onSwitched }: { chatId: string
 		setBusy(true);
 		setError(null);
 		try {
-			const view = (await (await fetch(`/api/chats/${encodeURIComponent(chatId)}`, { cache: "no-store" })).json()) as { settings?: ChatSettings };
+			const view = await fetchChatSettings(chatId, { cache: "no-store" });
 			const next: ChatSettings = { ...(view.settings ?? {}), model: { provider: target.provider, id: target.id } };
 			const res = await fetch(`/api/chats/${encodeURIComponent(chatId)}/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
 			if (!res.ok) {

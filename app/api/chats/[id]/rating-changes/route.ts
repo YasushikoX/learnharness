@@ -6,13 +6,14 @@
  *         after each problem, and when recall reaches the review target. 404 when the chat is not a course practice,
  *         review or check session.
  */
-import { ratingChanges } from "@/src/server";
+import { ratingChanges, startServerTiming } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+	const timing = startServerTiming();
 	const { id } = await params;
-	const changes = ratingChanges(id);
-	if (!changes) return Response.json({ error: "Not a course practice session" }, { status: 404 });
-	return Response.json({ changes });
+	const changes = timing.measure("ratings", () => ratingChanges(id));
+	if (!changes) return timing.json({ error: "Not a course practice session" }, { status: 404 });
+	return timing.json({ changes });
 }

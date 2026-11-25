@@ -7,6 +7,7 @@ import { usePopoverDismiss } from "./popover-dismiss.ts";
 import { Hint } from "@/components/ui/hint";
 import { CONTROL_CLASS, type ControlVariant } from "@/components/control-variant";
 import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
+import { fetchChatSettings, useChatSettingsSeed } from "@/components/chat-settings-client";
 
 /**
  * The difficulty pill (fork addition, 2026-11-07) — the pace pill's sibling on
@@ -22,18 +23,23 @@ import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-sig
 type SessionView = { settings?: ChatSettings; kind?: string };
 
 export function DifficultyControl({ chatId, variant = "edge" }: { chatId: string; variant?: ControlVariant }) {
-	const [view, setView] = useState<SessionView | undefined>(undefined);
+	const seed = useChatSettingsSeed(chatId);
+	const [view, setView] = useState<SessionView | undefined>(() =>
+		seed ? { settings: seed.settings ?? {}, kind: seed.kind } : undefined,
+	);
 	const [open, setOpen] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 
 	const read = useCallback(() => {
-		fetch(`/api/chats/${chatId}`)
-			.then((r) => r.json() as Promise<SessionView>)
+		fetchChatSettings(chatId)
 			.then((b) => setView({ settings: b.settings ?? {}, kind: b.kind }))
 			.catch(() => {});
 	}, [chatId]);
-	useEffect(read, [read]);
+	useEffect(() => {
+		if (seed) return;
+		read();
+	}, [seed, read]);
 	useSettingsSaved((section) => {
 		if (section === "lesson" || section === "models") read();
 	});

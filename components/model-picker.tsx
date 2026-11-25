@@ -12,6 +12,7 @@ import { isInputShortcutScopeEligible } from "@/components/plugin-input-focus";
 import { Hint } from "@/components/ui/hint";
 import { cn } from "@/lib/utils";
 import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
+import { fetchChatSettings, useChatSettingsSeed } from "@/components/chat-settings-client";
 import { useModelCatalog } from "@/components/model-catalog";
 export { useModelCatalog } from "@/components/model-catalog";
 import { defaultOrderLevel, populateLevel, THINKING_LABEL } from "@/components/thinking-default";
@@ -27,9 +28,9 @@ export function catalogLimits(catalog: Pick<ModelCatalogResponse, "models">): Ma
 /**
  * THE CONVERSATION MODEL CONTROL — dual-bound (owner, per-session models,
  * 2026-09-28). WITH a chatId (the in-session stats bar): the pills bind
- * THE SESSION'S OWN record — reads GET /api/chats/:id (its settings field;
- * a legacy unstamped record falls back to the strong slot's display,
- * exactly what the engine resolves), writes PUT /api/chats/:id/settings
+ * THE SESSION'S OWN record — reads GET /api/chats/:id?view=settings (its
+ * settings field; a legacy unstamped record falls back to the strong slot's
+ * display, exactly what the engine resolves), writes PUT /api/chats/:id/settings
  * (validated + level-clamped server-side). The session owns its model +
  * thinking level from birth; the strong slot never reaches it again.
  *
@@ -42,10 +43,13 @@ export function catalogLimits(catalog: Pick<ModelCatalogResponse, "models">): Ma
  */
 export function ModelControl({ chatId, onModelChange }: { chatId?: string; onModelChange?: (model: string | undefined) => void }) {
 	const { catalog, refresh } = useModelCatalog();
-	const [models, setModels] = useState<ModelsSettings | undefined>();
+	const seed = useChatSettingsSeed(chatId);
+	const [models, setModels] = useState<ModelsSettings | undefined>(() => seed?.models);
 	// A successful read with no settings is a legacy session; undefined
 	// means no session record is known yet, not permission to inherit Strong.
-	const [session, setSession] = useState<{ settings?: ChatSettings }>();
+	const [session, setSession] = useState<{ settings?: ChatSettings } | undefined>(() =>
+		chatId && seed ? { settings: seed.settings } : undefined,
+	);
 	const [open, setOpen] = useState<"model" | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -60,8 +64,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// reads the models section alone.
 	const readRecord = useCallback(() => {
 		if (chatId) {
-			fetch(`/api/chats/${chatId}`)
-				.then((r) => { if (!r.ok) throw new Error(`session read failed: ${r.status}`); return r.json() as Promise<{ settings?: ChatSettings }>; })
+			fetchChatSettings(chatId)
 				.then((body) => setSession({ settings: body.settings }))
 				.catch(() => {
 					/* same read-only posture as a models-section failure */
@@ -78,8 +81,9 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	}, [chatId]);
 
 	useEffect(() => {
+		if (chatId && seed) return;
 		readRecord();
-	}, [readRecord]);
+	}, [chatId, seed, readRecord]);
 
 	useSettingsSaved((section) => {
 		// "lesson": the language control rewrote this lesson's record

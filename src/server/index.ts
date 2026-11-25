@@ -90,7 +90,9 @@ export { catchUpLectureNotes } from "./lecture-note-reading.ts";
 // Courses (fork addition — docs/courses.md).
 export {
 	approveCourse,
+	clearCourseEvidenceCache,
 	courseDrafting,
+	courseEvidenceCacheSize,
 	courseWeighing,
 	courseView,
 	lessonResult,
@@ -102,6 +104,7 @@ export {
 	deleteCourse,
 	listCourseSummaries,
 	renameCourse,
+	setCourseEvidenceCacheLimit,
 	setCourseLanguage,
 	setCourseNote,
 	setCoursePace,
@@ -117,6 +120,7 @@ export {
 	graphSkillLayer,
 	startCourseDraft,
 } from "./courses.ts";
+export { startServerTiming, type ServerTiming } from "./server-timing.ts";
 export { refreshModelCatalog } from "./remote-model-catalog.ts";
 export { subscriptionControlsResponse, subscriptionBrowserResponse } from "./web-subscription-http.ts";
 export { sessionCost } from "./pricing.ts";

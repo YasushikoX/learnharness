@@ -1,5 +1,7 @@
 "use client";
 
+import { fetchChatSettings, type ChatSettingsSnapshot } from "@/components/chat-settings-client";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2Icon, MicIcon } from "lucide-react";
 import { useSettingsDialog } from "@/components/settings/settings-dialog";
@@ -129,8 +131,7 @@ export interface DictationConfig {
 /** This lesson's own settings (its language), or undefined on a draft page or when unreadable. */
 async function readLessonSettings(chatId: string | undefined): Promise<ChatSettings | undefined> {
 	if (!chatId) return undefined;
-	return fetch(`/api/chats/${chatId}`)
-		.then((r) => r.json() as Promise<{ settings?: ChatSettings }>)
+	return fetchChatSettings(chatId)
 		.then((b) => b.settings)
 		.catch(() => undefined);
 }
@@ -447,10 +448,12 @@ export type Dictation = {
  * Explicit plugin controllers never claim the primary target or finisher;
  * their asynchronous transcript delivery is part of finishing.
  */
-export function useDictation({ append, chatId, destination = "primary", disabled = false }: {
+export function useDictation({ append, chatId, initialSession, destination = "primary", disabled = false }: {
 	append: DictationAppend;
 	/** The lesson (its language, its settings). */
 	chatId?: string;
+	/** Server-rendered session settings seed (skips the mount-time fetch when present). */
+	initialSession?: ChatSettingsSnapshot;
 	/** Explicit destinations never register or consult the core primary target. */
 	destination?: "primary" | "explicit";
 	disabled?: boolean;
@@ -474,7 +477,7 @@ export function useDictation({ append, chatId, destination = "primary", disabled
 	 *  and this lesson's own language, and kept for the whole run (stop, retry, warm tokens). */
 	const runConfigRef = useRef<DictationConfig>({ engine: DEFAULT_DICTATION_ENGINE, language: DEFAULT_LESSON_LANGUAGE });
 	/** This lesson's settings, re-read when the lesson settings change. */
-	const lessonRef = useRef<ChatSettings | undefined>(undefined);
+	const lessonRef = useRef<ChatSettings | undefined>(initialSession?.settings);
 	/** The local engine's LIVE run (owner, 2026-10-25 — dictation-live.ts):
 	 *  the segmenter cuts the recording at pauses, the queue transcribes each
 	 *  piece while the learner keeps talking, and every delivered piece is
@@ -500,7 +503,14 @@ export function useDictation({ append, chatId, destination = "primary", disabled
 			lessonRef.current = s;
 		});
 	}, [chatId]);
-	useEffect(refreshLesson, [refreshLesson]);
+	const seededChatIdRef = useRef(chatId);
+	useEffect(() => {
+		if (initialSession !== undefined && chatId === seededChatIdRef.current) {
+			lessonRef.current = initialSession.settings;
+			return;
+		}
+		refreshLesson();
+	}, [chatId, initialSession, refreshLesson]);
 	/** Pre-mint for a Deepgram page (mitigation D) — silent if keyless. The engine comes from the shared settings read. */
 	const warmForEngine = useCallback(() => {
 		void getGeneral().then((g) => {

@@ -7,6 +7,7 @@ import { usePopoverDismiss } from "./popover-dismiss.ts";
 import { Hint } from "@/components/ui/hint";
 import { CONTROL_CLASS, type ControlVariant } from "@/components/control-variant";
 import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
+import { fetchChatSettings, useChatSettingsSeed } from "@/components/chat-settings-client";
 
 /**
  * The pace pill (fork addition, 2026-11-01) — the language pill's sibling on
@@ -23,22 +24,27 @@ import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-sig
 type SessionView = { settings?: ChatSettings; kind?: string; course?: unknown };
 
 export function PaceControl({ chatId, variant = "edge" }: { chatId: string; variant?: ControlVariant }) {
-	const [view, setView] = useState<SessionView | undefined>(undefined);
+	const seed = useChatSettingsSeed(chatId);
+	const [view, setView] = useState<SessionView | undefined>(() =>
+		seed ? { settings: seed.settings ?? {}, kind: seed.kind, course: seed.course } : undefined,
+	);
 	const [open, setOpen] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const [note, setNote] = useState("");
+	const [note, setNote] = useState(() => seed?.settings?.paceNote ?? "");
 	const containerRef = useRef<HTMLDivElement>(null);
 
 	const read = useCallback(() => {
-		fetch(`/api/chats/${chatId}`)
-			.then((r) => r.json() as Promise<SessionView>)
+		fetchChatSettings(chatId)
 			.then((b) => {
 				setView({ settings: b.settings ?? {}, kind: b.kind, course: b.course });
 				setNote(b.settings?.paceNote ?? "");
 			})
 			.catch(() => {});
 	}, [chatId]);
-	useEffect(read, [read]);
+	useEffect(() => {
+		if (seed) return;
+		read();
+	}, [seed, read]);
 	useSettingsSaved((section) => {
 		if (section === "lesson" || section === "models") read();
 	});
