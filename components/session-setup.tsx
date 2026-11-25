@@ -48,7 +48,7 @@ export function SessionSetup({
 	onNote: (note: string) => void;
 }) {
 	return (
-		<section data-testid="session-setup" aria-label="Session setup" className="flex w-full max-w-md flex-col gap-3 rounded-2xl border bg-card p-4 text-left shadow-lg">
+		<section data-testid="session-setup" aria-label="Session setup" className="flex w-full flex-col gap-3 rounded-lg border border-border bg-card p-4 text-left">
 			<div className="flex flex-col gap-1.5">
 				<h4 className="text-xs font-medium text-muted-foreground">How fast do you want to go?</h4>
 				<PaceRadios pace={pace} onPace={onPace} />
