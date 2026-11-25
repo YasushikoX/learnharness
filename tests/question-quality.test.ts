@@ -559,3 +559,79 @@ describe("old transcripts: every new field absent", () => {
 	});
 });
 
+
+// ─── Review 1 (2026-11-25): fixes ──────────────────────────────────────────────
+
+const qq = await import("../src/core/question-quality.ts");
+
+describe("WP6 review 1", () => {
+
+	it("finding 1: a short correct answer is graded on correctness; key points must fit the form the question asks for", () => {
+		assert.match(qq.KEY_POINTS_NEXT_TEXT, /`previous` is your verdict on the answer itself against `correctAnswer`/);
+		assert.match(qq.KEY_POINTS_NEXT_TEXT, /right when it is correct in the form the question asked for, even if it leaves out working the question did not ask for/);
+		assert.doesNotMatch(qq.KEY_POINTS_NEXT_TEXT, /right when it has them all/);
+		assert.match(qq.KEY_POINTS_NEXT_TEXT, /or when a correct result could not have been reached without it/);
+		assert.match(String(qq.keyPointsField.description), /checkable in an answer of the form `question` asks for/);
+	});
+
+	it("finding 2: finish keeps its own share of refusals whatever the other gates spent, and does not use up their total", () => {
+		const passes: string[] = [];
+		const refuse = makeRefusalBudget(REFUSALS_PER_GATE, REFUSALS_PER_TURN, { onPass: (g) => passes.push(g) });
+		// the reviewer's sequence: two give-away refusals and one verdict refusal spend the turn's total
+		assert.ok(refuse("giveaway-option", true, "r"));
+		assert.ok(refuse("giveaway-option", true, "r"));
+		assert.ok(refuse("verdict", true, "r"));
+		assert.equal(refuse("prose", true, "r"), undefined, "the total is spent for the other gates");
+		assert.ok(refuse("finish", true, "r"), "finish still refuses");
+		assert.ok(refuse("finish", true, "r"));
+		assert.equal(refuse("finish", true, "r"), undefined, "after its own share it passes, as every gate does");
+		assert.deepEqual(passes, ["prose", "finish"]);
+		// and finish refusals leave the others' total alone
+		const fresh = makeRefusalBudget();
+		assert.ok(fresh("finish", true, "r"));
+		assert.ok(fresh("finish", true, "r"));
+		for (const gate of ["prose", "lead-floor", "visual"]) assert.ok(fresh(gate, true, "r"), gate);
+		assert.equal(fresh("sources", true, "r"), undefined);
+	});
+
+	it("finding 3: the form rule says the example above is not a model of the form", () => {
+		assert.match(QUIZ_FORM_RULE, /The example above shows the argument shape and the escaping only: by this rule a calculation like it is an `explain`\./);
+	});
+
+	it("finding 4: a final problem's answer carries the key points without asking for a next question", () => {
+		const answer = { answers: [{ text: "200 N/m" }] };
+		const check = JSON.stringify((newAnswerResult("c1", "explain", answer, undefined, ["a", "b"]).content[0] as { text: string }).text);
+		const final = JSON.stringify((newAnswerResult("c2", "explain", answer, undefined, ["a", "b"], true).content[0] as { text: string }).text);
+		assert.match(check, /previousKeyPoints/);
+		assert.doesNotMatch(final, /previousKeyPoints|In `lead`, name each point/);
+		assert.match(final, /This was the final problem/);
+		assert.match(final, /1\. a/);
+	});
+
+	it("finding 6: a bare string is one concept id; absent stays undefined", () => {
+		assert.deepEqual(qq.normalizeConceptIds("Hooke's law"), ["Hooke's law"]);
+		assert.deepEqual(qq.normalizeConceptIds('["a", "a", " b "]'), ["a", "b"]);
+		assert.deepEqual(qq.normalizeConceptIds("  "), undefined);
+		assert.equal(qq.normalizeConceptIds(undefined), undefined);
+		assert.deepEqual(qq.normalizeConceptIds([]), []);
+	});
+
+	it("finding 8: the give-away refusal does not offer padding the wrong options", () => {
+		const reason = giveawayOptionReason({ options: [{ label: "x".repeat(60), length: 60 }], median: 10 } as never);
+		assert.doesNotMatch(reason, /equally detailed/);
+		assert.match(reason, /Do not lengthen the wrong options to match/);
+	});
+
+	it("finding 9: a question still streaming does not mark key points from its partial arguments", () => {
+		const answered = { type: "tool-explain", toolCallId: "e1", state: "output-available", input: { keyPoints: ["a", "b", "c"] } };
+		const streaming = { type: "tool-quiz", toolCallId: "q2", state: "input-streaming", input: { previousKeyPoints: [1] } };
+		assert.equal(qq.keyPointMarksOf([{ parts: [answered, streaming] }]).size, 0);
+		const complete = { ...streaming, state: "input-available", input: { previousKeyPoints: [1, 3] } };
+		assert.deepEqual([...qq.keyPointMarksOf([{ parts: [answered, complete] }]).get("e1")!], [1, 3]);
+	});
+
+	it("finding 10: one short point is enough for lookAt, as its description says", () => {
+		assert.deepEqual(figureNotesProblems("visual", { lookAt: ["the peak"] }), []);
+		assert.equal(figureNotesProblems("visual", { lookAt: ["x"] }).length, 1);
+	});
+});

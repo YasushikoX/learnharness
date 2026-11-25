@@ -62,7 +62,7 @@ export function giveawayOptionReason(problem: GiveawayProblem): string {
 	return (
 		`Refused: the correct option ${which} is more than ${GIVEAWAY_MEDIAN_RATIO} times as long as the median option ` +
 		`(${problem.median} characters), so it can be picked by its length alone. Make every option the same length and form: ` +
-		"cut the correct option down to its bare claim (the reasoning belongs in `explanation`), or write each wrong option " +
-		"as a full, equally detailed claim of the same shape. Then call again with the same question. Do not mention this to the learner."
+		"cut the correct option down to its bare claim (the reasoning belongs in `explanation`). Do not lengthen the wrong options to match. " +
+		"Then call again with the same question. Do not mention this to the learner."
 	);
 }

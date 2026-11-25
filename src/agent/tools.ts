@@ -514,7 +514,8 @@ export function quizMechanics(enabled?: EnabledTools): "choice" | "free" | "mixe
 /** The rule for picking the form of a question, when the teacher has both tools (owner-approved text, 2026-11-13;
  *  WP6, 2026-11-25: a written answer is the default for concept checks too). */
 export const QUIZ_FORM_RULE =
-	" CHOOSING THE FORM: you have both `quiz` (multiple choice) and `explain` (a written answer). A concept check or a calculation is an " +
+	" CHOOSING THE FORM: you have both `quiz` (multiple choice) and `explain` (a written answer). (The example above shows the argument " +
+	"shape and the escaping only: by this rule a calculation like it is an `explain`.) A concept check or a calculation is an " +
 	"`explain`: options would hand him the form of the answer, and recognising a result is not producing it. Use `quiz` only for a prediction " +
 	"before you teach or show something, and for a misconception trap where the wrong options are the point (each one the answer a specific " +
 	"wrong model gives). Test: could he pick the right option by eliminating the others, without doing the work? Then it is `explain`.";

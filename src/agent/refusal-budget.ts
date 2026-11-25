@@ -18,6 +18,13 @@
 export const REFUSALS_PER_GATE = 2;
 /** The most refusals all gates together may make in one learner turn. */
 export const REFUSALS_PER_TURN = 3;
+/**
+ * Gates outside the turn's total (review 1, finding 2): they keep their own REFUSALS_PER_GATE whatever the other gates
+ * spent, and what they refuse does not use up the others' total. `finish` is the one gate whose pass changes what is
+ * recorded about the learner (a lesson logged as finished with no final problem), so three refusals by other gates
+ * earlier in the turn must not wave it through unrefused.
+ */
+export const OWN_SHARE_GATES: readonly string[] = ["finish"];
 
 export interface RefusalBudgetEvents {
 	/** A gate refused (counts toward the budget). */
@@ -34,12 +41,13 @@ export function makeRefusalBudget(perGate = REFUSALS_PER_GATE, perTurn = REFUSAL
 	return (gate: string, blocks: boolean, reason: string): { block: true; reason: string } | undefined => {
 		if (!blocks) return undefined;
 		const used = byGate[gate] ?? 0;
-		if (used >= perGate || total >= perTurn) {
+		const ownShare = OWN_SHARE_GATES.includes(gate);
+		if (used >= perGate || (!ownShare && total >= perTurn)) {
 			events.onPass?.(gate);
 			return undefined;
 		}
 		byGate[gate] = used + 1;
-		total++;
+		if (!ownShare) total++;
 		events.onRefusal?.(gate);
 		return { block: true, reason };
 	};

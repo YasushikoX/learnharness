@@ -56,9 +56,10 @@ export const conceptIdsField = Type.Array(Type.String(), {
 });
 
 /** A persisted `conceptIds`: trimmed, blanks and duplicates dropped, first-seen order kept (order carries no meaning).
- *  Undefined when the field is absent or not an array (an old record). */
+ *  A bare string is one id (a model that sent `"Hooke's law"` for `["Hooke's law"]`; review 1, finding 6). Undefined only
+ *  when the field is absent or unreadable (an old record). */
 export function normalizeConceptIds(raw: unknown): string[] | undefined {
-	const list = arrayOf(raw);
+	const list = arrayOf(raw) ?? (typeof raw === "string" && raw.trim() !== "" && !raw.trim().startsWith("[") ? [raw] : undefined);
 	if (!list) return undefined;
 	const out: string[] = [];
 	for (const item of list) {
@@ -78,9 +79,10 @@ export const keyPointsField = Type.Array(Type.String({ minLength: 1 }), {
 	minItems: KEY_POINTS_MIN,
 	maxItems: KEY_POINTS_MAX,
 	description:
-		"REQUIRED. Two to five short statements, each ONE thing a correct answer must contain (a fact, a step, a value with its unit), " +
-		"taken from correctAnswer and committed with it. Hidden from the learner until he has answered, then shown to him. His answer " +
-		"comes back to you beside them, and you grade each point.",
+		"REQUIRED. Two to five short statements, each ONE thing a correct answer must contain, taken from correctAnswer and committed " +
+		"with it. Each must be checkable in an answer of the form `question` asks for: when you ask for a number with its unit, the points " +
+		"are the value and the unit, not the steps (ask for the working if you want to grade the steps). Hidden from the learner until " +
+		"he has answered, then shown to him. His answer comes back to you beside them, and you grade each point.",
 });
 
 /** The verdict per key point, on the NEXT teach question (beside `previous`). Optional: nothing refuses on it. */
@@ -119,16 +121,22 @@ export function keyPointsProblems(raw: unknown): string[] {
 /** What the tutor is asked to do with the key points, beside the learner's answer (the result's `next`). */
 export const KEY_POINTS_NEXT_TEXT =
 	"Grade his answer point by point against `keyPoints` (committed before he answered; he sees them now): a point counts when his answer " +
-	"states it or something equivalent, not when it only hints at it. In your next question set `previousKeyPoints` to the numbers of the " +
-	"points his answer contained ([] for none), and `previous` to right when it has them all, partly when it has some, wrong when it has none. " +
-	"In `lead`, name each point he missed and repair it.";
+	"states it or something equivalent, or when a correct result could not have been reached without it; not when it only hints at it. " +
+	"In your next question set `previousKeyPoints` to the numbers of the points that count ([] for none). `previous` is your verdict on " +
+	"the answer itself against `correctAnswer`, as always: right when it is correct in the form the question asked for, even if it leaves " +
+	"out working the question did not ask for; partly when it is correct in part; wrong otherwise. In `lead`, name each point he missed and repair it.";
+
+/** The same, after a FINAL problem (review 1, finding 4): no next question carries the verdict, and a final's lead carries no repair. */
+export const KEY_POINTS_FINAL_TEXT =
+	"Judge his answer against `correctAnswer` and `keyPoints` (committed before he answered; he sees them now). This was the final problem: " +
+	"ask no further question for it, and go on as the final problem's own rules say.";
 
 /** Add the committed key points to the model-facing answer record (agent sees them numbered, beside his answer). A dismissal
  *  or a steer is not an answer and gets none. Mutates and returns `forModel`. */
-export function withKeyPointsForModel(forModel: Record<string, unknown>, keyPoints: readonly string[] | undefined): Record<string, unknown> {
+export function withKeyPointsForModel(forModel: Record<string, unknown>, keyPoints: readonly string[] | undefined, final = false): Record<string, unknown> {
 	if (!keyPoints || keyPoints.length === 0 || forModel.dismissed === true) return forModel;
 	forModel.keyPoints = keyPoints.map((p, i) => `${i + 1}. ${p}`);
-	forModel.next = [typeof forModel.next === "string" ? forModel.next : "", KEY_POINTS_NEXT_TEXT].filter(Boolean).join(" ");
+	forModel.next = [typeof forModel.next === "string" ? forModel.next : "", final ? KEY_POINTS_FINAL_TEXT : KEY_POINTS_NEXT_TEXT].filter(Boolean).join(" ");
 	return forModel;
 }
 
@@ -167,7 +175,8 @@ export function keyPointMarksOf(messages: ReadonlyArray<{ role?: string; parts: 
 	for (const message of messages) {
 		for (const part of message.parts) {
 			if (!GRADED_PART_TYPES.has(part.type) || !part.toolCallId) continue;
-			if (part.state === "output-error") continue;
+			// a refused call does not count, and a call still streaming carries only part of its arguments
+			if (part.state === "output-error" || part.state === "input-streaming") continue;
 			if (waiting && TEACH_QUESTION_PART_TYPES.has(part.type)) {
 				const met = normalizePreviousKeyPoints((part.input as { previousKeyPoints?: unknown } | undefined)?.previousKeyPoints, waiting.count);
 				if (met) marks.set(waiting.id, met);

@@ -304,6 +304,8 @@ export function newAnswerResult(
 	figures?: string,
 	/** An `explain` call's committed key points (WP6 — core/question-quality.ts), read from the call by the caller. */
 	keyPoints?: readonly string[],
+	/** The answered question was a final problem: its key points come with no "next question" instruction. */
+	finalProblem = false,
 ): LhMessage & ToolResultMessage {
 	const forModel = compactAnswerForModel(answer as QuestionAnswerData);
 	const hasSketch = (answer as QuestionAnswerData).sketch !== undefined;
@@ -316,7 +318,7 @@ export function newAnswerResult(
 	const hints = Array.isArray(forModel.hints) ? forModel.hints.length : 0;
 	if (hints > 0 && !steered) forModel.next = [forModel.next, hintsNextText(hints)].filter(Boolean).join(" ");
 	// the committed key points beside his answer, to grade point by point in the next reply (no extra model call)
-	withKeyPointsForModel(forModel, keyPoints);
+	withKeyPointsForModel(forModel, keyPoints, finalProblem);
 	return {
 		id: newMessageId(),
 		role: "toolResult",

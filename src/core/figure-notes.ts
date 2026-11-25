@@ -17,7 +17,7 @@
 import { Type } from "typebox";
 
 /** The least `lookAt` text, all points together, that says anything. */
-export const LOOK_AT_MIN_CHARS = 10;
+export const LOOK_AT_MIN_CHARS = 5;
 export const LOOK_AT_MAX_POINTS = 3;
 /** The least `tryThis` that can hold an action and a prediction. */
 export const TRY_THIS_MIN_CHARS = 10;

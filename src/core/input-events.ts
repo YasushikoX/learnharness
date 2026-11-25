@@ -28,7 +28,7 @@
  * turn rides one composition.
  */
 
-import { CONFIDENCE_LEVELS, type QuestionAnswerData } from "./question-core.ts";
+import { normalizeQuizType, CONFIDENCE_LEVELS, type QuestionAnswerData } from "./question-core.ts";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { validatePluginSubmissionImageArray, validatePluginSubmissionImages, type PluginSubmissionImages, type PluginSubmissionOccurrence } from "./plugin-submissions.ts";
 import type { LhMessage } from "./native-messages.ts";
@@ -413,7 +413,7 @@ export function inputAppends(
 			}
 			// The soft figure reminder (owner, 2026-11-12) is computed from the FULL record, so compaction never drops it.
 			// The key points come from the call the server holds, never from the client's answer (WP6).
-			return [newAnswerResult(input.toolCallId, pending.tool, input.answer, unshownFiguresNote(record.messages), keyPointsOfCall(pending.tool, pending.input))];
+			return [newAnswerResult(input.toolCallId, pending.tool, input.answer, unshownFiguresNote(record.messages), keyPointsOfCall(pending.tool, pending.input), normalizeQuizType((pending.input as { type?: unknown } | null | undefined)?.type) === "final")];
 		}
 		case "continue":
 			return dismissalConclusion(record);
