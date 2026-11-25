@@ -71,7 +71,7 @@ import {
 	type ModelSlotName,
 	type ModelsSettings,
 } from "@/src/core";
-import { ChatSettingsSeedProvider, fetchChatSettings, type ChatSettingsSeed, type ChatSettingsSnapshot } from "@/components/chat-settings-client";
+import { ChatSettingsSeedProvider, chatSettingsGeneration, fetchChatSettings, type ChatSettingsSeed, type ChatSettingsSnapshot } from "@/components/chat-settings-client";
 import { useSettingsSaved } from "@/components/settings-signal";
 import { PlanBlock, PlanPopup, latestTree } from "@/components/plan-block";
 import { PlanMarginalia, planExists } from "@/components/plan-window";
@@ -1539,14 +1539,17 @@ export function Chat({
 		}
 	}, [readStats]);
 	const refreshSessionLanguage = useCallback(() => {
+		const gen = chatSettingsGeneration(chatId);
 		fetchChatSettings(chatId)
-			.then((b) => setSessionLanguage(resolveLessonLanguage(b.settings)))
+			.then((b) => {
+				if (chatSettingsGeneration(chatId) !== gen) return;
+				setSessionLanguage(resolveLessonLanguage(b.settings));
+			})
 			.catch(() => {});
 	}, [chatId]);
 	useEffect(() => {
-		if (initialSession !== undefined) return;
 		refreshSessionLanguage();
-	}, [initialSession, refreshSessionLanguage]);
+	}, [refreshSessionLanguage]);
 	useSettingsSaved((section) => {
 		if (section === "lesson") refreshSessionLanguage();
 	});

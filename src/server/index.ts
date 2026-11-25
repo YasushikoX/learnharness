@@ -89,9 +89,14 @@ export {
 export { catchUpLectureNotes } from "./lecture-note-reading.ts";
 // Courses (fork addition — docs/courses.md).
 export {
+	COURSE_EVIDENCE_CACHE_CEILING,
+	COURSE_EVIDENCE_CACHE_FLOOR,
+	COURSE_EVIDENCE_CACHE_KEY,
+	COURSE_EVIDENCE_CACHE_VERSION,
 	approveCourse,
 	clearCourseEvidenceCache,
 	courseDrafting,
+	courseEvidenceCacheLimit,
 	courseEvidenceCacheSize,
 	courseWeighing,
 	courseView,
@@ -104,6 +109,7 @@ export {
 	deleteCourse,
 	listCourseSummaries,
 	renameCourse,
+	setCourseEvidenceCacheBounds,
 	setCourseEvidenceCacheLimit,
 	setCourseLanguage,
 	setCourseNote,

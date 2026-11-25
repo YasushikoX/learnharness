@@ -7,7 +7,7 @@ import { usePopoverDismiss } from "./popover-dismiss.ts";
 import { Hint } from "@/components/ui/hint";
 import { CONTROL_CLASS, type ControlVariant } from "@/components/control-variant";
 import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
-import { fetchChatSettings, useChatSettingsSeed } from "@/components/chat-settings-client";
+import { chatSettingsGeneration, fetchChatSettings, updateChatSettings, useChatSettingsSeed } from "@/components/chat-settings-client";
 
 /**
  * The difficulty pill (fork addition, 2026-11-07) — the pace pill's sibling on
@@ -32,14 +32,17 @@ export function DifficultyControl({ chatId, variant = "edge" }: { chatId: string
 	const containerRef = useRef<HTMLDivElement>(null);
 
 	const read = useCallback(() => {
+		const gen = chatSettingsGeneration(chatId);
 		fetchChatSettings(chatId)
-			.then((b) => setView({ settings: b.settings ?? {}, kind: b.kind }))
+			.then((b) => {
+				if (chatSettingsGeneration(chatId) !== gen) return;
+				setView({ settings: b.settings ?? {}, kind: b.kind });
+			})
 			.catch(() => {});
 	}, [chatId]);
 	useEffect(() => {
-		if (seed) return;
 		read();
-	}, [seed, read]);
+	}, [read]);
 	useSettingsSaved((section) => {
 		if (section === "lesson" || section === "models") read();
 	});
@@ -50,30 +53,20 @@ export function DifficultyControl({ chatId, variant = "edge" }: { chatId: string
 	if (view?.kind !== "practice") return null;
 	const current = resolveDifficulty(view?.settings);
 
-	const save = async (next: ChatSettings): Promise<boolean> => {
+	const save = async (patch: (current: ChatSettings) => ChatSettings): Promise<boolean> => {
 		setError(null);
-		try {
-			const res = await fetch(`/api/chats/${chatId}/settings`, {
-				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(next),
-			});
-			if (!res.ok) {
-				const body = (await res.json().catch(() => ({}))) as { error?: string };
-				setError(body.error ?? `difficulty rejected (${res.status})`);
-				return false;
-			}
-			setView({ ...view, settings: next });
-			notifySettingsSaved("lesson");
-			return true;
-		} catch {
-			setError("Could not reach the server — try again.");
+		const res = await updateChatSettings(chatId, patch);
+		if (!res.ok) {
+			setError(res.networkError ? "Could not reach the server — try again." : (res.error ?? `difficulty rejected (${res.status})`));
 			return false;
 		}
+		setView((prev) => ({ ...prev, settings: res.settings }));
+		notifySettingsSaved("lesson");
+		return true;
 	};
 
 	const pick = async (difficulty: Difficulty) => {
-		if (await save({ ...view?.settings, difficulty })) setOpen(false);
+		if (await save((current) => ({ ...current, difficulty }))) setOpen(false);
 	};
 
 	return (

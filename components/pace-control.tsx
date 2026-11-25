@@ -7,7 +7,7 @@ import { usePopoverDismiss } from "./popover-dismiss.ts";
 import { Hint } from "@/components/ui/hint";
 import { CONTROL_CLASS, type ControlVariant } from "@/components/control-variant";
 import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
-import { fetchChatSettings, useChatSettingsSeed } from "@/components/chat-settings-client";
+import { chatSettingsGeneration, fetchChatSettings, updateChatSettings, useChatSettingsSeed } from "@/components/chat-settings-client";
 
 /**
  * The pace pill (fork addition, 2026-11-01) — the language pill's sibling on
@@ -34,17 +34,18 @@ export function PaceControl({ chatId, variant = "edge" }: { chatId: string; vari
 	const containerRef = useRef<HTMLDivElement>(null);
 
 	const read = useCallback(() => {
+		const gen = chatSettingsGeneration(chatId);
 		fetchChatSettings(chatId)
 			.then((b) => {
+				if (chatSettingsGeneration(chatId) !== gen) return;
 				setView({ settings: b.settings ?? {}, kind: b.kind, course: b.course });
 				setNote(b.settings?.paceNote ?? "");
 			})
 			.catch(() => {});
 	}, [chatId]);
 	useEffect(() => {
-		if (seed) return;
 		read();
-	}, [seed, read]);
+	}, [read]);
 	useSettingsSaved((section) => {
 		if (section === "lesson" || section === "models") read();
 	});
@@ -56,35 +57,32 @@ export function PaceControl({ chatId, variant = "edge" }: { chatId: string; vari
 	const current = resolvePace(view?.settings);
 	const hasCourse = view?.course !== undefined && view?.course !== null;
 
-	const save = async (next: ChatSettings): Promise<boolean> => {
+	const save = async (patch: (current: ChatSettings) => ChatSettings): Promise<boolean> => {
 		setError(null);
-		try {
-			const res = await fetch(`/api/chats/${chatId}/settings`, {
-				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(next),
-			});
-			if (!res.ok) {
-				const body = (await res.json().catch(() => ({}))) as { error?: string };
-				setError(body.error ?? `pace rejected (${res.status})`);
-				return false;
-			}
-			setView({ ...view, settings: next });
-			notifySettingsSaved("lesson");
-			return true;
-		} catch {
-			setError("Could not reach the server — try again.");
+		const res = await updateChatSettings(chatId, patch);
+		if (!res.ok) {
+			setError(res.networkError ? "Could not reach the server — try again." : (res.error ?? `pace rejected (${res.status})`));
 			return false;
 		}
+		setView((prev) => ({ ...prev, settings: res.settings }));
+		setNote(res.settings.paceNote ?? "");
+		notifySettingsSaved("lesson");
+		return true;
 	};
 
 	const pick = async (pace: Pace) => {
-		if (await save({ ...view?.settings, pace })) setOpen(false);
+		if (await save((current) => ({ ...current, pace }))) setOpen(false);
 	};
 	const saveNote = async () => {
-		const { paceNote: _old, ...rest } = view?.settings ?? {};
 		const trimmed = note.trim();
-		if (await save({ ...rest, ...(trimmed ? { paceNote: trimmed } : {}) })) setOpen(false);
+		if (
+			await save((current) => {
+				const { paceNote: _old, ...rest } = current;
+				return trimmed ? { ...rest, paceNote: trimmed } : rest;
+			})
+		) {
+			setOpen(false);
+		}
 	};
 
 	return (

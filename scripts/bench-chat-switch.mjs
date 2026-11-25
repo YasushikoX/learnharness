@@ -13,13 +13,14 @@
  * Usage:
  *   node scripts/bench-chat-switch.mjs [--mode=dev|prod] [--switches=3] [--no-browser]
  */
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer-core";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -471,6 +472,7 @@ async function main() {
 	const server = spawn(process.execPath, nextCmd, {
 		cwd: ROOT,
 		env,
+		detached: true,
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	let logs = "";
@@ -513,6 +515,7 @@ async function main() {
 			{ name: "GET /api/chats/:id (full)", method: "GET", url: `/api/chats/${fixture.chatLongA}` },
 			{ name: "GET /api/chats/:id?view=stats", method: "GET", url: `/api/chats/${fixture.chatLongA}?view=stats` },
 			{ name: "GET /api/chats/:id?view=settings", method: "GET", url: `/api/chats/${fixture.chatLongA}?view=settings` },
+			{ name: "GET /api/chats/:id?view=coverage", method: "GET", url: `/api/chats/${fixture.chatLongA}?view=coverage` },
 			{ name: "GET /api/chats/:id/rating-changes", method: "GET", url: `/api/chats/${fixture.chatLongB}/rating-changes` },
 			{ name: "GET /api/chats/:id/lesson-result", method: "GET", url: `/api/chats/${fixture.chatLongFinished}/lesson-result` },
 			{ name: "GET /api/chats/:id/course", method: "GET", url: `/api/chats/${fixture.chatLongB}/course` },
@@ -733,21 +736,111 @@ async function main() {
 		}
 	} finally {
 		if (browser) await browser.close().catch(() => {});
-		if (!exited) {
-			server.kill("SIGTERM");
-			await new Promise((resolve) => {
-				const t = setTimeout(() => {
-					if (!exited) { try { server.kill("SIGKILL"); } catch {} }
-					resolve();
-				}, 3000);
-				server.once("exit", () => { clearTimeout(t); resolve(); });
-			});
-		}
-		fs.rmSync(home, { recursive: true, force: true });
+		await stopProcessGroup(server);
+		await removeTempDirVerified(home);
 	}
 }
 
-main().catch((err) => {
-	console.error(err);
-	process.exit(1);
-});
+function isProcessGroupAlive(pgid) {
+	try {
+		process.kill(-pgid, 0);
+		return true;
+	} catch (err) {
+		return Boolean(err && err.code === "EPERM");
+	}
+}
+
+/** Find PIDs of any detached Next.js shutdown helpers spawned by `ownerPid` (e.g. telemetry detached-flush). */
+function findDetachedFlushPids(ownerPid) {
+	if (process.platform === "win32") return [];
+	try {
+		const out = execFileSync("ps", ["-eo", "pid=,args="], { encoding: "utf8" });
+		const marker = `_events_${ownerPid}_`;
+		const pids = [];
+		for (const line of out.split("\n")) {
+			if (!line.includes(marker)) continue;
+			const m = line.trim().match(/^(\d+)\s+/);
+			if (m) pids.push(Number(m[1]));
+		}
+		return pids;
+	} catch {
+		return [];
+	}
+}
+
+/** Terminate a detached child's entire process group and wait until every process (including detached shutdown helpers) has exited. */
+export async function stopProcessGroup(child, { sigtermTimeoutMs = 3000, sigkillTimeoutMs = 3000, pollMs = 50 } = {}) {
+	const pid = child?.pid;
+	if (!pid) return;
+	const pipesOpen = () =>
+		Boolean((child.stdout && !child.stdout.destroyed && !child.stdout.readableEnded) || (child.stderr && !child.stderr.destroyed && !child.stderr.readableEnded));
+	const waitForClose =
+		(child.exitCode !== null || child.signalCode !== null) && !pipesOpen()
+			? Promise.resolve()
+			: new Promise((resolve) => {
+					child.once("close", () => resolve());
+					child.once("error", () => resolve());
+			  });
+
+	const signalGroup = (sig) => {
+		try {
+			process.kill(-pid, sig);
+		} catch (err) {
+			if (!err || err.code !== "ESRCH") {
+				try { child.kill(sig); } catch {}
+			}
+		}
+	};
+
+	const groupDead = () => !isProcessGroupAlive(pid) && (child.exitCode !== null || child.signalCode !== null);
+
+	const waitGroupGone = async (timeoutMs) => {
+		const deadline = Date.now() + timeoutMs;
+		while (Date.now() < deadline) {
+			if (groupDead()) return true;
+			await new Promise((r) => setTimeout(r, pollMs));
+		}
+		return groupDead();
+	};
+
+	signalGroup("SIGTERM");
+	if (!(await waitGroupGone(sigtermTimeoutMs))) {
+		signalGroup("SIGKILL");
+		await waitGroupGone(sigkillTimeoutMs);
+	}
+	await Promise.race([waitForClose, new Promise((r) => setTimeout(r, 3000))]);
+
+	// Next.js's SIGTERM handler spawns a detached telemetry flush helper in its own PGID
+	// (argv contains `_events_<pid>_`) that writes under <HOME>/Library/Preferences/nextjs-nodejs.
+	// Wait for any such helper to exit before removing the temporary HOME directory.
+	const flushDeadline = Date.now() + 3000;
+	while (Date.now() < flushDeadline) {
+		const flushPids = findDetachedFlushPids(pid);
+		if (flushPids.length === 0) break;
+		await new Promise((r) => setTimeout(r, pollMs));
+	}
+}
+
+/** Remove a temporary directory after its owning process group has exited and verify it is gone. */
+export async function removeTempDirVerified(dir, { retries = 10, retryDelayMs = 100 } = {}) {
+	for (let attempt = 0; attempt <= retries; attempt++) {
+		try {
+			fs.rmSync(dir, { recursive: true, force: true });
+		} catch {
+			// retry
+		}
+		if (!fs.existsSync(dir)) return;
+		if (attempt < retries) await new Promise((r) => setTimeout(r, retryDelayMs));
+	}
+	if (fs.existsSync(dir)) {
+		throw new Error(`Temporary benchmark folder was not removed: ${dir}`);
+	}
+}
+
+const isDirectEntry = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isDirectEntry) {
+	main().catch((err) => {
+		console.error(err);
+		process.exit(1);
+	});
+}

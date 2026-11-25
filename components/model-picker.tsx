@@ -12,7 +12,7 @@ import { isInputShortcutScopeEligible } from "@/components/plugin-input-focus";
 import { Hint } from "@/components/ui/hint";
 import { cn } from "@/lib/utils";
 import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
-import { fetchChatSettings, useChatSettingsSeed } from "@/components/chat-settings-client";
+import { chatSettingsGeneration, fetchChatSettings, updateChatSettings, useChatSettingsSeed } from "@/components/chat-settings-client";
 import { useModelCatalog } from "@/components/model-catalog";
 export { useModelCatalog } from "@/components/model-catalog";
 import { defaultOrderLevel, populateLevel, THINKING_LABEL } from "@/components/thinking-default";
@@ -64,8 +64,12 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// reads the models section alone.
 	const readRecord = useCallback(() => {
 		if (chatId) {
+			const gen = chatSettingsGeneration(chatId);
 			fetchChatSettings(chatId)
-				.then((body) => setSession({ settings: body.settings }))
+				.then((body) => {
+					if (chatSettingsGeneration(chatId) !== gen) return;
+					setSession({ settings: body.settings });
+				})
 				.catch(() => {
 					/* same read-only posture as a models-section failure */
 				});
@@ -81,9 +85,8 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	}, [chatId]);
 
 	useEffect(() => {
-		if (chatId && seed) return;
 		readRecord();
-	}, [chatId, seed, readRecord]);
+	}, [readRecord]);
 
 	useSettingsSaved((section) => {
 		// "lesson": the language control rewrote this lesson's record
@@ -183,45 +186,41 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// shows the stored value). No notifySettingsSaved: the write touches
 	// one session's record, not the slots — no other surface reads it.
 	const saveChat = useCallback(
-		async (next: ChatSettings) => {
+		async (patch: (current: ChatSettings) => ChatSettings) => {
+			if (!chatId) return;
 			setError(null);
-			try {
-				const res = await fetch(`/api/chats/${chatId}/settings`, {
-					method: "PUT",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify(next),
-				});
-				if (!res.ok) {
-					const body = (await res.json().catch(() => ({}))) as { error?: string };
-					setError(body.error ?? `settings rejected (${res.status})`);
-					return;
-				}
-				const stored = (await res.json().catch(() => null)) as { settings?: ChatSettings } | null;
-				setSession({ settings: stored?.settings ?? next });
-				setOpen(null);
-			} catch {
-				setError("Could not reach the server — try again.");
+			const res = await updateChatSettings(chatId, patch);
+			if (!res.ok) {
+				setError(res.networkError ? "Could not reach the server — try again." : (res.error ?? `settings rejected (${res.status})`));
+				return;
 			}
+			setSession({ settings: res.settings });
+			setOpen(null);
 		},
 		[chatId],
 	);
 
 	// One apply seam over both write paths: a pick names provider + id +
-	// level; chat mode writes the session's own record (any pick pins it),
-	// draft mode composes the strong slot (siblings preserved,
-	// replace-whole-section discipline).
+	// level; chat mode re-reads fresh session settings immediately before the
+	// replace-whole PUT so other fields (language, pace, difficulty) ride along
+	// without stale overwrites; draft mode composes the strong slot.
 	const apply = useCallback(
 		(provider: string, id: string, level: ThinkingLevel | undefined) => {
 			if (chatId) {
-				// Replace-whole PUT: the lesson's other fields (its language)
-				// ride along so a model pick never clears them.
-				void saveChat({ ...session?.settings, model: { provider, id }, thinkingLevel: level });
+				void saveChat((current) => {
+					const { thinkingLevel: _oldLevel, ...rest } = current;
+					return {
+						...rest,
+						model: { provider, id },
+						...(level !== undefined ? { thinkingLevel: level } : {}),
+					};
+				});
 			} else {
 				// composeSlotModel's empty-string convention: no level = unset.
 				void save(composeSlotModel(models, "strong", provider, id, level ?? ""));
 			}
 		},
-		[chatId, models, save, saveChat, session],
+		[chatId, models, save, saveChat],
 	);
 
 	// Shortcut seams (keyboard wave A): ⌘K opens the model menu (the

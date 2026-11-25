@@ -269,39 +269,26 @@ export function CoverageRing({
 	// re-reads coverage (same runs-empty-transition the graph view rides).
 	const feed = useActivity().feed;
 	const runHere = feed.extractions.some((run) => run.chatId === chatId);
-	const sawRunRef = useRef(runHere);
-	if (runHere) sawRunRef.current = true;
-	const initialChatIdRef = useRef(chatId);
 
 	useSettingsSaved((section) => {
 		if (section === "graph") setNonce((n) => n + 1);
 	});
 
 	useEffect(() => {
-		if (initialGraph !== undefined && nonce === 0) return;
 		let alive = true;
 		void fetchGraphRead().then((g) => alive && setGraph(g));
 		return () => {
 			alive = false;
 		};
-	}, [nonce, initialGraph]);
+	}, [nonce]);
 
 	useEffect(() => {
-		if (
-			initialCoverage !== undefined &&
-			chatId === initialChatIdRef.current &&
-			refreshKey === 0 &&
-			nonce === 0 &&
-			!sawRunRef.current
-		) {
-			return;
-		}
 		let alive = true;
 		void fetchCoverage(chatId).then((c) => alive && setCoverage(c));
 		return () => {
 			alive = false;
 		};
-	}, [chatId, refreshKey, nonce, runHere, initialCoverage]);
+	}, [chatId, refreshKey, nonce, runHere]);
 
 	// While a run is in flight: poll at 2s so the ring DRAINS as folds land
 	// and settles at zero when the run completes (the "resets on

@@ -138,17 +138,43 @@ interface EvidenceCacheEntry {
 
 interface EvidenceCacheState {
 	entries: Map<string, EvidenceCacheEntry>;
+	floor: number;
+	ceiling: number;
 	maxEntries: number;
 }
 
-const DEFAULT_EVIDENCE_CACHE_MAX = 1000;
-const EVIDENCE_CACHE_KEY = Symbol.for("lh.courseEvidenceCache");
+/** Bump whenever `extractChatCourseEvidence` or `ChatCourseEvidence` changes so dev hot reloads never serve stale cached extractions. */
+export const COURSE_EVIDENCE_CACHE_VERSION = 1;
+export const COURSE_EVIDENCE_CACHE_KEY = Symbol.for(`lh.courseEvidenceCache.v${COURSE_EVIDENCE_CACHE_VERSION}`);
+/** Minimum LRU capacity even for small data directories. */
+export const COURSE_EVIDENCE_CACHE_FLOOR = 1_000;
+/** Hard memory-minded ceiling (~2–5 KB/entry -> ~40–100 MB worst-case). */
+export const COURSE_EVIDENCE_CACHE_CEILING = 20_000;
+const EVIDENCE_CACHE_HEADROOM = 1.25;
+
+function computeEvidenceCacheLimit(scannedCourseChats: number, floor: number, ceiling: number): number {
+	const target = Math.max(floor, Math.ceil(scannedCourseChats * EVIDENCE_CACHE_HEADROOM));
+	return Math.min(ceiling, Math.max(1, target));
+}
+
+function evictOverflow(state: EvidenceCacheState): void {
+	while (state.entries.size > state.maxEntries) {
+		const oldest = state.entries.keys().next().value;
+		if (oldest === undefined) break;
+		state.entries.delete(oldest);
+	}
+}
 
 /** Process-shared bounded LRU cache across Next.js route bundles (same pattern as draftRuns/weighRuns). */
 function evidenceCacheState(): EvidenceCacheState {
 	const g = globalThis as Record<symbol, EvidenceCacheState | undefined>;
-	g[EVIDENCE_CACHE_KEY] ??= { entries: new Map(), maxEntries: DEFAULT_EVIDENCE_CACHE_MAX };
-	return g[EVIDENCE_CACHE_KEY];
+	g[COURSE_EVIDENCE_CACHE_KEY] ??= {
+		entries: new Map(),
+		floor: COURSE_EVIDENCE_CACHE_FLOOR,
+		ceiling: COURSE_EVIDENCE_CACHE_CEILING,
+		maxEntries: COURSE_EVIDENCE_CACHE_FLOOR,
+	};
+	return g[COURSE_EVIDENCE_CACHE_KEY];
 }
 
 /** Test/diagnostic seam: clear the per-chat course evidence cache. */
@@ -161,15 +187,37 @@ export function courseEvidenceCacheSize(): number {
 	return evidenceCacheState().entries.size;
 }
 
-/** Test/diagnostic seam: bound the cache capacity (restoring default when omitted). */
-export function setCourseEvidenceCacheLimit(maxEntries = DEFAULT_EVIDENCE_CACHE_MAX): void {
+/** Test/diagnostic seam: active effective cache entry limit. */
+export function courseEvidenceCacheLimit(): number {
+	return evidenceCacheState().maxEntries;
+}
+
+/** Test/diagnostic seam: configure floor and ceiling bounds (restoring defaults when omitted). */
+export function setCourseEvidenceCacheBounds(bounds?: { floor?: number; ceiling?: number }): void {
 	const state = evidenceCacheState();
-	state.maxEntries = Math.max(1, Math.floor(maxEntries));
-	while (state.entries.size > state.maxEntries) {
-		const oldest = state.entries.keys().next().value;
-		if (oldest === undefined) break;
-		state.entries.delete(oldest);
+	const ceiling = Math.max(1, Math.floor(bounds?.ceiling ?? COURSE_EVIDENCE_CACHE_CEILING));
+	const floor = Math.min(ceiling, Math.max(1, Math.floor(bounds?.floor ?? COURSE_EVIDENCE_CACHE_FLOOR)));
+	state.ceiling = ceiling;
+	state.floor = floor;
+	state.maxEntries = Math.min(ceiling, Math.max(floor, state.maxEntries));
+	evictOverflow(state);
+}
+
+/** Test/diagnostic seam: pin the hard ceiling (or restore default floor/ceiling when omitted). */
+export function setCourseEvidenceCacheLimit(maxEntries?: number): void {
+	const state = evidenceCacheState();
+	if (maxEntries === undefined) {
+		state.floor = COURSE_EVIDENCE_CACHE_FLOOR;
+		state.ceiling = COURSE_EVIDENCE_CACHE_CEILING;
+		state.maxEntries = COURSE_EVIDENCE_CACHE_FLOOR;
+		evictOverflow(state);
+		return;
 	}
+	const cap = Math.max(1, Math.floor(maxEntries));
+	state.ceiling = cap;
+	state.floor = Math.min(state.floor, cap);
+	state.maxEntries = Math.min(state.maxEntries, cap);
+	evictOverflow(state);
 }
 
 function chatEvidenceFile(id: string): string | null {
@@ -225,11 +273,7 @@ function chatCourseEvidence(id: string): ChatCourseEvidence | null {
 	const evidence = extractChatCourseEvidence(stores.chatStore.getChat(id));
 	state.entries.delete(file);
 	state.entries.set(file, { mtimeMs: st.mtimeMs, size: st.size, ino: st.ino, evidence });
-	while (state.entries.size > state.maxEntries) {
-		const oldest = state.entries.keys().next().value;
-		if (oldest === undefined) break;
-		state.entries.delete(oldest);
-	}
+	evictOverflow(state);
 	return evidence;
 }
 
@@ -254,8 +298,12 @@ function courseEvidence(): { byCourse: Map<string, SkillEvent[]>; notes: Map<str
 	const problems = new Map<string, ConcludedProblem[]>();
 	const notes = new Map<string, LessonNote>();
 	const presentFiles = new Set<string>();
-	for (const summary of stores.chatStore.listChats()) {
-		if (!summary.course) continue;
+	const courseChats = stores.chatStore.listChats().filter((summary) => Boolean(summary.course));
+	const state = evidenceCacheState();
+	// Size the LRU cap from the number of course chats in this scan (bounded by [floor, ceiling])
+	// so scanning more chats than the floor never thrashes the cache.
+	state.maxEntries = computeEvidenceCacheLimit(courseChats.length, state.floor, state.ceiling);
+	for (const summary of courseChats) {
 		const file = chatEvidenceFile(summary.id);
 		if (file) presentFiles.add(file);
 		const ev = chatCourseEvidence(summary.id);
@@ -271,14 +319,14 @@ function courseEvidence(): { byCourse: Map<string, SkillEvent[]>; notes: Map<str
 			if (!held || held.at < note.at) notes.set(skillId, { ...note });
 		}
 	}
-	const state = evidenceCacheState();
 	const chatsPrefix = PATHS.chats.endsWith(path.sep) ? PATHS.chats : `${PATHS.chats}${path.sep}`;
 	for (const key of [...state.entries.keys()]) {
 		if (key.startsWith(chatsPrefix) && !presentFiles.has(key)) {
-			// Keep non-course entries only if the file still exists? Pruning deleted/non-course files keeps memory tight.
+			// Pruning deleted/non-course files keeps memory tight.
 			state.entries.delete(key);
 		}
 	}
+	evictOverflow(state);
 	return { byCourse, notes, problems };
 }
 

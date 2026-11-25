@@ -1,6 +1,6 @@
 "use client";
 
-import { fetchChatSettings, type ChatSettingsSnapshot } from "@/components/chat-settings-client";
+import { chatSettingsGeneration, fetchChatSettings, type ChatSettingsSnapshot } from "@/components/chat-settings-client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2Icon, MicIcon } from "lucide-react";
@@ -499,18 +499,15 @@ export function useDictation({ append, chatId, initialSession, destination = "pr
 	const transcriptRef = useRef<LiveTranscript | null>(null);
 	useEffect(() => probeNativeSpeech(), []);
 	const refreshLesson = useCallback(() => {
+		const gen = chatId ? chatSettingsGeneration(chatId) : null;
 		void readLessonSettings(chatId).then((s) => {
+			if (chatId && chatSettingsGeneration(chatId) !== gen) return;
 			lessonRef.current = s;
 		});
 	}, [chatId]);
-	const seededChatIdRef = useRef(chatId);
 	useEffect(() => {
-		if (initialSession !== undefined && chatId === seededChatIdRef.current) {
-			lessonRef.current = initialSession.settings;
-			return;
-		}
 		refreshLesson();
-	}, [chatId, initialSession, refreshLesson]);
+	}, [refreshLesson]);
 	/** Pre-mint for a Deepgram page (mitigation D) — silent if keyless. The engine comes from the shared settings read. */
 	const warmForEngine = useCallback(() => {
 		void getGeneral().then((g) => {
