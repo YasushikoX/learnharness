@@ -17,8 +17,8 @@ import type { MaterialStore } from "../../core/ports.ts";
  *                    (or one), hits with page (PDF) or line numbers
  *   material_read    a PDF's pages, or a text's line range
  *
- * Web pages are stored as their extracted Markdown; images are searched
- * and read through their transcription (content.md).
+ * PDFs, web pages and images use their derived content.md when present;
+ * older PDFs fall back to pdfjs against the stored original.
  */
 
 export interface MaterialToolContext {
@@ -38,6 +38,14 @@ function textPathOf(ctx: MaterialToolContext, m: LessonMaterial): string {
 /** The plain answer for a material whose original file is not on this device (it arrived by sync), or null when the file is here. */
 async function originalElsewhere(ctx: MaterialToolContext, m: LessonMaterial): Promise<string | null> {
 	try {
+		if (m.kind === "pdf") {
+			try {
+				await fs.access(ctx.store.auxPath(ctx.chatId, m.id, "content.md"));
+				return null;
+			} catch {
+				// Older materials have no derived content and need their original PDF.
+			}
+		}
 		await fs.access(textPathOf(ctx, m)); // the file the tools actually open
 		return null;
 	} catch {

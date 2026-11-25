@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { documentToMarkdown, type PdfPage } from "./pdf-markdown.ts";
+import { formatPageMarker, parsePageMarkedMarkdown, type MarkedPage } from "../../core/material-pages.ts";
 
 /**
  * PDF plumbing for the pdf-reader sub-agent — sources v0 (2026-09): Node
@@ -9,8 +10,8 @@ import { documentToMarkdown, type PdfPage } from "./pdf-markdown.ts";
  * pdf_search / pdf_render), on the user-chosen hybrid stack:
  *
  * - TEXT (info / extract / search): pdfjs-dist — pure JS, no native deps.
- *   extract and search read pdf-markdown's Markdown, so words and lines
- *   survive (the raw text items glued "lecture" + "Plants").
+ *   Extract and search prefer a sibling content.md, then read pdf-markdown's
+ *   Markdown, so words and lines survive (raw glued text items do not).
  * - RENDER: subagents/headless.ts uses the same pdfjs engine with
  *   @napi-rs/canvas (Skia), in-process — no browser needed.
  *
@@ -251,13 +252,30 @@ function pageMarkdown(page: PdfPage): string {
 	return page.kind === "text" ? page.markdown : "";
 }
 
+async function storedPages(filePath: string): Promise<MarkedPage[] | null> {
+	try {
+		return parsePageMarkedMarkdown(await fs.readFile(path.join(path.dirname(filePath), "content.md"), "utf8"));
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+		throw error;
+	}
+}
+
 /** pdf_extract: Markdown of the requested pages, `--- Page N ---` headed. */
 export async function pdfExtract(filePath: string, pageSpec: string): Promise<string> {
+	const stored = await storedPages(filePath);
+	if (stored) {
+		const byPage = new Map(stored.map((page) => [page.page, page.markdown]));
+		const total = stored.reduce((max, page) => Math.max(max, page.page), 0);
+		const pages = parsePageSpec(pageSpec, total);
+		if (pages.length === 0) return "No pages selected — page spec matched nothing.";
+		return pages.map((page) => `${formatPageMarker(page)}\n${byPage.get(page) ?? ""}`).join("\n");
+	}
 	const { doc } = await openDocument(filePath);
 	const pages = parsePageSpec(pageSpec, doc.numPages);
 	if (pages.length === 0) return "No pages selected — page spec matched nothing.";
 	const converted = await documentToMarkdown(doc, pages);
-	return converted.map((page) => `--- Page ${page.number} ---\n${pageMarkdown(page)}`).join("\n");
+	return converted.map((page) => `${formatPageMarker(page.number)}\n${pageMarkdown(page)}`).join("\n");
 }
 
 export interface PdfSearchHit {
@@ -276,7 +294,6 @@ export async function pdfSearch(
 	opts?: { contextLines?: number; literal?: boolean },
 ): Promise<{ hits: PdfSearchHit[]; pageTexts: Map<number, string> }> {
 	const contextLines = opts?.contextLines ?? 3;
-	const { doc } = await openDocument(filePath);
 	let pattern: RegExp;
 	if (opts?.literal) {
 		pattern = new RegExp(escapeRegex(query), "i");
@@ -287,13 +304,18 @@ export async function pdfSearch(
 			throw new Error(`Invalid regex: ${(err as Error).message}`);
 		}
 	}
+	const stored = await storedPages(filePath);
+	let pages: MarkedPage[];
+	if (stored) pages = stored;
+	else {
+		const { doc } = await openDocument(filePath);
+		pages = (await documentToMarkdown(doc)).map((page) => ({ page: page.number, markdown: pageMarkdown(page) }));
+	}
 	const hits: PdfSearchHit[] = [];
 	const pageTexts = new Map<number, string>();
-	for (const page of await documentToMarkdown(doc)) {
-		const i = page.number;
-		const text = pageMarkdown(page);
-		pageTexts.set(i, text);
-		const lines = text.split("\n");
+	for (const page of pages) {
+		pageTexts.set(page.page, page.markdown);
+		const lines = page.markdown.split("\n");
 		for (let ln = 0; ln < lines.length; ln++) {
 			if (!pattern.test(lines[ln]!)) continue;
 			const start = Math.max(0, ln - contextLines);
@@ -302,7 +324,7 @@ export async function pdfSearch(
 				.slice(start, end)
 				.map((l, j) => `${start + j === ln ? ">>>" : "   "} ${l}`)
 				.join("\n");
-			hits.push({ page: i, line: ln + 1, context });
+			hits.push({ page: page.page, line: ln + 1, context });
 		}
 	}
 	return { hits, pageTexts };

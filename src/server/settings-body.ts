@@ -26,9 +26,10 @@ import type {
 	GraphSettings,
 	ModelsSettings,
 	ModelSlot,
+	PdfConversionSettings,
 	RoleModelOverride,
 } from "../core/settings.ts";
-import { BACKGROUND_MODEL_ROLES, CACHE_RETENTIONS, COMPACTION_THRESHOLD_FLOOR, CUSTOM_MODEL_PIN_FLOOR, EXTRACTION_CHUNK_TOKENS_FLOOR, isTranscriptMaxWidth, MODEL_SLOTS, TRANSCRIPT_WIDTH_MAX_REM, TRANSCRIPT_WIDTH_MIN_REM } from "../core/settings.ts";
+import { BACKGROUND_MODEL_ROLES, CACHE_RETENTIONS, COMPACTION_THRESHOLD_FLOOR, CUSTOM_MODEL_PIN_FLOOR, EXTRACTION_CHUNK_TOKENS_FLOOR, isTranscriptMaxWidth, MODEL_SLOTS, normalizeBaseUrl, TRANSCRIPT_WIDTH_MAX_REM, TRANSCRIPT_WIDTH_MIN_REM } from "../core/settings.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
 import { parseRepo } from "./sync/service.ts";
 import { LESSON_LANGUAGES, isDictationEngine, isLessonLanguage } from "../core/language.ts";
@@ -626,6 +627,39 @@ export function parseCustomModelOverridesBody(
 	return { ok: true, settings: out };
 }
 
+export function parsePdfConversionSettingsBody(body: unknown): SettingsBodyResult<PdfConversionSettings> {
+	const raw = asRecord(body);
+	if (!raw) return { ok: false, error: "Invalid JSON body" };
+	const settings: PdfConversionSettings = {};
+	if (raw.converter !== undefined) {
+		if (typeof raw.converter !== "string" || !raw.converter.trim()) return { ok: false, error: "converter must be a non-empty registered id" };
+		settings.converter = raw.converter.trim();
+	}
+	if (raw.docling !== undefined) {
+		const docling = asRecord(raw.docling);
+		if (!docling) return { ok: false, error: "docling must be an object" };
+		const out: NonNullable<PdfConversionSettings["docling"]> = {};
+		if (docling.baseUrl !== undefined) {
+			if (typeof docling.baseUrl !== "string") return { ok: false, error: "docling.baseUrl must be an HTTP(S) URL" };
+			if (docling.baseUrl.trim()) {
+				const baseUrl = normalizeBaseUrl(docling.baseUrl);
+				if (!baseUrl) return { ok: false, error: "docling.baseUrl must be an absolute HTTP(S) URL without credentials, query, or fragment" };
+				out.baseUrl = baseUrl;
+			}
+		}
+		if (docling.ocr !== undefined) {
+			if (typeof docling.ocr !== "boolean") return { ok: false, error: "docling.ocr must be a boolean" };
+			out.ocr = docling.ocr;
+		}
+		if (docling.formulaEnrichment !== undefined) {
+			if (typeof docling.formulaEnrichment !== "boolean") return { ok: false, error: "docling.formulaEnrichment must be a boolean" };
+			out.formulaEnrichment = docling.formulaEnrichment;
+		}
+		settings.docling = out;
+	}
+	return { ok: true, settings };
+}
+
 /** The section→parser map for PUT /api/settings/[section]. The custom endpoint
  *  is NOT a section — it connects via POST /api/custom-provider. */
 export const SETTINGS_SECTIONS = {
@@ -637,6 +671,7 @@ export const SETTINGS_SECTIONS = {
 	compaction: parseCompactionSettingsBody,
 	learner: parseLearnerSettingsBody,
 	models: parseModelsSettingsBody,
+	pdfConversion: parsePdfConversionSettingsBody,
 	dictation: parseDictationSettingsBody,
 	claudeCode: parseClaudeCodeSettingsBody,
 	sync: parseSyncSettingsBody,

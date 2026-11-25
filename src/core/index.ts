@@ -97,6 +97,8 @@ export * from "./dictation-pieces.ts";
 export * from "./upstream.ts";
 // Lesson source material (fork addition, 2026-10-24).
 export * from "./materials.ts";
+export * from "./material-pages.ts";
+export * from "./pdf-converter.ts";
 export * from "./lecture-notes.ts";
 export * from "./lecture-note-text.ts";
 // Sketch answers (fork addition, 2026-10-26 — the Android plan M1).

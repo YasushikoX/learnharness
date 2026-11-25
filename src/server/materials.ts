@@ -17,12 +17,14 @@ import { fetchLink } from "../agent/tools/web.ts";
 import { materialTools } from "../agent/tools/materials.ts";
 import type { MaterialStore } from "../core/ports.ts";
 import { lectureNotesForTurn } from "./lecture-notes.ts";
+import { ensureMaterialContent } from "./material-conversion.ts";
+import { ConverterError } from "../core/pdf-converter.ts";
 import { stores } from "./stores.ts";
 
 /**
  * Lesson source material — the service seam (fork addition, 2026-10-24;
  * model: core/materials.ts). Adds uploads and links, profiles each
- * material ONCE in the background (one run per material, through the
+ * material ONCE in the background (PDF conversion, then profiling through the
  * shared background-LLM permits), and hands each turn its prompt section
  * and lookup tools. A turn waits briefly for profiles still being read.
  *
@@ -73,15 +75,16 @@ function startProfile(chatId: string, material: LessonMaterial): Promise<void> {
 	const controller = new AbortController();
 	const { materialStore } = stores;
 	const promise = (async () => {
-		const spec = resolveRoleSpec("pdfReader", stores.settingsStore.readSettings());
-		if (!spec) {
-			materialStore.update(chatId, material.id, {
-				status: "error",
-				error: "no vision model is configured (Settings → Agent: the vision slot reads source material)",
-			});
-			return;
-		}
 		try {
+			if (material.kind === "pdf") await ensureMaterialContent(chatId, material, controller.signal);
+			const spec = resolveRoleSpec("pdfReader", stores.settingsStore.readSettings());
+			if (!spec) {
+				materialStore.update(chatId, material.id, {
+					status: "error",
+					error: "no vision model is configured (Settings → Agent: the vision slot reads source material)",
+				});
+				return;
+			}
 			// The profiler's model requests pass the process-wide worker-request admission (the one background-LLM pool).
 			const result = await profileMaterial(
 				{
@@ -100,12 +103,14 @@ function startProfile(chatId: string, material: LessonMaterial): Promise<void> {
 				profile: result.profile,
 				...(result.pages !== undefined ? { pages: result.pages } : {}),
 				error: undefined,
+				conversionError: undefined,
 			});
 		} catch (err) {
 			if (controller.signal.aborted) return; // removed while reading
 			materialStore.update(chatId, material.id, {
 				status: "error",
-				error: err instanceof Error ? err.message : String(err),
+				error: err instanceof ConverterError ? `PDF conversion failed [${err.kind}]: ${err.message}` : err instanceof Error ? err.message : String(err),
+				conversionError: err instanceof ConverterError ? err.kind : undefined,
 			});
 		}
 	})().finally(() => runs().delete(key));

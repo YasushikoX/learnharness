@@ -13,6 +13,8 @@
  * notes' provenance, graph/sources.json) — a different thing.
  */
 
+import type { ConverterErrorKind } from "./pdf-converter.ts";
+
 export type MaterialKind = "pdf" | "text" | "image" | "web";
 
 /** reading: being profiled · ready: profiled · error: profiling failed
@@ -38,6 +40,8 @@ export interface LessonMaterial {
 	addedMidLesson?: boolean;
 	status: MaterialStatus;
 	error?: string;
+	/** The converter failure category when PDF conversion, rather than profiling, failed. */
+	conversionError?: ConverterErrorKind;
 	/** The reading profile (Markdown, page-cited for PDFs). */
 	profile?: string;
 	/** DERIVED on read, never stored: the material's name, profile and text

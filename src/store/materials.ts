@@ -11,7 +11,7 @@ import type { LessonMaterial } from "../core/materials.ts";
  *
  *   materials/<chatId>/index.json          LessonMaterial[]
  *   materials/<chatId>/<materialId>/source.<ext>   the stored copy
- *   materials/<chatId>/<materialId>/content.md     derived text (web, image)
+ *   materials/<chatId>/<materialId>/content.md     derived text (PDF, web, image)
  *
  * Index writes are synchronous read-modify-write, so the background
  * profiler and the routes can never interleave a partial update.
