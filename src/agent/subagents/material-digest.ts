@@ -517,12 +517,15 @@ async function callSingle(deps: MaterialDigestDeps, batch: MaterialBatch, name: 
 // ── Combining by exact id ──────────────────────────────────────────────────
 
 /**
- * An occurrence list in source order cut to MAX_TERM_OCCURRENCES: the first MAX_TERM_OCCURRENCES - 2, plus the
- * occurrence that supplies the definition and the first core one when they come later. Cutting the union of two cut
- * lists gives the cut of the union, so a recovery merge equals a clean run. Pure.
+ * An occurrence list in source order, of a term with `count` occurrences in all, in its stored form: whole when the
+ * count is at most MAX_TERM_OCCURRENCES; otherwise the first MAX_TERM_OCCURRENCES - 2, plus the occurrence that
+ * supplies the definition and the first core one when they come later. The cut depends on the total count, not on the
+ * length of the list it is given, so it is associative: cutting the union of cut lists (with the summed count) gives
+ * the cut of the union, and a stored digest merged with a recovered part equals a clean run for any number of
+ * occurrences. Idempotent. Pure.
  */
-function truncateOccurrences(occurrences: readonly TermOccurrence[]): TermOccurrence[] {
-	if (occurrences.length <= MAX_TERM_OCCURRENCES) return [...occurrences];
+export function truncateOccurrences(occurrences: readonly TermOccurrence[], count: number): TermOccurrence[] {
+	if (count <= MAX_TERM_OCCURRENCES) return [...occurrences];
 	const keep = new Set<number>();
 	for (let i = 0; i < MAX_TERM_OCCURRENCES - 2; i++) keep.add(i);
 	const supplier = definitionIndex(occurrences);
@@ -591,7 +594,7 @@ export function combineTerms(lists: readonly (readonly DigestTerm[])[]): DigestT
 		.sort((a, b) => compareKeys(a.key, b.key))
 		.map((acc) => {
 			const sorted = acc.occurrences.map((o, i) => ({ o, i })).sort((x, y) => x.o.part - y.o.part || x.i - y.i).map((x) => x.o);
-			const occurrences = truncateOccurrences(sorted);
+			const occurrences = truncateOccurrences(sorted, acc.count);
 			return {
 				id: acc.id,
 				term: acc.term,
@@ -1152,12 +1155,30 @@ const isPage = (v: unknown): v is number => Number.isSafeInteger(v) && (v as num
 const isTier = (v: unknown): v is TermTier => v === "core" || v === "supporting";
 const isStringArray = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === "string");
 const isNormalizedName = (v: unknown): v is string => typeof v === "string" && v !== "" && normalizeName(v) === v;
+/** A text the writer stores: visible content, trimmed (validateBatchReply). */
+const isStoredText = (v: unknown): v is string => typeof v === "string" && hasVisibleContent(v) && v === v.trim();
+/** A list of names as the writer stores them: normalised, visible, unique, sorted by code unit, at most MAX_TERM_NAMES. */
+const isNameList = (v: unknown): v is string[] =>
+	Array.isArray(v) && v.length <= MAX_TERM_NAMES && v.every((s, i) => isNormalizedName(s) && (i === 0 || byCodeUnit(v[i - 1] as string, s) < 0));
 
 /**
- * THE read boundary for digest.json: parses (a string) or takes a parsed value, and validates the version, every
- * shape, integer offsets that tile from 0, page sets, that every id is the id of its name, that every occurrence,
- * concept and figure names an indexed part and one of its pages, and that every term's summary fields are the ones
- * its occurrences give. Returns the typed digest, or the reason it cannot be used. Pure.
+ * Whether a digest has a usable profile: non-null and a valid profile (validateProfile). THE one test of "has a
+ * profile", used by the material notes (server/material-indexing.ts digestNotes) and the upload hook alike. Pure.
+ */
+export function hasProfile(digest: Pick<MaterialDigest, "profile">): digest is MaterialDigest & { profile: string } {
+	return digest.profile !== null && validateProfile(digest.profile).ok;
+}
+
+/**
+ * THE read boundary for digest.json: parses (a string) or takes a parsed value, and validates every invariant the
+ * writer enforces: the version; non-empty source hash and converter fields and a positive indexer version; a bounded,
+ * visible name; a page count no smaller than any part's page; a null profile with its error, or a valid profile
+ * (validateProfile) stored in its validated form; integer offsets that tile from 0, page sets and bounded heading
+ * titles; visible, trimmed summary bullets, definitions, statements and captions; aliases and symbols normalised,
+ * unique, sorted and bounded; that every id is the id of its name; that every occurrence, concept and figure names an
+ * indexed part and one of its pages; that every occurrence list is in source order and in its stored (truncated) form
+ * for its count; and that every term's summary fields are the ones its occurrences give. Returns a digest built only
+ * from the contract's fields (anything else in the file is dropped), or the reason it cannot be used. Pure.
  */
 export function parseStoredDigest(input: unknown): { ok: true; digest: MaterialDigest } | { ok: false; problem: StoredDigestProblem } {
 	const invalid = (reason: string) => ({ ok: false as const, problem: { kind: "invalid" as const, reason } });
@@ -1173,17 +1194,23 @@ export function parseStoredDigest(input: unknown): { ok: true; digest: MaterialD
 	if (value.version !== MATERIAL_DIGEST_VERSION) {
 		return { ok: false, problem: { kind: "version", version: value.version, reason: `digest version ${JSON.stringify(value.version) ?? "missing"}, this indexer writes ${MATERIAL_DIGEST_VERSION}` } };
 	}
-	for (const key of ["sourceHash", "converter", "converterVersion"] as const) if (typeof value[key] !== "string") return invalid(`"${key}" is not a string`);
-	if (!Number.isSafeInteger(value.indexerVersion)) return invalid(`"indexerVersion" is not an integer`);
-	if (value.name !== null && !(typeof value.name === "string" && value.name.length <= NAME_MAX_CHARS)) return invalid(`"name" is not null or a bounded string`);
+	for (const key of ["sourceHash", "converter", "converterVersion"] as const) if (!isStoredText(value[key])) return invalid(`"${key}" is not a non-empty string`);
+	if (!Number.isSafeInteger(value.indexerVersion) || (value.indexerVersion as number) < 0) return invalid(`"indexerVersion" is not a non-negative integer`);
+	if (value.name !== null && !(typeof value.name === "string" && requestName(value.name) === value.name)) return invalid(`"name" is not null or a bounded, visible, whitespace-collapsed string`);
 	if (!isPage(value.pageCount)) return invalid(`"pageCount" is not a page number`);
 	if (value.sourcePageCount !== null && !isPage(value.sourcePageCount)) return invalid(`"sourcePageCount" is not null or a page number`);
 	if (value.profile === null) {
-		if (typeof value.profileError !== "string") return invalid(`"profile" is null without a "profileError"`);
-	} else if (typeof value.profile !== "string" || value.profileError !== undefined) return invalid(`"profile" is not a string or null`);
+		if (!isStoredText(value.profileError)) return invalid(`"profile" is null without a "profileError"`);
+	} else {
+		if (typeof value.profile !== "string" || value.profileError !== undefined) return invalid(`"profile" is not a string or null`);
+		const checked = validateProfile(value.profile);
+		if (!checked.ok) return invalid(`"profile" is not a valid profile: ${checked.error}`);
+		if (checked.value !== value.profile) return invalid(`"profile" is not stored in its validated form`);
+	}
 
 	if (!Array.isArray(value.batches) || value.batches.length === 0) return invalid(`"batches" is not a non-empty array`);
 	const indexedPages = new Map<number, Set<number>>();
+	const batches: DigestBatch[] = [];
 	let end = 0;
 	for (const [i, b] of value.batches.entries()) {
 		const where = `batches[${i}]`;
@@ -1195,53 +1222,91 @@ export function parseStoredDigest(input: unknown): { ok: true; digest: MaterialD
 		if (!Array.isArray(b.pages) || b.pages.length === 0 || !b.pages.every(isPage)) return invalid(`${where} has no valid page set`);
 		const pages = b.pages as number[];
 		if (pages.some((p, k) => k > 0 && p <= pages[k - 1]!)) return invalid(`${where} has pages that are not ascending and unique`);
+		if (pages.at(-1)! > value.pageCount) return invalid(`${where} has page ${pages.at(-1)}, beyond the "pageCount" ${value.pageCount}`);
 		if (!isPage(b.pageStart) || !isPage(b.pageEnd) || !pages.includes(b.pageStart) || !pages.includes(b.pageEnd)) return invalid(`${where} has a start or end page outside its pages`);
-		if (!isStringArray(b.headingPath)) return invalid(`${where} has no heading path`);
+		if (!isStringArray(b.headingPath) || !b.headingPath.every((t) => clip(t, STORED_TITLE_MAX_CHARS) === t)) return invalid(`${where} has no heading path of bounded titles`);
+		const ref: DigestBatchRef = { index: i, pageStart: b.pageStart, pageEnd: b.pageEnd, pages: [...pages], headingPath: [...b.headingPath], charStart: b.charStart as number, charEnd: b.charEnd as number };
 		if (b.status === "indexed") {
 			if (!isStringArray(b.summaryBullets)) return invalid(`${where} has no summary bullets`);
+			if (!b.summaryBullets.every(isStoredText)) return invalid(`${where} has a blank or untrimmed summary bullet`);
 			if (b.error !== undefined) return invalid(`${where} is indexed but has an error`);
 			indexedPages.set(i, new Set(pages));
+			batches.push({ ...ref, status: "indexed", summaryBullets: [...b.summaryBullets] });
 		} else if (b.status === "failed") {
-			if (typeof b.error !== "string") return invalid(`${where} is failed without an error`);
+			if (typeof b.error !== "string" || !hasVisibleContent(b.error)) return invalid(`${where} is failed without an error`);
+			batches.push({ ...ref, status: "failed", error: b.error });
 		} else return invalid(`${where} has status ${JSON.stringify(b.status)}`);
 	}
 	const onPart = (part: unknown, page: unknown) => Number.isSafeInteger(part) && indexedPages.get(part as number)?.has(page as number) === true;
 
 	if (!Array.isArray(value.terms)) return invalid(`"terms" is not an array`);
 	const termIds = new Set<string>();
+	const terms: DigestTerm[] = [];
 	for (const [i, t] of value.terms.entries()) {
 		const where = `terms[${i}]`;
 		if (!isRecord(t) || !isNormalizedName(t.term) || t.id !== termId(t.term)) return invalid(`${where} has no name or not the id of its name`);
 		if (termIds.has(t.id)) return invalid(`${where} repeats the id ${t.id}`);
 		termIds.add(t.id);
-		if (!isStringArray(t.aliases) || !isStringArray(t.symbols)) return invalid(`${where} has no alias or symbol lists`);
+		if (!isNameList(t.aliases) || !isNameList(t.symbols)) return invalid(`${where} has alias or symbol lists that are not normalised, unique, sorted and bounded`);
+		if (t.aliases.includes(t.term)) return invalid(`${where} lists its own name as an alias`);
 		if (!Array.isArray(t.occurrences) || t.occurrences.length === 0 || t.occurrences.length > MAX_TERM_OCCURRENCES) return invalid(`${where} has no bounded occurrence list`);
+		const occurrences: TermOccurrence[] = [];
 		let lastPart = -1;
 		for (const [k, o] of t.occurrences.entries()) {
 			if (!isRecord(o) || !isTier(o.tier) || !onPart(o.part, o.page)) return invalid(`${where}.occurrences[${k}] is not on a page of an indexed part`);
 			if ((o.part as number) < lastPart) return invalid(`${where}.occurrences are not in source order`);
 			lastPart = o.part as number;
-			if (o.definition === null ? o.definitionPage !== null : typeof o.definition !== "string" || !onPart(o.part, o.definitionPage)) return invalid(`${where}.occurrences[${k}] has an inconsistent definition`);
+			if (o.definition === null ? o.definitionPage !== null : !isStoredText(o.definition) || !onPart(o.part, o.definitionPage)) return invalid(`${where}.occurrences[${k}] has an inconsistent or blank definition`);
+			occurrences.push({ part: o.part as number, page: o.page as number, tier: o.tier, definition: o.definition as string | null, definitionPage: o.definitionPage as number | null });
 		}
-		if (!Number.isSafeInteger(t.occurrenceCount) || (t.occurrenceCount as number) < t.occurrences.length) return invalid(`${where} has an occurrence count below its list`);
-		if ((t.occurrenceCount as number) > t.occurrences.length && t.occurrences.length < MAX_TERM_OCCURRENCES - 2) return invalid(`${where} is truncated below the bound`);
-		const derived = summarizeOccurrences(t.occurrences as TermOccurrence[]);
+		const count = t.occurrenceCount;
+		if (!Number.isSafeInteger(count) || (count as number) < occurrences.length) return invalid(`${where} has an occurrence count below its list`);
+		if ((count as number) <= MAX_TERM_OCCURRENCES ? count !== occurrences.length : occurrences.length < MAX_TERM_OCCURRENCES - 2 || truncateOccurrences(occurrences, count as number).length !== occurrences.length) {
+			return invalid(`${where} has an occurrence list that is not the stored form for its count`);
+		}
+		const derived = summarizeOccurrences(occurrences);
 		for (const key of ["page", "tier", "definition", "definitionPage", "definitionTier"] as const) {
 			if (t[key] !== derived[key]) return invalid(`${where}.${key} is not what its occurrences give`);
 		}
+		terms.push({ id: t.id, term: t.term, aliases: [...t.aliases], symbols: [...t.symbols], ...derived, occurrences, occurrenceCount: count as number });
 	}
 	if (!Array.isArray(value.concepts)) return invalid(`"concepts" is not an array`);
 	const conceptIds = new Set<string>();
+	const concepts: DigestConcept[] = [];
 	for (const [i, c] of value.concepts.entries()) {
 		if (!isRecord(c) || !isNormalizedName(c.name) || c.id !== conceptId(c.name) || conceptIds.has(c.id)) return invalid(`concepts[${i}] has no name, not the id of its name, or a repeated id`);
 		conceptIds.add(c.id);
-		if (typeof c.statement !== "string" || !onPart(c.part, c.page)) return invalid(`concepts[${i}] is not on a page of an indexed part`);
+		if (!isStoredText(c.statement)) return invalid(`concepts[${i}] has a blank or untrimmed statement`);
+		if (!onPart(c.part, c.page)) return invalid(`concepts[${i}] is not on a page of an indexed part`);
+		concepts.push({ id: c.id, name: c.name, statement: c.statement, page: c.page as number, part: c.part as number });
 	}
 	if (!Array.isArray(value.figures)) return invalid(`"figures" is not an array`);
+	const figures: DigestFigure[] = [];
+	const figureKeys = new Set<string>();
 	for (const [i, f] of value.figures.entries()) {
-		if (!isRecord(f) || typeof f.caption !== "string" || !onPart(f.part, f.page)) return invalid(`figures[${i}] is not on a page of an indexed part`);
+		if (!isRecord(f) || !isStoredText(f.caption)) return invalid(`figures[${i}] has a blank or untrimmed caption`);
+		if (!onPart(f.part, f.page)) return invalid(`figures[${i}] is not on a page of an indexed part`);
+		const key = `${f.page}|${f.caption}`;
+		if (figureKeys.has(key)) return invalid(`figures[${i}] repeats a page and caption`);
+		figureKeys.add(key);
+		figures.push({ page: f.page as number, caption: f.caption, part: f.part as number });
 	}
-	// Drop anything the contract does not define (an old "failedBatches" field is derived, never trusted).
-	const { failedBatches: _f, ...digest } = value as Record<string, unknown>;
-	return { ok: true, digest: digest as unknown as MaterialDigest };
+	// Built from the contract's fields alone: anything else in the file (an old "failedBatches", which is derived from
+	// the batches, or any other key) is dropped.
+	const base: Omit<MaterialDigest, "profile" | "profileError"> = {
+		version: MATERIAL_DIGEST_VERSION,
+		sourceHash: value.sourceHash as string,
+		converter: value.converter as string,
+		converterVersion: value.converterVersion as string,
+		indexerVersion: value.indexerVersion as number,
+		name: value.name as string | null,
+		pageCount: value.pageCount as number,
+		sourcePageCount: value.sourcePageCount as number | null,
+		batches,
+		terms,
+		concepts,
+		figures,
+	};
+	const digest: MaterialDigest = value.profile === null ? { ...base, profile: null, profileError: value.profileError as string } : { ...base, profile: value.profile as string };
+	return { ok: true, digest };
 }

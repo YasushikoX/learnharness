@@ -18,6 +18,7 @@ import {
 	EXTRACTION_OVERHEAD_MAX_CHARS,
 	failedBatchesOf,
 	formatHeadingPath,
+	hasProfile,
 	HEADING_PATH_MAX_CHARS,
 	MATERIAL_INDEXER_VERSION,
 	mergeConcepts,
@@ -29,6 +30,7 @@ import {
 	REDUCE_REQUEST_MAX_CHARS,
 	rewriteProfile,
 	summarizeOccurrences,
+	truncateOccurrences,
 	validateBatchReply,
 	validateProfile,
 	type BatchNotes,
@@ -956,6 +958,73 @@ describe("recovery: merging a re-run part equals a clean run", () => {
 		assert.deepEqual(combineTerms([...lists].reverse()), clean.terms);
 	});
 
+	// Review 4, finding 2: truncation ran only when the LIST was longer than 64, so a stored digest (62 occurrences,
+	// count 65) merged with a recovered part 0 (1 occurrence) kept 63 where a clean run keeps 62; the same inside a clean
+	// run when part 0 has 65 occurrences and part 1 has 1.
+	it("review 4, finding 2: the reviewer's cases: recovered merge and multi-part combine equal a clean run above the cap", () => {
+		const entropy = (part: number, n = 1) => partTerms(part, Array.from({ length: n }, () => modelTerm("Entropy", part + 1, "core", "Uorden.")));
+		const parts = Array.from({ length: 66 }, (_, p) => entropy(p));
+		const [clean] = combineTerms(parts);
+		assert.deepEqual([clean!.occurrences.length, clean!.occurrenceCount], [MAX_TERM_OCCURRENCES - 2, 66]);
+		const stored = combineTerms(parts.slice(1));
+		assert.deepEqual([stored[0]!.occurrences.length, stored[0]!.occurrenceCount], [MAX_TERM_OCCURRENCES - 2, 65]);
+		assert.deepEqual(combineTerms([stored, parts[0]!]), [clean], "the stored digest plus the recovered part 0");
+		// inside one clean run: part 0 with 65 occurrences, part 1 with 1
+		const [inRun] = combineTerms([entropy(0, 65), entropy(1)]);
+		const [whole] = partTerms(0, Array.from({ length: 66 }, () => modelTerm("Entropy", 1, "core", "Uorden.")));
+		assert.equal(inRun!.occurrenceCount, 66);
+		assert.equal(inRun!.occurrences.length, whole!.occurrences.length);
+		assert.equal(inRun!.occurrences.length, MAX_TERM_OCCURRENCES - 2);
+	});
+
+	it("property: for counts around and well above the cap, any recovered part merged into the rest equals the clean run", () => {
+		/** The stored form of a whole source-ordered list, computed directly from its definition. */
+		const expectedCut = (all: readonly DigestTerm["occurrences"][number][]) => {
+			if (all.length <= MAX_TERM_OCCURRENCES) return [...all];
+			const keep = new Set(Array.from({ length: MAX_TERM_OCCURRENCES - 2 }, (_, i) => i));
+			const coreDef = all.findIndex((o) => o.definition !== null && o.tier === "core");
+			const supplier = coreDef >= 0 ? coreDef : all.findIndex((o) => o.definition !== null);
+			if (supplier >= 0) keep.add(supplier);
+			const core = all.findIndex((o) => o.tier === "core");
+			if (core >= 0) keep.add(core);
+			return all.filter((_, i) => keep.has(i));
+		};
+		let checks = 0;
+		for (const count of [1, 2, 30, 61, 62, 63, 64, 65, 66, 67, 70, 100, 127, 128, 129, 200, 500, 2_000]) {
+			for (let seed = 1; seed <= 6; seed++) {
+				const rand = mulberry32(count * 31 + seed);
+				const partCount = 1 + Math.floor(rand() * Math.min(count, 12));
+				// every part gets at least one occurrence; the rest land anywhere; definitions and core occurrences are rare and late
+				const perPart = Array.from({ length: partCount }, () => 1);
+				for (let i = partCount; i < count; i++) perPart[Math.floor(rand() * partCount)]!++;
+				const raw = perPart.map((n, part) =>
+					Array.from({ length: n }, () => {
+						const tier: TermTier = rand() < 0.05 ? "core" : "supporting";
+						return modelTerm("Felles", part + 1, tier, rand() < 0.04 ? `Def ${part}.` : null);
+					}),
+				);
+				const lists = raw.map((terms, part) => partTerms(part, terms));
+				const clean = combineTerms(lists);
+				assert.equal(clean[0]!.occurrenceCount, count);
+				const full = raw.flatMap((terms, part) => terms.map((t) => ({ part, page: t.page, tier: t.tier, definition: t.definition, definitionPage: t.definitionPage })));
+				assert.deepEqual(clean[0]!.occurrences, expectedCut(full), `count ${count}, seed ${seed}: the cut of the whole list`);
+				for (let lost = 0; lost < partCount; lost++) {
+					const rest = combineTerms(lists.filter((_, p) => p !== lost));
+					const recovered = rest.length === 0 ? combineTerms([lists[lost]!]) : combineTerms([rest, lists[lost]!]);
+					assert.deepEqual(recovered, clean, `count ${count}, seed ${seed}, part ${lost} of ${partCount}`);
+					checks++;
+				}
+				// combining one part at a time (left to right) is the same as combining them all at once
+				const stepwise = lists.slice(1).reduce((acc, list) => combineTerms([acc, list]), lists[0]!);
+				assert.deepEqual(stepwise, clean, `count ${count}, seed ${seed}: stepwise`);
+				// the stored form is idempotent and passes the read boundary's check
+				const [t] = clean;
+				assert.deepEqual(truncateOccurrences(t!.occurrences, t!.occurrenceCount), t!.occurrences);
+			}
+		}
+		assert.ok(checks > 300, `${checks} recovery checks`);
+	});
+
 	// Review 3, finding 4, first half: the issued id depended on which spelling declared the alias.
 	it("review 3, finding 4: an id never depends on which spelling declares an alias", () => {
 		const one = mergeTerms([[modelTerm("ordinary least squares", 1, "core", null, ["OLS"]), modelTerm("OLS", 1, "supporting", null)]]);
@@ -1274,6 +1343,84 @@ describe("stored digests: the validated read boundary, rewrite and re-run", () =
 		assert.ok(!("failedBatches" in (parsed as { digest: object }).digest));
 		assert.equal(failedBatchesOf((parsed as { digest: MaterialDigest }).digest).length, 1);
 		assert.throws(() => batchFromRef("x".repeat(10_000), { ...digest.batches[0]!, charEnd: 2.99 }), RangeError);
+	});
+
+	// Review 4, finding 3: the reader accepted "profile": "", an invisible or heading-less profile, blank or invisible
+	// text fields, unnormalised or blank aliases and symbols, a pageCount below a part's pages, an empty sourceHash, a
+	// negative indexerVersion, and kept every extra key but failedBatches.
+	it("review 4, finding 3: the reader enforces every invariant the writer enforces and returns only contract fields", async () => {
+		const { text } = await build();
+		const value = () => JSON.parse(text) as Record<string, unknown> & MaterialDigest;
+		const withProfile = (d: Record<string, unknown>, profile: unknown) => {
+			d.profile = profile;
+			delete d.profileError;
+		};
+		const firstDefined = (d: MaterialDigest) => d.terms.find((t) => t.definition !== null)!;
+		const zw = String.fromCharCode(0x200b); // zero-width space
+		const isolate = String.fromCharCode(0x2066); // left-to-right isolate
+		const edits: [string, (d: MaterialDigest & Record<string, unknown>) => void, RegExp][] = [
+			['"profile": ""', (d) => withProfile(d, ""), /"profile" is not a valid profile/],
+			["an invisible profile", (d) => withProfile(d, ` ${zw}${isolate} `), /"profile" is not a valid profile/],
+			["a profile without headings", (d) => withProfile(d, "Just some text about the material (p. 1)."), /"profile" is not a valid profile/],
+			["a profile with only empty sections", (d) => withProfile(d, `## Contents\n${zw}`), /"profile" is not a valid profile/],
+			["a profile not in its validated form", (d) => withProfile(d, `Preamble.\n\n${PROFILE}`), /validated form/],
+			["a null profile with a blank error", (d) => Object.assign(d, { profile: null, profileError: "  " }), /without a "profileError"/],
+			["a blank summary bullet", (d) => Object.assign(d.batches[0]!, { summaryBullets: ["   "] }), /blank or untrimmed summary bullet/],
+			["an invisible summary bullet", (d) => Object.assign(d.batches[0]!, { summaryBullets: [zw] }), /blank or untrimmed summary bullet/],
+			["an invisible definition", (d) => {
+				const t = firstDefined(d);
+				t.occurrences[0]!.definition = zw;
+				t.definition = zw;
+			}, /inconsistent or blank definition/],
+			["an invisible statement", (d) => Object.assign(d.concepts[0]!, { statement: `${zw} ` }), /blank or untrimmed statement/],
+			["a blank caption", (d) => Object.assign(d.figures[0]!, { caption: " " }), /blank or untrimmed caption/],
+			["an unnormalised alias", (d) => Object.assign(d.terms[0]!, { aliases: ["  OLS "] }), /alias or symbol lists/],
+			["a blank alias", (d) => Object.assign(d.terms[0]!, { aliases: [""] }), /alias or symbol lists/],
+			["an invisible symbol", (d) => Object.assign(d.terms[0]!, { symbols: [zw] }), /alias or symbol lists/],
+			["unsorted symbols", (d) => Object.assign(d.terms[0]!, { symbols: ["v", "U"] }), /alias or symbol lists/],
+			["a repeated alias", (d) => Object.assign(d.terms[0]!, { aliases: ["A", "A"] }), /alias or symbol lists/],
+			["its own name as an alias", (d) => Object.assign(d.terms[0]!, { aliases: [d.terms[0]!.term] }), /own name as an alias/],
+			["a pageCount below a part's pages", (d) => Object.assign(d, { pageCount: 1 }), /beyond the "pageCount" 1/],
+			["an empty sourceHash", (d) => Object.assign(d, { sourceHash: "" }), /"sourceHash" is not a non-empty string/],
+			["an empty converter", (d) => Object.assign(d, { converter: "" }), /"converter" is not a non-empty string/],
+			["a negative indexerVersion", (d) => Object.assign(d, { indexerVersion: -1 }), /"indexerVersion" is not a non-negative integer/],
+			["a blank name", (d) => Object.assign(d, { name: "   " }), /"name" is not null/],
+			["a blank failed-part error", (d) => Object.assign(failedBatchesOf(d)[0]!, { error: "" }), /failed without an error/],
+			["a repeated figure", (d) => d.figures.push({ ...d.figures[0]! }), /repeats a page and caption/],
+		];
+		for (const [what, edit, expected] of edits) {
+			const d = value();
+			edit(d);
+			const parsed = parseStoredDigest(d);
+			assert.equal(parsed.ok, false, what);
+			const problem = (parsed as { problem: { kind: string; reason: string } }).problem;
+			assert.equal(problem.kind, "invalid", what);
+			assert.match(problem.reason, expected, what);
+		}
+		// the returned digest has only the contract's fields, at every level
+		const extra = value() as Record<string, any>;
+		extra.note = "hand-written";
+		extra.failedBatches = [];
+		extra.batches[0].debug = true;
+		extra.terms[0].debug = true;
+		extra.terms[0].occurrences[0].debug = true;
+		extra.concepts[0].debug = true;
+		extra.figures[0].debug = true;
+		const parsed = parseStoredDigest(extra);
+		assert.ok(parsed.ok);
+		const digest = (parsed as { digest: MaterialDigest }).digest;
+		assert.deepEqual(digest, parseStoredDigest(text).ok ? (parseStoredDigest(text) as { digest: MaterialDigest }).digest : null);
+		const keys = (o: object) => Object.keys(o).sort();
+		assert.deepEqual(keys(digest), ["batches", "concepts", "converter", "converterVersion", "figures", "indexerVersion", "name", "pageCount", "profile", "profileError", "sourceHash", "sourcePageCount", "terms", "version"]);
+		assert.ok(!("debug" in digest.batches[0]!) && !("debug" in digest.terms[0]!) && !("debug" in digest.terms[0]!.occurrences[0]!) && !("debug" in digest.concepts[0]!) && !("debug" in digest.figures[0]!));
+		// a valid profile is accepted, and hasProfile is the one test of "has a profile"
+		const good = value();
+		withProfile(good, PROFILE);
+		const ok = parseStoredDigest(good);
+		assert.ok(ok.ok);
+		assert.equal(hasProfile((ok as { digest: MaterialDigest }).digest), true);
+		assert.equal(hasProfile(value()), false);
+		assert.equal(hasProfile({ profile: "" } as MaterialDigest), false);
 	});
 });
 
