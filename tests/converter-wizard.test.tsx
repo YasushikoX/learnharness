@@ -217,7 +217,9 @@ describe("Draft with AI: the wizard", () => {
 			assert.equal(ui.q("wizard-step-review")!.getAttribute("data-current"), "true");
 			assert.equal(ui.text("wizard-submit"), "POST <your service URL>/convert");
 			assert.equal(ui.text("wizard-auth"), `Key header: X-Api-Key: ${KEY_MASK} (your key, never shown)`);
-			assert.deepEqual(ui.all("wizard-field"), ["format = markdown"]);
+			assert.equal(ui.text("wizard-fixed").startsWith("Sent with every PDF, exactly as written:"), true);
+			assert.deepEqual(ui.all("wizard-fixed-value"), ["submit field format = markdown", "submit path: /convert"]);
+			assert.equal(ui.all("wizard-fixed-red").length, 0);
 			assert.match(ui.text("wizard-pages"), /one entry per PDF page; each entry's page number is at \/n \(counted from 1\)/);
 			assert.match(ui.text("wizard-note"), /^Note from the AI \(it read the documentation, which can be wrong or written to mislead it\): Pages are numbered/);
 			assert.match(ui.text("wizard-json"), /"pagesPointer": "\/result\/pages"/);
@@ -291,10 +293,14 @@ describe("Draft with AI: the wizard", () => {
 			assert.match(ui.text("wizard-report-verdict"), /^Passed/);
 			assert.equal(ui.q("wizard-check-blank_page")!.getAttribute("data-status"), "pass");
 			assert.equal(ui.q("wizard-step-approve")!.getAttribute("data-current"), "true");
-			assert.equal(ui.disabled("wizard-approve"), false);
 			assert.match(ui.text("wizard-approve-note"), /Then choose Use for new PDFs on the main screen/);
+			// format=markdown is sent with every PDF: Approve needs "I have read these values"
+			assert.equal(ui.disabled("wizard-approve"), true);
+			assert.match(ui.text("wizard-ack-row"), /I have read these values/);
+			await ui.click("toggle-i-have-read-these-values");
+			assert.equal(ui.disabled("wizard-approve"), false);
 			await ui.click("wizard-approve");
-			assert.deepEqual(ui.calls.at(-1)!.body, { id: "d0123456789ab", shown: "a".repeat(24), acknowledged: false });
+			assert.deepEqual(ui.calls.at(-1)!.body, { id: "d0123456789ab", shown: "a".repeat(24), acknowledged: "a".repeat(24) });
 			assert.equal(ui.q("converter-wizard"), null, "the wizard closes");
 			assert.match(ui.text("converter-import-note"), /^Approved Acme OCR, shown above\. Choose Use for new PDFs to use it\.$/);
 			assert.match(ui.text("converter-destination"), /^If you use it, PDFs you upload will be sent to https:\/\/ocr\.acme\.example\./);
@@ -304,19 +310,108 @@ describe("Draft with AI: the wizard", () => {
 		}
 	});
 
-	it("a fixed value that names an address is shown as a warning and must be acknowledged before Approve", async () => {
-		const p = profile({ submit: { method: "POST", path: "/convert", body: { type: "multipart", fileField: "document", fields: { webhook_url: "https://evil.example/hook" } } } });
+	it("a fixed value that names an address is red, first, with its reason; Approve needs the acknowledgement", async () => {
+		const p = profile({ submit: { method: "POST", path: "/convert", body: { type: "multipart", fileField: "document", fields: { format: "markdown", webhook_url: "https://evil.example/hook" } } } });
 		const passed = configured({ profile: p, preflight: describeProfile(p, BASE, { stored: true, hint: "…WXYZ" }), test: { report: report(true), current: true, stale: false, at: "x" }, approvable: true, approveBlocked: undefined });
 		const ui = await mount({ "GET /api/converters": () => ({ json: section() }), "GET /api/converters/drafts": () => ({ json: drafts([passed]) }), "POST /api/converters/drafts/approve": () => ({ status: 409, json: { error: "stop here" } }) });
 		try {
 			await ui.click("converter-wizard-open");
 			await ui.click("wizard-open-d0123456789ab");
-			assert.match(ui.text("wizard-warning"), /webhook_url is https:\/\/evil\.example\/hook: it looks like an address/);
+			assert.deepEqual(ui.all("wizard-fixed-red").map((t) => t.split(":")[0]), ["submit field webhook_url = https"]);
+			assert.match(ui.text("wizard-warning"), /^its value looks like an address \(it is a URL\): a service told to send results or notifications there would send your documents' text to it\.$/);
+			assert.ok(ui.q("wizard-fixed-red")!.className.includes("text-error"));
+			assert.ok(ui.html().indexOf("webhook_url") < ui.html().indexOf("format = markdown"), "red values come first");
 			assert.equal(ui.disabled("wizard-approve"), true);
-			await ui.click("toggle-addresses-checked");
+			await ui.click("toggle-i-have-read-these-values");
 			assert.equal(ui.disabled("wizard-approve"), false);
 			await ui.click("wizard-approve");
-			assert.equal((ui.calls.at(-1)!.body as { acknowledged: boolean }).acknowledged, true);
+			assert.equal((ui.calls.at(-1)!.body as { acknowledged: string }).acknowledged, "a".repeat(24));
+		} finally {
+			ui.cleanup();
+		}
+	});
+
+	it("the acknowledgement is voided by Ask AI to fix and by Edit JSON (a new version on screen)", async () => {
+		const p1 = profile({ submit: { method: "POST", path: "/convert", body: { type: "multipart", fileField: "document", fields: { callback: "https://a.example/one" } } } });
+		const p2 = profile({ submit: { method: "POST", path: "/convert", body: { type: "multipart", fileField: "document", fields: { callback: "https://b.example/two" } } } });
+		const p3 = profile({ submit: { method: "POST", path: "/convert", body: { type: "multipart", fileField: "document", fields: { callback: "https://c.example/three" } } } });
+		const failedTest = { report: report(false), current: false, stale: false, at: "x" };
+		const passedTest = { report: report(true), current: true, stale: false, at: "x" };
+		const v1 = configured({ profile: p1, preflight: describeProfile(p1, BASE, { stored: true }), shown: "1".repeat(24), test: failedTest, approveBlocked: "The Test failed: fix the profile and run Test again." });
+		const v2 = configured({ profile: p2, preflight: describeProfile(p2, BASE, { stored: true }), shown: "2".repeat(24), test: passedTest, approvable: true, approveBlocked: undefined });
+		const v3 = configured({ profile: p3, preflight: describeProfile(p3, BASE, { stored: true }), shown: "3".repeat(24), test: passedTest, approvable: true, approveBlocked: undefined });
+		const ui = await mount({
+			"GET /api/converters": () => ({ json: section() }),
+			"GET /api/converters/drafts": () => ({ json: drafts([v1]) }),
+			"POST /api/converters/drafts/fix": () => ({ json: v2 }),
+			"PUT /api/converters/drafts": () => ({ json: v3 }),
+			"POST /api/converters/drafts/approve": () => ({ status: 409, json: { error: "stop here" } }),
+		});
+		try {
+			await ui.click("converter-wizard-open");
+			await ui.click("wizard-open-d0123456789ab");
+			await ui.click("toggle-i-have-read-these-values");
+			assert.equal(ui.q("toggle-i-have-read-these-values")!.getAttribute("aria-checked"), "true");
+			await ui.click("wizard-fix");
+			assert.match(ui.text("wizard-fixed"), /b\.example\/two/);
+			assert.equal(ui.q("toggle-i-have-read-these-values")!.getAttribute("aria-checked"), "false", "a fixed draft is a new version: read again");
+			assert.equal(ui.disabled("wizard-approve"), true);
+			await ui.click("toggle-i-have-read-these-values");
+			assert.equal(ui.disabled("wizard-approve"), false);
+			await ui.click("wizard-edit-json");
+			await ui.click("wizard-editor-save");
+			assert.match(ui.text("wizard-fixed"), /c\.example\/three/);
+			assert.equal(ui.q("toggle-i-have-read-these-values")!.getAttribute("aria-checked"), "false", "an edited draft is a new version");
+			assert.equal(ui.disabled("wizard-approve"), true);
+			await ui.click("toggle-i-have-read-these-values");
+			await ui.click("wizard-approve");
+			assert.equal((ui.calls.at(-1)!.body as { acknowledged: string }).acknowledged, "3".repeat(24), "the acknowledgement names the version read");
+		} finally {
+			ui.cleanup();
+		}
+	});
+
+	it("the reviewer's worst profile on Review: every value listed under the heading, the addresses and accounts red, the switch", async () => {
+		const worst = profile({
+			auth: { header: "Authorization", value: "Bearer {{API_KEY}}" },
+			submit: { method: "POST", path: "/convert?webhook=https://attacker.example/steal&callback_url=https://attacker.example/cb&email=leak@attacker.example", body: { type: "json-base64", filePointer: "/file", encoding: "base64", json: { ocr: false, max_pages: 3, tier: "enterprise-max", sink: "exfil.ru/collect", url: ["exfil.ru/hook"], target: { host: "exfil.ru" }, workspace_id: "ws_attacker_shared" } } },
+		});
+		const passed = configured({ profile: worst, preflight: describeProfile(worst, BASE, { stored: true }), test: { report: report(true), current: true, stale: false, at: "x" }, approvable: true, approveBlocked: undefined });
+		const ui = await mount({ "GET /api/converters": () => ({ json: section() }), "GET /api/converters/drafts": () => ({ json: drafts([passed]) }) });
+		try {
+			await ui.click("converter-wizard-open");
+			await ui.click("wizard-open-d0123456789ab");
+			const red = ui.all("wizard-fixed-red").map((t) => t.replace(/its (value|name).*$/, "").trim());
+			assert.deepEqual(red, [
+				'submit field /sink = "exfil.ru/collect"',
+				'submit field /url/0 = "exfil.ru/hook"',
+				'submit field /target/host = "exfil.ru"',
+				'submit field /workspace_id = "ws_attacker_shared"',
+				"submit query parameter webhook = https://attacker.example/steal",
+				"submit query parameter callback_url = https://attacker.example/cb",
+				"submit query parameter email = leak@attacker.example",
+			]);
+			assert.deepEqual(ui.all("wizard-fixed-value"), ["submit field /ocr = false", "submit field /max_pages = 3", 'submit field /tier = "enterprise-max"', "submit path: /convert"]);
+			assert.equal(ui.disabled("wizard-approve"), true);
+			assert.match(ui.text("wizard-ack-row"), /^I have read these values/);
+		} finally {
+			ui.cleanup();
+		}
+	});
+
+	it("a profile that sends no fixed value asks for no acknowledgement; a void pass is never a plain Passed", async () => {
+		const bare = profile({ submit: { method: "POST", path: "/convert", body: { type: "multipart", fileField: "document" } } });
+		const passed = configured({ profile: bare, preflight: describeProfile(bare, BASE, { stored: true }), test: { report: report(true), current: true, stale: false, at: "x" }, approvable: true, approveBlocked: undefined });
+		const voided = configured({ id: "d0123456789ac", test: { report: report(true), current: false, stale: true, at: "x" }, approveBlocked: "The profile, URL or key changed since the Test passed: run Test again." });
+		const ui = await mount({ "GET /api/converters": () => ({ json: section() }), "GET /api/converters/drafts": () => ({ json: drafts([passed, voided]) }) });
+		try {
+			await ui.click("converter-wizard-open");
+			await ui.click("wizard-open-d0123456789ab");
+			assert.equal(ui.q("wizard-ack-row"), null);
+			assert.equal(ui.disabled("wizard-approve"), false);
+			await ui.click("wizard-back");
+			await ui.click("wizard-open-d0123456789ac");
+			assert.match(ui.text("wizard-report-verdict"), /^This report is for an earlier version of the draft\. Passed/);
 		} finally {
 			ui.cleanup();
 		}

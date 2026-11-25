@@ -16,7 +16,7 @@ import {
 	type HttpConverterProfile,
 } from "./http-converter-spec.ts";
 import type { ConverterValidationReport, CredentialStatus } from "./converter-settings.ts";
-import { KEY_MASK, NO_BASE_URL, type ProfileLine, type ProfilePreflight } from "./converter-draft-view.ts";
+import { KEY_MASK, NO_BASE_URL, type FixedValue, type ProfilePreflight } from "./converter-draft-view.ts";
 export * from "./converter-draft-view.ts";
 
 /**
@@ -31,12 +31,17 @@ export * from "./converter-draft-view.ts";
  *     no `defaultBaseUrl`, no credential headers, paths relative to the base URL only), after the app has set the
  *     fields it owns itself (`withAppFields`: id, name, version, description, docsUrl; never `unverified`).
  *   - what the profile would send is shown to the user in plain words before anything is sent (`describeProfile`),
- *     with the user's own origin joined to every path, the key masked, and every fixed value; a fixed value that
- *     names an address (a webhook, a callback, an e-mail) is flagged (`addressWarnings`) and must be acknowledged.
+ *     with the user's own origin joined to every path and the key masked; EVERY fixed value it sends exactly as
+ *     written (headers, fields, every query parameter of every path, the paths) is listed (`fixedValues`), and when
+ *     there is one beyond a bare path Approve needs "I have read these values", tied to the version on screen. A
+ *     heuristic (`addressReason`, `nameReason`) only decides which are shown first, in red, with a reason.
+ *   - a draft may not carry a key, a token or an account of its own (`draftCredentialProblems`): the page's
+ *     credentials are never the user's.
  *   - the format documentation the model reads (`profileFormatGuide`) is generated from the validator's schema and
  *     constants, so it cannot drift from what the validator accepts (a test checks every schema field is described).
  *   - after a failed Test, what the model is told about it (`reportForModel`) has the key and the user's address
- *     removed and every string of the service's answer truncated.
+ *     removed, and of the service's answers only their shape: a string is its length unless it is a short status
+ *     token, a field name is a marker unless it is a plain identifier (`replyShape`).
  *
  * Pure and browser-safe (the wizard renders `describeProfile` itself from the server's view).
  */
@@ -54,8 +59,6 @@ export const DRAFT_SAMPLE_MAX_CHARS = 8_000;
 export const DRAFT_NOTE_MAX_CHARS = 600;
 /** The largest model reply read. */
 export const AUTHOR_REPLY_MAX_CHARS = 128 * 1024;
-/** Strings of the service's answer, as the fix call sees them. */
-export const FIX_STRING_MAX_CHARS = 24;
 
 export function draftConverterId(draftId: string): string {
 	return `${CONVERTER_DRAFT_PREFIX}${draftId}`;
@@ -97,7 +100,7 @@ export const QUOTE_TAGS = ["documentation", "sample", "previous_draft", "test_re
 
 /** Untrusted text made safe to quote inside one of QUOTE_TAGS: it cannot open or close any of them. */
 export function quoteSafe(text: string): string {
-	return cleanText(text).replace(new RegExp(`<(\\/?)\\s*(${QUOTE_TAGS.join("|")})\\b`, "gi"), "‹$1$2");
+	return cleanText(text).replace(new RegExp(`<\\s*(\\/?)\\s*(${QUOTE_TAGS.join("|")})\\b`, "gi"), "‹$1$2");
 }
 
 // ── The format guide (generated from the validator's schema) ─────────────────
@@ -257,6 +260,18 @@ export const PROFILE_EXAMPLE: HttpConverterProfile = {
 	extract: { type: "pages", pagesPointer: "/pages", numberPointer: "/page_number", numberBase: 1, markdownPointer: "/markdown" },
 };
 
+/** A second valid example, for the JSON body form and a job id (a test checks it passes the validator). */
+export const PROFILE_EXAMPLE_JSON: HttpConverterProfile = {
+	format: HTTP_CONVERTER_PROFILE_FORMAT,
+	id: "example-json-ocr",
+	name: "Example JSON OCR",
+	version: "1",
+	auth: { header: "Authorization", value: "Bearer {{API_KEY}}" },
+	submit: { method: "POST", path: "/v2/jobs", body: { type: "json-base64", filePointer: "/document/content", encoding: "base64", json: { document: { mime_type: "application/pdf" }, output: "markdown" } } },
+	poll: { jobIdPointer: "/id", path: "/v2/jobs/{{JOB_ID}}", statusPointer: "/status", done: ["succeeded"], running: ["queued", "running"], failed: ["failed"], errorPointer: "/error/message" },
+	extract: { type: "pages", pagesPointer: "/result/pages", numberPointer: "/index", numberBase: 0, markdownPointer: "/markdown" },
+};
+
 /** The profile format, for the model: generated from the validator's schema and constants. */
 export function profileFormatGuide(): string {
 	const fields = fieldLines(HTTP_CONVERTER_PROFILE_SCHEMA as unknown as SchemaNode, "", "");
@@ -277,8 +292,11 @@ export function profileFormatGuide(): string {
 		"",
 		"How the app checks pages: a page list must have exactly one entry per PDF page, with page numbers from numberPointer; a delimited text must have exactly one segment per page for \"between\", or one more (the empty last one for \"after\", the empty first one for \"before\"). Anything else fails the conversion.",
 		"",
-		"Example:",
+		"Example (a multipart upload, pages in the answer):",
 		JSON.stringify(PROFILE_EXAMPLE),
+		"",
+		`Example (the PDF as base64 inside a JSON body at filePointer, which must not already hold a value in "json"; a job id; pages counted from 0):`,
+		JSON.stringify(PROFILE_EXAMPLE_JSON),
 	].join("\n");
 }
 
@@ -363,9 +381,15 @@ export function withAppFields(profile: unknown, own: AppOwnedFields): unknown {
 	};
 }
 
-/** A draft profile checked exactly as an import is (never as a bundled preset). */
+/**
+ * A draft profile checked exactly as an import is (never as a bundled preset), and then for the credentials a draft
+ * may not carry (draftCredentialProblems; a hand-written import is not checked for those).
+ */
 export function validateDraftProfile(profile: unknown): { ok: true; profile: HttpConverterProfile } | { ok: false; errors: string[] } {
-	return validateHttpConverterProfile(profile, { bundled: false });
+	const checked = validateHttpConverterProfile(profile, { bundled: false });
+	if (!checked.ok) return checked;
+	const credentials = draftCredentialProblems(checked.profile);
+	return credentials.length ? { ok: false, errors: credentials } : checked;
 }
 
 // ── What the profile would send, in plain words ──────────────────────────────
@@ -377,43 +401,204 @@ function urlFor(baseUrl: string | undefined, path: string): string {
 	return `${baseUrl.replace(/\/+$/, "")}${shown}`;
 }
 
-const ADDRESS_VALUE = /(?:[a-z][a-z0-9+.-]*:\/\/)|(?:^|[\s"'(<])(?:www\.)|[^\s@"']+@[^\s@"']+\.[a-z]{2,}|\b(?:\d{1,3}\.){3}\d{1,3}\b|\b(?:[a-z0-9-]+\.)+(?:com|net|org|io|dev|app|ai|co|xyz|me|info|biz|cloud|site|online|tech|link|sh|run|page|so)\b/i;
-const ADDRESS_NAME = /callback|webhook|hook|notify|notification|redirect|return_?url|url$|uri$|endpoint|email|e-mail|mail_?to|forward|upload_?to|destination|target_?url|bucket|s3/i;
+// ── Fixed values: every one is listed; the heuristic only puts some first, in red ──
 
-/** Every fixed value of a profile, by where it is, as plain lines (headers, form fields, JSON values). */
-function fixedValues(profile: HttpConverterProfile): { headers: ProfileLine[]; fields: ProfileLine[] } {
-	const headers = Object.entries(profile.submit.headers ?? {}).map(([label, value]) => ({ label, value }));
-	const fields: ProfileLine[] = [];
+const DECODE_ROUNDS = 2;
+
+/** `text` percent-decoded (up to twice, for a doubly encoded value), or as it is where it cannot be decoded. */
+function percentDecoded(text: string): string {
+	let out = text;
+	for (let i = 0; i < DECODE_ROUNDS && /%[0-9a-f]{2}/i.test(out); i++) {
+		try {
+			out = decodeURIComponent(out);
+		} catch {
+			break;
+		}
+	}
+	return out;
+}
+
+const COMMON_TLDS = "com|net|org|io|dev|app|ai|co|xyz|me|info|biz|cloud|site|online|tech|link|sh|run|page|so|top|club|shop|store|live|pro|work|space|website|fun|icu|vip|email|zone|host|services|digital";
+/** What makes a value look like an address, each with its reason (the first that matches is shown). */
+const ADDRESS_VALUE_RULES: readonly [RegExp, string][] = [
+	[/[a-z][a-z0-9+.-]*:\/\//i, "it is a URL"],
+	[/(?:^|[\s"'(<=,;])\/\/[^\s/]/, "it is an address without a scheme (//host)"],
+	[/\b(?:mailto|javascript|data|file|ftp):/i, "it is a URL"],
+	[/[^\s@"'<>]+@[^\s@"'<>]+\.[a-z]{2,}/i, "it is an e-mail address"],
+	[/\[[0-9a-f:.]*:[0-9a-f:.]*\]/i, "it is an IPv6 address"],
+	[/(?:^|[^\w:])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\w:])/i, "it is an IPv6 address"],
+	[/\b(?:\d{1,3}\.){3}\d{1,3}\b/, "it is an IP address"],
+	[/(?:^|[^\w.-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}(?::\d{1,5}\b|\/)/i, "it is a host name with a path or port"],
+	[new RegExp(`(?:^|[^\\w.-])www\\.`, "i"), "it is a host name"],
+	[new RegExp(`(?:^|[^\\w.-])(?:[a-z0-9-]+\\.)+(?:${COMMON_TLDS}|[a-z]{2})(?![\\w.-])`, "i"), "it is a host name"],
+];
+
+/** Names (header names, field names, any segment of a JSON Pointer, query parameters) that suggest an address. */
+const ADDRESS_NAME = /callback|webhook|hook|notif|redirect|return_?(?:url|to|address)|url|uri|endpoint|e-?mail|mail_?to|forward|upload_?to|destination|^dest(?:ination)?$|target|bucket|^s3|sink|host|domain|server|address|^addr|recipient|channel|href|^link|send_?to|reply_?to|^to$|^cc$|^bcc$|^ip$|proxy|^ping/i;
+/** Names that suggest a key, a token or someone's account, workspace or channel. */
+const ACCOUNT_NAME = /key|token|secret|auth|passw|credential|tenant|account|organi[sz]ation|^org$|org_?id|workspace|project|^user|owner|customer|client_?id|team|session|signature|recipient|channel/i;
+
+/** Why a value looks like an address (pure; exported for tests), or undefined. Checked as written and decoded. */
+export function addressReason(value: string): string | undefined {
+	const plain = value.replace(/\{\{(?:DELIMITER|JOB_ID)\}\}/g, "");
+	for (const form of new Set([plain, percentDecoded(plain), percentDecoded(plain.replace(/\+/g, " "))])) {
+		for (const [rule, reason] of ADDRESS_VALUE_RULES) if (rule.test(form)) return reason;
+	}
+	return undefined;
+}
+
+/** Why a name (or one segment of a pointer) stands out, or undefined (pure; exported for tests). */
+export function nameReason(name: string): string | undefined {
+	const decoded = percentDecoded(name);
+	if (ADDRESS_NAME.test(decoded)) return "its name suggests an address the service would send data to";
+	if (ACCOUNT_NAME.test(decoded)) return "its name suggests a key, a token or an account: your documents could go to someone else's account";
+	return undefined;
+}
+
+/** The segments of a JSON Pointer, unescaped ("/a~1b/0" → ["a/b", "0"]). */
+function pointerSegments(pointer: string): string[] {
+	return pointer.split("/").slice(1).map((s) => s.replace(/~1/g, "/").replace(/~0/g, "~"));
+}
+
+/** A query string split into its parameters: the name and value decoded (+ as a space), and the raw text of each. */
+export function queryParameters(path: string): { name: string; value: string; raw: string }[] {
+	const at = path.indexOf("?");
+	if (at < 0) return [];
+	const decode = (text: string) => {
+		try {
+			return decodeURIComponent(text.replace(/\+/g, " "));
+		} catch {
+			return text;
+		}
+	};
+	return path.slice(at + 1).split("&").filter((part) => part !== "").map((raw) => {
+		const eq = raw.indexOf("=");
+		return eq < 0 ? { name: decode(raw), value: "", raw } : { name: decode(raw.slice(0, eq)), value: decode(raw.slice(eq + 1)), raw };
+	});
+}
+
+/** The key header's value is only the key, or a one-word scheme and the key ("Bearer {{API_KEY}}"). */
+const PLAIN_AUTH_VALUE = /^(?:[A-Za-z]{1,16} )?\{\{API_KEY\}\}$/;
+
+/**
+ * Every fixed value a profile would send exactly as written (pure; exported for tests): fixed headers, a key header's
+ * fixed text around the key, fixed form fields (each value of a list), every leaf of a fixed JSON body by its
+ * pointer, every query parameter of every path (decoded, with the raw text when it differs), and the paths. Red ones
+ * (by name or value) first; the order of the profile otherwise.
+ */
+export function fixedValues(profile: HttpConverterProfile): FixedValue[] {
+	const out: FixedValue[] = [];
+	const add = (kind: FixedValue["kind"], request: FixedValue["request"], label: string, value: string, names: readonly string[], extra: { raw?: string; acknowledge?: boolean } = {}) => {
+		const byValue = addressReason(value) ?? (extra.raw !== undefined ? addressReason(extra.raw) : undefined);
+		const byName = names.map(nameReason).find((r) => r !== undefined);
+		const reason = byValue ? `its value looks like an address (${byValue}): a service told to send results or notifications there would send your documents' text to it` : byName;
+		out.push({ kind, request, label, value, ...(extra.raw !== undefined && extra.raw !== value ? { raw: extra.raw } : {}), ...(reason ? { warning: reason } : {}), acknowledge: extra.acknowledge ?? true });
+	};
+	for (const [name, value] of Object.entries(profile.submit.headers ?? {})) add("header", "every request", name, value, [name]);
+	if (profile.auth && !PLAIN_AUTH_VALUE.test(profile.auth.value)) add("auth", "every request", `${profile.auth.header} (the key header)`, profile.auth.value.replace("{{API_KEY}}", "<your key>"), [], { raw: profile.auth.value });
 	const body = profile.submit.body;
 	if (body.type === "multipart") {
-		for (const [name, value] of Object.entries(body.fields ?? {})) fields.push({ label: name, value: Array.isArray(value) ? value.join(", ") : value });
+		for (const [name, value] of Object.entries(body.fields ?? {})) {
+			if (Array.isArray(value)) value.forEach((v, i) => add("field", "submit", `${name}[${i}]`, v, [name]));
+			else add("field", "submit", name, value, [name]);
+		}
 	} else {
 		const walk = (node: unknown, at: string) => {
 			if (node !== null && typeof node === "object") {
 				const entries = Array.isArray(node) ? node.map((v, i) => [String(i), v] as const) : Object.entries(node);
-				if (entries.length === 0) fields.push({ label: at || "/", value: Array.isArray(node) ? "[]" : "{}" });
+				if (entries.length === 0) add("field", "submit", at || "/", Array.isArray(node) ? "[]" : "{}", pointerSegments(at));
 				for (const [key, value] of entries) walk(value, `${at}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`);
-			} else fields.push({ label: at, value: JSON.stringify(node) });
+			} else add("field", "submit", at, JSON.stringify(node) ?? "null", pointerSegments(at));
 		};
 		walk(body.json ?? {}, "");
 	}
-	return { headers, fields };
+	const paths: [FixedValue["request"], string | undefined][] = [["submit", profile.submit.path], ["poll", profile.poll?.path], ["result", profile.result?.path]];
+	for (const [request, path] of paths) {
+		if (path === undefined) continue;
+		for (const q of queryParameters(path)) add("query", request, q.name, q.value, [q.name], { ...(q.raw !== `${q.name}=${q.value}` ? { raw: q.raw } : {}), acknowledge: q.value !== "{{JOB_ID}}" });
+	}
+	for (const [request, path] of paths) {
+		if (path === undefined) continue;
+		const bare = path.split("?")[0]!;
+		const segments = bare.split("/").filter((s) => s && !/^\{\{\w+\}\}$/.test(s));
+		add("path", request, `${request} path`, bare, segments, { acknowledge: false });
+	}
+	for (const value of out) if (value.warning) value.acknowledge = true;
+	return [...out.filter((v) => v.warning), ...out.filter((v) => !v.warning)];
 }
 
-/** Fixed values that name an address (pure; exported for tests). */
+/** The red values' reasons, one line each (pure; exported for tests). */
 export function addressWarnings(profile: HttpConverterProfile): string[] {
-	const { headers, fields } = fixedValues(profile);
-	const out: string[] = [];
-	const check = (kind: string, line: ProfileLine) => {
-		const value = line.value.replace(/\{\{DELIMITER\}\}/g, "");
-		if (ADDRESS_VALUE.test(value) || (ADDRESS_NAME.test(line.label) && value.replace(/^"|"$/g, "").trim() !== "")) {
-			out.push(`The ${kind} ${line.label} is ${line.value}: it looks like an address. A service told to send results or notifications there would send your documents' text to it. Remove it unless you know what it is.`);
-		}
+	return fixedValues(profile).filter((v) => v.warning).map((v) => `${v.label} (${KIND_WORDS[v.kind]}) = ${v.value}: ${v.warning}.`);
+}
+
+const KIND_WORDS: Record<FixedValue["kind"], string> = { header: "fixed header", field: "fixed field", query: "query parameter", auth: "key header", path: "path" };
+
+// ── Credentials in a drafted profile (refused; a hand-written import keeps its own rules) ──
+
+/** Header names that commonly carry a key, refused as fixed headers of a draft. */
+export const DRAFT_CREDENTIAL_HEADER_NAMES = ["x-api-key", "api-key", "apikey", "x-auth-token", "x-access-token", "ocp-apim-subscription-key"] as const;
+/** A name containing one of these carries a key or routes to an account: refused in a draft as described below. */
+export const DRAFT_CREDENTIAL_NAME = /key|token|secret|auth|passw|tenant|account|organi[sz]ation/i;
+/** A value that is only a short enumerated word or number ("bearer", "json", "4096", "true"): allowed under such a name. */
+const SHORT_WORD = /^(?:[A-Za-z][A-Za-z_-]{0,15}|\d{1,6})$/;
+const SHORT_NUMBER = /^(?:\d{1,6}|true|false)$/;
+const KEY_PREFIX = /(?:^|[^A-Za-z0-9])(?:(?:sk|pk|rk)[-_](?:(?:live|test|proj|ant)[-_])?[A-Za-z0-9]{8,}|(?:Bearer|Basic|Token)\s+\S{8,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{20,}|AKIA[0-9A-Z]{16})/;
+
+/**
+ * Whether a fixed value looks like a key, whatever its name: a known key prefix (sk-…, Bearer …, ghp_…, AIza…, AKIA…),
+ * or an unbroken run of 24 or more letters, digits, _, +, / or = holding at least two digits and two letters (hex and
+ * base64 keys; a hyphenated model name such as "mistral-ocr-latest-2025" is not one run).
+ */
+export function looksLikeKey(value: string): boolean {
+	if (KEY_PREFIX.test(value)) return true;
+	return (value.match(/[A-Za-z0-9_+/=]{24,}/g) ?? []).some((run) => (run.match(/\d/g)?.length ?? 0) >= 2 && (run.match(/[A-Za-z]/g)?.length ?? 0) >= 2);
+}
+
+/**
+ * Why a DRAFTED profile may not send what it sends (pure; exported for tests). A model writes the draft from a page
+ * that may be hostile, and a credential or an account it writes is the page's, never the user's, so:
+ *   - a fixed header named like a key or an account (DRAFT_CREDENTIAL_HEADER_NAMES, or containing DRAFT_CREDENTIAL_NAME)
+ *     is refused whatever its value (the one key header is `auth`, which the validator keeps out of the fixed headers);
+ *   - a fixed field (any segment of its pointer) or query parameter with such a name is refused when its value is more
+ *     than a short enumerated word (letters, _ and -, at most 16 characters) or a number of at most 6 digits; without
+ *     `auth` it is refused unless it is such a number or true/false (no key, so no reason to name an account);
+ *   - any fixed value that looks like a key (looksLikeKey) is refused, whatever its name.
+ * Each message says what to remove, so the author's repair call can.
+ */
+export function draftCredentialProblems(profile: HttpConverterProfile): string[] {
+	const errors: string[] = [];
+	const remove = "a drafted profile may not send a key, a token or an account of its own: remove it (the user's key goes only through auth, entered in the app)";
+	for (const [name, value] of Object.entries(profile.submit.headers ?? {})) {
+		const lower = name.toLowerCase();
+		if ((DRAFT_CREDENTIAL_HEADER_NAMES as readonly string[]).includes(lower) || DRAFT_CREDENTIAL_NAME.test(lower)) errors.push(`/submit/headers/${name}: this header carries a key or an account; ${remove}`);
+		else if (looksLikeKey(value)) errors.push(`/submit/headers/${name}: its value looks like a key; ${remove}`);
+	}
+	if (profile.auth && !PLAIN_AUTH_VALUE.test(profile.auth.value) && looksLikeKey(profile.auth.value.replace("{{API_KEY}}", ""))) errors.push(`/auth/value: holds a key besides {{API_KEY}}; ${remove}`);
+	const named = (where: string, names: readonly string[], scalar: unknown) => {
+		if (scalar === null || typeof scalar === "object") return;
+		const value = String(scalar);
+		if (looksLikeKey(value)) return void errors.push(`${where}: its value looks like a key; ${remove}`);
+		if (!names.some((n) => DRAFT_CREDENTIAL_NAME.test(percentDecoded(n)))) return;
+		const allowed = profile.auth ? SHORT_WORD.test(value) || value === "" : SHORT_NUMBER.test(value) || value === "";
+		if (!allowed || /\{\{/.test(value)) errors.push(`${where}: its name suggests a key or an account${profile.auth ? " and its value is more than a short word" : " and the profile takes no key"}; ${remove}`);
 	};
-	headers.forEach((h) => check("fixed header", h));
-	fields.forEach((f) => check("fixed field", f));
-	if (profile.auth && ADDRESS_VALUE.test(profile.auth.value.replace("{{API_KEY}}", ""))) out.push(`The key header's value ${profile.auth.value} contains an address.`);
-	return out;
+	const body = profile.submit.body;
+	if (body.type === "multipart") {
+		for (const [name, value] of Object.entries(body.fields ?? {})) for (const v of Array.isArray(value) ? value : [value]) named(`/submit/body/fields/${name}`, [name], v);
+	} else {
+		const walk = (node: unknown, at: string) => {
+			if (node !== null && typeof node === "object") for (const [key, value] of Array.isArray(node) ? node.map((v, i) => [String(i), v] as const) : Object.entries(node)) walk(value, `${at}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`);
+			else named(`/submit/body/json${at}`, pointerSegments(at), node);
+		};
+		walk(body.json ?? {}, "");
+	}
+	for (const [where, path] of [["/submit/path", profile.submit.path], ["/poll/path", profile.poll?.path], ["/result/path", profile.result?.path]] as const) {
+		if (path === undefined) continue;
+		for (const q of queryParameters(path)) if (q.value !== "{{JOB_ID}}") named(`${where} (query parameter ${q.name})`, [q.name], q.value);
+		if (looksLikeKey(percentDecoded(path.split("?")[0]!))) errors.push(`${where}: holds what looks like a key; ${remove}`);
+	}
+	return errors;
 }
 
 function pagesSentence(profile: HttpConverterProfile): string {
@@ -432,7 +617,7 @@ function pagesSentence(profile: HttpConverterProfile): string {
  */
 export function describeProfile(profile: HttpConverterProfile, baseUrl: string | undefined, credential?: CredentialStatus): ProfilePreflight {
 	const body = profile.submit.body;
-	const { headers, fields } = fixedValues(profile);
+	const fixed = fixedValues(profile);
 	const masked = credential?.stored && credential.hint ? `${KEY_MASK}${credential.hint.replace(/^…/, "")}` : KEY_MASK;
 	const poll = profile.poll;
 	const statuses = poll ? `done: ${poll.done.map((v) => JSON.stringify(v)).join(", ")}; still working: ${poll.running.map((v) => JSON.stringify(v)).join(", ")}${poll.failed?.length ? `; failed: ${poll.failed.map((v) => JSON.stringify(v)).join(", ")}` : ""}` : "";
@@ -440,11 +625,11 @@ export function describeProfile(profile: HttpConverterProfile, baseUrl: string |
 	return {
 		submit: `${profile.submit.method} ${urlFor(baseUrl, profile.submit.path)}`,
 		body: body.type === "multipart"
-			? `The PDF is uploaded as the form field "${body.fileField}" (multipart/form-data), with the fixed fields below.`
-			: `The PDF is sent inside a JSON body at ${body.filePointer}, as ${body.encoding === "data-url" ? "a base64 data URL" : "base64 text"}, with the fixed values below.`,
+			? `The PDF is uploaded as the form field "${body.fileField}" (multipart/form-data).`
+			: `The PDF is sent inside a JSON body at ${body.filePointer}, as ${body.encoding === "data-url" ? "a base64 data URL" : "base64 text"}.`,
 		...(profile.auth ? { auth: { header: profile.auth.header, value: profile.auth.value.replace("{{API_KEY}}", masked) } } : {}),
-		headers,
-		fields,
+		fixed,
+		acknowledgeNeeded: fixed.some((v) => v.acknowledge),
 		...(poll ? { poll: `The upload's answer holds a job id at ${poll.jobIdPointer}. Then ${poll.method ?? "GET"} ${urlFor(baseUrl, poll.path)} every ${((poll.intervalMs ?? POLL_DEFAULT_INTERVAL_MS) / 1000).toString()} s${poll.maxPolls ? `, at most ${poll.maxPolls} times` : ""}, reading the state at ${poll.statusPointer} (${statuses}).` } : {}),
 		...(profile.result ? { result: `${profile.result.method ?? "GET"} ${urlFor(baseUrl, profile.result.path)} fetches the finished answer.` } : {}),
 		pages: pagesSentence(profile),
@@ -457,22 +642,29 @@ export function describeProfile(profile: HttpConverterProfile, baseUrl: string |
 
 /** The most values one reduced answer holds (the fix call needs the shape, not the content). */
 export const FIX_SHAPE_MAX_NODES = 200;
-const CUT_STRING = new RegExp(`^[\\s\\S]{0,${FIX_STRING_MAX_CHARS}}…\\(\\d+ chars\\)$`);
+/** A string value kept as it is: a short status-like token (`done`, `PROCESSING`, `page_count`, `v2`). */
+export const FIX_TOKEN = /^[A-Za-z0-9_-]{1,16}$/;
+/** A field name kept as it is: a plain identifier of at most 40 characters. */
+export const FIX_FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,39}$/;
+const STRING_MARKER = /^<text, \d+ chars>$/;
+const NAME_MARKER = /^<name \d+, \d+ chars>$/;
 
 /**
- * A JSON value reduced to its shape (pure): every string cut to FIX_STRING_MAX_CHARS after `redact`, lists cut to 3
- * entries plus a count, objects to 30 fields, depth to 8, and FIX_SHAPE_MAX_NODES values in all.
+ * A JSON value reduced to its shape (pure), for the fix call: a string value becomes `<text, N chars>` unless it is a
+ * short status-like token (FIX_TOKEN) that `allowed` accepts; a field name becomes `<name i, N chars>` unless it is
+ * a plain identifier (FIX_FIELD_NAME) that `allowed` accepts; lists are cut to 3 entries plus a count, objects to 30
+ * fields, depth to 8, and FIX_SHAPE_MAX_NODES values in all. Nothing of a free-form string reaches the model, only
+ * its length. Reducing an already reduced shape changes nothing.
  */
-export function replyShape(value: unknown, redact: (text: string) => string = (t) => t): unknown {
+export function replyShape(value: unknown, allowed: (text: string) => boolean = () => true): unknown {
 	let budget = FIX_SHAPE_MAX_NODES;
 	const walk = (node: unknown, depth: number): unknown => {
 		if (--budget < 0) return "…";
 		if (typeof node === "string") {
-			const clean = redact(node);
-			if (clean.length <= FIX_STRING_MAX_CHARS || CUT_STRING.test(clean)) return clean; // already cut: reducing twice keeps the first count
-			return `${clean.slice(0, FIX_STRING_MAX_CHARS)}…(${clean.length} chars)`;
+			if (STRING_MARKER.test(node) || node === "…" || node === "[…]" || node === "{…}" || /^…\(\d+ entries in all\)$/.test(node)) return node;
+			return FIX_TOKEN.test(node) && allowed(node) ? node : `<text, ${node.length} chars>`;
 		}
-		if (node === null || typeof node !== "object") return node;
+		if (node === null || typeof node !== "object") return typeof node === "number" || typeof node === "boolean" ? node : null;
 		if (depth >= 8) return Array.isArray(node) ? "[…]" : "{…}";
 		if (Array.isArray(node)) {
 			const head = node.slice(0, 3).map((v) => walk(v, depth + 1));
@@ -486,7 +678,8 @@ export function replyShape(value: unknown, redact: (text: string) => string = (t
 				out["…"] = "more fields";
 				break;
 			}
-			Object.defineProperty(out, redact(key).slice(0, 60), { value: walk((node as Record<string, unknown>)[key], depth + 1), enumerable: true, configurable: true, writable: true });
+			const name = NAME_MARKER.test(key) || key === "…" || (FIX_FIELD_NAME.test(key) && allowed(key)) ? key : `<name ${fields}, ${key.length} chars>`;
+			Object.defineProperty(out, name, { value: walk((node as Record<string, unknown>)[key], depth + 1), enumerable: true, configurable: true, writable: true });
 		}
 		return out;
 	};
@@ -509,17 +702,17 @@ export interface FixReport {
 }
 
 /**
- * What the fix call sees of a failed Test (pure): which checks failed and why, and the shape of the service's
- * answers, with every secret and the user's service address removed and every string truncated. No page text.
+ * What the fix call sees of a failed Test (pure): which checks failed and why, with every secret and the user's
+ * service address removed, and the shape of the service's answers (replyShape: lengths, not strings). No page text.
  */
-export function reportForModel(report: ConverterValidationReport, answers: readonly TestAnswerShape[], redact: (text: string) => string): FixReport {
+export function reportForModel(report: ConverterValidationReport, answers: readonly TestAnswerShape[], redact: (text: string) => string, allowed: (text: string) => boolean = () => true): FixReport {
 	const line = (text: string, max: number) => plainLine(redact(text), max);
 	return {
 		checks: report.checks.map((c) => ({ id: c.id, status: c.status, message: line(c.message, 300) })),
 		...(report.error ? { error: { kind: report.error.kind, message: line(report.error.message, 400) } } : {}),
 		pages: report.pages.map((p) => ({ page: p.page, chars: p.text.length })),
 		warnings: report.warnings.slice(0, 5).map((w) => line(w, 200)),
-		answers: answers.slice(0, 6).map((a) => ({ ...a, shape: replyShape(a.shape, redact) })),
+		answers: answers.slice(0, 6).map((a) => ({ ...a, shape: replyShape(a.shape, allowed) })),
 	};
 }
 

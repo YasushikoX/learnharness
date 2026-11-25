@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { sendLine, type ConverterDraftView, type ConverterDraftsOverview, type ConvertersOverview } from "@/src/core";
+import { ACKNOWLEDGE_LABEL, FIXED_VALUES_HEADING, sendLine, type ConverterDraftView, type ConverterDraftsOverview, type ConvertersOverview, type FixedValue } from "@/src/core";
 import { Button } from "@/components/ui/button";
 import { SettingsRow, SettingsSegmentedControl, Toggle } from "./controls";
 import { DRAFT_TEST_CLIENT_TIMEOUT_MS, approveDraft, createDraft, discardDraft, fixDraft, loadDrafts, testDraft, updateDraft } from "./converter-wizard-client.ts";
@@ -41,6 +41,30 @@ function keyHint(draft: ConverterDraftView): string {
 	return "Needed; not stored yet";
 }
 
+const KIND: Record<FixedValue["kind"], string> = { header: "header", field: "field", query: "query parameter", auth: "key header", path: "path" };
+
+/**
+ * Every fixed value the draft sends exactly as written: the red ones (an address, a key, an account) first, each with
+ * its reason, then the rest. A bare path is shown but needs no acknowledgement.
+ */
+function FixedValues({ values }: { values: FixedValue[] }) {
+	if (values.length === 0) return null;
+	return (
+		<div data-testid="wizard-fixed" className="flex flex-col gap-0.5">
+			<p className="text-xs font-medium text-foreground">{FIXED_VALUES_HEADING}:</p>
+			{values.map((v, i) => (
+				<div key={`${v.kind}-${v.request}-${v.label}-${i}`} data-testid={v.warning ? "wizard-fixed-red" : "wizard-fixed-value"} data-kind={v.kind} className={`flex flex-col ${v.warning ? "text-error" : "text-foreground"}`}>
+					<span className="font-mono text-[11px]">
+						{v.kind === "path" ? `${v.label}: ` : `${v.request === "every request" ? "" : `${v.request} `}${KIND[v.kind]} ${v.label} = `}{v.value}
+						{v.raw !== undefined && <span className="text-muted-foreground"> (written as {v.raw})</span>}
+					</span>
+					{v.warning && <span role="alert" data-testid="wizard-warning" className="text-xs">{v.warning}.</span>}
+				</div>
+			))}
+		</div>
+	);
+}
+
 function stepOf(draft: ConverterDraftView | null): number {
 	if (!draft) return 0;
 	if (draft.status !== "ready" || !draft.baseUrl || (draft.keyNeeded && !draft.credential.stored)) return 1;
@@ -65,7 +89,8 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 	const [url, setUrl] = useState("");
 	const [key, setKey] = useState("");
 	const [editing, setEditing] = useState<string | null>(null);
-	const [acknowledged, setAcknowledged] = useState(false);
+	/** The digest of the version whose fixed values the user said they read: any other version on screen voids it. */
+	const [acknowledged, setAcknowledged] = useState<string | null>(null);
 
 	useEffect(() => {
 		void loadDrafts().then(({ value, error: failed }) => {
@@ -128,7 +153,7 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 		if (!draft?.shown) return;
 		setBusy("save");
 		setError(null);
-		const { value, error: failed } = await approveDraft(draft.id, draft.shown, acknowledged);
+		const { value, error: failed } = await approveDraft(draft.id, draft.shown, acknowledged === draft.shown ? acknowledged : undefined);
 		setBusy(null);
 		if (!value) return setError(failed);
 		onApproved(value.overview, value.id);
@@ -150,7 +175,7 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 		setUrl(next?.baseUrl ?? "");
 		setKey("");
 		setEditing(null);
-		setAcknowledged(false);
+		setAcknowledged(null);
 		setError(null);
 		setErrors([]);
 	}
@@ -257,7 +282,8 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 	const urlChanged = url.trim() !== (draft.baseUrl ?? "");
 	const failed = !!report && !report.ok && !draft.test?.stale;
 	const canFix = busy === null && (draft.status === "invalid" || failed);
-	const ackNeeded = !!pre?.warnings.length;
+	const ackNeeded = !!pre?.acknowledgeNeeded;
+	const read = !!draft.shown && acknowledged === draft.shown;
 	const editor = editing !== null && (
 		<div className="flex flex-col gap-1" data-testid="wizard-editor">
 			<p className={NOTE}>The app sets the id, name, version, description and docs link itself; the profile may not name the service&apos;s address.</p>
@@ -319,14 +345,10 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 					) : (
 						<p data-testid="wizard-auth" className={NOTE}>No key is sent.</p>
 					)}
-					<p className={NOTE}>{pre.headers.length ? "Fixed headers:" : "No fixed headers."}</p>
-					{pre.headers.map((h) => <p key={`h-${h.label}`} data-testid="wizard-header" className="font-mono text-[11px] text-foreground">{h.label}: {h.value}</p>)}
-					<p className={NOTE}>{pre.fields.length ? "Fixed fields:" : "No fixed fields."}</p>
-					{pre.fields.map((f) => <p key={`f-${f.label}`} data-testid="wizard-field" className="font-mono text-[11px] text-foreground">{f.label} = {f.value}</p>)}
+					<FixedValues values={pre.fixed} />
 					{pre.poll && <p data-testid="wizard-poll" className="font-mono text-[11px] text-foreground">{pre.poll}</p>}
 					{pre.result && <p data-testid="wizard-result" className="font-mono text-[11px] text-foreground">{pre.result}</p>}
 					<p data-testid="wizard-pages" className={NOTE}>{pre.pages}</p>
-					{pre.warnings.map((w) => <p key={w} role="alert" data-testid="wizard-warning" className="text-xs text-error">{w}</p>)}
 				</div>
 			)}
 			{draft.profileText !== undefined && (
@@ -400,12 +422,12 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 			{pre && (
 				<div className="flex flex-col gap-1" data-testid="wizard-approve-step">
 					{ackNeeded && (
-						<SettingsRow label="I checked the values marked as addresses above" testid="wizard-ack-row">
-							<Toggle label="Addresses checked" checked={acknowledged} disabled={busy !== null} onChange={setAcknowledged} />
+						<SettingsRow label={ACKNOWLEDGE_LABEL} hint={`Every value under "${FIXED_VALUES_HEADING}" above, for this version of the draft`} testid="wizard-ack-row">
+							<Toggle label={ACKNOWLEDGE_LABEL} checked={read} disabled={busy !== null} onChange={(on) => setAcknowledged(on && draft.shown ? draft.shown : null)} />
 						</SettingsRow>
 					)}
 					<div className="flex flex-wrap items-center gap-3">
-						<Button type="button" size="xs" variant="outline" className="lh-hit cursor-pointer disabled:cursor-not-allowed" disabled={busy !== null || !draft.approvable || (ackNeeded && !acknowledged)} onClick={() => void approve()} data-testid="wizard-approve">
+						<Button type="button" size="xs" variant="outline" className="lh-hit cursor-pointer disabled:cursor-not-allowed" disabled={busy !== null || !draft.approvable || (ackNeeded && !read)} onClick={() => void approve()} data-testid="wizard-approve">
 							Approve
 						</Button>
 						<span className={NOTE} data-testid="wizard-approve-note">

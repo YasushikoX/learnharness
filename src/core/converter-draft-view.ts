@@ -14,6 +14,27 @@ export interface ProfileLine {
 	value: string;
 }
 
+/**
+ * One fixed value a profile sends exactly as written, with every PDF (fix round 1: every one is listed and must be
+ * acknowledged; the address and key heuristic only decides which are shown first, in red).
+ */
+export interface FixedValue {
+	/** A fixed header, a fixed body or form field, a query parameter of a path, a key header's fixed text, or a path. */
+	kind: "header" | "field" | "query" | "auth" | "path";
+	/** The request that sends it ("every request" for headers). */
+	request: "submit" | "poll" | "result" | "every request";
+	/** The header name, the field's name or JSON Pointer, the parameter's decoded name, or which path. */
+	label: string;
+	/** The value as sent (a query parameter decoded; placeholders as <job id>, <separator>). */
+	value: string;
+	/** As written in the profile, when that differs from what is shown (a percent-encoded query parameter: name=value). */
+	raw?: string;
+	/** Why it is shown in red (it looks like an address, a webhook, a key or an account), or absent. */
+	warning?: string;
+	/** Counts toward the acknowledgement (everything but a bare path and a parameter that is only {{JOB_ID}}). */
+	acknowledge: boolean;
+}
+
 export interface ProfilePreflight {
 	/** "POST https://ocr.example.com/v1/convert"; with no saved URL, "<your service URL>/v1/convert". */
 	submit: string;
@@ -21,21 +42,25 @@ export interface ProfilePreflight {
 	body: string;
 	/** The one header that carries the key, its value with the key masked; absent for a keyless service. */
 	auth?: { header: string; value: string };
-	/** Every fixed header (sent with every request of the job). */
-	headers: ProfileLine[];
-	/** Every fixed form field or JSON value of the upload. */
-	fields: ProfileLine[];
+	/** Every fixed value the profile sends exactly as written: red ones first, then the rest in profile order. */
+	fixed: FixedValue[];
+	/** A fixed value other than a bare path is sent, or one is red: Approve needs "I have read these values". */
+	acknowledgeNeeded: boolean;
 	/** Status checks, when the service works with a job id. */
 	poll?: string;
 	/** The separate result request. */
 	result?: string;
 	/** How the pages are found in the answer. */
 	pages: string;
-	/** Fixed values that name an address: the service could send data there. Each must be acknowledged. */
+	/** The red values' one-line reasons ("<label>: <why>"), in the order of `fixed`. */
 	warnings: string[];
 	/** Every origin a request goes to (only ever the user's). */
 	origins: string[];
 }
+
+/** The heading of the fixed values on the Review step, and the switch Approve needs when there are any. */
+export const FIXED_VALUES_HEADING = "Sent with every PDF, exactly as written";
+export const ACKNOWLEDGE_LABEL = "I have read these values";
 
 export const NO_BASE_URL = "<your service URL>";
 
@@ -47,7 +72,7 @@ export interface ConverterDraftTest {
 	report: ConverterValidationReport;
 	/** The report is for exactly the profile, URL and key there are now, and passed. */
 	current: boolean;
-	/** The report is for an earlier profile or URL than the one shown. */
+	/** The report no longer applies: it is for an earlier profile or URL, or its pass is void (another key, a restart). */
 	stale: boolean;
 	at: string;
 }
@@ -78,7 +103,8 @@ export interface ConverterDraftView {
 	origin?: string;
 	keyNeeded: boolean;
 	credential: CredentialStatus;
-	/** A digest of the profile and URL shown; approval must name it, so it approves what was on screen. */
+	/** A digest of the profile and URL shown; approval must name it, so it approves what was on screen, and the
+	 *  acknowledgement of the fixed values is this digest (any change of the profile or URL voids it). */
 	shown?: string;
 	test?: ConverterDraftTest;
 	/** Approve is possible now (a passing Test of exactly this profile, URL and key). */

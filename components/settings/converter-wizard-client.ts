@@ -50,7 +50,8 @@ export const testDraft = (id: string, signal?: AbortSignal) => call<ConverterDra
 
 export const fixDraft = (id: string, signal?: AbortSignal) => call<ConverterDraftView>("/api/converters/drafts/fix", json("POST", { id }, signal), "The fix could not be written");
 
-export const approveDraft = (id: string, shown: string, acknowledged: boolean) =>
-	call<{ id: string; overview: ConvertersOverview }>("/api/converters/drafts/approve", json("POST", { id, shown, acknowledged }), "Could not approve the draft");
+/** `acknowledged`: the digest of the version whose fixed values the user read, sent only when it is the one shown. */
+export const approveDraft = (id: string, shown: string, acknowledged?: string) =>
+	call<{ id: string; overview: ConvertersOverview }>("/api/converters/drafts/approve", json("POST", { id, shown, ...(acknowledged ? { acknowledged } : {}) }), "Could not approve the draft");
 
 export const discardDraft = (id: string) => call<ConverterDraftsOverview>(`/api/converters/drafts?id=${encodeURIComponent(id)}`, { method: "DELETE" }, "Could not discard the draft");

@@ -36,7 +36,8 @@ import { readSettings, writeSettings } from "../../store/settings.ts";
 import { credentialStatus, readConverterCredential, writeProfileCredential } from "./credentials.ts";
 import { convertersDir, listCustomProfiles, saveCustomProfile } from "./custom-profiles.ts";
 import { DocsFetchError, fetchDocsPage, type FetchedDocs } from "./docs-fetch.ts";
-import { apiKeyProblem, redactSecrets } from "./http-common.ts";
+import { apiKeyProblem, containsSecret, redactSecrets } from "./http-common.ts";
+import { PRESET_PROFILES } from "./presets.ts";
 import { createProfileConverter } from "./registry.ts";
 import { selfOriginProblem } from "./self-origin.ts";
 import { convertersOverview } from "./settings-service.ts";
@@ -57,8 +58,9 @@ import { CONVERTER_TEST_DEADLINE_MS, validateConverter } from "./validator.ts";
  *   - its Test is the converter test (validator.ts) on the bundled PDFs, sent only to that URL's origin;
  *   - APPROVE is possible only after a passing Test of exactly the profile, URL and key there are now (an HMAC of the
  *     three with a per-process secret, held in memory: a restart, any edit, another URL or key needs a new Test) and
- *     for the profile the user was shown (`shown`, a digest of profile and URL the approval names); fixed values that
- *     name an address must be acknowledged. Approval makes it an ordinary custom profile (custom-profiles.ts) with the
+ *     for the profile the user was shown (`shown`, a digest of profile and URL the approval names); when the profile
+ *     sends any fixed value beyond a bare path, the approval must also carry the acknowledgement of that same digest
+ *     (a bare `true`, or the digest of an earlier version, is refused). Approval makes it an ordinary custom profile (custom-profiles.ts) with the
  *     URL and key moved to it, and never selects it: "Use for new PDFs" stays a separate step.
  *
  * The model is called only when the user presses Draft or "Ask AI to fix": one drafting call plus at most one repair
@@ -144,6 +146,17 @@ function draftFile(id: string): string {
 const str = (value: unknown, max: number): string | undefined => (typeof value === "string" ? value.slice(0, max) : undefined);
 const strings = (value: unknown, max: number): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === "string").slice(0, 20).map((v) => v.slice(0, max)) : []);
 
+/** A documentation address read back from a file: an http(s) URL of at most 2000 characters, or undefined. */
+function safeDocsUrl(value: unknown): string | undefined {
+	if (typeof value !== "string" || value.length > 2000) return undefined;
+	try {
+		const url = new URL(value);
+		return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password ? value : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /** A draft file read back: shape checked, every field bounded, the profile validated again. undefined when unusable. */
 function recordOf(value: unknown, id: string): DraftRecord | undefined {
 	if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
@@ -160,7 +173,7 @@ function recordOf(value: unknown, id: string): DraftRecord | undefined {
 		updatedAt: str(raw.updatedAt, 40) ?? new Date(0).toISOString(),
 		serviceName,
 		source: raw.source === "url" ? "url" : "paste",
-		...(str(raw.docsUrl, 2000) ? { docsUrl: str(raw.docsUrl, 2000) } : {}),
+		...(safeDocsUrl(raw.docsUrl) ? { docsUrl: safeDocsUrl(raw.docsUrl) } : {}),
 		...(str(raw.docsNotice, 400) ? { docsNotice: str(raw.docsNotice, 400) } : {}),
 		documentation: cleanText(str(raw.documentation, DRAFT_DOCS_MAX_CHARS) ?? ""),
 		documentationCut: raw.documentationCut === true,
@@ -276,7 +289,8 @@ function viewOf(record: DraftRecord): ConverterDraftView {
 		keyNeeded,
 		credential,
 		shown,
-		...(record.lastTest ? { test: { report: record.lastTest.report, current, at: record.lastTest.at, stale: record.lastTest.shown !== shown } } : {}),
+		// stale: the report no longer applies (another profile or URL, or a pass made void by another key or a restart)
+		...(record.lastTest ? { test: { report: record.lastTest.report, current, at: record.lastTest.at, stale: record.lastTest.shown !== shown || (record.lastTest.report.ok && !current) } } : {}),
 		approvable: approveBlocked === undefined,
 		...(approveBlocked ? { approveBlocked } : {}),
 		modelCalls: record.usage.length,
@@ -337,11 +351,16 @@ export function parseCreateDraftBody(body: unknown): ServiceResult<CreateDraftIn
 	return { ok: true, value: { serviceName: raw.serviceName, ...(docsUrl ? { docsUrl } : {}), ...(docsText ? { docsText } : {}), ...(sample ? { sample } : {}) } };
 }
 
-/** A profile id for a new draft: from the name, unused by any profile file or other draft. */
+/** Ids a draft never gets: the built-in converters' and the presets'. */
+const RESERVED_PROFILE_IDS = ["pdfjs", "docling", ...PRESET_PROFILES.map((p) => p.id)];
+
+/** A profile id for a new draft: from the name, unused by any built-in, preset, profile file or other draft. */
 function freshProfileId(serviceName: string): string {
 	const base = serviceName.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/, "") || "connector";
 	const listing = listCustomProfiles();
 	const taken = new Set([
+		// the built-in converters and the presets: a draft named after one would show as "<that name> (your profile)"
+		...RESERVED_PROFILE_IDS,
 		...listing.profiles.map((p) => p.id),
 		...listing.invalid.map((f) => f.file.replace(/\.json$/, "")),
 		...draftIds().map((id) => (readDraft(id)?.profile as { id?: unknown } | undefined)?.id).filter((v): v is string => typeof v === "string"),
@@ -562,19 +581,83 @@ export function configureConverterDraft(input: ConfigureDraftInput): ServiceResu
 	return { ok: true, value: viewOf(readDraft(record.id) ?? record) };
 }
 
-/** The user's service address and its host, removed from text a model will read. */
-function addressRedactor(baseUrl: string | undefined, secret: string | undefined): (text: string) => string {
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The user's service address, origin, host and host name (an IPv6 host bracketed and bare), removed from text a model
+ * will read, in any letter case; and the key, in every form http-common.ts knows.
+ */
+export function addressRedactor(baseUrl: string | undefined, secret: string | undefined): (text: string) => string {
 	const forms: string[] = [];
 	if (baseUrl) {
 		const url = new URL(baseUrl);
-		forms.push(baseUrl, url.origin, url.host, url.hostname);
+		forms.push(baseUrl, baseUrl.replace(/\/+$/, ""), url.origin, url.host, url.hostname);
+		if (url.hostname.startsWith("[")) forms.push(url.hostname.slice(1, -1));
 	}
 	const sorted = [...new Set(forms)].filter(Boolean).sort((a, b) => b.length - a.length);
+	const pattern = sorted.length ? new RegExp(sorted.map(escapeRegExp).join("|"), "gi") : undefined;
 	return (text: string) => {
-		let out = redactSecrets(text, [secret]);
-		for (const form of sorted) out = out.split(form).join("<service>");
-		return out;
+		const out = redactSecrets(text, [secret]);
+		return pattern ? out.replace(pattern, "<service>") : out;
 	};
+}
+
+/**
+ * Whether a short token or field name of a service's answer may reach the fix call as it is: nothing of the address or
+ * the key is in it, in any case, and it shares no run of 6 characters with the key or the key reversed (a key cut into
+ * pieces across fields, or written backwards).
+ */
+export function tokenAllowed(baseUrl: string | undefined, secret: string | undefined): (text: string) => boolean {
+	const redact = addressRedactor(baseUrl, secret);
+	const pieces = new Set<string>();
+	if (secret) {
+		for (const form of [secret.toLowerCase(), [...secret.toLowerCase()].reverse().join("")]) {
+			for (let i = 0; i + 6 <= form.length; i++) pieces.add(form.slice(i, i + 6));
+		}
+	}
+	return (text: string) => {
+		if (redact(text) !== text) return false;
+		const lower = text.toLowerCase();
+		for (let i = 0; i + 6 <= lower.length; i++) if (pieces.has(lower.slice(i, i + 6))) return false;
+		return true;
+	};
+}
+
+/** The most characters of one raw answer read for the key (answers are capped in size before they get here). */
+const LEAK_SCAN_MAX_CHARS = 8 * 1024 * 1024;
+
+/**
+ * Whether a raw answer holds the key anywhere: in a string or a field name, split across consecutive string values or
+ * across consecutive field names, or reversed, in any letter case (every form http-common.ts knows). Iterative and
+ * bounded.
+ */
+export function answerHoldsSecret(answer: unknown, secret: string | undefined): boolean {
+	if (!secret) return false;
+	const values: string[] = [];
+	const names: string[] = [];
+	let chars = 0;
+	const stack: { node: unknown; name?: string }[] = [{ node: answer }];
+	while (stack.length && chars < LEAK_SCAN_MAX_CHARS) {
+		const { node, name } = stack.pop()!;
+		if (name !== undefined) {
+			names.push(name);
+			chars += name.length;
+		}
+		if (typeof node === "string") {
+			values.push(node);
+			chars += node.length;
+		} else if (Array.isArray(node)) {
+			for (let i = node.length - 1; i >= 0; i--) stack.push({ node: node[i] });
+		} else if (node !== null && typeof node === "object") {
+			const entries = Object.entries(node);
+			for (let i = entries.length - 1; i >= 0; i--) stack.push({ node: entries[i]![1], name: entries[i]![0] });
+		}
+	}
+	const key = secret.toLowerCase();
+	return [values.join(""), names.join("")].some((joined) => {
+		const lower = joined.toLowerCase();
+		return containsSecret(joined, [secret]) || containsSecret(lower, [key]) || containsSecret([...lower].reverse().join(""), [key]);
+	});
 }
 
 /** Run the converter test on the draft: the bundled PDFs, sent only to the draft's saved URL. */
@@ -588,15 +671,18 @@ export function testConverterDraft(id: string, signal: AbortSignal, deadlineMs =
 		if (!record.baseUrl) return { ok: false, error: "Enter the service URL first. Nothing was sent.", status: 409 };
 		const secret = readConverterCredential(cid, record.baseUrl);
 		if (profile.auth && !secret) return { ok: false, error: "Save its API key first. Nothing was sent.", status: 409 };
-		const redact = addressRedactor(record.baseUrl, secret);
+		const allowed = tokenAllowed(record.baseUrl, secret);
 		const answers: TestAnswerShape[] = [];
+		let leaked = false;
 		let pdfIndex = -1;
 		let converter;
 		try {
 			converter = createProfileConverter(cid, profile, { services: { [cid]: { baseUrl: record.baseUrl } } }, readConverterCredential, false, {
 				onAnswer: (stage, answer) => {
 					if (stage === "submit") pdfIndex++;
-					if (answers.length < 6) answers.push({ pdf: pdfIndex <= 0 ? "two-page" : "blank-middle", stage, shape: replyShape(answer, redact) });
+					if (!leaked && answerHoldsSecret(answer, secret)) leaked = true;
+					// only the shape is kept (in the draft file too): lengths for strings, markers for odd field names
+					if (answers.length < 6) answers.push({ pdf: pdfIndex <= 0 ? "two-page" : "blank-middle", stage, shape: replyShape(answer, allowed) });
 				},
 			});
 		} catch (error) {
@@ -604,7 +690,7 @@ export function testConverterDraft(id: string, signal: AbortSignal, deadlineMs =
 		}
 		const shown = shownDigest(record);
 		const print = fingerprint(record);
-		const report = await validateConverter(converter, { signal, secrets: secret ? [secret] : [], deadlineMs });
+		const report = await validateConverter(converter, { signal, secrets: secret ? [secret] : [], deadlineMs, answerLeaked: () => leaked });
 		// the draft may have been discarded or edited while the Test ran: the pass is only for what was tested
 		const now = readDraft(id);
 		if (!now) return { ok: false, error: "The draft was discarded during the Test", status: 409 };
@@ -630,6 +716,7 @@ export function fixConverterDraft(id: string, signal: AbortSignal): Promise<Serv
 		if (record.status === "ready" && !failedTest) return { ok: false, error: "Ask AI to fix after a failed Test of this profile.", status: 409 };
 		const secret = record.baseUrl ? readConverterCredential(draftConverterId(record.id), record.baseUrl) : undefined;
 		const redact = addressRedactor(record.baseUrl, secret);
+		const allowed = tokenAllowed(record.baseUrl, secret);
 		const profileId = (record.profile as { id?: unknown } | undefined)?.id;
 		const own = ownFields(record, typeof profileId === "string" && /^[a-z0-9][a-z0-9-]{0,47}$/.test(profileId) ? profileId : freshProfileId(record.serviceName), new Date(record.createdAt));
 		const outcome = await fixConverterProfile(
@@ -639,7 +726,7 @@ export function fixConverterDraft(id: string, signal: AbortSignal): Promise<Serv
 				documentationCut: record.documentationCut,
 				...(record.sample ? { sample: record.sample } : {}),
 				previous: record.profile,
-				...(failedTest ? { report: reportForModel(failedTest.report, failedTest.answers, redact) } : { errors: record.errors.map(redact) }),
+				...(failedTest ? { report: reportForModel(failedTest.report, failedTest.answers, redact, allowed) } : { errors: record.errors.map(redact) }),
 			},
 			{ engine: model.engine, signal, own, onUsage: (usage, call) => record.usage.push(usageEntry(usage, call, model.id, record)) },
 		);
@@ -663,8 +750,8 @@ export interface ApproveDraftInput {
 	id: string;
 	/** The `shown` digest of the draft the user approved on screen. */
 	shown: string;
-	/** The user acknowledged the fixed values flagged as addresses. */
-	acknowledged?: boolean;
+	/** The `shown` digest of the version whose fixed values the user acknowledged ("I have read these values"). */
+	acknowledged?: string;
 }
 
 export function parseApproveDraftBody(body: unknown): ServiceResult<ApproveDraftInput> {
@@ -674,7 +761,7 @@ export function parseApproveDraftBody(body: unknown): ServiceResult<ApproveDraft
 	if (unknown) return { ok: false, error: `unknown field ${unknown}` };
 	if (typeof raw.id !== "string" || !CONVERTER_DRAFT_ID_PATTERN.test(raw.id)) return { ok: false, error: "id must be a draft id" };
 	if (typeof raw.shown !== "string" || !/^[0-9a-f]{24}$/.test(raw.shown)) return { ok: false, error: "shown must name the draft on screen" };
-	if (raw.acknowledged !== undefined && typeof raw.acknowledged !== "boolean") return { ok: false, error: "acknowledged must be true or false" };
+	if (raw.acknowledged !== undefined && (typeof raw.acknowledged !== "string" || !/^[0-9a-f]{24}$/.test(raw.acknowledged))) return { ok: false, error: "acknowledged must name the version whose values were read" };
 	return { ok: true, value: raw as unknown as ApproveDraftInput };
 }
 
@@ -689,11 +776,14 @@ export function approveConverterDraft(input: ApproveDraftInput): ServiceResult<{
 	const view = viewOf(record);
 	if (input.shown !== view.shown) return { ok: false, error: "The draft changed since it was shown: review it again.", status: 409 };
 	if (!view.approvable) return { ok: false, error: view.approveBlocked ?? "The draft cannot be approved yet", status: 409 };
-	if (view.preflight?.warnings.length && input.acknowledged !== true) return { ok: false, error: "Confirm the values marked as addresses first.", status: 409 };
+	// the acknowledgement belongs to what was read: the digest of exactly this profile and URL, never a bare "true"
+	if (view.preflight?.acknowledgeNeeded && input.acknowledged !== view.shown) {
+		return { ok: false, error: input.acknowledged ? "The values changed since you read them: read them again and switch on \"I have read these values\"." : "Read the values sent with every PDF and switch on \"I have read these values\" first.", status: 409 };
+	}
 	const profile = record.profile as HttpConverterProfile;
 	const listing = listCustomProfiles();
 	if (listing.profiles.some((p) => p.id === profile.id) || listing.invalid.some((f) => f.file === `${profile.id}.json`)) {
-		return { ok: false, error: `A profile with the id ${profile.id} exists already. Remove it, or edit this draft's JSON.`, status: 409 };
+		return { ok: false, error: `A profile with the id ${profile.id} exists already. Remove that profile on the main screen and approve again, or discard this draft and draft the service again (a new draft gets a free id).`, status: 409 };
 	}
 	const cid = draftConverterId(record.id);
 	const baseUrl = record.baseUrl!;

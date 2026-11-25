@@ -35,6 +35,9 @@ export interface ValidateConverterOptions {
 	onProgress?: (stage: string) => void;
 	/** The deadline of the whole test (tests shorten it). */
 	deadlineMs?: number;
+	/** The connector wizard's draft Test: whether a raw answer the interpreter observed held the key (in any field,
+	 *  split across fields or reversed). True fails `no_secret` too; it never makes the check pass. */
+	answerLeaked?: () => boolean;
 }
 
 const PREVIEW_CHARS = 300;
@@ -110,6 +113,7 @@ export async function validateConverter(converter: PdfConverter, options: Valida
 	}
 
 	const finish = (extra: Partial<ConverterValidationReport>): ConverterValidationReport => {
+		if (options.answerLeaked?.()) leaked = true;
 		check("no_secret", leaked ? "fail" : "pass", leaked ? "The API key appeared in the service's answer or error (it was removed from this report)." : "The API key does not appear in the answer.");
 		return redactDeep(
 			{

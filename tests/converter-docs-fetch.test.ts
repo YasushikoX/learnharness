@@ -7,6 +7,7 @@
 
 import assert from "node:assert/strict";
 import http from "node:http";
+import zlib from "node:zlib";
 import type { AddressInfo, LookupFunction, Socket } from "node:net";
 import { describe, it } from "node:test";
 import { createAddressCheckedAgent, isPublicAddress } from "../src/agent/tools/safe-fetch.ts";
@@ -25,13 +26,14 @@ interface Seen {
 }
 
 /** A loopback server, an agent that lets the test reach it under any name, and the requests it saw. */
-async function withDocs(handler: (req: http.IncomingMessage, res: http.ServerResponse) => void, run: (port: number, seen: Seen[], agent: ReturnType<typeof createAddressCheckedAgent>) => Promise<void>, allowed: (address: string) => boolean = () => true): Promise<void> {
+async function withDocs(handler: (req: http.IncomingMessage, res: http.ServerResponse) => void, run: (port: number, seen: Seen[], agent: ReturnType<typeof createAddressCheckedAgent>) => Promise<void>, allowed: (address: string) => boolean = () => true, setup?: (server: http.Server) => void): Promise<void> {
 	const seen: Seen[] = [];
 	const sockets = new Set<Socket>();
 	const server = http.createServer((req, res) => {
 		seen.push({ url: req.url ?? "", host: req.headers.host ?? "", headers: req.headers });
 		handler(req, res);
 	});
+	setup?.(server);
 	server.on("connection", (s) => {
 		sockets.add(s);
 		s.on("close", () => sockets.delete(s));
@@ -69,11 +71,22 @@ describe("documentation fetch: addresses", () => {
 		assert.equal(docsUrlProblem("https://93.184.216.34/"), undefined);
 	});
 
-	it("a public-looking name that resolves to a private address is refused on the address reached, before any request", async () => {
+	it("a public-looking name that resolves to a private address is refused before any connection is opened", async () => {
+		let connections = 0;
 		await withDocs((_q, r) => r.end("must not be read"), async (port, seen, agent) => {
 			await refused(fetchDocsPage(`http://docs.acme.example:${port}/`, { dispatcher: agent }), "address", /leads to a private or local address/);
 			assert.equal(seen.length, 0);
-		}, isPublicAddress);
+			assert.equal(connections, 0, "no TCP handshake: the DNS answer is filtered before connecting");
+		}, isPublicAddress, (server) => server.on("connection", () => connections++));
+	});
+
+	it("the special IPv6 ranges are refused as literals before any connection", async () => {
+		for (const host of ["[::127.0.0.1]", "[::169.254.169.254]", "[::ffff:0:127.0.0.1]", "[fec0::1]", "[2001::1]", "[2001:10::1]", "[2001:20::1]", "[::ffff:7f00:1]"]) {
+			const url = `http://${host}/docs`;
+			assert.ok(docsUrlProblem(url), url);
+			await refused(fetchDocsPage(url), "address");
+		}
+		assert.equal(docsUrlProblem("http://[2606:4700:4700::1111]/"), undefined, "a public IPv6 address is allowed");
 	});
 });
 
@@ -157,6 +170,29 @@ describe("documentation fetch: size, type, time, credentials", () => {
 				assert.equal(s.headers.authorization, undefined);
 				assert.equal(s.headers.referer, undefined);
 			}
+		});
+	});
+
+	it("a gzip bomb is stopped at the cap (decompressed size counts); a body that trickles is stopped by the timeout", async () => {
+		const bomb = zlib.gzipSync(Buffer.alloc(50 * 1024 * 1024, 0x61));
+		assert.ok(bomb.length < 200 * 1024, "the bomb is small on the wire");
+		let trickled = 0;
+		await withDocs((req, res) => {
+			if (req.url === "/bomb") return void res.writeHead(200, { "Content-Type": "text/plain", "Content-Encoding": "gzip", "Content-Length": String(bomb.length) }).end(bomb);
+			if (req.url === "/trickle") {
+				res.writeHead(200, { "Content-Type": "text/plain" });
+				const timer = setInterval(() => {
+					trickled++;
+					if (!res.writableEnded && !res.destroyed) res.write("a");
+				}, 50);
+				res.on("close", () => clearInterval(timer));
+				return;
+			}
+			res.writeHead(404).end();
+		}, async (port, _seen, agent) => {
+			await refused(fetchDocsPage(`http://docs.acme.example:${port}/bomb`, { dispatcher: agent }), "too_large", /larger than 2 MB/);
+			await refused(fetchDocsPage(`http://docs.acme.example:${port}/trickle`, { dispatcher: agent, timeoutMs: 400 }), "timeout");
+			assert.ok(trickled >= 2, "the body had started");
 		});
 	});
 
