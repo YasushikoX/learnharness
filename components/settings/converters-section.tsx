@@ -4,6 +4,7 @@ import { destinationLine, type ConverterEntry, type ConvertersOverview, type Con
 import { Button } from "@/components/ui/button";
 import { SettingsRow, ThinSelect, Toggle } from "./controls";
 import { importProfile, loadConverters, removeProfile, runConverterTest, saveConverter, type ConverterChange } from "./converters-client.ts";
+import { ConverterWizard } from "./converter-wizard.tsx";
 
 /**
  * Settings → PDF conversion (fork addition, 2026-11-25): which converter turns uploaded PDFs into page-marked text.
@@ -50,6 +51,7 @@ export function ConvertersSection() {
 	const [profileText, setProfileText] = useState("");
 	const [importErrors, setImportErrors] = useState<string[]>([]);
 	const [importNote, setImportNote] = useState<string | null>(null);
+	const [wizardOpen, setWizardOpen] = useState(false);
 
 	/** The converter in use; one that is gone (a removed or invalid profile) is the built-in reader, which is what runs. */
 	const active = overview ? (overview.converters.find((c) => c.id === overview.selected) ?? overview.converters[0]) : undefined;
@@ -386,6 +388,25 @@ export function ConvertersSection() {
 					</ul>
 				)}
 			</details>
+
+			{wizardOpen ? (
+				<ConverterWizard
+					onClose={() => setWizardOpen(false)}
+					onApproved={(next, id) => {
+						setWizardOpen(false);
+						cancelTest();
+						setReport(null);
+						setError(null);
+						setKey("");
+						adopt(next, id);
+						setImportNote(`Approved ${next.converters.find((c) => c.id === id)?.name ?? id}, shown above. Choose Use for new PDFs to use it.`);
+					}}
+				/>
+			) : (
+				<button type="button" onClick={() => setWizardOpen(true)} disabled={busy} data-testid="converter-wizard-open" className={`${LINK} self-start`}>
+					No preset fits? Draft a connector with AI…
+				</button>
+			)}
 
 			{overview.invalidProfiles.length > 0 && (
 				<div data-testid="converter-invalid-profiles" className="flex flex-col gap-0.5">

@@ -80,6 +80,8 @@ export interface HttpConverterOptions {
 	maxResponseBytes?: number;
 	/** Overrides the profile's poll interval (tests). */
 	pollIntervalMs?: number;
+	/** Sees each parsed JSON answer (the connector wizard's Test keeps only its redacted shape). Never changes it. */
+	onAnswer?: (stage: "submit" | "poll" | "result", answer: unknown) => void;
 }
 
 function notConfigured(message: string): never {
@@ -250,6 +252,7 @@ export function createHttpConverter(options: HttpConverterOptions): PdfConverter
 			throw new ConverterError("not_configured", `${name}: the request body could not be built (${(error as Error).message}); nothing was sent`, false);
 		}
 		let answer = await request(job, submitUrl, { method: profile.submit.method, body: submit.body }, uploadTimeoutMs, submit.headers);
+		options.onAnswer?.("submit", answer);
 
 		const poll = profile.poll;
 		let jobId: string | undefined;
@@ -264,6 +267,7 @@ export function createHttpConverter(options: HttpConverterOptions): PdfConverter
 				if (count >= maxPolls) throw new ConverterError("timeout", `${name} did not finish after ${maxPolls} status checks`, true);
 				await delay(interval, job.signal);
 				answer = await request(job, pollUrl, { method: poll.method ?? "GET" }, requestTimeoutMs);
+				options.onAnswer?.("poll", answer);
 				const status = jsonPointerGet(answer, poll.statusPointer);
 				if (poll.done.some((v) => sameScalar(v, status))) break;
 				if ((poll.failed ?? []).some((v) => sameScalar(v, status))) {
@@ -278,6 +282,7 @@ export function createHttpConverter(options: HttpConverterOptions): PdfConverter
 		if (profile.result) {
 			ctx.onProgress("downloading", undefined, total);
 			answer = await request(job, urlFor(profile.result.path, jobId), { method: profile.result.method ?? "GET" }, requestTimeoutMs);
+			options.onAnswer?.("result", answer);
 		}
 
 		const pages = extractPages(answer, total, delimiter);

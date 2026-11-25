@@ -33,7 +33,8 @@ import { normalizeBaseUrl } from "./settings.ts";
  *   - header names and values are checked for what fetch would refuse, and credential headers (Authorization,
  *     Cookie, Proxy-Authorization) can never be fixed headers.
  *
- * validateHttpConverterProfile is the one gate (presets, files on disk, an import, the later AI wizard).
+ * validateHttpConverterProfile is the one gate (presets, files on disk, an import, a draft of the AI wizard, which
+ * adds its own stricter checks on top: src/core/converter-draft.ts).
  */
 
 export const HTTP_CONVERTER_PROFILE_FORMAT = "learnharness.http-converter/1";
@@ -338,12 +339,14 @@ export function profileUrl(baseUrl: string, template: string, jobId?: string): s
 
 const HEADER_NAME = /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,100}$/;
 /** Set by the host itself, never sent to a service, or names that mean something to a JavaScript object. */
-const RESERVED_HEADERS = new Set([
+export const RESERVED_HEADER_NAMES = [
 	"host", "content-length", "content-type", "transfer-encoding", "connection", "cookie", "keep-alive", "upgrade", "te", "trailer", "proxy-authorization", "origin", "referer",
 	"__proto__", "constructor", "prototype",
-]);
+] as const;
+const RESERVED_HEADERS = new Set<string>(RESERVED_HEADER_NAMES);
 /** Credentials: never a fixed header of a profile (Authorization only through `auth`). */
-const CREDENTIAL_HEADERS = new Set(["authorization", "cookie", "proxy-authorization"]);
+export const CREDENTIAL_HEADER_NAMES = ["authorization", "cookie", "proxy-authorization"] as const;
+const CREDENTIAL_HEADERS = new Set<string>(CREDENTIAL_HEADER_NAMES);
 
 /**
  * Why a value cannot be sent as an HTTP header value, or undefined (pure). Control characters (line breaks, tab, DEL,

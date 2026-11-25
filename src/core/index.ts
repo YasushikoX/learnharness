@@ -104,6 +104,8 @@ export * from "./materials.ts";
 export * from "./pdf-converter.ts";
 // Settings → PDF conversion wire types (fork addition, 2026-11-25). The profile format (http-converter-spec.ts) stays server-side.
 export * from "./converter-settings.ts";
+// "Draft with AI" wire types (fork addition, 2026-11-25). Its validator side (converter-draft.ts) stays server-side.
+export * from "./converter-draft-view.ts";
 // The digest.json contract and the class glossary's lookups (fork addition, 2026-11-24): pure, browser-safe. The
 // splitter (material-split.ts) is not re-exported: only the server reads content.md.
 export * from "./contracts/material-digest.ts";
