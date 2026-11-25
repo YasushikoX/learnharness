@@ -77,7 +77,9 @@ function escapedFenceRanges(text: string, native: LiteralRange[]): { fences: Lit
  * ranges, including nested quotes/lists and implicit container endings.
  * Keep source offsets: never serialize the AST back into Markdown. */
 function nativeLiteralRanges(text: string, offset = 0): LiteralRange[] {
-	const pending: MarkdownNode[] = [fromMarkdown(text, { extensions: [math({ singleDollarTextMath: true })], mdastExtensions: [mathFromMarkdown()] })];
+	// Emphasis parsing is off: it cannot change where code and inline code are (code spans bind before emphasis), and
+	// micromark's emphasis tokenizer is quadratic on runs like `*_*_…` (WP5 review 3: 190 ms at 5,000 characters).
+	const pending: MarkdownNode[] = [fromMarkdown(text, { extensions: [math({ singleDollarTextMath: true }), { disable: { null: ["attention"] } }], mdastExtensions: [mathFromMarkdown()] })];
 	const ranges: LiteralRange[] = [];
 	while (pending.length) {
 		const node = pending.pop()!;

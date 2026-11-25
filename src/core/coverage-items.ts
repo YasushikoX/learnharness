@@ -19,7 +19,7 @@
  *   - an item whose skills all left the class map is UNASSIGNED too.
  */
 
-import type { CourseCoverage, CoverageDropped, CoverageEntryView, CoverageItem, CoverageSense, CoverageSuggestions, DraftCoverage } from "./contracts/course.ts";
+import type { CourseCoverage, CoverageDropped, CoverageEntryView, CoverageItem, CoverageLinkEdit, CoverageSense, CoverageSuggestions, DraftCoverage } from "./contracts/course.ts";
 import type { TermTier } from "./contracts/material-digest.ts";
 import { byCodeUnit, normalizeName, type GlossaryCitation, type GlossaryEntry, type SuggestedDuplicateGroup } from "./glossary.ts";
 
@@ -246,7 +246,7 @@ export function carryForward(
 }
 
 /** Suggestions cleaned: duplicate and already-made links dropped; undefined when nothing is left. */
-function suggestionsOf(s: CoverageSuggestions, links: ReadonlyArray<ReadonlyArray<string>>): CoverageSuggestions | undefined {
+export function suggestionsOf(s: CoverageSuggestions, links: ReadonlyArray<ReadonlyArray<string>>): CoverageSuggestions | undefined {
 	const groupOf = linkGroupsOf(links);
 	const excluded = [...new Map(s.excluded.map((x) => [x.key, x])).values()];
 	const seen = new Set<string>();
@@ -259,6 +259,27 @@ function suggestionsOf(s: CoverageSuggestions, links: ReadonlyArray<ReadonlyArra
 		outLinks.push(g);
 	}
 	return excluded.length > 0 || outLinks.length > 0 ? { excluded, links: outLinks } : undefined;
+}
+
+/**
+ * A draft's link decisions (DraftCoverage.linkEdits) replayed, in order, on a mapping (WP5 review 3: after approval
+ * carries the approved map again): a link joins its keys that still exist (an item of the mapping or a glossary entry),
+ * an unlink takes its key out of every group; suggestions a link made are dropped. Pure.
+ */
+export function replayLinkEdits(mapping: CoverageMapping, edits: readonly CoverageLinkEdit[] | undefined, glossary: CoverageGlossary | null | undefined): CoverageMapping {
+	if (!edits || edits.length === 0) return mapping;
+	const has = (k: string) => mapping.items.some((i) => itemKey(i) === k) || keyExists(glossary, k);
+	let links = mapping.links.map((g) => [...g]);
+	for (const e of edits) {
+		if ("link" in e) {
+			const keys = [...new Set(e.link)].filter(has);
+			if (keys.length >= 2) links.push(keys);
+		} else links = links.map((g) => g.filter((k) => k !== e.unlink));
+	}
+	const normalized = normalizeLinks(links);
+	const suggested = mapping.suggested ? suggestionsOf(mapping.suggested, normalized) : undefined;
+	const { suggested: _old, ...rest } = mapping;
+	return { ...rest, links: normalized, ...(suggested ? { suggested } : {}) };
 }
 
 /**
@@ -786,6 +807,7 @@ export function readDraftCoverage(raw: unknown): DraftCoverage | undefined {
 	const count = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 	const carriedKeys = readStringList(raw.carriedKeys);
 	const edited = readStringList(raw.edited);
+	const linkEdits = readLinkEdits(raw.linkEdits);
 	return {
 		...readMapping(raw),
 		dropped: someStrings(raw.dropped),
@@ -795,7 +817,21 @@ export function readDraftCoverage(raw: unknown): DraftCoverage | undefined {
 		...(typeof raw.carriedFrom === "string" ? { carriedFrom: raw.carriedFrom } : {}),
 		...(carriedKeys ? { carriedKeys } : {}),
 		...(edited ? { edited } : {}),
+		...(linkEdits ? { linkEdits } : {}),
 	};
+}
+
+/** DraftCoverage.linkEdits: the well-formed entries, in order (undefined when none). */
+function readLinkEdits(raw: unknown): CoverageLinkEdit[] | undefined {
+	if (!Array.isArray(raw)) return undefined;
+	const out: CoverageLinkEdit[] = [];
+	for (const e of raw) {
+		if (!isObj(e)) continue;
+		const link = someStrings(e.link);
+		if (Array.isArray(e.link) && link.length >= 2) out.push({ link });
+		else if (nonEmpty(e.unlink)) out.push({ unlink: e.unlink as string });
+	}
+	return out.length > 0 ? out : undefined;
 }
 
 /** A fingerprint of a mapping's decisions (items and links): the draft records the approved map's when it carries it,

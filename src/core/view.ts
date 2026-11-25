@@ -404,7 +404,9 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 					// streams, the same on replay.
 					const lead = leadOf(block);
 					if (lead && part.state !== "output-error" && !rejectedCalls.has(block.id)) {
-						rest.push({ type: "text", id: `${m.id}-t${textN++}`, text: lead, state: "done" });
+						// `leadFor` names the call (WP5 review 3): the vocabulary ledger counts a lead only when its question
+						// counts (answered, or the dock's pending one); the transcript ignores the field.
+						rest.push({ type: "text", id: `${m.id}-t${textN++}`, text: lead, state: "done", leadFor: { toolCallId: block.id, messageId: m.id, contentIndex } });
 					}
 					rest.push(part);
 				}

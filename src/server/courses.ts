@@ -952,6 +952,19 @@ async function runDraft(courseId: string, feedback: string | undefined, controll
 
 // ─── approval (the skills ledger's ONLY writer) ──────────────────────────────
 
+/** A draft of the shape approval reads: an object whose skills each have a key, a name, a statement and their lists. */
+function readableDraft(draft: unknown): draft is CourseDraft {
+	if (!draft || typeof draft !== "object" || Array.isArray(draft)) return false;
+	const skills = (draft as { skills?: unknown }).skills;
+	return (
+		Array.isArray(skills) &&
+		skills.every((s) => {
+			const r = s as Record<string, unknown> | null;
+			return !!r && typeof r === "object" && typeof r.key === "string" && typeof r.name === "string" && typeof r.statement === "string" && Array.isArray(r.requires) && Array.isArray(r.restsOn) && (r.reuse === undefined || typeof r.reuse === "string");
+		})
+	);
+}
+
 /** Approve the pending draft. When the class glossary has core terms NOW (WP5), every one must be assigned or excluded,
  *  whether or not the draft carries a proposal (none reads as an empty mapping): otherwise approval is refused (409) and
  *  lists them, unless `leaveUnassigned` (the student's explicit "leave N terms unassigned") makes each one excluded with
@@ -963,13 +976,21 @@ export function approveCourse(courseId: string, opts: { leaveUnassigned?: boolea
 	if (!course) return { ok: false, status: 404, error: "Unknown course" };
 	if (draftRuns().has(courseId)) return { ok: false, status: 409, error: "The skill map is still being drafted" };
 	if (!course.draft) return { ok: false, status: 409, error: "There is no draft to approve" };
+	// a synced or hand-edited draft of the wrong shape is refused, never a thrown request (WP5 review 3)
+	if (!readableDraft(course.draft)) return { ok: false, status: 422, error: "The draft cannot be read — ask for changes to re-draft it" };
 	const ctx = checkContext();
 	const problems = draftProblems(course.draft.skills, ctx);
 	if (problems.length > 0) {
 		return { ok: false, status: 422, error: `The draft no longer fits the graph — ask for changes to re-draft it: ${problems.join("; ")}` };
 	}
-	// refused BEFORE anything is written (no silent drop in either direction)
-	const unassigned = draftUnassigned(course);
+	// refused BEFORE anything is written (no silent drop in either direction); the vocabulary part never throws out of
+	// approval (WP5 review 3): a proposal that cannot be read refuses it
+	let unassigned: ReturnType<typeof draftUnassigned>;
+	try {
+		unassigned = draftUnassigned(course);
+	} catch {
+		return { ok: false, status: 409, error: "The draft's vocabulary mapping could not be read — ask for changes to re-draft it" };
+	}
 	if (unassigned.length > 0 && !opts.leaveUnassigned) {
 		const names = unassigned.slice(0, 12).map((e) => e.name).join(", ");
 		return {
@@ -984,7 +1005,13 @@ export function approveCourse(courseId: string, opts: { leaveUnassigned?: boolea
 	let coverage = readCourseCoverage(course.coverage);
 	const glossary = coverageGlossary(courseId);
 	if (hasCoreEntries(glossary)) {
-		const approved = approveCoverage(approvalProposal(course, glossary), (key) => idOf[key], glossary, opts.leaveUnassigned ? leftAtApprovalReason(courseLanguage(course)) : null, now);
+		let proposal: ReturnType<typeof approvalProposal>;
+		try {
+			proposal = approvalProposal(course, glossary);
+		} catch {
+			return { ok: false, status: 409, error: "The draft's vocabulary mapping could not be read — ask for changes to re-draft it" };
+		}
+		const approved = approveCoverage(proposal, (key) => idOf[key], glossary, opts.leaveUnassigned ? leftAtApprovalReason(courseLanguage(course)) : null, now);
 		if (!approved.ok) return { ok: false, status: 409, error: `Core terms are unassigned: ${approved.unassigned.map((e) => e.term).join(", ")}` };
 		coverage = approved.coverage;
 	}

@@ -106,6 +106,9 @@ export interface CoverageItem {
 	leftAtApproval?: true;
 }
 
+/** One link decision a student made on a draft (DraftCoverage.linkEdits). */
+export type CoverageLinkEdit = { link: string[] } | { unlink: string };
+
 /** `CourseRecord.coverage`: the approved vocabulary mapping. Absent on every class approved without an indexed glossary.
  *  JSON `null` is an EXPLICIT deletion (sync keeps a mapping a side merely lacks; see core/sync-merge.ts). */
 export interface CourseCoverage {
@@ -157,6 +160,10 @@ export interface DraftCoverage {
 	/** The item keys the student changed on this draft (assign, unassign, exclude, remove, remap): they win over the
 	 *  approved map's item when approval carries again. */
 	edited?: string[];
+	/** The links and unlinks the student made on this draft, in order (WP5 review 3): replayed after approval carries
+	 *  again, so a link stays a link and an unlink stays an unlink whatever changed on the approved map. A removed item
+	 *  is recorded as an unlink of its key; a remap renames the key in the earlier entries. */
+	linkEdits?: CoverageLinkEdit[];
 	/** Earlier decisions the carrying could not keep, with why (moved to CourseCoverage.displaced at approval). */
 	displaced?: CoverageDropped[];
 }

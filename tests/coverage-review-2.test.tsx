@@ -372,7 +372,8 @@ describe("finding 6: two senses of one word in one skill can be satisfied", () =
 		{ entryId: "t_kernel", name: "kernel", sense: { materialId: "mat_lec", page: 3 }, skills: [skill] },
 		{ entryId: "t_kernel", name: "kernel", sense: { materialId: "mat_lec", page: 9 }, skills: [skill] },
 	];
-	const tagged = (id: string, key: string) => call(id, "explain", { ...EXPLAIN, question: "Explain this meaning.", conceptIds: [key] });
+	// review 3: the check's own message must name the word (here its question does)
+	const tagged = (id: string, key: string, question = "Explain this meaning of the kernel.") => call(id, "explain", { ...EXPLAIN, question, conceptIds: [key] });
 	const ledger = (messages: LhMessage[]) => {
 		const resolved = resolveCoverage({ items: both("sk_1"), links: [] }, g, null);
 		return foldLedger(resolved, g, [{ chatId: "c1", mode: "learn", skillIds: ["sk_1"], vocabulary: chatVocabularyOf(messages, buildMatcher(g)) }]);
@@ -386,7 +387,7 @@ describe("finding 6: two senses of one word in one skill can be satisfied", () =
 	it("its halves: the name alone introduces neither; the tag alone introduces nothing; one sense checked introduces only that one", () => {
 		const named = ledger([say("The kernel of a map.")]);
 		assert.deepEqual([named.get(s3)!.introduced, named.get(s9)!.introduced], [false, false]);
-		const a = tagged("e1", s3);
+		const a = tagged("e1", s3, "Explain this meaning.");
 		const tagOnly = ledger([a, answer(a, { text: "…" })]);
 		assert.deepEqual([tagOnly.get(s3)!.introduced, tagOnly.get(s3)!.checked], [false, true]);
 		const b = tagged("e2", s9);
@@ -403,7 +404,7 @@ describe("finding 6: two senses of one word in one skill can be satisfied", () =
 		courseStore.updateCourse(c.id, { status: "active", skills: [skill], language: "en", coverage: { updatedAt: "x", items: both(skill), links: [] } });
 		const id = session(c.id, "learn", [skill]);
 		const turn = courses.courseForTurn(id)!;
-		assert.match(turn.section, /naming the word alone introduces none of them\. Name the word, explain this sense, and check it with a question tagged with this exact id: the name seen and that answered check together introduce this sense and check it\./);
+		assert.match(turn.section, /naming the word alone introduces none of them\. Explain this sense and check it with a question tagged with this exact id \(not also with another sense's id\) that names the word in its own text or in the message that poses it: that answered check introduces this sense and checks it\./);
 		const a = tagged("e1", s3);
 		const b = tagged("e2", s9);
 		const messages = [say("The kernel, in both senses."), a, answer(a, { text: "…" }), b, answer(b, { text: "…" })];

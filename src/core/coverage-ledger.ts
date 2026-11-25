@@ -26,22 +26,31 @@
  *     folding and with typographic quotes read as plain ones.
  *   - A hyphen joins a word: a name preceded or followed by a hyphen that touches a letter or digit is part of a longer
  *     word and does not match ("sub-ring" does not introduce "ring"; "R-module" is one word). So do an en dash, an em
- *     dash without spaces, a minus sign, a non-breaking hyphen and an underscore (review 2: "sub–ring", "ring_buffer");
- *     a soft hyphen is removed, and a line-break hyphen joins its halves (core/visible-text.ts).
- *   - Emphasis markers are removed before words are formed ("**sub**group" is "subgroup"), and inline code counts
- *     nothing (core/visible-text.ts).
+ *     dash without spaces, a minus sign, a non-breaking hyphen and an underscore (review 2: "sub–ring", "ring_buffer"),
+ *     and any run of them ("foo__ring", "sub--ring", review 3); a soft hyphen is removed, and a line-break hyphen joins
+ *     its halves, while the hyphenated form is tried too ("well-" / "defined" matches "well-defined" as well).
+ *   - A dot or a slash directly between letters or digits joins too ("obj.ring", "sub/ring"; a bare URL is not read at
+ *     all, core/visible-text.ts), and so does an apostrophe after a letter before the name ("l'ring") (review 3).
+ *   - Emphasis markers are removed before words are formed ("**sub**group" is "subgroup"), inline code and struck-through
+ *     text count nothing (core/visible-text.ts); a name that itself contains `*` or `_` ("C*-algebra") is also matched
+ *     against the text with its markers kept.
  *   - Longest match wins: where a longer name of the class covers a span, the shorter names inside that span are not
  *     credited by it ("ring homomorphism" does not introduce "ring").
  *   - Case: exact, with one exception: a name stored in lower case at its start (the glossary keeps running-text forms)
- *     also matches with its first letter capitalised AT THE START OF A SENTENCE (start of a line, which is where every
- *     heading, list item and table cell starts in the visible text, or after ".", "!", "?" or ":"). All-caps text never
- *     matches a lower-case name.
+ *     also matches with its first letter capitalised AT THE START OF A SENTENCE: the start of a text or a line (where
+ *     every heading, list item and table cell starts in the visible text); after "!", "?" or ":"; or after "." when the
+ *     word before the dot is longer than four letters (review 3: "Dr. Ring" and "Fig. Field" are not sentence starts; a
+ *     short last word before a real full stop, "a set. Ring…", is missed: a false "new", the cheap error). All-caps text
+ *     never matches a lower-case name.
  *   - Inflections are NOT matched unless the inflected form is an alias of the entry, or is itself an entry linked with it.
  *   - Symbols never introduce anything.
  *   - Senses of a homonym: a mention credits a sense only when exactly ONE sense of that entry is eligible in the
  *     session (assigned to one of its skills). With two or more eligible senses a bare mention introduces none of them;
- *     a sense is then introduced when its word was seen in the session AND the learner answered a question of that
- *     session tagged with that sense's key (review 2: the tag alone still introduces nothing, the name alone neither).
+ *     a sense is then introduced when the learner answered (rightly or not: the sense was explained and asked) a
+ *     question tagged with that sense's key whose own tutor message (the one model reply that posed it: its prose, the
+ *     question's lead and its card) shows the word (reviews 2 and 3: the tag alone still introduces nothing, the name alone neither, a
+ *     name met only in another message does not pair with the check, and a question tagged with two senses of one word
+ *     introduces neither: it cannot be about both).
  *   - Ask conversations count for nothing, and nor do chats outside the class.
  *
  * NOTHING HERE THROWS (review 2, "nothing in one chat may break the class"): a text that cannot be reduced or matched
@@ -53,12 +62,12 @@ import type { CourseMode, CoverageTermState } from "./contracts/course.ts";
 import type { CoverageGlossary, ResolvedCoverage } from "./coverage-items.ts";
 import { findTermCandidates, normalizeName, plainQuotes, stripInvisible } from "./glossary.ts";
 import { readAnswerVerdict } from "./lead-floor-gate.ts";
-import { pendingQuestionAt, seenTextsOfView, type SeenReading } from "./learner-seen.ts";
+import { pendingQuestionAt, seenTextsOfView, type PendingQuestionAt, type SeenReading } from "./learner-seen.ts";
 import type { LhMessage } from "./native-messages.ts";
 import type { QuestionAnswerData } from "./question-core.ts";
 import { normalizeConceptIds, normalizeQuestionLevel, QUESTION_LEVELS, type QuestionLevel } from "./question-quality.ts";
 import { FINISH_LESSON_TOOL, sessionFinishOf, VOCABULARY_REFUSAL_HEAD } from "./course-session.ts";
-import { projectView, type LhViewPart } from "./view.ts";
+import { projectView, type LhViewMessage, type LhViewPart } from "./view.ts";
 
 // ─── what the learner saw ───────────────────────────────────────────────────
 
@@ -73,8 +82,11 @@ export function learnerSeenTexts(messages: readonly LhMessage[], reading?: SeenR
 const WORD_RUN = /[\p{L}\p{N}\p{M}]+/gu;
 const WORD_CHAR = /^[\p{L}\p{N}\p{M}]$/u;
 const FIRST_WORD = /^[\p{L}\p{N}\p{M}]+/u;
-/** Characters that join the words on either side into one (when they touch a letter or digit on the other side). */
+/** Characters that join the words on either side into one (when a run of them touches a letter or digit on the other
+ *  side). */
 const JOINERS = new Set(["-", "\u2010", "\u2011", "\u2013", "\u2014", "\u2212", "_"]);
+/** Characters that join only when they sit directly between two letters or digits (review 3). */
+const TIGHT_JOINERS = new Set([".", "/"]);
 
 /** A text or a name as matching reads it: invisible characters out, NFC, typographic quotes plain, runs of spaces and
  *  tabs as one space (line breaks kept: they start sentences). */
@@ -90,6 +102,8 @@ export interface VocabularyMatcher {
 	byFirst: Map<string, string[]>;
 	/** Names that do not start with a letter or digit (rare; found by a plain search). */
 	odd: string[];
+	/** Names that contain `*` or `_`: also matched against a text with its emphasis markers kept (review 3). */
+	marked: ReadonlySet<string>;
 }
 
 function fnv(text: string): string {
@@ -102,7 +116,7 @@ function fnv(text: string): string {
 }
 
 /** Bump when the matching rules change: cached chat scans made under older rules are then redone. */
-const MATCH_RULES_VERSION = 3;
+const MATCH_RULES_VERSION = 4;
 
 /** The matcher over every entry's name and aliases (never its symbols). Pure. */
 export function buildMatcher(glossary: Pick<CoverageGlossary, "terms">): VocabularyMatcher {
@@ -121,7 +135,7 @@ export function buildMatcher(glossary: Pick<CoverageGlossary, "terms">): Vocabul
 		if (!first) odd.push(form);
 		else byFirst.set(first, [...(byFirst.get(first) ?? []), form]);
 	}
-	return { key: `r${MATCH_RULES_VERSION}:${sorted.length}:${fnv(sorted.join("\u0000"))}`, byFirst, odd };
+	return { key: `r${MATCH_RULES_VERSION}:${sorted.length}:${fnv(sorted.join("\u0000"))}`, byFirst, odd, marked: new Set(sorted.filter((f) => /[*_]/u.test(f))) };
 }
 
 /** The code point ending just before `i` ("" at the start). */
@@ -138,22 +152,32 @@ function after(text: string, i: number): string {
 }
 const isWord = (ch: string) => ch !== "" && WORD_CHAR.test(ch);
 
-/** Can a name start at `i`? Not inside a word, and not right after a hyphen that is joined to a word before it. */
+/** Can a name start at `i`? Not inside a word, not right after a run of joiners joined to a word before it, not after a
+ *  dot or slash between word characters, and not after an apostrophe that follows a letter ("l'ring"). */
 function startsClean(text: string, i: number): boolean {
 	const prev = before(text, i);
 	if (isWord(prev)) return false;
-	if (JOINERS.has(prev) && isWord(before(text, i - prev.length))) return false;
-	return true;
+	if (TIGHT_JOINERS.has(prev) || prev === "'") return !isWord(before(text, i - prev.length));
+	let k = i;
+	while (JOINERS.has(before(text, k))) k -= before(text, k).length;
+	return k === i || !isWord(before(text, k));
 }
-/** Can a name end at `end`? The next character is not a word character, nor a hyphen joined to a word after it. */
+/** Can a name end at `end`? The next character is not a word character, nor a run of joiners joined to a word after
+ *  it, nor a dot or slash followed by a word character. */
 function endsClean(text: string, end: number): boolean {
 	const next = after(text, end);
 	if (isWord(next)) return false;
-	if (JOINERS.has(next) && isWord(after(text, end + next.length))) return false;
-	return true;
+	if (TIGHT_JOINERS.has(next)) return !isWord(after(text, end + 1));
+	let k = end;
+	while (JOINERS.has(after(text, k))) k += after(text, k).length;
+	return k === end || !isWord(after(text, k));
 }
 
 const SKIP_BACK = /[\s*_#>\-•"'“”‘’(\[«»|]/u;
+
+/** The longest word before a full stop that may be an abbreviation ("Dr.", "Fig.", "etc."): a sentence ends at a dot
+ *  only after a longer word. */
+const ABBREVIATION_MAX = 4;
 
 /** Does position `i` start a sentence (see the module comment)? */
 function sentenceStart(text: string, i: number): boolean {
@@ -162,7 +186,16 @@ function sentenceStart(text: string, i: number): boolean {
 		if (text[k] === "\n") return true;
 		k--;
 	}
-	return k < 0 || /[.!?:]/u.test(text[k]!);
+	if (k < 0 || /[!?:]/u.test(text[k]!)) return true;
+	if (text[k] !== ".") return false;
+	let letters = 0;
+	for (let j = k; j > 0 && letters <= ABBREVIATION_MAX; ) {
+		const ch = before(text, j);
+		if (!isWord(ch)) break;
+		letters++;
+		j -= ch.length;
+	}
+	return letters > ABBREVIATION_MAX;
 }
 
 /** The text from `i` with its first character lower-cased, as long as `form`. */
@@ -178,11 +211,14 @@ interface Span {
 	form: string;
 }
 
-/** Every name of the matcher that occurs in the (visible) text under the rules above, longest match winning. Never
+/** Every name of the matcher that occurs in the (visible) text under the rules above, longest match winning.
+ *  `onlyMarked`: keep only the names that contain `*` or `_` (for a text read with its emphasis markers kept). Never
  *  throws: a text that cannot be matched gives nothing. Pure. */
-export function matchNames(rawText: string, m: VocabularyMatcher): Set<string> {
+export function matchNames(rawText: string, m: VocabularyMatcher, opts: { onlyMarked?: boolean } = {}): Set<string> {
 	try {
-		return typeof rawText === "string" ? namesIn(rawText, m) : new Set();
+		if (typeof rawText !== "string") return new Set();
+		const found = namesIn(rawText, m);
+		return opts.onlyMarked ? new Set([...found].filter((f) => m.marked?.has(f))) : found;
 	} catch {
 		return new Set();
 	}
@@ -264,6 +300,9 @@ export interface VocabularyCheck {
 	level?: QuestionLevel;
 	/** Graded right (quiz: the recorded answer; explain: the tutor's `previous` on the next question); null = not graded yet. */
 	right: boolean | null;
+	/** The matcher's names the learner saw in the question's own tutor message (the model reply that posed it, with its
+	 *  card; tutorMessagesOf): only these can pair with a sense key it carries (review 3). */
+	named?: string[];
 }
 
 /** What one chat holds for the ledger. */
@@ -281,15 +320,51 @@ export interface ChatVocabulary {
 
 const TEACH_PARTS = new Set(["tool-quiz", "tool-explain"]);
 
+/** The matcher's names in what the learner saw of these view messages: each text, its hyphenated variant, and (for
+ *  names that contain `*` or `_`) its marked variant (core/learner-seen.ts). Never throws. Pure. */
+function namesSeenIn(view: readonly LhViewMessage[], pending: PendingQuestionAt | null, matcher: VocabularyMatcher, reading: SeenReading): Set<string> {
+	const variants: SeenReading = { unread: 0, hyphenated: [], marked: [] };
+	const found = new Set<string>();
+	for (const text of seenTextsOfView(view, pending, variants)) for (const f of matchNames(text, matcher)) found.add(f);
+	for (const text of variants.hyphenated ?? []) for (const f of matchNames(text, matcher)) found.add(f);
+	for (const text of variants.marked ?? []) for (const f of matchNames(text, matcher, { onlyMarked: true })) found.add(f);
+	reading.unread += variants.unread;
+	return found;
+}
+
+/** The view's assistant runs cut into tutor messages: one per native assistant message (the view marks each with a
+ *  `step-start` part), so a run of many steps (a lesson the learner answers only through the dock is one run) is not
+ *  read as one message. Pure. */
+export function tutorMessagesOf(view: readonly LhViewMessage[]): LhViewMessage[] {
+	const out: LhViewMessage[] = [];
+	for (const m of view) {
+		if (m?.role !== "assistant" || !Array.isArray(m.parts)) continue;
+		let current: LhViewMessage | undefined;
+		for (const part of m.parts) {
+			if (!current || part?.type === "step-start") out.push((current = { id: `${m.id}#${out.length}`, role: "assistant", parts: [] }));
+			current.parts.push(part);
+		}
+	}
+	return out;
+}
+
 /** A chat's vocabulary evidence: the names seen, the answered tagged questions, and the lesson's deferred ids. Never
  *  throws: a chat whose record cannot be read is `failed` and counts nothing. Pure. */
 export function chatVocabularyOf(messages: readonly LhMessage[], matcher: VocabularyMatcher): ChatVocabulary {
 	try {
 		const list = Array.isArray(messages) ? messages : [];
 		const reading = { unread: 0 };
+		const view = tutorMessagesOf(projectView(list));
+		const pending = pendingQuestionAt(list);
 		const forms = new Set<string>();
-		for (const text of learnerSeenTexts(list, reading)) for (const f of matchNames(text, matcher)) forms.add(f);
-		return { forms: [...forms].sort(), checks: checksOf(list), deferred: deferredOf(list), ...(reading.unread > 0 ? { unread: reading.unread } : {}) };
+		// one tutor message at a time: a sense-keyed check pairs only with a name in its own message (review 3)
+		const named = new Map<LhViewMessage, string[]>();
+		for (const m of view) {
+			const found = namesSeenIn([m], pending, matcher, reading);
+			for (const f of found) forms.add(f);
+			named.set(m, [...found].sort());
+		}
+		return { forms: [...forms].sort(), checks: checksOf(list, { view, named }), deferred: deferredOf(list), ...(reading.unread > 0 ? { unread: reading.unread } : {}) };
 	} catch {
 		return { forms: [], checks: [], deferred: [], failed: true };
 	}
@@ -297,10 +372,19 @@ export function chatVocabularyOf(messages: readonly LhMessage[], matcher: Vocabu
 
 /** The answered quiz/explain occurrences that carry concept ids, with their level and grade, read through the view so
  *  each answer belongs to the question occurrence it answers. Dismissed (skipped or set aside) and refused ones check
- *  nothing. Pure. */
-export function checksOf(messages: readonly LhMessage[]): VocabularyCheck[] {
+ *  nothing. `named`: the names seen per tutor message (chatVocabularyOf), recorded on each check. Pure. */
+export function checksOf(messages: readonly LhMessage[], opts: { view?: readonly LhViewMessage[]; named?: ReadonlyMap<LhViewMessage, readonly string[]> } = {}): VocabularyCheck[] {
 	const parts: LhViewPart[] = [];
-	for (const m of projectView(messages)) if (m.role === "assistant") for (const p of m.parts) if (TEACH_PARTS.has(p.type)) parts.push(p);
+	const namedOf = new Map<LhViewPart, readonly string[]>();
+	for (const m of opts.view ?? projectView(messages)) {
+		if (m.role !== "assistant") continue;
+		for (const p of m.parts) {
+			if (!TEACH_PARTS.has(p.type)) continue;
+			parts.push(p);
+			const n = opts.named?.get(m);
+			if (n) namedOf.set(p, n);
+		}
+	}
 	const checks: VocabularyCheck[] = [];
 	parts.forEach((part, i) => {
 		try {
@@ -327,7 +411,8 @@ export function checksOf(messages: readonly LhMessage[]): VocabularyCheck[] {
 			else if (previous === "partly" || previous === "wrong") right = false;
 		}
 		const level = normalizeQuestionLevel(args.level);
-		checks.push({ ids, ...(level ? { level } : {}), right });
+		const named = namedOf.get(part);
+		checks.push({ ids, ...(level ? { level } : {}), right, ...(named && named.length > 0 ? { named: [...named] } : {}) });
 	}
 }
 
@@ -366,7 +451,7 @@ export interface LedgerChat {
 	mode: CourseMode;
 	skillIds: readonly string[];
 	vocabulary: ChatVocabulary;
-	/** When the session started (ms since the epoch), for "oldest first". */
+	/** When the session started (ms since the epoch): an introduced term's age, the tie-break after fewest listings. */
 	startedAt?: number;
 	/** The item keys listed to it when it started (its stored listing; absent when it has none). */
 	listed?: readonly string[];
@@ -484,22 +569,26 @@ export function foldLedger(
 	function chatMarks(chat: LedgerChat) {
 		const skills = new Set(Array.isArray(chat.skillIds) ? chat.skillIds : []);
 		const skillKey = [...skills].sort().join(",");
-		const introduced: string[] = [];
-		const namedSenses = new Set<string>();
-		for (const form of chat.vocabulary.forms) {
+		const named = (form: string) => {
 			const cacheKey = `${skillKey}\u0000${form}`;
-			let named = nameCache.get(cacheKey);
-			if (!named) nameCache.set(cacheKey, (named = namedKeys(form, glossary, resolved, skills)));
-			introduced.push(...named.keys);
-			for (const k of named.senses) namedSenses.add(k);
-		}
+			let n = nameCache.get(cacheKey);
+			if (!n) nameCache.set(cacheKey, (n = namedKeys(form, glossary, resolved, skills)));
+			return n;
+		};
+		const introduced: string[] = [];
+		for (const form of chat.vocabulary.forms) introduced.push(...named(form).keys);
 		const checks: Array<{ keys: string[]; check: VocabularyCheck }> = [];
 		for (const check of chat.vocabulary.checks) {
-			for (const id of check.ids) {
-				const keys = idKeys(id);
-				checks.push({ keys, check });
-				// a sense whose word was named in this chat is introduced by an answered check tagged with it (review 2)
-				for (const k of keys) if (namedSenses.has(k)) introduced.push(k);
+			const tagged = check.ids.map((id) => ({ id, keys: idKeys(id) }));
+			for (const { keys } of tagged) checks.push({ keys, check });
+			// A sense is introduced by an answered check tagged with it whose own tutor message shows its word (reviews 2
+			// and 3); a check tagged with two senses of one word introduces neither.
+			const senseKeys = [...new Set(tagged.flatMap((t) => t.keys))].filter((k) => resolved.byKey.get(k)?.item.sense);
+			const entryOf = (k: string) => resolved.byKey.get(k)!.item.entryId;
+			const shown = new Set((Array.isArray(check.named) ? check.named : []).flatMap((f) => named(f).senses));
+			for (const k of senseKeys) {
+				if (senseKeys.some((o) => o !== k && entryOf(o) === entryOf(k))) continue;
+				if (shown.has(k)) introduced.push(k);
 			}
 		}
 		const deferred = chat.vocabulary.deferred.flatMap(idKeys);
@@ -544,7 +633,8 @@ export interface VocabularyPromptItem {
 	listedBefore?: number;
 	/** Where the material introduces it (smaller first; the class's teaching order). */
 	order?: number;
-	/** When it was first introduced (the earliest session's start, ms since the epoch), for "oldest first". */
+	/** When it was first introduced (the earliest session's start, ms since the epoch): the tie-break after fewest
+	 *  listings among terms to check. */
 	introducedAt?: number;
 }
 
@@ -562,9 +652,12 @@ const notIntroduced = (i: VocabularyPromptItem) => i.state === "new" || i.state 
  *   1. core terms never listed to an earlier session of this skill (and not introduced), in the order the material
  *      introduces them;
  *   2. core terms listed before but still not introduced (deferred or ignored), fewest earlier listings first;
- *   3. core terms introduced but not checked, oldest first (first introduced earliest, then fewest listings); at most
- *      VOCABULARY_TO_CHECK_MAX places go to these while any term of 1 or 2 is waiting;
+ *   3. core terms introduced but not checked, fewest earlier listings first, then oldest (first introduced earliest);
+ *      at most VOCABULARY_TO_CHECK_MAX places go to these while any term of 1 or 2 is waiting;
  *   4. supporting terms still open, not introduced first, with whatever places are left.
+ * So a 60-term skill is listed through (every term listed once) in 5 sessions when the tutor names and checks its terms,
+ * defers them all or ignores the list (12 new a session), and in 7 when it names them and never checks (after the first
+ * session 4 of the 12 places go to terms to check, so 8 new a session) (review 3, simulated through the server).
  * Practice sessions of the skill take part like Learn sessions (they are listed and can introduce and check). The
  * session owes exactly these (the core ones not yet introduced); its section counts the rest as left for later. Pure.
  */
@@ -630,7 +723,7 @@ export function vocabularySection(
 		const linked = names.length > 0 ? ` Also named: ${shownNames.join(", ")}${names.length > shownNames.length ? ` (+${names.length - shownNames.length} more)` : ""}.` : "";
 		const sense =
 			i.senses && i.senses > 1
-				? ` One of ${i.senses} senses of "${i.name}" in this lesson (this one: ${where || "its own page"}): naming the word alone introduces none of them. Name the word, explain this sense, and check it with a question tagged with this exact id: the name seen and that answered check together introduce this sense and check it. List it in \`deferred\` if you leave it.`
+				? ` One of ${i.senses} senses of "${i.name}" in this lesson (this one: ${where || "its own page"}): naming the word alone introduces none of them. Explain this sense and check it with a question tagged with this exact id (not also with another sense's id) that names the word in its own text or in the message that poses it: that answered check introduces this sense and checks it. List it in \`deferred\` if you leave it.`
 				: "";
 		return `- [${i.key}] ${i.name}${i.tier === "supporting" ? " (supporting)" : ""} — ${stateText(i)}. ${definition}${linked}${sense}`;
 	};

@@ -33,6 +33,8 @@ const { CourseBody } = await import("../components/course-page.tsx");
 const { LessonResultView } = await import("../components/lesson-result-card.tsx");
 const { VOCABULARY_REFUSAL_HEAD } = await import("../src/core/coverage-ledger.ts");
 const { settingsStore } = await import("../src/store/settings.ts");
+/** Settings → General → Lessons: the vocabulary finish refusal (review 3: off by default). */
+const setRefuseFinish = (on: boolean) => settingsStore.writeSettings({ version: 1, general: on ? { refuseFinishWithUnintroducedTerms: true } : {} });
 import type { CourseRecord, SkillLine } from "../src/core/contracts.ts";
 import type { CoverageGlossary } from "../src/core/coverage-items.ts";
 import type { LessonVocabulary } from "../src/core/coverage-ledger.ts";
@@ -577,11 +579,11 @@ describe("the finish refusal through the teacher agent (scripted model)", () => 
 	 *  refusal as built. */
 	const lessonVocabulary = () => {
 		const c = mappedCourse();
-		settingsStore.writeSettings({ ...(settingsStore.readSettings() ?? {}), general: { ...(settingsStore.readSettings()?.general ?? {}), refuseFinishWithUnintroducedTerms: true } });
+		setRefuseFinish(true);
 		try {
 			return courses.courseForTurn(session(c.id, "learn", ["sk_rings"], []))!.vocabulary!;
 		} finally {
-			settingsStore.writeSettings({ ...(settingsStore.readSettings() ?? {}), general: {} });
+			setRefuseFinish(false);
 		}
 	};
 
@@ -611,17 +613,17 @@ describe("the finish refusal through the teacher agent (scripted model)", () => 
 		assert.match(off, /Introduce the core terms listed above where they belong in what you teach; the ones you leave for a later session, list in `finish_lesson`'s `deferred` with a few words of why\./);
 		assert.doesNotMatch(off, /Before `finish_lesson`/);
 		const c = mappedCourse();
-		settingsStore.writeSettings({ general: { refuseFinishWithUnintroducedTerms: true } });
+		setRefuseFinish(true);
 		try {
 			const id = session(c.id, "learn", ["sk_rings"], []);
 			const on = courses.courseForTurn(id)!;
 			assert.equal(on.vocabulary!.refuse, true);
 			assert.match(on.section, /Before `finish_lesson`, every core term listed above must have been introduced/);
 			// a change mid-lesson applies from the next turn (read when the turn's agent is built)
-			settingsStore.writeSettings({ general: {} });
+			setRefuseFinish(false);
 			assert.equal(courses.courseForTurn(id)!.vocabulary!.refuse, false);
 		} finally {
-			settingsStore.writeSettings({ general: {} });
+			setRefuseFinish(false);
 		}
 	});
 	it("refuses once, naming the items; the same call again goes through", async () => {

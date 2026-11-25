@@ -15,21 +15,31 @@
  *     never matches a name; display math, fenced code and diagrams are their own blocks and show no words;
  *   - inline code counts nothing (an identifier is not a term introduced): it reads as the same stand-in letter, so it
  *     still occupies a word's place (review 2);
- *   - bold, italic and strikethrough markers are removed the way the screen removes them before words are formed, by
- *     the read-aloud package's linear pass (core/speech-text.ts stripLinearEmphasis; the parse stage leaves emphasis
- *     unparsed because micromark's emphasis tokenizer is quadratic): `**sub**group` reads "subgroup" (review 2);
+ *   - bold and italic markers are removed the way the screen removes them before words are formed, by the read-aloud
+ *     package's linear pass (core/speech-text.ts stripLinearEmphasis, with the Unicode intraword test; the parse stage
+ *     leaves emphasis unparsed because micromark's emphasis tokenizer is quadratic): `**sub**group` reads "subgroup"
+ *     (review 2);
+ *   - struck-through text counts nothing (review 3): `~~…~~`, `~…~` (GFM) and `<del>`/`<s>`/`<strike>` read as the
+ *     stand-in letter;
+ *   - a bare URL (`http://…`, `www.…`), which GFM shows as its own link label, reads as the stand-in letter: no segment
+ *     of it is a word (review 3);
  *   - a soft line break inside a paragraph is a space, except after a line-break hyphen: a hyphen that ends a line
  *     followed by a line that begins with a lower-case letter joins the two halves into one word (`homo-` / `morphism`
  *     reads "homomorphism", as a PDF line quoted into a reply shows it); every block (paragraph, heading, list item,
  *     table cell, blockquote line, summary) starts on its own line, so a reader that treats a line start as a sentence
  *     start sees a heading or a table cell start one.
  *
- * BOUNDED (review 2: one hostile text could stall or crash a whole class's page). A text is not parsed at all, and so
- * counts nothing, when it is longer than VISIBLE_TEXT_MAX_CHARS, or VISIBLE_TEXT_MAX_CHARS_TEX when it has a legacy TeX
- * delimiter or a double backslash (the display's delimiter repair, core/math-delims.ts, costs the square of the length
- * on unclosed ones), or when its nesting (block markers at a line start, open HTML tags) is deeper than
- * VISIBLE_TEXT_MAX_DEPTH (the Markdown libraries recurse once per level and overflow the stack near a thousand). Any
- * other failure of the parse or the walk also counts nothing for that text: `readVisibleMarkdown` returns null.
+ * Two VARIANTS of a text are also read (readVisibleVariants), for names the main reading would miss (review 3): the
+ * text with its line-break hyphens kept (`well-` / `defined` also reads "well-defined"), and the text with its `*` and
+ * `_` kept (for a name that contains one, such as "C*-algebra"; the ledger matches only such names against it).
+ *
+ * BOUNDED (reviews 2 and 3: one hostile text could stall or crash a whole class's page). A text is not parsed at all, and
+ * so counts nothing, when it is longer than VISIBLE_TEXT_MAX_CHARS, or VISIBLE_TEXT_MAX_CHARS_TEX when it has a legacy
+ * TeX opener `\(` or `\[` (the display's delimiter reader, core/content-reader.ts readContentSpans, scans to the end for
+ * every opener it cannot close: the square of the length), or when one line starts with more than
+ * VISIBLE_TEXT_MAX_DEPTH stacked container markers (`1. 1. 1. …`, `> - > - …`: the parse's cost grows fastest with
+ * those). Anything else that fails, a stack overflow included, is caught: `readVisibleMarkdown` returns null and the text
+ * counts nothing. The limits and what they leave out are measured below.
  *
  * Plain one-line text with no Markdown character skips the parser (the common case for short tutor lines).
  */
@@ -42,30 +52,34 @@ import { displayedMarkdownHast, stripLinearEmphasis } from "./speech-text.ts";
 export const FORMULA_STAND_IN = "\u{1D465}";
 
 /**
- * The longest text that is parsed (characters). Measured (review 2, warm, best of three, this machine): the slowest
- * shapes without a TeX delimiter are a GFM table, long or wide (a 5,000-character wide table about 40 ms, a long one
- * about 16 ms; 8,000 characters cost 90 ms), and deep `>` runs (also cut by the depth bound); ordinary Markdown-heavy
- * tutor text costs about 1 ms per 1,000 characters. Tutor texts in the fixtures: median 290, 99th percentile 3,800.
+ * The longest text that is parsed (characters). Measured (review 3, warm, best of three, this machine, through the
+ * parse and the walk) at 5,000 characters: the slowest shapes without a TeX opener are a run of `[` and `]` (about
+ * 72 ms; about 105 ms at 6,000 and 170 ms at 8,000, so the limit stays here), a run of `>` (about 55 ms, ending in a
+ * caught stack overflow) and GFM tables (about 16 ms); 1,666 stacked `1. ` markers on one line would cost 124 ms and are
+ * cut by the depth bound below; ordinary Markdown-heavy tutor text costs about 0.5 ms per 1,000 characters. Tutor texts
+ * in the golden fixtures: median 286 characters, longest 3,835.
  */
 export const VISIBLE_TEXT_MAX_CHARS = 5_000;
 /**
- * The longest text with a legacy TeX delimiter (`\(`, `\[`) or a double backslash that is parsed. The display's
- * delimiter repair is quadratic on unclosed ones: 2,000 characters of `\(` plus line breaks cost about 36 ms, 4,000
- * about 125 ms (the reviewer's 40,000 took 11 s). Closed delimiters and dollar math are linear (16,000 characters of
- * ordinary math about 22 ms), and the tutor is told to write dollar math, so this tier rarely applies.
+ * The longest text with a legacy TeX opener (`\(`, `\[`) that is parsed. The display's delimiter reader scans to the
+ * end for every opener it cannot close, so it is quadratic on unclosed ones (review 3: 3,000 characters of `\(` cost
+ * about 70 ms, 3,600 about 97 ms, 5,000 about 180 ms); closed delimiters, `cases` and matrix rows (`\\`) and dollar math
+ * are linear and are not counted against this tier (16,000 characters of ordinary maths: about 15 ms). The longest
+ * fixture reply with `\(` is 1,834 characters.
  */
-export const VISIBLE_TEXT_MAX_CHARS_TEX = 2_000;
-/** The deepest nesting that is parsed: block markers at one line's start plus open HTML tags. The parse libraries
- *  overflow the stack between 500 and 1,000 levels on a cold start; no rendered reply nests beyond a few. */
+export const VISIBLE_TEXT_MAX_CHARS_TEX = 3_000;
+/** The most container markers stacked at one line's start that is parsed (`> - 1. …`). The parse's cost grows fastest
+ *  with these (see VISIBLE_TEXT_MAX_CHARS); no rendered reply stacks more than a few. Nesting spread over several lines
+ *  needs indentation, which the length limit keeps shallow (measured: 6.6 ms at 5,000 characters), and a deep HTML
+ *  nest costs under 6 ms at the length limit, so neither is estimated: this is a cost bound, not crash protection
+ *  (the catch in readVisibleMarkdown is that). */
 export const VISIBLE_TEXT_MAX_DEPTH = 100;
 
-const TEX_DELIMITER = /\\[([]|\\\\/;
+const TEX_OPENER = /\\[([]/;
 const LINE_CONTAINER = /^[ \t]{0,3}(?:>|[-+*](?=[ \t]|$)|\d{1,9}[.)](?=[ \t]|$))[ \t]?/;
-const HTML_TAG = /<(\/?)([A-Za-z][A-Za-z0-9-]*)\b[^<>]*?(\/?)>/g;
-const VOID_TAGS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
 
-/** How deep a text nests, estimated without parsing: the most block markers at one line's start (`> > - 1.`) plus the
- *  most HTML tags open at once. Linear. */
+/** The most container markers stacked at one line's start (`> > - 1.`), counted up to VISIBLE_TEXT_MAX_DEPTH + 1.
+ *  Linear. */
 export function nestingDepth(text: string): number {
 	let lineDepth = 0;
 	for (const raw of text.split("\n")) {
@@ -78,30 +92,71 @@ export function nestingDepth(text: string): number {
 		}
 		if (d > lineDepth) lineDepth = d;
 	}
-	let open = 0;
-	let htmlDepth = 0;
-	if (text.includes("<")) {
-		for (const m of text.matchAll(HTML_TAG)) {
-			const tag = m[2]!.toLowerCase();
-			if (m[1]) open = Math.max(0, open - 1);
-			else if (!m[3] && !VOID_TAGS.has(tag)) open++;
-			if (open > htmlDepth) htmlDepth = open;
-		}
-	}
-	return lineDepth + htmlDepth;
+	return lineDepth;
 }
 
 /** Can this text be parsed within the bounds above? */
 export function withinVisibleTextBounds(text: string): boolean {
 	if (text.length > VISIBLE_TEXT_MAX_CHARS) return false;
-	if (text.length > VISIBLE_TEXT_MAX_CHARS_TEX && TEX_DELIMITER.test(text)) return false;
+	if (text.length > VISIBLE_TEXT_MAX_CHARS_TEX && TEX_OPENER.test(text)) return false;
 	return nestingDepth(text) <= VISIBLE_TEXT_MAX_DEPTH;
 }
 
+const LINE_BREAK_HYPHEN = /([\p{L}\p{N}\p{M}])([-\u2010])\n[^\S\n]*(?=\p{Ll})/gu;
+
 /** A line-break hyphen joins its two halves: "homo-\nmorphism" → "homomorphism" (the next line starts lower-case). */
 export function joinLineBreakHyphens(text: string): string {
-	return text.includes("\n") ? text.replace(/([\p{L}\p{N}\p{M}])[-\u2010]\n[^\S\n]*(?=\p{Ll})/gu, "$1") : text;
+	return text.includes("\n") ? text.replace(LINE_BREAK_HYPHEN, "$1") : text;
 }
+
+/** The same halves joined with the hyphen kept: "well-\ndefined" → "well-defined". */
+export function keepLineBreakHyphens(text: string): string {
+	return text.includes("\n") ? text.replace(LINE_BREAK_HYPHEN, "$1$2") : text;
+}
+
+/** A bare URL as GFM autolinks it: every segment is part of one link label, never a word. */
+const BARE_URL = /(?:\b[A-Za-z][A-Za-z0-9+.-]{0,30}:\/\/|\bwww\.)[^\s<>]*/gu;
+
+/**
+ * Struck-through text (GFM `~~…~~` and `~…~`: a closing run as long as its opening one, flanked like emphasis) replaced
+ * by the stand-in letter. Linear: one pass with a stack per run length; nested or overlapping pairs collapse into the
+ * outermost. Unpaired tildes stay as they are.
+ */
+export function replaceStruck(text: string): string {
+	if (!text.includes("~")) return text;
+	const ranges: Array<[number, number]> = [];
+	const open: [number[], number[]] = [[], []];
+	for (let i = 0; i < text.length; ) {
+		if (text[i] !== "~") {
+			i++;
+			continue;
+		}
+		let j = i;
+		while (j < text.length && text[j] === "~") j++;
+		const len = j - i;
+		if (len <= 2) {
+			const stack = open[len - 1]!;
+			const prev = text[i - 1];
+			const next = text[j];
+			if (stack.length > 0 && prev !== undefined && !/\s/u.test(prev)) ranges.push([stack.pop()!, j]);
+			else if (next !== undefined && !/\s/u.test(next)) stack.push(i);
+		}
+		i = j;
+	}
+	if (ranges.length === 0) return text;
+	ranges.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+	let out = "";
+	let at = 0;
+	for (const [start, end] of ranges) {
+		if (start < at) continue; // inside an earlier (outer) range
+		out += text.slice(at, start) + FORMULA_STAND_IN;
+		at = end;
+	}
+	return out + text.slice(at);
+}
+
+/** One line of visible text as the screen shows it: struck text and bare URLs out, emphasis markers removed. */
+const finishLine = (line: string): string => stripLinearEmphasis(replaceStruck(line), { unicodeWords: true }).replace(BARE_URL, FORMULA_STAND_IN).trim();
 
 const BLOCKS = new Set(["p", "div", "section", "article", "blockquote", "pre", "ul", "ol", "li", "dl", "dt", "dd", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "details", "summary", "figure", "figcaption", "h1", "h2", "h3", "h4", "h5", "h6", "hr"]);
 const ALERT_MARKER = /^\[!(note|tip|important|warning|caution)\][ \t]*(?:\n|$)/i;
@@ -141,12 +196,26 @@ export function visibleMarkdownText(markdown: string): string {
 /** The visible text of displayed Markdown, or null when it is not read: longer or deeper than the bounds above, or a
  *  parse or walk that failed. Never throws. Pure. */
 export function readVisibleMarkdown(markdown: string): string | null {
+	return readVisibleVariants(markdown)?.text ?? null;
+}
+
+/** A text's visible reading and its variants (see the module comment); a variant is present only when it differs. */
+export interface VisibleVariants {
+	text: string;
+	/** Line-break hyphens kept ("well-defined" for `well-` / `defined`). */
+	hyphenated?: string;
+	/** `*` and `_` kept (matched only against names that contain one). */
+	marked?: string;
+}
+
+/** readVisibleMarkdown with the variants. Null when the text is not read. Never throws. Pure. */
+export function readVisibleVariants(markdown: string): VisibleVariants | null {
 	try {
 		if (typeof markdown !== "string") return null;
 		if (!withinVisibleTextBounds(markdown)) return null;
-		if (!markdown.trim()) return "";
-		if (!MARKDOWN_CHARS.test(markdown)) return markdown.replace(/\s+/g, " ").trim();
-		return visibleHastText(displayedMarkdownHast(markdown));
+		if (!markdown.trim()) return { text: "" };
+		if (!MARKDOWN_CHARS.test(markdown)) return { text: markdown.replace(/\s+/g, " ").replace(BARE_URL, FORMULA_STAND_IN).trim() };
+		return visibleHastVariants(displayedMarkdownHast(markdown));
 	} catch {
 		return null;
 	}
@@ -154,11 +223,29 @@ export function readVisibleMarkdown(markdown: string): string | null {
 
 /** The visible text of a sanitised HAST (see visibleMarkdownText). Pure. */
 export function visibleHastText(root: Root): string {
+	return visibleHastVariants(root).text;
+}
+
+function visibleHastVariants(root: Root): VisibleVariants {
 	const lines: string[] = [];
+	const hyphenated: string[] = [];
+	const marked: string[] = [];
+	let hasHyphenated = false;
+	let hasMarked = false;
 	let current = "";
 	const flush = () => {
-		const line = stripLinearEmphasis(joinLineBreakHyphens(current).replace(/\s+/g, " ")).trim();
+		const joined = joinLineBreakHyphens(current).replace(/\s+/g, " ");
+		const line = finishLine(joined);
 		if (line) lines.push(line);
+		const kept = keepLineBreakHyphens(current);
+		if (kept !== current) {
+			hasHyphenated = true;
+			hyphenated.push(finishLine(kept.replace(/\s+/g, " ")));
+		}
+		if (/[*_]/u.test(joined)) {
+			hasMarked = true;
+			marked.push(replaceStruck(joined).replace(BARE_URL, FORMULA_STAND_IN).trim());
+		}
 		current = "";
 	};
 	// text keeps its line breaks until the line is flushed (a line-break hyphen is read there)
@@ -174,6 +261,8 @@ export function visibleHastText(root: Root): string {
 			if (classes.includes("math-inline") || classes.includes("math-display") || classes.includes("language-math")) return formulaText(rawTextOf(node));
 			return rawTextOf(node).trim() === "" ? "" : FORMULA_STAND_IN; // inline code: an identifier, not a term
 		}
+		// struck-through text counts nothing (review 3)
+		if (tag === "del" || tag === "s" || tag === "strike") return rawTextOf(node).trim() === "" ? "" : FORMULA_STAND_IN;
 		if (tag === "sup" && node.children.every((c) => (c.type === "text" && !c.value.trim()) || (c.type === "element" && isFootnoteRef(c)))) return "";
 		if (tag === "details") return (detailsOpen(node) ? node.children : node.children.filter((c) => c.type === "element" && c.tagName === "summary").slice(0, 1)).map(inline).join(" ");
 		return node.children.map(inline).join("");
@@ -201,7 +290,11 @@ export function visibleHastText(root: Root): string {
 	};
 	for (const child of root.children) block(child);
 	flush();
-	return lines.join("\n");
+	return {
+		text: lines.join("\n"),
+		...(hasHyphenated ? { hyphenated: hyphenated.filter(Boolean).join("\n") } : {}),
+		...(hasMarked ? { marked: marked.filter(Boolean).join("\n") } : {}),
+	};
 }
 
 /** A GitHub alert's "[!NOTE]" marker is chrome, not text. */

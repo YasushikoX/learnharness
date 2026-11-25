@@ -282,11 +282,13 @@ function mergeChat(i: MergeInput & { local: string; remote: string }): MergeResu
 			}
 		}
 	}
-	// WP5 review 2: a session's vocabulary listing is fixed when it starts; a side whose course link lacks it (an older
-	// build) must not erase it
+	// WP5 reviews 2 and 3: a session's vocabulary listing is fixed when it starts; a side whose course link lacks it (an
+	// older build), or holds null or a malformed one, must not erase a valid one (an array of non-empty strings), and a
+	// malformed list is never copied
 	const loserLink = (newer === "local" ? r : l).course;
-	if (isObj(out.course) && !("vocabulary" in out.course) && isObj(loserLink) && loserLink.courseId === out.course.courseId && Array.isArray(loserLink.vocabulary)) {
-		out.course = { ...out.course, vocabulary: loserLink.vocabulary };
+	const validListing = (v: unknown): v is string[] => Array.isArray(v) && v.every((k) => typeof k === "string" && k.trim() !== "");
+	if (isObj(out.course) && !validListing(out.course.vocabulary) && isObj(loserLink) && loserLink.courseId === out.course.courseId && validListing(loserLink.vocabulary)) {
+		out.course = { ...out.course, vocabulary: [...loserLink.vocabulary] };
 	}
 	out.updatedAt = maxIso(l.updatedAt, r.updatedAt);
 	out.version = chatVersionFor(out);

@@ -1329,22 +1329,26 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 
 /**
  * Strip paired Markdown emphasis/strikethrough delimiters (`**`, `__`, `~~`, `*`, `_`)
- * in strictly linear O(n) time without backtracking regexes.
+ * in strictly linear O(n) time without backtracking regexes. `unicodeWords`: the
+ * intraword test for `_` reads any Unicode letter or digit as a word character, as
+ * CommonMark does (WP5 review 3: `über_ring` keeps its underscore); read-aloud keeps
+ * the ASCII test it was built with.
  */
-export function stripLinearEmphasis(text: string): string {
-	let result = stripPairedDouble(text, "*", false);
-	result = stripPairedDouble(result, "_", true);
-	result = stripPairedDouble(result, "~", false);
-	result = stripPairedSingle(result, "*", false);
-	result = stripPairedSingle(result, "_", true);
+export function stripLinearEmphasis(text: string, opts: { unicodeWords?: boolean } = {}): string {
+	const unicode = opts.unicodeWords === true;
+	let result = stripPairedDouble(text, "*", false, unicode);
+	result = stripPairedDouble(result, "_", true, unicode);
+	result = stripPairedDouble(result, "~", false, unicode);
+	result = stripPairedSingle(result, "*", false, unicode);
+	result = stripPairedSingle(result, "_", true, unicode);
 	return result;
 }
 
-function isWordChar(ch: string | undefined): boolean {
-	return ch !== undefined && /[A-Za-z0-9_]/.test(ch);
+function isWordChar(ch: string | undefined, unicode = false): boolean {
+	return ch !== undefined && (unicode ? /[\p{L}\p{N}\p{M}_]/u : /[A-Za-z0-9_]/).test(ch);
 }
 
-function stripPairedDouble(text: string, marker: string, respectWordBoundary: boolean): string {
+function stripPairedDouble(text: string, marker: string, respectWordBoundary: boolean, unicode = false): string {
 	const drop = new Uint8Array(text.length);
 	const stack: number[] = [];
 	let i = 0;
@@ -1356,11 +1360,11 @@ function stripPairedDouble(text: string, marker: string, respectWordBoundary: bo
 				stack.length > 0 &&
 				prev !== undefined &&
 				!/\s/.test(prev) &&
-				(!respectWordBoundary || !isWordChar(next));
+				(!respectWordBoundary || !isWordChar(next, unicode));
 			const canOpen =
 				next !== undefined &&
 				!/\s/.test(next) &&
-				(!respectWordBoundary || !isWordChar(prev));
+				(!respectWordBoundary || !isWordChar(prev, unicode));
 
 			if (canClose) {
 				const openPos = stack.pop()!;
@@ -1384,7 +1388,7 @@ function stripPairedDouble(text: string, marker: string, respectWordBoundary: bo
 	return out;
 }
 
-function stripPairedSingle(text: string, marker: string, respectWordBoundary: boolean): string {
+function stripPairedSingle(text: string, marker: string, respectWordBoundary: boolean, unicode = false): string {
 	const drop = new Uint8Array(text.length);
 	const stack: number[] = [];
 	for (let i = 0; i < text.length; i++) {
@@ -1398,11 +1402,11 @@ function stripPairedSingle(text: string, marker: string, respectWordBoundary: bo
 			stack.length > 0 &&
 			prev !== undefined &&
 			!/\s/.test(prev) &&
-			(!respectWordBoundary || !isWordChar(next));
+			(!respectWordBoundary || !isWordChar(next, unicode));
 		const canOpen =
 			next !== undefined &&
 			!/\s/.test(next) &&
-			(!respectWordBoundary || !isWordChar(prev));
+			(!respectWordBoundary || !isWordChar(prev, unicode));
 
 		if (canClose) {
 			const openPos = stack.pop()!;

@@ -5,7 +5,7 @@
  * for the vocabulary ledger (core/coverage-ledger.ts). Where a card component decides what to show, the decision lives
  * here and the component calls it, so the screen and the ledger cannot disagree:
  *   - answeredCardContent: an answered question (components/answered-card.tsx). A DISMISSED (skipped or set-aside)
- *     question shows only its question text; an answered one its question, its details line, and for `explain` the
+ *     question shows only its question text (reduced as Markdown like every text, review 3); an answered one its question, its details line, and for `explain` the
  *     committed answer and the key points. A quiz's explanation sits behind the "Why" toggle and is NOT counted as seen
  *     (text the learner must open does not count). Option labels are shown but are not teaching: the ledger leaves
  *     them out (a term met only as a wrong option was not introduced).
@@ -16,8 +16,13 @@
  *     not teaching). Only THE pending question counts, as the dock computes it (core/native-messages.ts
  *     pendingQuestionOf, shared, review 2): a question in a generation that ended in error, abort or a length stop, one
  *     the dock cannot parse ("malformed"), and one a later message superseded show nothing of themselves.
- *   - tutor prose (text parts, which include `send_to_user` and a posed question's `lead`), and a practice problem's
- *     statement once the problem went through (its clean result; a pose in a failed generation never did).
+ *   - tutor prose (text parts, which include `send_to_user`), and a practice problem's statement once the problem went
+ *     through (its clean result; a pose in a failed generation never did).
+ *   - a question's `lead` (a text part the view tags with its call, `leadFor`) only when the question itself counts: it
+ *     was answered or dismissed, or it is the dock's pending question (review 3). The transcript still shows the lead of
+ *     a question in a generation that stopped with an error, an abort or a length stop, of one a later message
+ *     superseded, and of a second sibling question, although it shows no card for that question; the ledger does not
+ *     count it.
  * Never thinking, the learner's own words, plan blocks, context markers, refused calls, or any tool argument a card
  * does not render. Every text goes through core/visible-text.ts (a link's label, not its URL; collapsed details out).
  *
@@ -27,7 +32,8 @@
  * will succeed is therefore not counted by the gate although the later scan counts it: the gate errs toward "new".)
  *
  * Nothing here throws (review 2): a part whose record cannot be read, or a text that is too long or too deep to reduce
- * (core/visible-text.ts readVisibleMarkdown), counts nothing, and `unread` counts such texts.
+ * (core/visible-text.ts readVisibleVariants), counts nothing, and `unread` counts such texts. A reading also collects
+ * each text's variants (line-break hyphens kept; `*` and `_` kept) in `hyphenated` and `marked` when it is given them.
  */
 
 import type { AssistantMessage } from "@earendil-works/pi-ai";
@@ -39,7 +45,7 @@ import { figureNotesOf } from "./figure-notes.ts";
 import type { FigureEntry } from "./figure-show.ts";
 import { parseAskInput, parseQuestionInput, parseQuizInput } from "./tool-parts.ts";
 import type { PendingQuestion } from "./pending.ts";
-import { joinLineBreakHyphens, readVisibleMarkdown, VISIBLE_TEXT_MAX_CHARS } from "./visible-text.ts";
+import { readVisibleVariants } from "./visible-text.ts";
 
 // ─── the cards' decisions ───────────────────────────────────────────────────
 
@@ -111,38 +117,67 @@ const QUESTION_PARTS = new Set(["tool-quiz", "tool-explain", "tool-probe", "tool
 /** Where the dock's pending question is (core/native-messages.ts pendingQuestionOf). */
 export type PendingQuestionAt = Pick<PendingQuestion, "toolCallId" | "messageId" | "contentIndex">;
 
-/** How a reading went: the texts it could not read (too long, too deep, or a record that failed). */
+/** How a reading went: the texts it could not read (too long, too deep, or a record that failed); and, when the
+ *  arrays are given, each read text's variants (core/visible-text.ts VisibleVariants). */
 export interface SeenReading {
 	unread: number;
+	hyphenated?: string[];
+	marked?: string[];
+}
+
+/** A question occurrence as the view and the dock name it. */
+const occurrenceKey = (toolCallId: unknown, messageId: unknown, contentIndex: unknown) => `${String(messageId)}\u0000${String(contentIndex)}\u0000${String(toolCallId)}`;
+
+const isPendingPart = (part: LhViewPart, pending: PendingQuestionAt | null) =>
+	pending !== null && part.toolCallId === pending.toolCallId && part.sourceMessageId === pending.messageId && part.sourceContentIndex === pending.contentIndex;
+
+/** The question occurrences of a view whose lead counts: answered or dismissed (it has a result), or the dock's pending
+ *  one. Pure. */
+export function countedQuestionsOf(view: readonly LhViewMessage[], pending: PendingQuestionAt | null): Set<string> {
+	const out = new Set<string>();
+	for (const m of view) {
+		if (m?.role !== "assistant" || !Array.isArray(m.parts)) continue;
+		for (const part of m.parts) {
+			if (!part || !QUESTION_PARTS.has(part.type) || part.pluginQuestion) continue;
+			if (part.state === "output-available" || (part.state !== "output-error" && isPendingPart(part, pending))) {
+				out.add(occurrenceKey(part.toolCallId, part.sourceMessageId, part.sourceContentIndex));
+			}
+		}
+	}
+	return out;
 }
 
 /** The texts one view part shows the learner (see the module comment). `pending`: the dock's pending question (null or
- *  absent: none, so no unanswered question counts). Never throws: a part that cannot be read shows nothing. Pure. */
-export function seenTextsOfPart(part: LhViewPart, pending?: PendingQuestionAt | null, reading: SeenReading = { unread: 0 }): string[] {
+ *  absent: none, so no unanswered question counts). `counted`: the question occurrences whose lead counts
+ *  (countedQuestionsOf; absent: no lead counts). Never throws: a part that cannot be read shows nothing. Pure. */
+export function seenTextsOfPart(part: LhViewPart, pending?: PendingQuestionAt | null, reading: SeenReading = { unread: 0 }, counted?: ReadonlySet<string>): string[] {
 	try {
-		return partTexts(part, pending ?? null, reading);
+		return partTexts(part, pending ?? null, reading, counted ?? new Set());
 	} catch {
 		reading.unread++;
 		return [];
 	}
 }
 
-function partTexts(part: LhViewPart, pending: PendingQuestionAt | null, reading: SeenReading): string[] {
+function partTexts(part: LhViewPart, pending: PendingQuestionAt | null, reading: SeenReading, counted: ReadonlySet<string>): string[] {
 	const out: string[] = [];
-	/** A text the learner was shown, as the screen shows it: Markdown reduced to its visible text. */
+	/** A text the learner was shown, as the screen shows it: Markdown reduced to its visible text (and its variants). */
 	const markdown = (text: unknown) => {
 		if (typeof text !== "string" || text.trim() === "") return;
-		const visible = readVisibleMarkdown(text);
-		if (visible === null) reading.unread++;
-		else if (visible) out.push(visible);
-	};
-	/** Plain text as is (within the same length bound). */
-	const plain = (text: unknown) => {
-		if (typeof text !== "string" || text.trim() === "") return;
-		if (text.length > VISIBLE_TEXT_MAX_CHARS) reading.unread++;
-		else out.push(joinLineBreakHyphens(text).replace(/\s+/g, " ").trim());
+		const visible = readVisibleVariants(text);
+		if (visible === null) {
+			reading.unread++;
+			return;
+		}
+		if (visible.text) out.push(visible.text);
+		if (visible.hyphenated) reading.hyphenated?.push(visible.hyphenated);
+		if (visible.marked) reading.marked?.push(visible.marked);
 	};
 	if (part.type === "text") {
+		// a question's lead counts only when its question does (review 3)
+		// (`leadFor` is set by core/view.ts on a lead's text part; not part of the typed view, which plugins read)
+		const lead = part.leadFor as { toolCallId?: unknown; messageId?: unknown; contentIndex?: unknown } | undefined;
+		if (lead && !counted.has(occurrenceKey(lead.toolCallId, lead.messageId, lead.contentIndex))) return out;
 		markdown(part.text);
 		return out;
 	}
@@ -152,7 +187,7 @@ function partTexts(part: LhViewPart, pending: PendingQuestionAt | null, reading:
 		if (part.state === "output-available") {
 			const content = answeredCardContent(part.output as QuestionAnswerData, part.input);
 			if (content.dismissed) {
-				plain(content.questionText);
+				markdown(content.questionText);
 				return out;
 			}
 			markdown(content.questionText);
@@ -162,8 +197,7 @@ function partTexts(part: LhViewPart, pending: PendingQuestionAt | null, reading:
 			return out;
 		}
 		// unanswered: only the dock's pending question was ever shown (review 2, finding 5)
-		const isPending = pending !== null && part.toolCallId === pending.toolCallId && part.sourceMessageId === pending.messageId && part.sourceContentIndex === pending.contentIndex;
-		if (!isPending) return out;
+		if (!isPendingPart(part, pending)) return out;
 		const posed = pendingQuestionContent(part.type.slice("tool-".length), part.input);
 		if (posed) {
 			markdown(posed.question);
@@ -174,7 +208,7 @@ function partTexts(part: LhViewPart, pending: PendingQuestionAt | null, reading:
 	if (part.type === "tool-show_figure") {
 		const shown = showFigureContent(part);
 		if (!shown) return out;
-		plain(shown.caption);
+		markdown(shown.caption); // the card shows it as plain text; one with Markdown markers is reduced like any text (review 3)
 		for (const p of shown.lookAt) markdown(p);
 		markdown(shown.tryThis);
 		return out;
@@ -188,9 +222,15 @@ function partTexts(part: LhViewPart, pending: PendingQuestionAt | null, reading:
  *  same transcript (pendingQuestionOf; absent: no unanswered question counts). Never throws. Pure. */
 export function seenTextsOfView(view: readonly LhViewMessage[], pending?: PendingQuestionAt | null, reading: SeenReading = { unread: 0 }): string[] {
 	const out: string[] = [];
+	let counted: Set<string>;
+	try {
+		counted = countedQuestionsOf(view, pending ?? null);
+	} catch {
+		counted = new Set();
+	}
 	for (const m of view) {
 		if (m?.role !== "assistant" || !Array.isArray(m.parts)) continue;
-		for (const part of m.parts) out.push(...seenTextsOfPart(part, pending, reading));
+		for (const part of m.parts) out.push(...seenTextsOfPart(part, pending, reading, counted));
 	}
 	return out;
 }

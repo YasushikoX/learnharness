@@ -27,7 +27,7 @@ import * as path from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { PATHS } from "../../config.ts";
-import type { CourseCoverage, CourseCoverageView, CourseMode, CourseRecord, CoverageEntryView, CoverageSuggestions, CoverageTermView, DraftCoverage, LessonResult } from "../core/contracts.ts";
+import type { CourseCoverage, CourseCoverageView, CourseDraft, CourseMode, CourseRecord, CoverageLinkEdit, CoverageEntryView, CoverageSuggestions, CoverageTermView, DraftCoverage, LessonResult } from "../core/contracts.ts";
 import {
 	applyCoverageEdit,
 	carryForward,
@@ -36,8 +36,8 @@ import {
 	itemKey,
 	mappingFingerprint,
 	mergeMappingPass,
-	normalizeLinks,
 	readCourseCoverage,
+	replayLinkEdits,
 	readDraftCoverage,
 	readListedVocabulary,
 	readStringList,
@@ -100,16 +100,36 @@ const EMPTY_GLOSSARY: CoverageGlossary = { terms: {}, lookup: {}, suggestedDupli
 // ─── nothing in one chat may break the class (review 2) ─────────────────────
 
 /** A course record with what this package reads of it checked (core/coverage-items.ts readers): a malformed mapping or
- *  draft proposal reads as absent. */
+ *  draft proposal reads as absent; a draft that is not an object reads as no draft, and its skill list keeps only the
+ *  skills that have a key (review 3: `draft: "not-an-object"`, `skills: null`, `skills: [null]`). The one place a
+ *  course record is read by this package. */
 export function safeCourse(course: CourseRecord): CourseRecord {
-	const coverage = readCourseCoverage(course.coverage);
-	const draft = course.draft ? { ...course.draft, coverage: readDraftCoverage(course.draft.coverage) } : undefined;
-	if (draft && !draft.coverage) delete draft.coverage;
-	const out: CourseRecord = { ...course, skills: readStringList(course.skills) ?? [], ...(draft ? { draft } : {}) };
+	const raw = (course && typeof course === "object" ? course : {}) as Partial<CourseRecord>;
+	const coverage = readCourseCoverage(raw.coverage);
+	const draft = readDraft(raw.draft);
+	const out = { ...raw, skills: readStringList(raw.skills) ?? [], ...(draft ? { draft } : {}) } as CourseRecord;
 	if (coverage) out.coverage = coverage;
 	else delete out.coverage;
 	if (!draft) delete out.draft;
 	return out;
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const textOf = (v: unknown): string => (typeof v === "string" ? v : "");
+
+/** A draft as this package reads it (its skills' key, name, statement and reuse; its proposal), or undefined. */
+function readDraft(raw: unknown): CourseDraft | undefined {
+	if (!isRecord(raw)) return undefined;
+	const skills = (Array.isArray(raw.skills) ? raw.skills : [])
+		.filter((s): s is Record<string, unknown> => isRecord(s) && typeof s.key === "string" && s.key.trim() !== "")
+		.map((s) => {
+			const { reuse, ...rest } = s;
+			return { ...rest, key: s.key as string, name: textOf(s.name), statement: textOf(s.statement), requires: readStringList(s.requires) ?? [], restsOn: readStringList(s.restsOn) ?? [], ...(typeof reuse === "string" ? { reuse } : {}) };
+		}) as CourseDraft["skills"];
+	const coverage = readDraftCoverage(raw.coverage);
+	const draft = { ...raw, skills, ...(coverage ? { coverage } : {}) } as CourseDraft;
+	if (!coverage) delete draft.coverage;
+	return draft;
 }
 
 const REPORTED_MAX = 1_000;
@@ -145,7 +165,7 @@ interface VocabularyCacheEntry {
 }
 
 /** Bump when chatVocabularyOf or ChatVocabulary changes. */
-export const COURSE_VOCABULARY_CACHE_VERSION = 3;
+export const COURSE_VOCABULARY_CACHE_VERSION = 4;
 const CACHE_KEY = Symbol.for(`lh.courseVocabularyCache.v${COURSE_VOCABULARY_CACHE_VERSION}`);
 /** The most chat files the cache keeps (least recently used first out). */
 export const COURSE_VOCABULARY_CACHE_MAX = 5_000;
@@ -340,7 +360,9 @@ function coverageViewOf(course: CourseRecord, language: LessonLanguage, mapping:
  * IS NOW into the draft's proposal (or into an empty one, a draft made before the class's material was indexed). A
  * carry stored with the draft (when it was made or edited) is advice for the page, never the source (review 2,
  * finding 7): it is used as it is only while the approved map is unchanged since (its fingerprint); otherwise the carry
- * is made again from the approved map now, and the student's own edits on the draft (`edited`) win over it. Null
+ * is made again from the approved map now, and the student's own edits on the draft win over it: item edits
+ * (`edited`) and, replayed in order after the carry, link and unlink edits (`linkEdits`, review 3), so nothing the
+ * student decided on the draft becomes a suggestion or disappears because the approved map changed elsewhere. Null
  * without a draft.
  */
 export function approvalProposal(raw: CourseRecord, glossary: CoverageGlossary | null): (CoverageMapping & Partial<DraftCoverage>) | null {
@@ -366,7 +388,9 @@ export function approvalProposal(raw: CourseRecord, glossary: CoverageGlossary |
 	const items = again.items.filter((i) => !edited.has(itemKey(i)) || editedItems.has(itemKey(i))).map((i) => editedItems.get(itemKey(i)) ?? i);
 	for (const [k, i] of editedItems) if (!items.some((x) => itemKey(x) === k)) items.push(i);
 	const { suggested: _stale, ...rest } = own;
-	return { ...rest, ...again, items, links: normalizeLinks(again.links), ...stampOf(course) };
+	const replayed = replayLinkEdits({ items, links: again.links, ...(again.suggested ? { suggested: again.suggested } : {}) }, own.linkEdits, glossary);
+	const { suggested: _carried, ...carried } = again;
+	return { ...rest, ...carried, items, links: replayed.links, ...(replayed.suggested ? { suggested: replayed.suggested } : {}), ...stampOf(course) };
 }
 
 /** What a draft records about the approved map it carried in (see approvalProposal). */
@@ -553,6 +577,11 @@ function lessonCoverageOf(messages: readonly LhMessage[], language: LessonLangua
 /** Edit the approved mapping ("approved"; started empty on a class that has core terms and none) or the draft's
  *  proposal ("draft"; started from the proposal approval would check, so a draft with none gets one). */
 export function editCourseCoverage(courseId: string, target: "approved" | "draft", edit: CoverageEdit): Result<CourseRecord> {
+	// nothing in one record may break the class (review 3): a failure is a refused edit, never a thrown request
+	return guarded<Result<CourseRecord>>("a mapping edit", courseId, { ok: false, status: 409, error: "The class's vocabulary mapping could not be read; the edit was not saved" }, () => editCoverageOf(courseId, target, edit));
+}
+
+function editCoverageOf(courseId: string, target: "approved" | "draft", edit: CoverageEdit): Result<CourseRecord> {
 	const stored = stores.courseStore.getCourse(courseId);
 	if (!stored) return { ok: false, status: 404, error: "Unknown course" };
 	const course = safeCourse(stored);
@@ -564,6 +593,7 @@ export function editCourseCoverage(courseId: string, target: "approved" | "draft
 		const applied = applyCoverageEdit(base, edit, { glossary, skills: new Set(course.draft.skills.map((s) => s.key)) });
 		if (!applied.ok) return { ok: false, status: 400, error: applied.error };
 		const edited = [...new Set([...(course.draft.coverage?.edited ?? []), ...editedKeys(edit)])];
+		const linkEdits = withLinkEdit(course.draft.coverage?.linkEdits ?? [], edit);
 		const coverage: DraftCoverage = {
 			dropped: course.draft.coverage?.dropped ?? [],
 			incomplete: course.draft.coverage?.incomplete ?? (glossary?.incomplete ?? []).map((m) => m.name),
@@ -571,8 +601,10 @@ export function editCourseCoverage(courseId: string, target: "approved" | "draft
 			...applied.value,
 			...stampOf(course),
 			...(edited.length > 0 ? { edited } : {}),
+			...(linkEdits.length > 0 ? { linkEdits } : {}),
 		};
-		const updated = stores.courseStore.updateCourse(courseId, { draft: { ...course.draft, coverage } })!;
+		// the stored draft as it is, with its new proposal (what this package sanitised for reading is not written back)
+		const updated = stores.courseStore.updateCourse(courseId, { draft: { ...(stored.draft as CourseDraft), coverage } })!;
 		return { ok: true, value: updated };
 	}
 	if (course.skills.length === 0) return { ok: false, status: 409, error: "Approve the skill map first" };
@@ -582,6 +614,24 @@ export function editCourseCoverage(courseId: string, target: "approved" | "draft
 	if (!applied.ok) return { ok: false, status: 400, error: applied.error };
 	const updated = stores.courseStore.updateCourse(courseId, { coverage: { updatedAt: new Date().toISOString(), ...applied.value } })!;
 	return { ok: true, value: updated };
+}
+
+/** A draft's link decisions with this edit's added (review 3): a link or an unlink as it is; a removed item as an unlink
+ *  of its key; a remap renames the key in the earlier entries. */
+function withLinkEdit(earlier: readonly CoverageLinkEdit[], edit: CoverageEdit): CoverageLinkEdit[] {
+	switch (edit.action) {
+		case "link":
+			return [...earlier, { link: [...new Set(edit.keys)] }];
+		case "unlink":
+		case "remove":
+			return [...earlier, { unlink: edit.key }];
+		case "remap": {
+			const rename = (k: string) => (k === edit.key ? edit.to : k);
+			return earlier.map((e) => ("link" in e ? { link: e.link.map(rename) } : { unlink: rename(e.unlink) }));
+		}
+		default:
+			return [...earlier];
+	}
 }
 
 /** The item keys an edit changes the item of (recorded on a draft so they win when approval carries again). */
@@ -673,8 +723,9 @@ async function runMapping(courseId: string, language: LessonLanguage, target: "a
 				...merged,
 				...stampOf(fresh),
 				...(fresh.draft.coverage?.edited?.length ? { edited: fresh.draft.coverage.edited } : {}),
+				...(fresh.draft.coverage?.linkEdits?.length ? { linkEdits: fresh.draft.coverage.linkEdits } : {}),
 			};
-			settle({ draft: { ...fresh.draft, coverage }, coverageError: error });
+			settle({ draft: { ...(freshStored!.draft as CourseDraft), coverage }, coverageError: error });
 			return;
 		}
 		// the pass only adds assignments for terms with no decision; what would change one is a suggestion
