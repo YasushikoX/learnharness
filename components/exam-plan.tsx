@@ -110,6 +110,12 @@ export function examCountdown(daysLeft: number): string {
 	return daysLeft === 0 ? "today" : "passed";
 }
 
+/** A "a · b · c" line whose middots stay on the line before them (a no-break space in front), so a narrow card wraps
+ *  after "·", never before it (UI round 1b, SPEC §8: no line starts with a middot). Pure. */
+export function keepMiddots(line: string): string {
+	return line.replace(/ · /g, " · ");
+}
+
 /** "27 skills left", "1 skill left". Pure. */
 export function skillsLeftLabel(skillsLeft: number): string {
 	return skillsLeft === 1 ? "1 skill left" : `${skillsLeft} skills left`;
@@ -331,7 +337,7 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 						{(examDate || plan.skillsLeft > 0) && <p data-testid="course-plan-headline">{skillsLeftLabel(plan.skillsLeft)}</p>}
 						{f && (
 							<p className={cn(f.status === "behind" && "text-warning")} data-testid="course-plan-forecast">
-								{forecastLine(f)}
+								{keepMiddots(forecastLine(f))}
 							</p>
 						)}
 						{(weighing || starting) && (

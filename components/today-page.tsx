@@ -74,13 +74,18 @@ export function TodayPage({ initial }: { initial: TodayCourse[] }) {
 						{hero && heroCourse && (
 							// The next task (SPEC §7 "Today"): the one dominant card, the one primary Start.
 							<section className={HERO_CARD} data-testid="today-next">
-								<div className="flex min-w-0 items-baseline gap-2 text-meta text-muted-foreground">
-									<span className="font-medium">Next up</span>
+								<div className="flex min-w-0 items-baseline gap-1.5 text-meta text-muted-foreground">
+									<span className="shrink-0 font-medium">Next up</span>
 									<span aria-hidden>·</span>
 									<Link href={`/course/${heroCourse.courseId}`} className="min-w-0 truncate hover:text-foreground hover:underline">
 										{heroCourse.title}
 									</Link>
-									{examDaysLine(heroCourse.daysLeft) && <span className="shrink-0 whitespace-nowrap">· {examDaysLine(heroCourse.daysLeft)}</span>}
+									{examDaysLine(heroCourse.daysLeft) && (
+										<>
+											<span aria-hidden>·</span>
+											<span className="shrink-0 whitespace-nowrap">{examDaysLine(heroCourse.daysLeft)}</span>
+										</>
+									)}
 								</div>
 								<div className="mt-3 flex items-center justify-between gap-4">
 									<span className="flex min-w-0 items-center gap-2 text-lg leading-[22px] font-semibold">

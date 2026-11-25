@@ -461,7 +461,8 @@ describe("the exam plan on the page", () => {
 		);
 		assert.match(html, /data-testid="course-exam-countdown"[^>]*>[\s\S]*?29 d[\s\S]*?12 Dec 2026/);
 		assert.match(html, /27 skills left/);
-		assert.match(html, /needs 1 lesson\/day · your pace 1\.2\/day · on track/);
+		// UI round 1b: a no-break space before each middot (\s matches it), so the line never wraps onto a leading "·"
+		assert.match(html, /needs 1 lesson\/day\s· your pace 1\.2\/day\s· on track/);
 		assert.match(html, /Review · 4</);
 		assert.match(html, /Learn today[\s\S]*Taylor series/);
 		assert.match(html, /w3/);

@@ -1,6 +1,7 @@
 "use client";
 
 import { buttonVariants } from "@/components/ui/button";
+import { FIELD_CLASS } from "@/components/ui/input";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { PlusIcon, MoreHorizontalIcon, PencilLineIcon } from "lucide-react";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
@@ -85,9 +86,9 @@ export function LectureNotesRow({ courseId }: { courseId: string }) {
 					data-testid="lecture-note-new"
 					aria-label="New lecture note"
 					onClick={() => setDialog({ kind: "create" })}
-					className={cn(CARD_W, "lh-touch flex aspect-[4/3] flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground")}
+					className={cn(CARD_W, "lh-touch flex aspect-[4/3] flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-input text-muted-foreground outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised hover:text-foreground focus-visible:ring-2 focus-visible:ring-focus")}
 				>
-					<PlusIcon className="size-6" />
+					<PlusIcon className="size-5" strokeWidth={1.5} />
 					<span className="text-xs">New note</span>
 				</button>
 				{(notes ?? []).map((n) => (
@@ -112,7 +113,7 @@ export function LectureNotesRow({ courseId }: { courseId: string }) {
 							data-testid="lecture-note-edit"
 							aria-label={`Edit ${n.title}`}
 							onClick={() => setDialog({ kind: "edit", note: n })}
-							className="lh-touch absolute right-1.5 top-1.5 grid size-7 place-items-center rounded-full bg-background/85 text-muted-foreground shadow-sm hover:text-foreground"
+							className={buttonVariants({ variant: "outline", size: "icon-sm", className: "lh-touch absolute right-1.5 top-1.5 bg-background text-muted-foreground hover:text-foreground" })}
 						>
 							<MoreHorizontalIcon className="size-4" />
 						</button>
@@ -195,8 +196,9 @@ function NoteDialog({
 						void save();
 					}}
 				>
-					<h2 className="text-sm font-semibold text-card-foreground">{editing ? "Edit lecture note" : "New lecture note"}</h2>
-					<label className="mt-3 block text-xs text-muted-foreground">
+					{/* UI round 1b (SPEC §3 dialogs): a 15/600 title, 32px fields and buttons, one primary action. */}
+					<h2 className="lh-section-title text-card-foreground">{editing ? "Edit lecture note" : "New lecture note"}</h2>
+					<label className="mt-4 block text-sm font-medium text-foreground">
 						Title
 						<input
 							data-testid="lecture-note-title"
@@ -205,27 +207,27 @@ function NoteDialog({
 							placeholder={defaultNoteTitle(date)}
 							maxLength={120}
 							autoFocus
-							className="mt-1 w-full rounded-md border bg-background px-2.5 py-1.5 text-sm text-foreground"
+							className={cn(FIELD_CLASS, "mt-1.5 h-8 w-full px-2.5 font-normal")}
 						/>
 					</label>
-					<label className="mt-3 block text-xs text-muted-foreground">
+					<label className="mt-3 block text-sm font-medium text-foreground">
 						Date
-						<input data-testid="lecture-note-date" type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} className="mt-1 w-full rounded-md border bg-background px-2.5 py-1.5 text-sm text-foreground" />
+						<input data-testid="lecture-note-date" type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} className={cn(FIELD_CLASS, "mt-1.5 h-8 w-full px-2.5 font-normal")} />
 					</label>
 					{error && <p className="mt-2 text-xs text-destructive">{error}</p>}
-					<div className="mt-4 flex items-center justify-between gap-2">
+					<div className="mt-6 flex items-center justify-between gap-2">
 						{editing ? (
-							<button type="button" data-testid="lecture-note-delete" disabled={busy} onClick={() => (confirmDelete ? void remove() : setConfirmDelete(true))} className="rounded-sm px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50">
+							<button type="button" data-testid="lecture-note-delete" disabled={busy} onClick={() => (confirmDelete ? void remove() : setConfirmDelete(true))} className={buttonVariants({ variant: confirmDelete ? "destructiveSolid" : "destructive" })}>
 								{confirmDelete ? "Delete lecture and its ink?" : "Delete"}
 							</button>
 						) : (
 							<span />
 						)}
 						<div className="flex gap-2">
-							<button type="button" onClick={onClose} className={buttonVariants({ variant: "ghost", size: "sm" })}>
+							<button type="button" onClick={onClose} className={buttonVariants({ variant: "ghost" })}>
 								Cancel
 							</button>
-							<button type="submit" data-testid="lecture-note-save" disabled={busy} className="rounded-sm border border-foreground/30 bg-muted px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-muted/70 disabled:pointer-events-none disabled:opacity-50">
+							<button type="submit" data-testid="lecture-note-save" disabled={busy} className={buttonVariants()}>
 								{editing ? "Save" : "Start note"}
 							</button>
 						</div>

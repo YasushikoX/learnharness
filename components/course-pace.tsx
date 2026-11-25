@@ -50,7 +50,7 @@ export function CoursePace({
 			description="How fast this course's lessons go. A Learn start can still pick its own."
 			note={error && <span role="alert" className="text-destructive">{error}</span>}
 		>
-			<span className="w-44 max-sm:w-full">
+			<span className="w-44 max-sm:w-full [&>span]:w-full">
 				<ThinSelect testid="course-pace-select" ariaLabel="course default pace" value={pace ?? ""} onChange={(v) => void save(v)}>
 					<option value="">{`Global default${globalPace ? ` (${paceInfo(globalPace).label})` : ""}`}</option>
 					{PACES.map((p) => (

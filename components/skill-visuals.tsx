@@ -61,7 +61,7 @@ export function UnderstandingBar({
 			aria-valuenow={skill.understanding}
 			data-testid="skill-bar"
 			data-due={due ? "true" : undefined}
-			className={cn("relative mt-1.5 block h-1.5 w-full rounded-full bg-border/50", className)}
+			className={cn("relative mt-1.5 block h-1.5 w-full rounded-full bg-border", className)}
 			style={{
 				...(due ? { outline: `1px dashed ${DUE_COLOR}`, outlineOffset: 2 } : {}),
 				...(locked
