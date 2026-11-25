@@ -37,8 +37,11 @@ import {
 /** One row's status line. Pure — exported for pins. */
 export function materialStatusLine(m: LessonMaterial): string {
 	const p = m.conversionProgress;
-	if (m.status === "reading") return p ? `reading… · converting: ${p.stage}${p.donePages !== undefined && p.totalPages ? ` ${p.donePages}/${p.totalPages}` : ""}` : "reading…";
-	const note = m.conversionError ? ` · ${m.conversionError.message}` : m.conversionWarnings?.length ? ` · ${m.conversionWarnings.join(" ")}` : "";
+	const converting = p ? `converting: ${p.stage}${p.donePages !== undefined && p.totalPages ? ` ${p.donePages}/${p.totalPages}` : ""}` : undefined;
+	if (m.status === "reading") return converting ? `reading… · ${converting}` : "reading…";
+	if (converting) return converting;
+	const notes = [m.conversionError?.message, ...(m.conversionWarnings ?? [])].filter((s): s is string => Boolean(s));
+	const note = notes.length > 0 ? ` · ${notes.join(" · ")}` : "";
 	if (m.status === "error") return `not read${m.error ? ` — ${m.error}` : ""}${note}`;
 	const base = m.kind === "pdf" && m.pages ? `${m.pages} pages` : m.kind === "web" ? "web page" : m.kind === "image" ? "image" : "text";
 	return `${m.originalElsewhere ? `${base} · original on another device` : base}${note}`;
@@ -200,7 +203,7 @@ export function MaterialsControl({
 										<span className="block truncate text-foreground" title={m.url ?? m.name}>
 											{m.name}
 										</span>
-										<span className={`block truncate ${m.status === "error" ? "text-error" : "text-muted-foreground"}`} title={m.error ?? m.conversionError?.message ?? m.conversionWarnings?.join(" ")}>
+										<span className={`block truncate ${m.status === "error" ? "text-error" : "text-muted-foreground"}`} title={m.conversionProgress ? materialStatusLine(m) : ([m.error, m.conversionError?.message, ...(m.conversionWarnings ?? [])].filter(Boolean).join(" · ") || undefined)}>
 											{materialStatusLine(m)}
 										</span>
 									</span>

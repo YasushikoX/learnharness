@@ -16,6 +16,7 @@ process.env.LH_AUTH_FILE = path.join(TMP, "auth.json");
 process.env.LH_DATA_DIR = TMP;
 after(() => fs.rmSync(TMP, { recursive: true, force: true }));
 const { assignDoclingPages, createDoclingConverter } = await import("../src/server/converters/docling.ts");
+const { normaliseConversion } = await import("../src/server/converters/normalise.ts");
 const { convertWithFallback, isRegisteredPdfConverter, resolvePdfConverter } = await import("../src/server/converters/registry.ts");
 const { pdfjsConverter } = await import("../src/server/converters/pdfjs.ts");
 const { parsePdfConversionSettingsBody } = await import("../src/server/settings-body.ts");
@@ -116,12 +117,52 @@ describe("assignDoclingPages", () => {
 
 	it("counts pages from every item kind, not only texts", () => {
 		const pages = assignDoclingPages(`A${D}<!-- image -->${D}| t |`, doc([{ ref: "#/texts/0", page: 1 }, { ref: "#/pictures/0", page: 2 }, { ref: "#/tables/0", page: 3 }]), D, 3);
-		assert.deepEqual(texts(pages), ["A", "<!-- image -->", "| t |"]);
+		assert.deepEqual(texts(pages), ["A", "empty", "| t |"]);
+		assert.match(pages[1]?.status === "empty" ? (pages[1].reason ?? "") : "", /only an image/);
 	});
 
 	it("ignores furniture (page headers and footers are not in the Markdown)", () => {
 		const pages = assignDoclingPages(`A${D}C`, doc([{ ref: "#/texts/0", page: 1 }, { ref: "#/texts/1", page: 2, layer: "furniture" }, { ref: "#/texts/2", page: 3 }]), D, 3);
 		assert.deepEqual(texts(pages), ["A", "empty", "C"]);
+	});
+
+	it("ignores children of a non-body group whose children omit content_layer", () => {
+		const jsonDoc = {
+			pages: { "1": { page_no: 1 }, "2": { page_no: 2 }, "3": { page_no: 3 } },
+			body: { self_ref: "#/body", children: [{ $ref: "#/texts/0" }, { $ref: "#/groups/0" }, { $ref: "#/texts/2" }] },
+			groups: [{ self_ref: "#/groups/0", content_layer: "furniture", children: [{ $ref: "#/texts/1" }] }],
+			texts: [
+				{ self_ref: "#/texts/0", content_layer: "body", prov: [{ page_no: 1 }] },
+				{ self_ref: "#/texts/1", prov: [{ page_no: 2 }] },
+				{ self_ref: "#/texts/2", content_layer: "body", prov: [{ page_no: 3 }] },
+			],
+		};
+		const pages = assignDoclingPages(`A${D}C`, jsonDoc, D, 3);
+		assert.deepEqual(texts(pages), ["A", "empty", "C"]);
+	});
+
+	it("treats image-placeholder-only pages as empty while keeping text plus image placeholders", () => {
+		const mixed = assignDoclingPages(
+			`  <!-- image -->\n\n<!-- image -->  ${D}Caption text\n\n<!-- image -->`,
+			doc([{ ref: "#/pictures/0", page: 1 }, { ref: "#/texts/0", page: 2 }], 2),
+			D,
+			2,
+		);
+		assert.equal(mixed[0]?.status, "empty");
+		assert.match(mixed[0]?.status === "empty" ? (mixed[0].reason ?? "") : "", /only an image/);
+		assert.deepEqual(mixed[1], { page: 2, status: "ok", markdown: "Caption text\n\n<!-- image -->" });
+
+		const allImages = assignDoclingPages(
+			`<!-- image -->${D}<!-- image -->`,
+			doc([{ ref: "#/pictures/0", page: 1 }, { ref: "#/pictures/1", page: 2 }], 2),
+			D,
+			2,
+		);
+		assert.deepEqual(texts(allImages), ["empty", "empty"]);
+		assert.throws(
+			() => normaliseConversion({ converterVersion: "1.38.2", pages: allImages }, 2),
+			(e: unknown) => e instanceof ConverterError && e.kind === "no_text",
+		);
 	});
 
 	it("places an item spanning pages on its first page", () => {
@@ -309,18 +350,18 @@ describe("registry", () => {
 	// Test files import settings-body.ts before they isolate their data folder (cache-retention.test.ts): if it loaded
 	// config.ts, the settings store would stay bound to the repo's data/ folder and the test would write there.
 	it("importing the settings parser (and so the registry) does not load config.ts", () => {
+		const lateDir = path.resolve(os.tmpdir(), "lh-late-data-dir");
 		const probe = [
 			"await import('./src/server/settings-body.ts');",
-			"process.env.LH_DATA_DIR = '/tmp/lh-late-data-dir';",
+			`process.env.LH_DATA_DIR = ${JSON.stringify(lateDir)};`,
 			"const config = await import('./config.ts');",
 			"console.log(config.SETTINGS_FILE);",
 		].join("\n");
-		const tsx = path.join(import.meta.dirname, "..", "node_modules", ".bin", "tsx");
 		const env: NodeJS.ProcessEnv = { ...process.env };
 		delete env.LH_DATA_DIR;
-		const run = spawnSync(tsx, ["--input-type=module", "-e", probe], { cwd: path.join(import.meta.dirname, ".."), env, encoding: "utf8" });
+		const run = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", probe], { cwd: path.join(import.meta.dirname, ".."), env, encoding: "utf8" });
 		assert.equal(run.status, 0, run.stderr);
-		assert.equal(run.stdout.trim(), path.join("/tmp/lh-late-data-dir", "settings.json"));
+		assert.equal(run.stdout.trim(), path.join(lateDir, "settings.json"));
 	});
 
 	it("Docling without a URL falls back to pdfjs with a warning that says so", () => {

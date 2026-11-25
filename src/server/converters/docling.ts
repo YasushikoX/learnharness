@@ -168,10 +168,11 @@ function bodyPageSequence(doc: Record<string, unknown>): number[] {
 		return Array.isArray(list) ? asRecord(list[Number(match[2])]) : undefined;
 	};
 	const visit = (node: Record<string, unknown>, ref: string) => {
-		const prov = Array.isArray(node.prov) ? node.prov : [];
 		const layer = node.content_layer;
+		if (layer !== undefined && layer !== null && layer !== "body") return;
+		const prov = Array.isArray(node.prov) ? node.prov : [];
 		const first = asRecord(prov[0]);
-		if (first && (layer === undefined || layer === null || layer === "body")) {
+		if (first) {
 			const page = first.page_no;
 			if (!Number.isInteger(page)) badResponse(`Docling item ${ref} has no page number`);
 			if (sequence.at(-1) !== page) sequence.push(page as number);
@@ -190,11 +191,18 @@ function bodyPageSequence(doc: Record<string, unknown>): number[] {
 	return sequence;
 }
 
+/** Markdown that consists only of Docling's image placeholder(s) and whitespace has no readable text. */
+const IMAGE_PLACEHOLDER_ONLY = /^(?:\s*<!--\s*image\s*-->\s*)+$/i;
+
 /**
  * Docling's Markdown split at `delimiter` and matched to physical pages through its JSON document (pure; exported for
  * tests). The JSON's page list must name exactly the local pages 1..pageCount; the reading-order sequence of pages with
- * items (bodyPageSequence) must only move forward and have exactly one segment each. Pages without items are empty.
- * Every mismatch is bad_response.
+ * items (bodyPageSequence) must only move forward and have exactly one segment each. Pages without items, or whose
+ * Markdown consists only of image placeholders and whitespace, are empty. Every mismatch is bad_response.
+ *
+ * Known limitation: an item continuing onto the next page (a paragraph or table whose provenance spans two pages) is
+ * assigned wholly to its first page, because Docling's Markdown is split at page breaks between items; citations for
+ * the continued part therefore point one page early.
  */
 export function assignDoclingPages(markdown: string, jsonContent: unknown, delimiter: string, pageCount: number): PageResult[] {
 	const doc = asRecord(jsonContent) ?? badResponse("Docling's result has no JSON document to place its pages with");
@@ -217,7 +225,9 @@ export function assignDoclingPages(markdown: string, jsonContent: unknown, delim
 	return Array.from({ length: pageCount }, (_, i): PageResult => {
 		const page = i + 1;
 		const text = textOf.get(page);
-		return text ? { page, status: "ok", markdown: text } : { page, status: "empty", reason: "Docling found no content on this page" };
+		if (!text) return { page, status: "empty", reason: "Docling found no content on this page" };
+		if (IMAGE_PLACEHOLDER_ONLY.test(text)) return { page, status: "empty", reason: "This page contains only an image and no readable text" };
+		return { page, status: "ok", markdown: text };
 	});
 }
 

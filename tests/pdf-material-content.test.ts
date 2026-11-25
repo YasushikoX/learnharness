@@ -189,6 +189,34 @@ describe("the upload hook with Docling (loopback)", () => {
 		assert.match(material.conversionWarnings?.[0] ?? "", /no Docling URL is configured; the built-in reader \(pdfjs\) was used instead/);
 	});
 
+	it("records the requested converter id so switching from unconfigured Docling to pdfjs clears the stale warning", async () => {
+		settings({ converter: "docling" });
+		const { chatId, material } = await upload("unconfigured-switch.pdf", recordedPdf("three-full"));
+		assert.equal(sidecarOf(chatId, material).requested.converterId, "docling");
+		assert.equal(sidecarOf(chatId, material).converterId, "pdfjs");
+		assert.match(material.conversionWarnings?.[0] ?? "", /no Docling URL is configured/);
+		const stillSame = await convertMaterialPdf(chatId, material, { signal: new AbortController().signal, store, settings: { converter: "docling" } });
+		assert.equal(stillSame.status, "unchanged");
+		const switched = await convertMaterialPdf(chatId, material, { signal: new AbortController().signal, store, settings: { converter: "pdfjs" } });
+		assert.equal(switched.status, "converted");
+		assert.deepEqual(switched.warnings, []);
+		assert.equal(sidecarOf(chatId, material).requested.converterId, "pdfjs");
+	});
+
+	it("a scanned PDF after an unreachable Docling fallback is retryable, explains both causes, and shows warnings alongside errors", async () => {
+		settings({ converter: "docling", docling: { baseUrl: await closedBaseUrl() } });
+		const { material } = await upload("scanned-fallback.pdf", scanned);
+		assert.equal(material.conversionError?.kind, "no_text");
+		assert.equal(material.conversionError?.retryable, true);
+		assert.match(material.conversionError?.message ?? "", /Docling could not be reached \(Could not reach Docling/);
+		assert.match(material.conversionError?.message ?? "", /looks scanned/);
+		assert.match(material.conversionError?.message ?? "", /Retry/i);
+		assert.match(material.conversionWarnings?.[0] ?? "", /^Docling failed \(Could not reach Docling/);
+		const line = materialStatusLine({ ...material, status: "ready", pages: 2 });
+		assert.ok(line.includes(material.conversionError!.message), line);
+		assert.ok(line.includes(material.conversionWarnings![0]!), line);
+	});
+
 	it("C2: after a fallback to pdfjs an unchanged re-run uploads nothing; a retry on purpose does", async () => {
 		settings({ converter: "docling", docling: { baseUrl: await closedBaseUrl() } });
 		const { chatId, material } = await upload("fallback.pdf", recordedPdf("three-full"));
@@ -256,6 +284,34 @@ describe("the upload hook with Docling (loopback)", () => {
 			await new Promise((resolve) => setTimeout(resolve, 200));
 			assert.equal(log.length, requests);
 			assert.equal(uploads(log), 1);
+		});
+	});
+
+	it("retrying a finished material shows conversion progress instead of the stale error", { timeout: 30_000 }, async () => {
+		const docling = fakeDocling(recordedResponse("three-full"), { poll: () => {} });
+		await withServer(docling.handler, async (baseUrl, log) => {
+			const chat = chatStore.createChat("Retry progress");
+			const m = materialStore.add(chat.id, { kind: "pdf", name: "retry.pdf", ext: ".pdf", bytes: recordedPdf("three-full") });
+			materialStore.update(chat.id, m.id, {
+				status: "ready",
+				pages: 3,
+				conversionError: { kind: "interrupted", message: "stale error", retryable: true },
+			});
+			settings({ converter: "docling", docling: { baseUrl } });
+			assert.ok(service.retryMaterialConversion(chat.id, m.id).ok);
+			await until(() => log.some((r) => r.url.startsWith("/v1/status/poll/")));
+			const live = service.listMaterials(chat.id)[0]!;
+			assert.equal(live.status, "ready");
+			assert.equal(live.conversionProgress?.stage, "queued");
+			const line = materialStatusLine(live);
+			assert.match(line, /^converting: queued/);
+			assert.equal(line.includes("stale error"), false, line);
+			assert.equal(
+				materialStatusLine({ ...live, conversionProgress: { stage: "extracting", donePages: 2, totalPages: 3 } }),
+				"converting: extracting 2/3",
+			);
+			assert.equal(service.removeMaterial(chat.id, m.id), true);
+			await until(() => service.materialRunCount() === 0, 10_000);
 		});
 	});
 });

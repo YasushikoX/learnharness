@@ -68,9 +68,8 @@ describe("Docling credentials", () => {
 
 	it("the setup script stores the URL and key from the environment without printing the key", () => {
 		const script = path.join(import.meta.dirname, "..", "scripts", "docling-credential.ts");
-		const tsx = path.join(import.meta.dirname, "..", "node_modules", ".bin", "tsx");
 		const env = { ...process.env, DOCLING_BASE_URL: "http://script.lan:5001/", DOCLING_API_KEY: "script-secret-55aa" };
-		const run = spawnSync(tsx, [script], { env, encoding: "utf8" });
+		const run = spawnSync(process.execPath, ["--import", "tsx", script], { cwd: path.join(import.meta.dirname, ".."), env, encoding: "utf8" });
 		assert.equal(run.status, 0, run.stderr);
 		assert.match(run.stdout, /Docling URL: http:\/\/script\.lan:5001/);
 		assert.match(run.stdout, /Docling key: stored/);

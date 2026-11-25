@@ -39,6 +39,8 @@ export interface ResolvedPdfConverter {
 export interface RegistryConversion extends ConvertResult {
 	/** The converter that produced the pages (pdfjs after a fallback). */
 	converterId: string;
+	/** Set when the configured converter failed with unreachable/timeout and fell back to pdfjs. */
+	fallbackFrom?: { converterId: string; reason: string };
 }
 
 const factories = new Map<string, PdfConverterFactory>();
@@ -98,6 +100,7 @@ export async function convertWithFallback(resolved: ResolvedPdfConverter, input:
 		return {
 			...result,
 			converterId: pdfjsConverter.id,
+			fallbackFrom: { converterId: selected.id, reason: error.message },
 			warnings: [
 				...resolved.warnings,
 				`${selected.id === "docling" ? "Docling" : selected.id} failed (${error.message}); the built-in reader (pdfjs) was used instead.`,

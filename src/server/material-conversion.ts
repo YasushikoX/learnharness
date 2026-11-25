@@ -121,9 +121,23 @@ function pageList(pages: number[]): string {
 
 const SCANNED = "No page of this PDF has extractable text, so it looks scanned. A converter with OCR (such as Docling) would read it; until then the tutor reads it from the page images.";
 
-function materialError(error: unknown, ranWith: string | undefined): MaterialConversionError {
+function materialError(
+	error: unknown,
+	ranWith: string | undefined,
+	fallbackFrom?: RegistryConversion["fallbackFrom"],
+): MaterialConversionError {
 	if (error instanceof ConverterError) {
-		if (error.kind === "no_text" && ranWith === "pdfjs") return { kind: "no_text", message: SCANNED, retryable: false };
+		if (error.kind === "no_text" && ranWith === "pdfjs") {
+			if (fallbackFrom) {
+				const name = fallbackFrom.converterId === "docling" ? "Docling" : fallbackFrom.converterId;
+				return {
+					kind: "no_text",
+					message: `${name} could not be reached (${fallbackFrom.reason}), and the built-in reader (pdfjs) found no extractable text, so this PDF looks scanned. Retry the conversion once ${name} is reachable to read it with OCR.`,
+					retryable: true,
+				};
+			}
+			return { kind: "no_text", message: SCANNED, retryable: false };
+		}
 		return { kind: error.kind, message: error.message, retryable: error.retryable };
 	}
 	return { kind: "internal", message: `PDF conversion failed: ${error instanceof Error ? error.message : String(error)}`, retryable: true };
@@ -155,9 +169,9 @@ export async function convertMaterialPdf(ownerId: string, material: LessonMateri
 	const converter = resolved.converter;
 	const options = converter.options ?? {};
 	const existing = opts.force ? undefined : readSidecar(sidecarPath);
-	if (existing && existing.sourceHash === sourceHash && existing.requested.converterId === converter.id && sameOptions(existing.requested.options, options)) {
+	if (existing && existing.sourceHash === sourceHash && existing.requested.converterId === resolved.requestedId && sameOptions(existing.requested.options, options)) {
 		const done = existing.error !== undefined || fs.existsSync(contentPath);
-		const fellBack = existing.error !== undefined || existing.converterId !== converter.id;
+		const fellBack = existing.error !== undefined || existing.converterId !== resolved.requestedId;
 		let unchanged = done && fellBack;
 		if (done && !fellBack) {
 			if (converter.local || !converter.serverVersion) unchanged = existing.requested.converterVersion === converter.version;
@@ -191,7 +205,7 @@ export async function convertMaterialPdf(ownerId: string, material: LessonMateri
 		const sidecar: PdfConversionSidecar = {
 			version: 2,
 			sourceHash,
-			requested: { converterId: converter.id, converterVersion: result.converterId === converter.id ? result.converterVersion : "unknown", options },
+			requested: { converterId: resolved.requestedId, converterVersion: result.converterId === resolved.requestedId ? result.converterVersion : "unknown", options },
 			converterId: result.converterId,
 			converterVersion: result.converterVersion,
 			failedPages: normalised.failedPages,
@@ -208,12 +222,12 @@ export async function convertMaterialPdf(ownerId: string, material: LessonMateri
 			fs.rmSync(submittedPath, { force: true });
 			throw error;
 		}
-		const failure = materialError(error, result?.converterId ?? (converter.local ? converter.id : undefined));
+		const failure = materialError(error, result?.converterId ?? (converter.local ? converter.id : undefined), result?.fallbackFrom);
 		const warnings = result?.warnings ?? resolved.warnings;
 		const sidecar: PdfConversionSidecar = {
 			version: 2,
 			sourceHash,
-			requested: { converterId: converter.id, converterVersion: "unknown", options },
+			requested: { converterId: resolved.requestedId, converterVersion: "unknown", options },
 			failedPages: [],
 			warnings,
 			error: failure,
