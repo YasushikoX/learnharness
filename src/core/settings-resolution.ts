@@ -205,6 +205,7 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 			readAloudAuto: record?.general?.readAloudAuto ?? FACTORY_SETTINGS.general.readAloudAuto,
 			readAloudRate: record?.general?.readAloudRate ?? FACTORY_SETTINGS.general.readAloudRate,
 			readAloudVoice: record?.general?.readAloudVoice ?? FACTORY_SETTINGS.general.readAloudVoice,
+			refuseFinishWithUnintroducedTerms: record?.general?.refuseFinishWithUnintroducedTerms ?? FACTORY_SETTINGS.general.refuseFinishWithUnintroducedTerms,
 		},
 		dictation: {
 			language: record?.dictation?.language ?? FACTORY_SETTINGS.dictation.language,

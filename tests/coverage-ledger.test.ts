@@ -345,7 +345,7 @@ describe("the lesson's prompt section", () => {
 		// review 2 (finding 2): never listed first, then listed but not introduced (fewest listings first), then to check
 		assert.deepEqual(listed, ["t_term1", "t_term5", "t_term4", "t_term2"], "the done one is not listed");
 		const byKey = new Map(items.map((i) => [i.key, i]));
-		const text = vocabularySection("Entropy of a source", listed.map((k) => byKey.get(k)!), "learn", { done: [items[2]!] });
+		const text = vocabularySection("Entropy of a source", listed.map((k) => byKey.get(k)!), "learn", { done: [items[2]!], refuseFinish: true });
 		const lines = text.split("\n");
 		assert.match(lines[0]!, /^VOCABULARY — the class's own terms that this lesson of "Entropy of a source" owes/);
 		assert.match(lines[1]!, /^- \[t_term1\] term 1 — new\. The material: "definition 1" \(Lecture 3\.pdf, p\. 1\)$/);

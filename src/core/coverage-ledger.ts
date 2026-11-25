@@ -613,7 +613,12 @@ function stateText(i: VocabularyPromptItem): string {
  * state; the skill's done terms on one line by name; and how many terms are left for later sessions (`later`). "" when
  * nothing is listed and nothing is done. Pure.
  */
-export function vocabularySection(skillName: string, listed: readonly VocabularyPromptItem[], mode: CourseMode, opts: { done?: readonly VocabularyPromptItem[]; later?: number } = {}): string {
+export function vocabularySection(
+	skillName: string,
+	listed: readonly VocabularyPromptItem[],
+	mode: CourseMode,
+	opts: { done?: readonly VocabularyPromptItem[]; later?: number; /** The finish refusal is on (general.refuseFinishWithUnintroducedTerms). */ refuseFinish?: boolean } = {},
+): string {
 	const done = opts.done ?? [];
 	const later = opts.later ?? 0;
 	if (listed.length === 0 && done.length === 0) return "";
@@ -650,7 +655,9 @@ export function vocabularySection(skillName: string, listed: readonly Vocabulary
 		);
 		if (mode === "learn") {
 			body.push(
-				`Before \`${FINISH_LESSON_TOOL}\`, every core term listed above must have been introduced (in this lesson or an earlier one) or listed in its \`deferred\` with a few words of why. Terms introduced but not checked carry into the next session of this skill; they never block finishing.`,
+				opts.refuseFinish
+					? `Before \`${FINISH_LESSON_TOOL}\`, every core term listed above must have been introduced (in this lesson or an earlier one) or listed in its \`deferred\` with a few words of why. Terms introduced but not checked carry into the next session of this skill; they never block finishing.`
+					: `Introduce the core terms listed above where they belong in what you teach; the ones you leave for a later session, list in \`${FINISH_LESSON_TOOL}\`'s \`deferred\` with a few words of why. Terms not yet introduced or checked carry into the next session of this skill.`,
 			);
 		}
 	}
@@ -686,6 +693,10 @@ export function vocabularyRefusedBefore(messages: readonly unknown[]): boolean {
  *  what is introduced given this lesson's own transcript on top of every other session (the server's ledger, live). */
 export interface LessonVocabulary {
 	items: ReadonlyArray<{ key: string; name: string; group: readonly string[] }>;
+	/** The finish refusal is on (general.refuseFinishWithUnintroducedTerms, off by default): the teacher agent refuses a
+	 *  `finish_lesson` once when finishVocabularyProblem finds an item owed. Off: never refused; a clean finish still
+	 *  records the lesson's coverage line. */
+	refuse?: boolean;
 	/** The keys introduced given this lesson's messages and every other session of the class. */
 	introduced: (messages: readonly LhMessage[]) => ReadonlySet<string>;
 }

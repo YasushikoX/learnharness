@@ -352,8 +352,9 @@ export function baseAgentOptions(
 	/** A course Learn session's teacher (owner, 2026-11-13): finish_lesson waits for an answered final problem, and
 	 *  plan_init for a look in the course's sources. */
 	lessonGates = false,
-	/** A course Learn session's vocabulary (WP5, core/coverage-ledger.ts): finish_lesson is refused once when a core term
-	 *  of its skill is neither introduced nor deferred. Absent: the class has no coverage, nothing is checked. */
+	/** A course Learn session's vocabulary (WP5, core/coverage-ledger.ts): with its `refuse` on (a setting, off by default)
+	 *  finish_lesson is refused once when a listed core term is neither introduced nor deferred; either way a clean finish
+	 *  records the lesson's coverage line. Absent: the class has no coverage, nothing is checked. */
 	lessonVocabulary?: LessonVocabulary,
 ) {
 	// Practice never reaches the role fallback (the handler ALWAYS injects
@@ -509,7 +510,8 @@ export function baseAgentOptions(
 						// The vocabulary check (WP5): once per lesson at most, on its own gate and allowance (agent/refusal-budget.ts), so it
 						// never spends a refusal of the final-problem requirement. It counts only what had reached the learner when the call
 						// was made: this message's prose, not its sibling calls, which have not settled yet (core/learner-seen.ts).
-						if (lessonGates && lessonVocabulary && toolCall.name === FINISH_LESSON_TOOL) {
+						// A setting, off by default (general.refuseFinishWithUnintroducedTerms, read into lessonVocabulary.refuse).
+						if (lessonGates && lessonVocabulary?.refuse === true && toolCall.name === FINISH_LESSON_TOOL) {
 							const sibling = vocabularyRefusalOf.get(assistantMessage);
 							if (sibling) return sibling;
 							let missing: ReturnType<typeof finishVocabularyProblem> = null;

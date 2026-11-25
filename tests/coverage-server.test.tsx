@@ -32,6 +32,7 @@ const { createTeacherAgent } = await import("../src/agent/teacher-agent.ts");
 const { CourseBody } = await import("../components/course-page.tsx");
 const { LessonResultView } = await import("../components/lesson-result-card.tsx");
 const { VOCABULARY_REFUSAL_HEAD } = await import("../src/core/coverage-ledger.ts");
+const { settingsStore } = await import("../src/store/settings.ts");
 import type { CourseRecord, SkillLine } from "../src/core/contracts.ts";
 import type { CoverageGlossary } from "../src/core/coverage-items.ts";
 import type { LessonVocabulary } from "../src/core/coverage-ledger.ts";
@@ -572,11 +573,57 @@ describe("the finish refusal through the teacher agent (scripted model)", () => 
 		return { by: (id: string) => results.find((r) => r.toolCallId === id)!, messages: agent.state.messages as unknown as LhMessage[] };
 	}
 	const run = async (...a: Parameters<typeof runAll>) => (await runAll(...a)).by;
+	/** A lesson's vocabulary check with the finish refusal ON (review 3: a setting, off by default); these tests are the
+	 *  refusal as built. */
 	const lessonVocabulary = () => {
 		const c = mappedCourse();
-		return courses.courseForTurn(session(c.id, "learn", ["sk_rings"], []))!.vocabulary!;
+		settingsStore.writeSettings({ ...(settingsStore.readSettings() ?? {}), general: { ...(settingsStore.readSettings()?.general ?? {}), refuseFinishWithUnintroducedTerms: true } });
+		try {
+			return courses.courseForTurn(session(c.id, "learn", ["sk_rings"], []))!.vocabulary!;
+		} finally {
+			settingsStore.writeSettings({ ...(settingsStore.readSettings() ?? {}), general: {} });
+		}
 	};
 
+	// review 3: the refusal is a setting, off by default
+	const lessonWithoutRefusal = () => {
+		const c = mappedCourse();
+		return courses.courseForTurn(session(c.id, "learn", ["sk_rings"], []))!;
+	};
+	it("off by default: a lesson with unintroduced listed terms finishes without a vocabulary refusal, and still records its coverage line", async () => {
+		const turn = lessonWithoutRefusal();
+		assert.equal(turn.vocabulary!.refuse, false);
+		assert.equal(turn.vocabulary!.items.length, 3, "the lesson still owes (and tracks) its listed terms");
+		const { by } = await runAll(turn.vocabulary, finalProblem, [step("f1", { summary: "s" })]);
+		assert.equal(by("f1").isError, false, by("f1").content[0]!.text);
+		assert.deepEqual(gates, [], "no vocabulary refusal");
+		assert.deepEqual((by("f1").details as { coverage?: unknown }).coverage, { total: 3, covered: 1, left: ["ring", "unit"] }, "the lesson-result line is unchanged");
+	});
+	it("off by default: the final-problem gate is unaffected", async () => {
+		const { by } = await runAll(lessonWithoutRefusal().vocabulary, [], [step("f1", { summary: "s" }), step("f2", { summary: "s" }), step("f3", { summary: "s" })]);
+		assert.match(by("f1").content[0]!.text, /^Refused: a lesson finishes only after ONE final problem/);
+		assert.match(by("f2").content[0]!.text, /^Refused: a lesson finishes only after ONE final problem/);
+		assert.deepEqual(gates, ["finish", "finish"]);
+		assert.equal(by("f3").isError, false);
+	});
+	it("the prompt's closing instruction: off says introduce and defer with why; on says the finish needs it", () => {
+		const off = lessonWithoutRefusal().section;
+		assert.match(off, /Introduce the core terms listed above where they belong in what you teach; the ones you leave for a later session, list in `finish_lesson`'s `deferred` with a few words of why\./);
+		assert.doesNotMatch(off, /Before `finish_lesson`/);
+		const c = mappedCourse();
+		settingsStore.writeSettings({ general: { refuseFinishWithUnintroducedTerms: true } });
+		try {
+			const id = session(c.id, "learn", ["sk_rings"], []);
+			const on = courses.courseForTurn(id)!;
+			assert.equal(on.vocabulary!.refuse, true);
+			assert.match(on.section, /Before `finish_lesson`, every core term listed above must have been introduced/);
+			// a change mid-lesson applies from the next turn (read when the turn's agent is built)
+			settingsStore.writeSettings({ general: {} });
+			assert.equal(courses.courseForTurn(id)!.vocabulary!.refuse, false);
+		} finally {
+			settingsStore.writeSettings({ general: {} });
+		}
+	});
 	it("refuses once, naming the items; the same call again goes through", async () => {
 		const by = await run(lessonVocabulary(), finalProblem, [step("f1", { summary: "s", deferred: [] }), step("f2", { summary: "s", deferred: [] })]);
 		assert.equal(by("f1").isError, true);

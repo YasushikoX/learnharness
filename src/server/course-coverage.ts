@@ -487,11 +487,12 @@ export function sessionVocabulary(
 	skill: { id: string; name: string },
 	mode: CourseMode,
 	storedListing: unknown,
+	opts: { refuseFinish?: boolean } = {},
 ): { section: string; lesson?: LessonVocabulary; known: ConceptIdReader } | undefined {
-	return guarded("a session's vocabulary", course.id, undefined, () => sessionVocabularyOf(course, chatId, skill, mode, readListedVocabulary(storedListing)));
+	return guarded("a session's vocabulary", course.id, undefined, () => sessionVocabularyOf(course, chatId, skill, mode, readListedVocabulary(storedListing), opts.refuseFinish === true));
 }
 
-function sessionVocabularyOf(course: CourseRecord, chatId: string, skill: { id: string; name: string }, mode: CourseMode, listed: readonly string[] | undefined) {
+function sessionVocabularyOf(course: CourseRecord, chatId: string, skill: { id: string; name: string }, mode: CourseMode, listed: readonly string[] | undefined, refuseFinish: boolean) {
 	const cc = classCoverage(course);
 	if (!cc) return undefined;
 	const known: ConceptIdReader = {
@@ -511,11 +512,12 @@ function sessionVocabularyOf(course: CourseRecord, chatId: string, skill: { id: 
 	const shownKeys = new Set(shown.map((i) => i.key));
 	const done = items.filter((i) => i.state === "checked" && !shownKeys.has(i.key));
 	const later = items.filter((i) => i.state !== "checked" && !shownKeys.has(i.key)).length;
-	const section = vocabularySection(skill.name, shown, mode, { done, later });
+	const section = vocabularySection(skill.name, shown, mode, { done, later, refuseFinish });
 	if (mode !== "learn") return { section, known };
 	const introducedElsewhere = new Set([...others].filter(([, l]) => l.introduced).map(([k]) => k));
 	const lesson: LessonVocabulary = {
 		items: shown.filter((i) => i.tier === "core").map((i) => ({ key: i.key, name: i.name, group: cc.resolved.group(i.key) })),
+		refuse: refuseFinish,
 		introduced: (messages: readonly LhMessage[]) => {
 			const live = foldLedger(cc.resolved, cc.glossary, [{ chatId, mode, skillIds: [skill.id], vocabulary: chatVocabularyOf(messages, cc.matcher) }]);
 			const out = new Set(introducedElsewhere);

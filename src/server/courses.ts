@@ -103,7 +103,7 @@ import {
 import { stampNewSession, titleFromPrompt } from "./chats.ts";
 import { removeCourseLectureNotes } from "./lecture-notes.ts";
 import { listMaterials, removeMaterial, waitForMaterials } from "./materials.ts";
-import { stores } from "./stores.ts";
+import { effectiveSettings, stores } from "./stores.ts";
 
 /**
  * Courses — the service seam (fork addition, 2026-10-24; spec:
@@ -1282,6 +1282,16 @@ export function courseSessionSkillNames(chatId: string): { courseId: string; ski
 	return { courseId: link.courseId, skills };
 }
 
+/** Is the vocabulary finish refusal on (Settings → General → Lessons; off by default, and off when the settings cannot
+ *  be read)? */
+function refuseFinishSetting(): boolean {
+	try {
+		return effectiveSettings().general.refuseFinishWithUnintroducedTerms === true;
+	} catch {
+		return false;
+	}
+}
+
 /** A course session's per-turn pieces: the prompt section, its mode, and
  *  (practice modes, the placement test) the skills its question/problem
  *  tool may tag. Undefined for other sessions, or when the course is gone. */
@@ -1327,7 +1337,9 @@ export function courseForTurn(
 	const nameOf = (id: string) => ctx.skills.get(id)?.name ?? id;
 	// WP5: a Learn session, or a Practice session on one skill, is told the vocabulary its skill owes
 	const vocabSkill = (link.mode === "learn" || (link.mode === "practice" && skills.length === 1)) ? skills[0] : undefined;
-	const vocabulary = course && vocabSkill ? sessionVocabulary(course, chatId, { id: vocabSkill.id, name: vocabSkill.name }, link.mode, link.vocabulary) : undefined;
+	// the finish refusal is a setting, off by default, read as the turn's agent is built: a change applies from the next turn
+	const refuseFinish = link.mode === "learn" && vocabSkill !== undefined && refuseFinishSetting();
+	const vocabulary = course && vocabSkill ? sessionVocabulary(course, chatId, { id: vocabSkill.id, name: vocabSkill.name }, link.mode, link.vocabulary, { refuseFinish }) : undefined;
 	const coverageParts = vocabulary ? { ...(vocabulary.lesson ? { vocabulary: vocabulary.lesson } : {}), conceptIds: vocabulary.known } : {};
 	const section = coursePromptSection(
 		link.mode,
