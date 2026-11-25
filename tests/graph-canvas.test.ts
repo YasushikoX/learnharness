@@ -111,6 +111,14 @@ describe("fitTransform", () => {
 		assert.ok(Math.abs(0 * t.k + t.x - 250) < 1e-9);
 	});
 
+	test("a bottom inset (the home composer dock) frames the graph in the space above it", () => {
+		// 500x300 viewport, 40px padding, 100px dock: available 420x120 -> k = min(4.2, 2.4) = 2.4.
+		const t = fitTransform({ minX: -50, maxX: 50, minY: -25, maxY: 25 }, 500, 300, 40, 100);
+		assert.ok(Math.abs(t.k - 2.4) < 1e-9, `k=${t.k}`);
+		assert.ok(Math.abs(t.y - 100) < 1e-9, `y=${t.y}`); // centred in 40..160
+		assert.ok(25 * t.k + t.y <= 300 - 100 - 40 + 1e-9, "the bbox bottom clears the dock by the padding");
+	});
+
 	test("never returns a non-positive scale for degenerate bboxes", () => {
 		const t = fitTransform({ minX: 5, maxX: 5, minY: 5, maxY: 5 }, 100, 100, 10);
 		assert.ok(t.k > 0 && Number.isFinite(t.k));
@@ -438,6 +446,20 @@ describe("labelBoxesOverlap", () => {
 		assert.equal(labelBoxesOverlap(box, { x0: 5, x1: 15, y0: 5, y1: 15 }), true);
 		assert.equal(labelBoxesOverlap(box, { x0: 10, x1: 20, y0: 0, y1: 10 }), false);
 		assert.equal(labelBoxesOverlap(box, { x0: 0, x1: 10, y0: 20, y1: 30 }), false);
+	});
+});
+
+describe("placeRegionLabel (a region label never sits on a node)", () => {
+	it("keeps a free spot, moves above the covered nodes, then below, else gives up", async () => {
+		const { placeRegionLabel } = await import("../components/graph-canvas.ts");
+		const label = { x0: 0, x1: 100, y0: 40, y1: 60 };
+		assert.deepEqual(placeRegionLabel(label, [{ x0: 200, x1: 210, y0: 40, y1: 50 }], 2), label);
+		const node = { x0: 45, x1: 55, y0: 45, y1: 55 };
+		assert.deepEqual(placeRegionLabel(label, [node], 2), { x0: 0, x1: 100, y0: 23, y1: 43 });
+		const above = { x0: 45, x1: 55, y0: 20, y1: 30 };
+		assert.deepEqual(placeRegionLabel(label, [node, above], 2), { x0: 0, x1: 100, y0: 57, y1: 77 });
+		const below = { x0: 45, x1: 55, y0: 65, y1: 75 };
+		assert.equal(placeRegionLabel(label, [node, above, below], 2), null);
 	});
 });
 

@@ -321,6 +321,25 @@ export function labelBoxesOverlap(
 	return a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
 }
 
+type LabelBox = { x0: number; x1: number; y0: number; y1: number };
+
+/** A region label never sits ON a node (UI round 1b, SPEC §8 "graph ATP label sits on its node"): the centred box
+ *  first, else moved just above the nodes it covers, else just below them (`gap` clear of each disc). Null when no
+ *  spot is free — the label is skipped and returns as the camera moves (the overlap guard's rule). Exported for tests. */
+export function placeRegionLabel(box: LabelBox, nodes: readonly LabelBox[], gap: number): LabelBox | null {
+	const covered = (b: LabelBox) => nodes.filter((n) => labelBoxesOverlap(b, { x0: n.x0 - gap, x1: n.x1 + gap, y0: n.y0 - gap, y1: n.y1 + gap }));
+	const hit = covered(box);
+	if (hit.length === 0) return box;
+	const h = box.y1 - box.y0;
+	const up = { ...box, y1: Math.min(...hit.map((n) => n.y0)) - gap };
+	up.y0 = up.y1 - h;
+	if (covered(up).length === 0) return up;
+	const down = { ...box, y0: Math.max(...hit.map((n) => n.y1)) + gap };
+	down.y1 = down.y0 + h;
+	if (covered(down).length === 0) return down;
+	return null;
+}
+
 /** True when the world bbox, seen through the camera, overlaps the viewport at all. Exported for tests. */
 export function bboxOnScreen(
 	bbox: { minX: number; maxX: number; minY: number; maxY: number },
@@ -666,6 +685,8 @@ export class GraphCanvasRenderer {
 	 *  kFit refresh share it (computed once per setData, not per resize). */
 	private worldBBox: { minX: number; maxX: number; minY: number; maxY: number } | null = null;
 	private bottomInset = 0;
+	/** The camera is still fit()'s own frame: no pan, zoom or restored camera since. */
+	private autoFramed = false;
 
 	private data: CanvasData | null = null;
 	/** id -> node for the current data (avoids O(n^2) scans). */
@@ -766,7 +787,8 @@ export class GraphCanvasRenderer {
 		// transform change just marks dirty (draws happen in OUR loop).
 		this.zoomBehavior = zoom<HTMLCanvasElement, unknown>()
 			.scaleExtent([0.02, 40])
-			.on("zoom", ({ transform }) => {
+			.on("zoom", ({ transform, sourceEvent }) => {
+				if (sourceEvent) this.autoFramed = false; // the learner moved the camera
 				this.transform = transform;
 				this.markDirty();
 				// The transform doubles as the persistence payload (view state).
@@ -970,11 +992,14 @@ export class GraphCanvasRenderer {
 		this.markDirty();
 	}
 
+	/** Screen px at the bottom covered by the home composer dock (plus clearance): fit-to-view frames the graph above
+	 *  it (UI round 1b, SPEC §8 "bottom node hidden behind the composer"). The dock is measured after the first fit, so
+	 *  a camera that is still that automatic frame re-fits; a camera the learner moved (or restored) stays. */
 	setBottomInset(inset: number): void {
 		const next = Math.max(0, inset);
 		if (next === this.bottomInset) return;
 		this.bottomInset = next;
-		if (!this.hasFit) this.fit();
+		if (!this.hasFit || this.autoFramed) this.fit();
 		else this.refreshFitZoom();
 	}
 
@@ -989,6 +1014,7 @@ export class GraphCanvasRenderer {
 		const t = fitTransform(this.worldBBox, w, h, 40, this.bottomInset);
 		this.kFit = t.k;
 		this.hasFit = true;
+		this.autoFramed = true;
 		select(this.canvas).call(
 			this.zoomBehavior.transform,
 			zoomIdentity.translate(t.x, t.y).scale(t.k),
@@ -1028,6 +1054,7 @@ export class GraphCanvasRenderer {
 	 *  tick loop (cursor-anchored). Sensitivity formula is d3-zoom's own. */
 	private onWheel = (e: WheelEvent) => {
 		e.preventDefault();
+		this.autoFramed = false;
 		const delta = -e.deltaY * (e.deltaMode === 1 ? 0.05 : e.deltaMode ? 1 : 0.002);
 		const { x, y } = this.eventPos(e);
 		const current = this.zoomTarget?.k ?? this.transform.k;
@@ -1881,22 +1908,28 @@ export class GraphCanvasRenderer {
 			// label that would sit on an already-placed one is skipped (it comes
 			// back as you zoom in and the labels move apart on screen).
 			const placed: Array<{ x0: number; x1: number; y0: number; y1: number }> = [];
+			// The discs a label must clear (world units; the label gap is a constant 6 screen px).
+			const r = this.world.nodeR;
+			const discs: LabelBox[] = [];
+			for (const node of data.nodes) {
+				if (isImpNodeId(node.id) || (this.visible && !this.visible.has(node.id))) continue;
+				discs.push({ x0: node.x - r, x1: node.x + r, y0: node.y - r, y1: node.y + r });
+			}
 			for (const rm of this.regionMeta) {
 				if (!rm.lines) continue;
 				const boxW = Math.max(...rm.lines.map((l) => ctx.measureText(l).width));
 				const boxH = rm.lines.length * lineH;
-				const box = { x0: rm.cx - boxW / 2, x1: rm.cx + boxW / 2, y0: rm.cy - boxH / 2, y1: rm.cy + boxH / 2 };
-				if (placed.some((p) => labelBoxesOverlap(p, box))) continue;
-				const coversNode = data.nodes.some((node) => isVisible(node.id) && !isImpNodeId(node.id) && labelBoxesOverlap(box, {
-					x0: node.x - world.nodeR, x1: node.x + world.nodeR,
-					y0: node.y - world.nodeR, y1: node.y + world.nodeR,
-				}));
-				if (coversNode) continue;
+				const box = placeRegionLabel(
+					{ x0: rm.cx - boxW / 2, x1: rm.cx + boxW / 2, y0: rm.cy - boxH / 2, y1: rm.cy + boxH / 2 },
+					discs,
+					6 / k,
+				);
+				if (!box || placed.some((p) => labelBoxesOverlap(p, box))) continue;
 				placed.push(box);
 				ctx.fillStyle = `hsla(${rm.hue}, 55%, ${data.colors.clusterLightness.label}%, 0.85)`;
-				const firstOffset = (-(rm.lines.length - 1) / 2) * lineH;
+				const firstY = (box.y0 + box.y1) / 2 + (-(rm.lines.length - 1) / 2) * lineH;
 				for (let i = 0; i < rm.lines.length; i++) {
-					ctx.fillText(rm.lines[i]!, rm.cx, rm.cy + firstOffset + i * lineH);
+					ctx.fillText(rm.lines[i]!, rm.cx, firstY + i * lineH);
 				}
 			}
 			ctx.restore();
