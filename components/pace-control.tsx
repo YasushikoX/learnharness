@@ -6,7 +6,8 @@ import { MenuShell } from "@/components/menu-shell";
 import { usePopoverDismiss } from "./popover-dismiss.ts";
 import { Hint } from "@/components/ui/hint";
 import { CONTROL_CLASS, type ControlVariant } from "@/components/control-variant";
-import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
+import { useSettingsSaved } from "@/components/settings-signal";
+import { chatSettingsGeneration, fetchChatSettings, updateChatSettings, useChatSettingsSeed } from "@/components/chat-settings-client";
 
 /**
  * The pace pill (fork addition, 2026-11-01) — the language pill's sibling on
@@ -23,22 +24,28 @@ import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-sig
 type SessionView = { settings?: ChatSettings; kind?: string; course?: unknown };
 
 export function PaceControl({ chatId, variant = "edge" }: { chatId: string; variant?: ControlVariant }) {
-	const [view, setView] = useState<SessionView | undefined>(undefined);
+	const seed = useChatSettingsSeed(chatId);
+	const [view, setView] = useState<SessionView | undefined>(() =>
+		seed ? { settings: seed.settings ?? {}, kind: seed.kind, course: seed.course } : undefined,
+	);
 	const [open, setOpen] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const [note, setNote] = useState("");
+	const [note, setNote] = useState(() => seed?.settings?.paceNote ?? "");
 	const containerRef = useRef<HTMLDivElement>(null);
 
 	const read = useCallback(() => {
-		fetch(`/api/chats/${chatId}`)
-			.then((r) => r.json() as Promise<SessionView>)
+		const gen = chatSettingsGeneration(chatId);
+		fetchChatSettings(chatId)
 			.then((b) => {
+				if (chatSettingsGeneration(chatId) !== gen) return;
 				setView({ settings: b.settings ?? {}, kind: b.kind, course: b.course });
 				setNote(b.settings?.paceNote ?? "");
 			})
 			.catch(() => {});
 	}, [chatId]);
-	useEffect(read, [read]);
+	useEffect(() => {
+		read();
+	}, [read]);
 	useSettingsSaved((section) => {
 		if (section === "lesson" || section === "models") read();
 	});
@@ -50,35 +57,32 @@ export function PaceControl({ chatId, variant = "edge" }: { chatId: string; vari
 	const current = resolvePace(view?.settings);
 	const hasCourse = view?.course !== undefined && view?.course !== null;
 
-	const save = async (next: ChatSettings): Promise<boolean> => {
+	const save = async (patch: (current: ChatSettings) => ChatSettings): Promise<boolean> => {
 		setError(null);
-		try {
-			const res = await fetch(`/api/chats/${chatId}/settings`, {
-				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(next),
-			});
-			if (!res.ok) {
-				const body = (await res.json().catch(() => ({}))) as { error?: string };
-				setError(body.error ?? `pace rejected (${res.status})`);
-				return false;
-			}
-			setView({ ...view, settings: next });
-			notifySettingsSaved("lesson");
-			return true;
-		} catch {
-			setError("Could not reach the server — try again.");
+		const res = await updateChatSettings(chatId, patch);
+		if (!res.ok) {
+			setError(res.networkError ? "Could not reach the server — try again." : (res.error ?? `pace rejected (${res.status})`));
 			return false;
 		}
+		setView((prev) => ({ ...prev, settings: res.settings }));
+		setNote(res.settings.paceNote ?? "");
+		// updateChatSettings broadcasts "lesson" once its save queue drains.
+		return true;
 	};
 
 	const pick = async (pace: Pace) => {
-		if (await save({ ...view?.settings, pace })) setOpen(false);
+		if (await save((current) => ({ ...current, pace }))) setOpen(false);
 	};
 	const saveNote = async () => {
-		const { paceNote: _old, ...rest } = view?.settings ?? {};
 		const trimmed = note.trim();
-		if (await save({ ...rest, ...(trimmed ? { paceNote: trimmed } : {}) })) setOpen(false);
+		if (
+			await save((current) => {
+				const { paceNote: _old, ...rest } = current;
+				return trimmed ? { ...rest, paceNote: trimmed } : rest;
+			})
+		) {
+			setOpen(false);
+		}
 	};
 
 	return (

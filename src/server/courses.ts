@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { PATHS } from "../../config.ts";
 import type {
 	ChatCourseLink,
+	ChatRecord,
 	CourseDeletionImpact,
 	LessonResult,
 	RatingChange,
@@ -109,15 +113,6 @@ function allSkills(nodeIds: ReadonlySet<string>): Map<string, Skill> {
 	return new Map(mergeSkillLines(stores.skillStore.readSkillLines(), nodeIds).map((s) => [s.id, s]));
 }
 
-/** Every course-linked session record. */
-function courseChats() {
-	return stores.chatStore
-		.listChats()
-		.filter((c) => c.course)
-		.map((c) => stores.chatStore.getChat(c.id))
-		.filter((r) => r !== null && r.course !== undefined);
-}
-
 /** A skill's lesson note: the summary its newest finished lesson gave (core/course-session.ts finishSummaryOf). */
 interface LessonNote {
 	summary: string;
@@ -125,7 +120,163 @@ interface LessonNote {
 	chatId: string;
 }
 
-/** Every course session's skill evidence, by course, and each skill's lesson note, in one pass over the chats. */
+/** Derived course evidence for one chat file (never holds ChatRecord or messages). */
+interface ChatCourseEvidence {
+	readonly link: ChatCourseLink;
+	readonly events: readonly SkillEvent[];
+	readonly note: LessonNote | null;
+	readonly problems: readonly ConcludedProblem[];
+	readonly concludeCalls: ReadonlyArray<{ readonly callId: string; readonly at: number }>;
+}
+
+interface EvidenceCacheEntry {
+	readonly mtimeMs: number;
+	readonly size: number;
+	readonly ino: number;
+	readonly evidence: ChatCourseEvidence | null;
+}
+
+interface EvidenceCacheState {
+	entries: Map<string, EvidenceCacheEntry>;
+	floor: number;
+	ceiling: number;
+	maxEntries: number;
+}
+
+/** Bump whenever `extractChatCourseEvidence` or `ChatCourseEvidence` changes so dev hot reloads never serve stale cached extractions. */
+export const COURSE_EVIDENCE_CACHE_VERSION = 1;
+export const COURSE_EVIDENCE_CACHE_KEY = Symbol.for(`lh.courseEvidenceCache.v${COURSE_EVIDENCE_CACHE_VERSION}`);
+/** Minimum LRU capacity even for small data directories. */
+export const COURSE_EVIDENCE_CACHE_FLOOR = 1_000;
+/** Hard memory-minded ceiling (~2–5 KB/entry -> ~40–100 MB worst-case). */
+export const COURSE_EVIDENCE_CACHE_CEILING = 20_000;
+const EVIDENCE_CACHE_HEADROOM = 1.25;
+
+function computeEvidenceCacheLimit(scannedCourseChats: number, floor: number, ceiling: number): number {
+	const target = Math.max(floor, Math.ceil(scannedCourseChats * EVIDENCE_CACHE_HEADROOM));
+	return Math.min(ceiling, Math.max(1, target));
+}
+
+function evictOverflow(state: EvidenceCacheState): void {
+	while (state.entries.size > state.maxEntries) {
+		const oldest = state.entries.keys().next().value;
+		if (oldest === undefined) break;
+		state.entries.delete(oldest);
+	}
+}
+
+/** Process-shared bounded LRU cache across Next.js route bundles (same pattern as draftRuns/weighRuns). */
+function evidenceCacheState(): EvidenceCacheState {
+	const g = globalThis as Record<symbol, EvidenceCacheState | undefined>;
+	g[COURSE_EVIDENCE_CACHE_KEY] ??= {
+		entries: new Map(),
+		floor: COURSE_EVIDENCE_CACHE_FLOOR,
+		ceiling: COURSE_EVIDENCE_CACHE_CEILING,
+		maxEntries: COURSE_EVIDENCE_CACHE_FLOOR,
+	};
+	return g[COURSE_EVIDENCE_CACHE_KEY];
+}
+
+/** Test/diagnostic seam: clear the per-chat course evidence cache. */
+export function clearCourseEvidenceCache(): void {
+	evidenceCacheState().entries.clear();
+}
+
+/** Test/diagnostic seam: current number of cached chat evidence entries. */
+export function courseEvidenceCacheSize(): number {
+	return evidenceCacheState().entries.size;
+}
+
+/** Test/diagnostic seam: active effective cache entry limit. */
+export function courseEvidenceCacheLimit(): number {
+	return evidenceCacheState().maxEntries;
+}
+
+/** Test/diagnostic seam: configure floor and ceiling bounds (restoring defaults when omitted). */
+export function setCourseEvidenceCacheBounds(bounds?: { floor?: number; ceiling?: number }): void {
+	const state = evidenceCacheState();
+	const ceiling = Math.max(1, Math.floor(bounds?.ceiling ?? COURSE_EVIDENCE_CACHE_CEILING));
+	const floor = Math.min(ceiling, Math.max(1, Math.floor(bounds?.floor ?? COURSE_EVIDENCE_CACHE_FLOOR)));
+	state.ceiling = ceiling;
+	state.floor = floor;
+	state.maxEntries = Math.min(ceiling, Math.max(floor, state.maxEntries));
+	evictOverflow(state);
+}
+
+/** Test/diagnostic seam: pin the hard ceiling (or restore default floor/ceiling when omitted). */
+export function setCourseEvidenceCacheLimit(maxEntries?: number): void {
+	const state = evidenceCacheState();
+	if (maxEntries === undefined) {
+		state.floor = COURSE_EVIDENCE_CACHE_FLOOR;
+		state.ceiling = COURSE_EVIDENCE_CACHE_CEILING;
+		state.maxEntries = COURSE_EVIDENCE_CACHE_FLOOR;
+		evictOverflow(state);
+		return;
+	}
+	const cap = Math.max(1, Math.floor(maxEntries));
+	state.ceiling = cap;
+	state.floor = Math.min(state.floor, cap);
+	state.maxEntries = Math.min(state.maxEntries, cap);
+	evictOverflow(state);
+}
+
+function chatEvidenceFile(id: string): string | null {
+	if (!/^[A-Za-z0-9_-]+$/.test(id)) return null;
+	return path.join(/* turbopackIgnore: true */ PATHS.chats, `${id}.json`);
+}
+
+function extractChatCourseEvidence(chat: ChatRecord | null): ChatCourseEvidence | null {
+	const link = chat?.course;
+	if (!chat || !link) return null;
+	const events = skillEventsOf(chat.messages, link);
+	const problems = link.mode === "practice" || link.mode === "review" || link.mode === "check" ? concludedProblemsOf(chat.messages, chat.id) : [];
+	const rawNote = link.mode === "learn" ? finishSummaryOf(chat.messages) : null;
+	const note = rawNote ? { summary: rawNote.summary, at: rawNote.at, chatId: chat.id } : null;
+	const concludeCalls: Array<{ callId: string; at: number }> = [];
+	if (link.mode !== "learn" && link.mode !== "placement") {
+		const clean = new Set<string>();
+		for (const m of chat.messages) {
+			const r = m as { role?: string; toolCallId?: string; isError?: boolean };
+			if (r.role === "toolResult" && !r.isError && r.toolCallId) clean.add(r.toolCallId);
+		}
+		for (const m of chat.messages) {
+			if ((m as { role?: string }).role !== "assistant") continue;
+			const at = (m as { timestamp: number }).timestamp;
+			for (const block of (m as unknown as { content: Array<{ type: string; id?: string; name?: string }> }).content) {
+				if (block.type !== "toolCall" || block.name !== "conclude" || !block.id || !clean.has(block.id)) continue;
+				concludeCalls.push({ callId: block.id, at });
+			}
+		}
+	}
+	return { link, events, note, problems, concludeCalls };
+}
+
+/** Read one chat's derived course evidence, reusing the cached extraction while the file's mtime, size, and inode match. */
+function chatCourseEvidence(id: string): ChatCourseEvidence | null {
+	const file = chatEvidenceFile(id);
+	if (!file) return null;
+	const state = evidenceCacheState();
+	let st: fs.Stats;
+	try {
+		st = fs.statSync(/* turbopackIgnore: true */ file);
+	} catch {
+		state.entries.delete(file);
+		// Fallback for non-filesystem chat stores in tests without caching.
+		return extractChatCourseEvidence(stores.chatStore.getChat(id));
+	}
+	const hit = state.entries.get(file);
+	if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size && hit.ino === st.ino) {
+		state.entries.delete(file);
+		state.entries.set(file, hit);
+		return hit.evidence;
+	}
+	const evidence = extractChatCourseEvidence(stores.chatStore.getChat(id));
+	state.entries.delete(file);
+	state.entries.set(file, { mtimeMs: st.mtimeMs, size: st.size, ino: st.ino, evidence });
+	evictOverflow(state);
+	return evidence;
+}
+
 /** The course page's list of open misses: newest first, the skills that still exist in the course map, at most 20. */
 function missedViews(open: readonly MissedProblem[], ctx: ReadContext): MissedProblemView[] {
 	const out: MissedProblemView[] = [];
@@ -141,24 +292,41 @@ function missedViews(open: readonly MissedProblem[], ctx: ReadContext): MissedPr
 /** How a miss is put to the tutor. */
 const MISS_HOW: Partial<Record<string, string>> = { surrendered: "gave up", movedOn: "moved on", taught: "was taught the answer", solvedWithHints: "needed hints" };
 
+/** Every course session's skill evidence, by course, and each skill's lesson note, in one pass over the chats. */
 function courseEvidence(): { byCourse: Map<string, SkillEvent[]>; notes: Map<string, LessonNote>; problems: Map<string, ConcludedProblem[]> } {
 	const byCourse = new Map<string, SkillEvent[]>();
 	const problems = new Map<string, ConcludedProblem[]>();
 	const notes = new Map<string, LessonNote>();
-	for (const chat of courseChats()) {
-		const link = chat!.course!;
-		byCourse.set(link.courseId, [...(byCourse.get(link.courseId) ?? []), ...skillEventsOf(chat!.messages, link)]);
+	const presentFiles = new Set<string>();
+	const courseChats = stores.chatStore.listChats().filter((summary) => Boolean(summary.course));
+	const state = evidenceCacheState();
+	// Size the LRU cap from the number of course chats in this scan (bounded by [floor, ceiling])
+	// so scanning more chats than the floor never thrashes the cache.
+	state.maxEntries = computeEvidenceCacheLimit(courseChats.length, state.floor, state.ceiling);
+	for (const summary of courseChats) {
+		const file = chatEvidenceFile(summary.id);
+		if (file) presentFiles.add(file);
+		const ev = chatCourseEvidence(summary.id);
+		if (!ev) continue;
+		const { link, events, note, problems: chatProblems } = ev;
+		byCourse.set(link.courseId, [...(byCourse.get(link.courseId) ?? []), ...events]);
 		if (link.mode === "practice" || link.mode === "review" || link.mode === "check") {
-			problems.set(link.courseId, [...(problems.get(link.courseId) ?? []), ...concludedProblemsOf(chat!.messages, chat!.id)]);
+			problems.set(link.courseId, [...(problems.get(link.courseId) ?? []), ...chatProblems]);
 		}
-		if (link.mode !== "learn") continue;
-		const note = finishSummaryOf(chat!.messages);
-		if (!note) continue;
+		if (link.mode !== "learn" || !note) continue;
 		for (const skillId of link.skillIds) {
 			const held = notes.get(skillId);
-			if (!held || held.at < note.at) notes.set(skillId, { summary: note.summary, at: note.at, chatId: chat!.id });
+			if (!held || held.at < note.at) notes.set(skillId, { ...note });
 		}
 	}
+	const chatsPrefix = PATHS.chats.endsWith(path.sep) ? PATHS.chats : `${PATHS.chats}${path.sep}`;
+	for (const key of [...state.entries.keys()]) {
+		if (key.startsWith(chatsPrefix) && !presentFiles.has(key)) {
+			// Pruning deleted/non-course files keeps memory tight.
+			state.entries.delete(key);
+		}
+	}
+	evictOverflow(state);
 	return { byCourse, notes, problems };
 }
 
@@ -782,43 +950,33 @@ function sessionSkill(id: string, ctx: ReadContext): SessionSkill {
  *  (owner, 2026-11-13): the memory model folded over every course's evidence before the problem and with it. Null for
  *  any other session. */
 export function ratingChanges(chatId: string): RatingChange[] | null {
-	const record = stores.chatStore.getChat(chatId);
-	const link = record?.course;
-	if (!record || !link || link.mode === "learn" || link.mode === "placement" || link.mode === "ask") return null;
+	const ev = chatCourseEvidence(chatId);
+	const link = ev?.link;
+	if (!ev || !link || link.mode === "learn" || link.mode === "placement" || link.mode === "ask") return null;
 	const ctx = readContext();
 	const requiresOf = (id: string) => ctx.skills.get(id)?.requires ?? [];
 	const all = [...ctx.byCourse.values()].flat();
-	const own = skillEventsOf(record.messages, link);
-	const clean = new Set<string>();
-	for (const m of record.messages) {
-		const r = m as { role?: string; toolCallId?: string; isError?: boolean };
-		if (r.role === "toolResult" && !r.isError && r.toolCallId) clean.add(r.toolCallId);
-	}
+	const own = ev.events;
 	const out: RatingChange[] = [];
-	for (const m of record.messages) {
-		if ((m as { role?: string }).role !== "assistant") continue;
-		const at = (m as { timestamp: number }).timestamp;
-		for (const block of (m as unknown as { content: Array<{ type: string; id?: string; name?: string }> }).content) {
-			if (block.type !== "toolCall" || block.name !== "conclude" || !block.id || !clean.has(block.id)) continue;
-			const ids = [...new Set(own.filter((e) => e.at === at).map((e) => e.skillId))];
-			if (ids.length === 0) continue;
-			const before = foldSkills(all.filter((e) => e.at < at), requiresOf);
-			const after = foldSkills(all.filter((e) => e.at <= at), requiresOf);
-			out.push({
-				callId: block.id,
-				skills: ids.map((id) => {
-					const b = before.get(id);
-					const a = after.get(id);
-					return {
-						id,
-						name: ctx.skills.get(id)?.name ?? id,
-						before: b ? understandingOf(b) : 0,
-						after: a ? understandingOf(a) : 0,
-						reviewAt: a ? new Date(reviewAt(a)).toISOString() : null,
-					};
-				}),
-			});
-		}
+	for (const { callId, at } of ev.concludeCalls) {
+		const ids = [...new Set(own.filter((e) => e.at === at).map((e) => e.skillId))];
+		if (ids.length === 0) continue;
+		const before = foldSkills(all.filter((e) => e.at < at), requiresOf);
+		const after = foldSkills(all.filter((e) => e.at <= at), requiresOf);
+		out.push({
+			callId,
+			skills: ids.map((id) => {
+				const b = before.get(id);
+				const a = after.get(id);
+				return {
+					id,
+					name: ctx.skills.get(id)?.name ?? id,
+					before: b ? understandingOf(b) : 0,
+					after: a ? understandingOf(a) : 0,
+					reviewAt: a ? new Date(reviewAt(a)).toISOString() : null,
+				};
+			}),
+		});
 	}
 	return out;
 }
@@ -827,9 +985,9 @@ export function ratingChanges(chatId: string): RatingChange[] | null {
  *  understanding and review date, the teacher's summary, and the next skill in the course's order. Null when the chat is
  *  not a course Learn session. */
 export function lessonResult(chatId: string): LessonResult | null {
-	const record = stores.chatStore.getChat(chatId);
-	const link = record?.course;
-	if (!record || !link || link.mode !== "learn") return null;
+	const ev = chatCourseEvidence(chatId);
+	const link = ev?.link;
+	if (!ev || !link || link.mode !== "learn") return null;
 	const course = stores.courseStore.getCourse(link.courseId);
 	const skillId = link.skillIds[0];
 	if (!course || !skillId) return null;
@@ -846,7 +1004,7 @@ export function lessonResult(chatId: string): LessonResult | null {
 		understanding: state ? understandingOf(state) : 0,
 		learned: state !== undefined,
 		reviewAt: state ? new Date(reviewAt(state)).toISOString() : null,
-		summary: finishSummaryOf(record.messages)?.summary ?? null,
+		summary: ev.note?.summary ?? null,
 		next: next ? { id: next, name: ctx.skills.get(next)?.name ?? next } : null,
 	};
 }
@@ -994,12 +1152,9 @@ export function courseDeletionImpact(chatIds: readonly string[]): CourseDeletion
 	const skills = new Set<string>();
 	let sessions = 0;
 	for (const id of new Set(chatIds)) {
-		const chat = stores.chatStore.getChat(id);
-		const link = chat?.course;
-		if (!chat || !link) continue;
-		const events = skillEventsOf(chat.messages, link);
-		const note = link.mode === "learn" ? finishSummaryOf(chat.messages) : null;
-		const problems = link.mode === "practice" || link.mode === "review" || link.mode === "check" ? concludedProblemsOf(chat.messages, chat.id) : [];
+		const ev = chatCourseEvidence(id);
+		if (!ev) continue;
+		const { link, events, note, problems } = ev;
 		if (events.length === 0 && !note && problems.length === 0) continue;
 		sessions++;
 		byCourse.set(link.courseId, (byCourse.get(link.courseId) ?? 0) + 1);
@@ -1015,10 +1170,12 @@ export function courseDeletionImpact(chatIds: readonly string[]): CourseDeletion
  *  the tutor's "Learn <skill>" buttons on a concluded problem. Null for any
  *  other session, or when the chat is unknown. */
 export function courseSessionSkillNames(chatId: string): { courseId: string; skills: Array<{ id: string; name: string }> } | null {
-	const link = stores.chatStore.getChat(chatId)?.course;
+	const link = chatCourseEvidence(chatId)?.link;
 	if (!link || (link.mode !== "review" && link.mode !== "practice")) return null;
-	const ctx = readContext();
-	const skills = link.skillIds.filter((id) => ctx.skills.has(id)).map((id) => ({ id, name: ctx.skills.get(id)!.name }));
+	const graph = getGraph(stores.graphStore);
+	const nodeIds = new Set(graph.nodes.map((n) => n.id));
+	const all = allSkills(nodeIds);
+	const skills = link.skillIds.filter((id) => all.has(id)).map((id) => ({ id, name: all.get(id)!.name }));
 	return { courseId: link.courseId, skills };
 }
 

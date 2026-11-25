@@ -506,6 +506,8 @@ A long set titles the session with three names and "+n more".
 - `GET /api/graph` also carries the skills layer (`skills`: held skills, their arrows, one region per course).
 - New server event **`courses-changed`** (course record changed, or a course chat's turn settled) → the sidebar and course page refetch.
 
+**Course evidence cache.** To avoid re-parsing every course chat transcript on each sidebar or course-route read, `src/server/courses.ts` caches each chat file's derived course evidence (course link, skill events, lesson finish note, concluded problems, and conclude calls) in a process-shared, version-keyed LRU map validated against the file's `mtimeMs`, `size`, and `ino`. Capacity starts at a 1,000-entry floor, scales dynamically to `ceil(courseChats * 1.25)` during scans so larger data directories do not thrash, and is bounded by a 20,000-entry ceiling; deleted or unlinked chat files are pruned on scan. **Limitation:** a same-size in-place rewrite that preserves the file's modification time (for example `rsync --inplace -t`) is not noticed until the file changes again; the app's own writer and sync engine write a temporary file and rename it, which changes the inode and invalidates the entry immediately.
+
 ## 6. UI
 
 - **Sidebar → Courses** (above sessions): one row per course with its title and a meta line, plus

@@ -67,10 +67,12 @@ import {
 	textPartMessageId,
 	kbdEventForAction as kbdEventForChat,
 	type ChatInput,
-	type ChatSettings,
 	type LhMessage,
 	type ModelSlotName,
+	type ModelsSettings,
 } from "@/src/core";
+import { ChatSettingsSeedProvider, chatSettingsGeneration, fetchChatSettings, type ChatSettingsSeed, type ChatSettingsSnapshot } from "@/components/chat-settings-client";
+import { useSettingsSaved } from "@/components/settings-signal";
 import { PlanBlock, PlanPopup, latestTree } from "@/components/plan-block";
 import { PlanMarginalia, planExists } from "@/components/plan-window";
 import { MermaidOverlay, SessionMermaidContext, type SessionImage } from "@/components/session-overlay";
@@ -127,7 +129,7 @@ import {
 	CompactionMomentDivider,
 	type CompactionDividerData,
 } from "@/components/compaction-divider";
-import { CoverageRing } from "@/components/extraction-coverage";
+import { CoverageRing, type GraphRead, type SessionCoverage } from "@/components/extraction-coverage";
 import { Button } from "@/components/ui/button";
 import {
 	activeProblemOf,
@@ -314,6 +316,10 @@ export function Chat({
 	chatId,
 	title,
 	initialMessages,
+	initialSession,
+	initialModels,
+	initialGraph,
+	initialCoverage,
 	initialError,
 	initialPrompt,
 	initiallyInFlight,
@@ -325,6 +331,14 @@ export function Chat({
 	chatId: string;
 	title: string;
 	initialMessages: LhMessage[];
+	/** Server-rendered session settings, kind, and course link so controls hydrate without refetching the full transcript. */
+	initialSession?: ChatSettingsSnapshot;
+	/** Global models section (for ModelControl's fallback on legacy unstamped sessions). */
+	initialModels?: ModelsSettings;
+	/** Server-rendered graph extraction settings for CoverageRing. */
+	initialGraph?: GraphRead | null;
+	/** Server-rendered extraction coverage for CoverageRing. */
+	initialCoverage?: SessionCoverage | null;
 	/** Memory-only settlement notice supplied on reopening. */
 	initialError?: string;
 	/** The session kind (practice sessions, owner 2026-10-04): practice
@@ -348,6 +362,10 @@ export function Chat({
 	 *  only decides whether the pill rides the composer. */
 	initialConfigured?: boolean;
 }) {
+	const settingsSeed = useMemo<ChatSettingsSeed | null>(
+		() => (initialSession ? { chatId, ...initialSession, ...(initialModels ? { models: initialModels } : {}) } : null),
+		[chatId, initialSession, initialModels],
+	);
 	// Reattach plumbing (background-turn runner wave): the hook holds the
 	// settled terminal's callback — a stable ref assigned below, once
 	// syncFromServer exists (refs, not closures: no stale capture).
@@ -1113,6 +1131,7 @@ export function Chat({
 		disabled: pluginOwnsDock && !pluginMicAvailable,
 		// the lesson's language picks the dictation language
 		chatId,
+		initialSession,
 	});
 	const dictation: Dictation = { ...recording,
 		phase: recording.destinationId === "main" ? recording.phase : "idle",
@@ -1484,7 +1503,9 @@ export function Chat({
 		!compacting &&
 		!busy &&
 		phaseAt3(messages) === "plan";
-	const [sessionLanguage, setSessionLanguage] = useState<LessonLanguage>("en");
+	const [sessionLanguage, setSessionLanguage] = useState<LessonLanguage>(() =>
+		resolveLessonLanguage(initialSession?.settings),
+	);
 	const sendPlanContinue = useCallback(() => {
 		if (!planContinueReady) return;
 		void send({ type: "text", text: sessionLanguage === "nb" ? "Ser bra ut, la oss starte." : "Looks good, let's start." });
@@ -1523,14 +1544,21 @@ export function Chat({
 			if (statsRequest.current === request) statsRequest.current = null;
 		}
 	}, [readStats]);
-	useEffect(() => {
-		let cancelled = false;
-		fetch(`/api/chats/${encodeURIComponent(chatId)}`)
-			.then((r) => (r.ok ? (r.json() as Promise<{ settings?: ChatSettings }>) : null))
-			.then((b) => { if (!cancelled && b) setSessionLanguage(resolveLessonLanguage(b.settings)); })
+	const refreshSessionLanguage = useCallback(() => {
+		const gen = chatSettingsGeneration(chatId);
+		fetchChatSettings(chatId)
+			.then((b) => {
+				if (chatSettingsGeneration(chatId) !== gen) return;
+				setSessionLanguage(resolveLessonLanguage(b.settings));
+			})
 			.catch(() => {});
-		return () => { cancelled = true; };
 	}, [chatId]);
+	useEffect(() => {
+		refreshSessionLanguage();
+	}, [refreshSessionLanguage]);
+	useSettingsSaved((section) => {
+		if (section === "lesson") refreshSessionLanguage();
+	});
 	useEffect(() => {
 		void syncTurns();
 		return () => statsRequest.current?.abort();
@@ -1878,6 +1906,7 @@ export function Chat({
 	usePluginShortcutPage(`/chat/${encodeURIComponent(chatId)}`, captureActionContext);
 
 	return (
+		<ChatSettingsSeedProvider value={settingsSeed}>
 		<ChatActionsContext.Provider
 			value={{
 				chatId,
@@ -2012,7 +2041,14 @@ export function Chat({
 					{/* Practice (owner, 2026-10-04): the coverage ring hides —
 				    practice never extracts, so an ever-filling ring with no
 				    run behind it would lie. */}
-					{kind !== "practice" && course?.mode !== "placement" && !askSession && <CoverageRing chatId={chatId} refreshKey={coverageTick} />}
+					{kind !== "practice" && course?.mode !== "placement" && !askSession && (
+						<CoverageRing
+							chatId={chatId}
+							refreshKey={coverageTick}
+							initialCoverage={initialCoverage}
+							initialGraph={initialGraph}
+						/>
+					)}
 					{course && (
 						<FinishLessonButton
 							lesson={isLesson}
@@ -2616,6 +2652,7 @@ export function Chat({
 			}}
 		/>
 		</ChatActionsContext.Provider>
+		</ChatSettingsSeedProvider>
 	);
 }
 
