@@ -1093,13 +1093,43 @@ html.lh-native-ink body > *:not([data-testid="sketch-view"]) {
 	line-height: 18px;
 }
 
-/* The skill map (components/skill-map.tsx) on the plan diagram: a locked skill keeps a READABLE label in the muted
-   text colour (4.5:1, never extra opacity) and an input-strength outline; the lock badge says why (SPEC §7). */
+/* The skill map (components/skill-map.tsx) on the plan diagram, UI round 2: card-grammar nodes (radius 8, the surface
+   fill, a hairline border, 13px sans labels in the text colour). The plan diagram's square corners were an owner call
+   from before the redesign; the owner's later T3/Apple-style redesign brief supersedes it for the map (the chat plan
+   block keeps its own look). Accent only on the next-up node (data-accent); a locked skill keeps a READABLE label in
+   the muted text colour (4.5:1, never extra opacity) with a dashed input-strength outline, and its lock badge says why.
+   Edges are the muted line colour. The label rules also reach the hidden layout probe, so boxes still fit their text. */
+.lh-skill-map svg text,
+.lh-skill-map [data-plan-probe] foreignObject div {
+	font-family: var(--font-sans);
+	font-size: var(--text-chrome);
+	font-weight: 500;
+}
+.lh-skill-map [data-status] text {
+	fill: var(--foreground);
+}
+.lh-skill-map [data-status] > rect:first-child {
+	rx: 8px;
+	ry: 8px;
+	fill: var(--card);
+	stroke: var(--border);
+}
+.lh-skill-map [data-accent] > rect:first-child {
+	stroke: var(--ring);
+	stroke-width: 1.5px;
+}
 .lh-skill-map [data-status="upcoming"] text {
 	fill: var(--muted-foreground);
 }
 .lh-skill-map [data-status="upcoming"] > rect:first-child {
 	stroke: var(--input);
+	stroke-dasharray: 4 3;
+}
+.lh-skill-map svg > path {
+	stroke: color-mix(in oklab, var(--muted-foreground) 60%, transparent);
+}
+.lh-skill-map marker path {
+	fill: color-mix(in oklab, var(--muted-foreground) 60%, transparent);
 }
 
 /* Swipe regions (components/use-swipe.ts): the browser reads `touch-action` only up to the nearest scroll container, so a

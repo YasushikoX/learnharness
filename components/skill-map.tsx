@@ -73,6 +73,7 @@ export function SkillMap({
 	statusOf,
 	focusIds,
 	fitted = false,
+	accentId = null,
 }: {
 	nodes: readonly LayoutNode[];
 	edges: ReadonlyArray<{ from: string; to: string }>;
@@ -81,6 +82,8 @@ export function SkillMap({
 	focusIds: readonly string[];
 	/** Open showing the whole map (the course page's Map view, 2026-11-14) instead of centered on `focusIds`. */
 	fitted?: boolean;
+	/** The next-up skill: the one node in the accent colour (UI round 2). */
+	accentId?: string | null;
 }) {
 	const markerId = useId().replace(/[^a-zA-Z0-9-]/g, "");
 	// Upstream v0.7.0 sizes plan boxes from labels measured in the real font (usePlanLayout + its probe).
@@ -211,8 +214,9 @@ export function SkillMap({
 					}}
 				>
 					<PlanLayoutProbe probe={plan.probe} />
-					<PlanDiagram layout={layout} nodes={nodes} edges={edges} statusOf={statusOf} markerId={markerId} pad={PAD} naturalSize />
-					{/* A lock badge on each locked skill's corner (UI round 1b, SPEC §7): the label stays readable, the icon says why. */}
+					<PlanDiagram layout={layout} nodes={nodes} edges={edges} statusOf={statusOf} markerId={markerId} pad={PAD} naturalSize accentId={accentId} />
+					{/* A lock badge on each locked skill's top-right corner (UI round 2: clear of the centred label): the
+					    label stays readable, the icon says why. */}
 					{nodes
 						.filter((n) => statusOf(n.id) === "upcoming" && layout.x.has(n.id))
 						.map((n) => (
@@ -222,7 +226,7 @@ export function SkillMap({
 								aria-label="locked"
 								data-testid={`skill-map-lock-${n.id}`}
 								className="absolute flex size-4 items-center justify-center rounded-full border border-input bg-background text-muted-foreground"
-								style={{ left: layout.x.get(n.id)! - (layout.originX ?? 0) + PAD - 8, top: layout.y.get(n.id)! - (layout.originY ?? 0) + PAD - 8 }}
+								style={{ left: layout.x.get(n.id)! - (layout.originX ?? 0) + PAD + (layout.nodeW.get(n.id) ?? NODE_W_MIN) - 8, top: layout.y.get(n.id)! - (layout.originY ?? 0) + PAD - 8 }}
 							>
 								<LockIcon className="size-2.5" strokeWidth={2} aria-hidden />
 							</span>

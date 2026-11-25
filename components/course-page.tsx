@@ -765,8 +765,9 @@ export function CourseBody({
 								}}
 								focusIds={mapFocus}
 								fitted
+								accentId={data.nextUp[0] ?? null}
 							/>
-							<p className="mt-2 text-meta text-muted-foreground">Outlined: known, learned or next up · gray with a lock: locked behind a prerequisite.</p>
+							<p className="mt-2 text-meta text-muted-foreground">Blue outline: next up · dashed with a lock: locked behind a prerequisite.</p>
 						</section>
 					)}
 
