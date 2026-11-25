@@ -19,17 +19,41 @@ import { normalizeBaseUrl } from "../../core/settings.ts";
  */
 
 const observed = new Set<string>();
+/** The ports this app was actually reached at (a converter settings request): its own, whatever PORT says. */
+const observedPorts = new Set<string>();
+
+/**
+ * A host as compared here: lower case, no trailing dot (`localhost.` is localhost), and an IPv4-mapped IPv6 address
+ * as the IPv4 address it reaches (`[::ffff:7f00:1]` and `[::ffff:127.0.0.1]` are 127.0.0.1; `[::ffff:0:0]` is 0.0.0.0).
+ * The URL parser has already turned decimal, hex and shortened IPv4 forms into dotted form.
+ */
+export function canonicalHost(hostname: string): string {
+	const host = hostname.toLowerCase().replace(/\.+$/, "");
+	const hex = /^\[::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]$/.exec(host);
+	if (hex) {
+		const [high, low] = [parseInt(hex[1]!, 16), parseInt(hex[2]!, 16)];
+		return `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`;
+	}
+	const dotted = /^\[::ffff:(\d{1,3}(?:\.\d{1,3}){3})\]$/.exec(host);
+	return dotted ? dotted[1]! : host;
+}
+
+function portOf(url: URL): string {
+	return url.port || (url.protocol === "https:" ? "443" : "80");
+}
 
 function hostPort(url: URL): string {
-	const port = url.port || (url.protocol === "https:" ? "443" : "80");
-	return `${url.hostname.toLowerCase()}:${port}`;
+	return `${canonicalHost(url.hostname)}:${portOf(url)}`;
 }
 
 /** Remember the host:port a converter settings request reached this app at. */
 export function noteAppRequest(requestUrl: string): void {
 	try {
 		const url = new URL(requestUrl);
-		if (url.protocol === "http:" || url.protocol === "https:") observed.add(hostPort(url));
+		if (url.protocol === "http:" || url.protocol === "https:") {
+			observed.add(hostPort(url));
+			observedPorts.add(portOf(url));
+		}
 	} catch {
 		// not a URL: nothing to remember
 	}
@@ -50,7 +74,7 @@ function appPorts(env: Record<string, string | undefined>): Set<string> {
 }
 
 function isLoopback(host: string): boolean {
-	return host === "localhost" || host.endsWith(".localhost") || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) || host === "[::1]" || host === "0.0.0.0" || host === "[::]" || host === "[::ffff:127.0.0.1]" || host === "[::ffff:7f00:1]";
+	return host === "localhost" || host.endsWith(".localhost") || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) || host === "[::1]" || host === "0.0.0.0" || host === "[::]";
 }
 
 function localHosts(env: Record<string, string | undefined>): Set<string> {
@@ -85,8 +109,8 @@ export function selfOriginProblem(baseUrl: string, env: Record<string, string | 
 	const target = hostPort(url);
 	const refusal = `${url.origin} is this app's own address; a PDF service must be another server`;
 	if (observed.has(target)) return refusal;
-	const port = target.slice(target.lastIndexOf(":") + 1);
-	if (!appPorts(env).has(port)) return undefined;
-	const host = url.hostname.toLowerCase();
+	const port = portOf(url);
+	if (!appPorts(env).has(port) && !observedPorts.has(port)) return undefined;
+	const host = canonicalHost(url.hostname);
 	return isLoopback(host) || localHosts(env).has(host) ? refusal : undefined;
 }

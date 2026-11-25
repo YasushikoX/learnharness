@@ -86,7 +86,7 @@ Wrong page numbers would silently corrupt every citation, so: a page array must 
 - `after`: a delimiter after every page, the last one included, so one more segment, and the last one must be empty;
 - `before`: a delimiter before every page, so one more segment, and the first one must be empty.
 
-Prefer `{ "random": true }`: a fixed delimiter that also appears in a page's text breaks the count, and a service that ignores the per-job delimiter is caught. Run **Test**: its blank-page check shows whether the service marks pages that have no text.
+Prefer `{ "random": true }`: a fixed delimiter that also appears in a page's text breaks the count, and a service that ignores the per-job delimiter is caught. Run **Test**: its blank-page check shows whether the service marks pages that have no text. What Test cannot show: both test PDFs hold clean, embedded text (not scans), and the blank page is in the middle. A service that drops a page break at the very start or end of a document, or that reads scans differently from text, can pass Test and still misplace pages on such a PDF; check the first real upload's page numbers against the PDF.
 
 ### What a profile cannot express
 

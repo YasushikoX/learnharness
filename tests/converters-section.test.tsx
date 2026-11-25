@@ -312,6 +312,38 @@ describe("Settings → PDF conversion", () => {
 		}
 	});
 
+	it("re-check 2, finding 4: removing a profile while its Test runs cancels the Test, and no late report appears under another converter", async () => {
+		const acmeReady = acme({ baseUrl: "https://ocr.example", origin: "https://ocr.example", ready: true, setup: undefined, credential: { stored: true, hint: "…WXYZ" } });
+		const late: ConverterValidationReport = { ok: false, converterId: "custom:acme", durationMs: 5, warnings: [], pages: [], checks: [{ id: "converted", status: "fail", message: "Acme OCR failed" }] };
+		const pending: { resolve: (r: Reply) => void; signal?: AbortSignal }[] = [];
+		const ui = await mount({
+			"GET /api/converters": () => ({ json: view("custom:acme", [pdfjs, docling(), acmeReady]) }),
+			"POST /api/converters/test": (call) => new Promise<Reply>((resolve) => pending.push({ resolve, ...(call.signal ? { signal: call.signal } : {}) })),
+			"DELETE /api/converters/profiles?id=custom%3Aacme": () => ({ json: view("pdfjs", [pdfjs, docling()]) }),
+		});
+		try {
+			await ui.click("converter-test");
+			assert.equal(ui.text("converter-test"), "Testing…");
+			await ui.click("converter-profile-remove");
+			assert.equal(pending[0]!.signal!.aborted, true, "removing the profile aborts its running test");
+			assert.equal(ui.text("converter-test"), "Test");
+			await act(async () => pending[0]!.resolve({ json: late }));
+			assert.equal(ui.q("converter-report"), null, "the removed converter's report is not shown under the built-in reader");
+			assert.match(ui.text("converter-destination"), /PDFs stay on this computer/);
+		} finally {
+			ui.cleanup();
+		}
+	});
+
+	it("re-check 2, finding 5: a service in use with no saved address says the built-in reader is converting", async () => {
+		const ui = await mount({ "GET /api/converters": () => ({ json: view("docling", [pdfjs, docling({ ready: false, setup: "Save the Docling service URL first." })]) }) });
+		try {
+			assert.match(ui.text("converter-destination"), /Not set up yet, so nothing is sent: the built-in reader converts PDFs on this computer\. Save the service URL first\./);
+		} finally {
+			ui.cleanup();
+		}
+	});
+
 	it("Test can be cancelled; a switch to another converter while it runs cancels it and its late report is never shown", async () => {
 		const report: ConverterValidationReport = {
 			ok: true, converterId: "mistral-ocr", durationMs: 5, warnings: [], pages: [],

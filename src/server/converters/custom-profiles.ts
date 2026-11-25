@@ -96,7 +96,8 @@ export function profileFileText(profile: HttpConverterProfile): string | undefin
 	const fits = (text: string) => Buffer.byteLength(text, "utf8") <= HTTP_CONVERTER_PROFILE_MAX_BYTES;
 	const pretty = `${JSON.stringify(profile, null, "\t")}\n`;
 	if (fits(pretty)) return pretty;
-	const compact = `${JSON.stringify(profile)}\n`;
+	// no trailing newline here: the cap is measured on exactly this text, so a profile the validator accepts always fits
+	const compact = JSON.stringify(profile);
 	return fits(compact) ? compact : undefined;
 }
 

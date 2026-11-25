@@ -30,7 +30,7 @@ const credentials = await import("../src/server/converters/credentials.ts");
 const { readSettings, writeSettings } = await import("../src/store/settings.ts");
 const custom = await import("../src/server/converters/custom-profiles.ts");
 const { resolvePdfConverter } = await import("../src/server/converters/registry.ts");
-const { selfOriginProblem } = await import("../src/server/converters/self-origin.ts");
+const { canonicalHost, selfOriginProblem } = await import("../src/server/converters/self-origin.ts");
 const settingsService = await import("../src/server/converters/settings-service.ts");
 const authModule = await import("../src/server/converters/auth.ts");
 const convertersRoute = await import("../app/api/converters/route.ts");
@@ -416,5 +416,84 @@ describe("every /api/converters route is behind the app's request guard", () => 
 				assert.equal(res.status, 403, `${method} ${route}`);
 			}
 		});
+	});
+});
+
+// ── Re-check 2 (council/reviews/wp3a2-review-2.md) ──────────────────────────
+
+describe("re-check 2: the app's own address, readiness, replaced profiles", () => {
+	it("finding 3: IPv4-mapped IPv6, a trailing dot and a port learned from a request do not get past the own-address check", async () => {
+		assert.equal(canonicalHost("[::ffff:7f00:1]"), "127.0.0.1");
+		assert.equal(canonicalHost("[::ffff:0:0]"), "0.0.0.0");
+		assert.equal(canonicalHost("[::ffff:c0a8:154]"), "192.168.1.84");
+		assert.equal(canonicalHost("LocalHost."), "localhost");
+		process.env.PORT = "45123";
+		for (const url of ["http://[::ffff:0.0.0.0]:45123", "http://[::ffff:127.0.0.2]:45123", "http://[::ffff:7f00:1]:45123", "http://localhost.:45123", "http://0.0.0.0:45123", "http://2130706433:45123"]) {
+			assert.match(selfOriginProblem(url) ?? "", /is this app's own address/, url);
+		}
+		// every address of this computer's own network interfaces, in its IPv4-mapped form too
+		for (const list of Object.values(os.networkInterfaces())) {
+			for (const address of list ?? []) {
+				if (address.family !== "IPv4") continue;
+				assert.match(selfOriginProblem(`http://[::ffff:${address.address}]:45123`) ?? "", /own address/, address.address);
+			}
+		}
+		assert.equal(selfOriginProblem("http://127.0.0.1:5001"), undefined, "another port on this machine is another server");
+		assert.equal(selfOriginProblem("http://[::ffff:127.0.0.1]:5001"), undefined);
+		// with no PORT, the port a settings request arrived on is the app's own, at every local name
+		delete process.env.PORT;
+		assert.equal(selfOriginProblem("http://127.0.0.1:43211"), undefined, "not known yet");
+		await convertersRoute.GET(new Request("http://localhost:43211/api/converters"));
+		for (const url of ["http://127.0.0.1:43211", "http://[::1]:43211", "http://0.0.0.0:43211", "http://localhost.:43211"]) {
+			assert.match(selfOriginProblem(url) ?? "", /is this app's own address/, url);
+		}
+		assert.equal(selfOriginProblem("http://127.0.0.1:5001"), undefined);
+	});
+
+	it("finding 5: a preset in use with no saved address is shown as not set up, as the upload path treats it", async () => {
+		credentials.writeProfileCredential("mistral-ocr", "https://api.mistral.ai", KEY);
+		writeSettings({ ...(readSettings() ?? {}), pdfConversion: { converter: "mistral-ocr" } } as never);
+		const overview = settingsService.convertersOverview();
+		const mistral = entry(overview, "mistral-ocr");
+		assert.equal(mistral.ready, false);
+		assert.match(mistral.setup ?? "", /Save the service URL \(https:\/\/api\.mistral\.ai\) to confirm it/);
+		assert.equal(resolvePdfConverter(readSettings()!.pdfConversion!, credentials.readConverterCredential, custom.loadCustomProfile).converter.id, "pdfjs");
+		// not in use: its bundled address still makes it ready to be chosen
+		writeSettings({ ...(readSettings() ?? {}), pdfConversion: {} } as never);
+		assert.equal(entry(settingsService.convertersOverview(), "mistral-ocr").ready, true);
+	});
+
+	it("finding 7: replacing a profile that is in use takes it out of use until it is chosen again; its URL and key stay", async () => {
+		await withServer(routes({ "POST /convert": (_q, r) => json(r, pagesAnswer(["a", "b"])) }), async (baseUrl, log) => {
+			assert.equal((await importProfile(pageArrayProfile())).status, 200);
+			assert.equal((await putJson({ id: "custom:pages-svc", baseUrl })).status, 200);
+			assert.equal((await putJson({ id: "custom:pages-svc", apiKey: KEY, select: true })).status, 200);
+			assert.equal(readSettings()?.pdfConversion?.converter, "custom:pages-svc");
+			const changed = { ...pageArrayProfile(), submit: { ...(pageArrayProfile() as { submit: Record<string, unknown> }).submit, path: "/different-endpoint" } };
+			const res = await importProfile(changed);
+			const body = (await res.json()) as { replaced: boolean; deselected?: boolean; overview: ConvertersOverview };
+			assert.equal(body.replaced, true);
+			assert.equal(body.deselected, true);
+			assert.equal(body.overview.selected, "pdfjs");
+			assert.equal(readSettings()?.pdfConversion?.converter, undefined);
+			assert.equal(readSettings()?.pdfConversion?.services?.["custom:pages-svc"]?.baseUrl, new URL(baseUrl).origin);
+			assert.equal(entry(body.overview, "custom:pages-svc").credential.stored, true);
+			assert.equal(log.length, 0, "nothing was sent by replacing it");
+			// replacing a profile that is not in use changes no selection
+			const again = (await (await importProfile(pageArrayProfile())).json()) as { deselected?: boolean };
+			assert.equal(again.deselected, undefined);
+		});
+	});
+
+	it("finding 8: the text written for a profile exactly at the size cap fits the cap (no byte added after measuring)", () => {
+		const CAP = 64 * 1024;
+		const empty = Buffer.byteLength(JSON.stringify({ id: "at-cap", pad: "" }), "utf8");
+		const atCap = { id: "at-cap", pad: "p".repeat(CAP - empty) } as never;
+		assert.equal(Buffer.byteLength(JSON.stringify(atCap), "utf8"), CAP);
+		const text = custom.profileFileText(atCap);
+		assert.ok(text !== undefined, "a profile the validator's size check accepts is written");
+		assert.equal(Buffer.byteLength(text, "utf8"), CAP);
+		const over = { id: "at-cap", pad: "p".repeat(CAP - empty + 1) } as never;
+		assert.equal(custom.profileFileText(over), undefined);
 	});
 });

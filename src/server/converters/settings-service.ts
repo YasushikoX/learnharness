@@ -58,7 +58,10 @@ function profileEntry(id: string, kind: "preset" | "custom", profile: HttpConver
 	const effective = effectiveUrl(kind, profile, settings, id);
 	const origin = serviceOrigin(effective);
 	const credential = profile.auth ? credentialStatus(id, effective) : { stored: false };
-	const setup = setupProblem(profile.name, effective, !!profile.auth, credential.stored);
+	// the upload path uses only a SAVED address (registry.ts), so a converter that is in use without one is not set up,
+	// whatever a preset's bundled address would allow (settings edited by hand, or written by an older build)
+	const unsaved = settings.converter === id && !baseUrl && !!effective;
+	const setup = setupProblem(profile.name, effective, !!profile.auth, credential.stored) ?? (unsaved ? `Save the service URL (${effective}) to confirm it.` : undefined);
 	return {
 		id,
 		kind,
@@ -239,10 +242,20 @@ export function pdfConversionUrlChange(before: PdfConversionSettings | undefined
 	return undefined;
 }
 
-export function importConverterProfile(profile: unknown): ServiceResult<{ id: string; replaced: boolean; overview: ConvertersOverview }> | { ok: false; error: string; errors: string[]; status: number } {
+export function importConverterProfile(profile: unknown): ServiceResult<{ id: string; replaced: boolean; deselected?: boolean; overview: ConvertersOverview }> | { ok: false; error: string; errors: string[]; status: number } {
 	const saved = saveCustomProfile(profile);
 	if (!saved.ok) return { ok: false, error: "The profile is not valid", errors: saved.errors, status: 400 };
-	return { ok: true, value: { id: customConverterId(saved.profile.id), replaced: saved.replaced === true, overview: convertersOverview() } };
+	const id = customConverterId(saved.profile.id);
+	// a replaced profile is a different set of requests to the same address: if it was in use it stops being used until
+	// the user has looked at it again and chosen it (its saved URL and key stay; they are bound to the address)
+	const settings = section();
+	const deselected = saved.replaced === true && settings.converter === id;
+	if (deselected) {
+		const next = structuredClone(settings);
+		delete next.converter;
+		writeSection(next);
+	}
+	return { ok: true, value: { id, replaced: saved.replaced === true, ...(deselected ? { deselected: true } : {}), overview: convertersOverview() } };
 }
 
 /** Remove a custom profile file, its key, its URL, and its selection (back to the built-in reader). */

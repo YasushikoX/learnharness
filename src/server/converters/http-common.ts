@@ -27,15 +27,21 @@ export const API_KEY_MIN_LENGTH = 8;
 export const API_KEY_MAX_LENGTH = 4096;
 
 /**
- * Every form a secret can take in a service's text: as is, URL-encoded (encodeURIComponent, and the form encoding
- * with + for a space), and base64 (standard with and without padding, and base64url). A secret base64-encoded
- * together with other text (for example `user:key` in Basic auth) is not covered: its base64 depends on what
- * precedes it.
+ * Every form a secret can take in a service's text: as is, URL-encoded (encodeURIComponent with upper- and lower-case
+ * hex, and the form encoding with + for a space), as it appears inside a JSON string (quotes and backslashes escaped,
+ * which is how a truncated JSON error body carries it), and base64 (standard with and without padding, and
+ * base64url). Not covered: hex, and a secret base64-encoded together with other text (for example `user:key` in Basic
+ * auth), whose base64 depends on what precedes it.
  */
 export function secretForms(secret: string): string[] {
 	if (!secret) return [];
 	const base64 = Buffer.from(secret, "utf8").toString("base64");
-	const forms = new Set([secret, encodeURIComponent(secret), encodeURIComponent(secret).replace(/%20/g, "+"), base64, base64.replace(/=+$/, ""), Buffer.from(secret, "utf8").toString("base64url")]);
+	const encoded = encodeURIComponent(secret);
+	const lowerHex = encoded.replace(/%[0-9A-F]{2}/g, (m) => m.toLowerCase());
+	const forms = new Set([
+		secret, encoded, lowerHex, encoded.replace(/%20/g, "+"), lowerHex.replace(/%20/g, "+"), JSON.stringify(secret).slice(1, -1),
+		base64, base64.replace(/=+$/, ""), Buffer.from(secret, "utf8").toString("base64url"),
+	]);
 	return [...forms].filter((form) => form.length > 0).sort((a, b) => b.length - a.length);
 }
 
@@ -65,10 +71,31 @@ export function redactDeep<T>(value: T, secrets: readonly (string | undefined)[]
 	return walk(value) as T;
 }
 
-/** A ConverterError with the secrets removed from its message (the same error when there was nothing to remove). */
+/** The messages along an error's `cause` chain, joined (bounded depth): what a logged error would print. */
+export function causeText(error: unknown): string {
+	const parts: string[] = [];
+	let current: unknown = error;
+	for (let depth = 0; depth < 6 && current !== undefined && current !== null; depth++) {
+		parts.push(current instanceof Error ? `${current.name}: ${current.message}` : String(current));
+		current = current instanceof Error ? current.cause : undefined;
+	}
+	return parts.join("\n");
+}
+
+/** `{ cause }` for a new error only when the cause's own text holds no secret: an engine's parse or network error can
+ *  quote the text it choked on (V8's JSON.parse quotes the start of the body), and a cause is printed with the error. */
+export function safeCause(cause: unknown, redact: (text: string) => string): { cause: unknown } | undefined {
+	const text = causeText(cause);
+	return redact(text) === text ? { cause } : undefined;
+}
+
+/** A ConverterError with the secrets removed from its message and no cause that carries one (the same error when
+ *  there was nothing to remove). */
 export function redactError(error: ConverterError, secrets: readonly (string | undefined)[]): ConverterError {
 	const message = redactSecrets(error.message, secrets);
-	return message === error.message ? error : new ConverterError(error.kind, message, error.retryable);
+	const cause = error.cause === undefined ? "" : causeText(error.cause);
+	if (message === error.message && !containsSecret(cause, secrets)) return error;
+	return new ConverterError(error.kind, message, error.retryable, containsSecret(cause, secrets) ? undefined : { cause: error.cause });
 }
 
 /**
@@ -97,7 +124,10 @@ export { headerValueProblem };
 
 /** Why a stored key cannot be sent (checked when it is used: characters fetch would refuse), or undefined. */
 export function storedKeyProblem(key: string): string | undefined {
-	const problem = headerValueProblem(key.trim());
+	const trimmed = key.trim();
+	// a key stored before the length rule existed: too short to remove from text without mangling ordinary words
+	if (trimmed.length > 0 && trimmed.length < API_KEY_MIN_LENGTH) return `The stored API key is shorter than ${API_KEY_MIN_LENGTH} characters; enter the key again in Settings → PDF conversion`;
+	const problem = headerValueProblem(trimmed);
 	return problem ? `The API key ${problem}` : undefined;
 }
 
@@ -237,11 +267,12 @@ export interface ConverterJob {
 export function classifyConverterFailure(error: unknown, job: ConverterJob, requestElapsed: boolean, timeoutMs: number): ConverterError {
 	if (error instanceof ConverterError) return error;
 	const { name, baseUrl } = job.service;
-	if (job.parent.aborted) return new ConverterError("aborted", "PDF conversion was aborted", false, { cause: error });
-	if (job.deadlineElapsed()) return new ConverterError("timeout", `${name} did not finish within the ${seconds(job.deadlineMs)} job deadline`, true, { cause: error });
-	if (requestElapsed) return new ConverterError("timeout", `${name} did not answer within ${seconds(timeoutMs)}`, true, { cause: error });
+	const cause = safeCause(error, job.redact);
+	if (job.parent.aborted) return new ConverterError("aborted", "PDF conversion was aborted", false, cause);
+	if (job.deadlineElapsed()) return new ConverterError("timeout", `${name} did not finish within the ${seconds(job.deadlineMs)} job deadline`, true, cause);
+	if (requestElapsed) return new ConverterError("timeout", `${name} did not answer within ${seconds(timeoutMs)}`, true, cause);
 	const reason = error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error);
-	return new ConverterError("unreachable", `Could not reach ${name} at ${baseUrl}: ${job.redact(reason)}`, true, { cause: error });
+	return new ConverterError("unreachable", `Could not reach ${name} at ${baseUrl}: ${job.redact(reason)}`, true, cause);
 }
 
 /** Run `work` as one job: the caller's signal plus the job deadline. Every failure leaves as a ConverterError. */
@@ -313,8 +344,9 @@ export async function requestServiceJson(job: ConverterJob, url: string, init: R
 		const text = await readCapped(response, controller.signal, options.maxResponseBytes, name);
 		try {
 			return JSON.parse(text) as unknown;
-		} catch (error) {
-			throw new ConverterError("bad_response", `${name} returned invalid JSON`, false, { cause: error });
+		} catch {
+			// no cause: the engine's SyntaxError quotes the start of the body, which a service may have filled with the key
+			throw new ConverterError("bad_response", `${name} returned invalid JSON`, false);
 		}
 	} catch (error) {
 		throw classifyConverterFailure(error, job, elapsed, options.timeoutMs);

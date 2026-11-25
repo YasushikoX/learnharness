@@ -87,6 +87,7 @@ export function ConvertersSection() {
 	}, [adopt]);
 
 	async function change(input: ConverterChange, after?: () => void): Promise<void> {
+		cancelTest(); // a Test of the settings being replaced must not report under the new ones
 		setBusy(true);
 		setError(null);
 		const { value, error: failed } = await saveConverter(input);
@@ -148,7 +149,13 @@ export function ConvertersSection() {
 		setError(null);
 		setKey("");
 		adopt(value.overview, value.id);
-		setImportNote(`${value.replaced ? "Replaced" : "Imported"} ${entry?.name ?? value.id}, shown above. Nothing is sent until you save its service URL${entry?.key === "required" ? " and key" : ""} and choose Use for new PDFs.`);
+		const name = entry?.name ?? value.id;
+		const configured = value.replaced && !!entry?.baseUrl;
+		setImportNote(
+			value.deselected ? `Replaced ${name}, shown above. Its requests changed, so it is no longer in use: the built-in reader converts PDFs until you test it and choose Use for new PDFs again.`
+			: configured ? `Replaced ${name}, shown above. Its saved service URL${entry?.credential?.stored ? " and key" : ""} are kept; test it before you rely on it.`
+			: `${value.replaced ? "Replaced" : "Imported"} ${name}, shown above. Nothing is sent until you save its service URL${entry?.key === "required" ? " and key" : ""} and choose Use for new PDFs.`,
+		);
 	}
 
 	async function chooseFile(file: File | undefined): Promise<void> {
@@ -158,6 +165,7 @@ export function ConvertersSection() {
 
 	async function remove(): Promise<void> {
 		if (!selected || selected.kind !== "custom") return;
+		cancelTest();
 		setBusy(true);
 		setError(null);
 		const { value, error: failed } = await removeProfile(selected.id);
@@ -323,7 +331,7 @@ export function ConvertersSection() {
 					</button>
 				)}
 			</div>
-			{report && (
+			{report && report.converterId === selected.id && (
 				<div data-testid="converter-report" className="flex flex-col gap-1 rounded-sm border border-border p-2">
 					<p data-testid="converter-report-verdict" className={`text-xs font-medium ${report.ok ? "text-foreground" : "text-error"}`}>
 						{report.ok ? "Passed: every page came back with its own text, and the blank page stayed blank." : "Failed: this converter cannot be trusted with page citations yet."}

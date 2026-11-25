@@ -139,7 +139,8 @@ export function assignDoclingPages(markdown: string, jsonContent: unknown, delim
 		if (sequence[i]! < 1 || sequence[i]! > pageCount) badResponse(`Docling placed an item on page ${sequence[i]}; this PDF has ${pageCount}`);
 		if (i > 0 && sequence[i]! <= sequence[i - 1]!) badResponse(`Docling's reading order goes back from page ${sequence[i - 1]} to page ${sequence[i]}, so its Markdown cannot be split into pages reliably`);
 	}
-	const segments = markdown.split(delimiter);
+	// bounded: more segments than pages is already wrong, and a reply full of delimiters must not allocate one each
+	const segments = markdown.split(delimiter, pageCount + 3);
 	if (sequence.length === 0) {
 		if (markdown.trim()) badResponse("Docling returned text but placed no item on any page");
 	} else if (segments.length !== sequence.length) {

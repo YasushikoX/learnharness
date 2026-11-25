@@ -76,7 +76,7 @@ export interface ConverterValidationReport {
 /** The plain sentence about where PDFs go, for a converter entry; `active` when it is the one used for new PDFs. */
 export function destinationLine(entry: ConverterEntry, active = true): string {
 	if (entry.local) return active ? "PDFs stay on this computer: the built-in reader converts them here." : "If you use it, PDFs stay on this computer: the built-in reader converts them here.";
-	if (!entry.origin) return "Save the service URL first. Nothing is sent until then.";
+	if (!entry.origin) return active ? "Not set up yet, so nothing is sent: the built-in reader converts PDFs on this computer. Save the service URL first." : "Save the service URL first. Nothing is sent until then.";
 	if (active && !entry.ready) return `Not set up yet, so nothing is sent to ${entry.origin}: the built-in reader converts PDFs on this computer.${entry.setup ? ` ${entry.setup}` : ""}`;
 	return active ? `PDFs you upload are sent to ${entry.origin}.` : `If you use it, PDFs you upload will be sent to ${entry.origin}.`;
 }

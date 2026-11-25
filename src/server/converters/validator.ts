@@ -1,7 +1,7 @@
 import { contentPages } from "../../core/material-split.ts";
 import type { ConverterValidationReport, ValidationCheck, ValidationCheckId } from "../../core/converter-settings.ts";
 import { ConverterError, type ConvertResult, type PdfConverter } from "../../core/pdf-converter.ts";
-import { REDACTED, SECRET_REDACTED_WARNING, redactDeep, redactSecrets, seconds } from "./http-common.ts";
+import { containsSecret, REDACTED, SECRET_REDACTED_WARNING, redactDeep, redactSecrets, seconds } from "./http-common.ts";
 import { normaliseConversion } from "./normalise.ts";
 export type { ConverterValidationReport, ValidationCheck, ValidationCheckId };
 import { BLANK_PAGE_FILENAME, BLANK_PAGE_SENTENCES, VALIDATION_FILENAME, VALIDATION_SENTENCES, blankPageTestPdf, validationPdf } from "./validation-fixture.ts";
@@ -38,6 +38,18 @@ export interface ValidateConverterOptions {
 }
 
 const PREVIEW_CHARS = 300;
+/** The most text a test answer may hold (pages, reasons, warnings, version) before the test stops reading it. */
+export const VALIDATION_MAX_ANSWER_CHARS = 256 * 1024;
+
+function answerChars(result: ConvertResult): number {
+	let total = typeof result.converterVersion === "string" ? result.converterVersion.length : 0;
+	for (const warning of result.warnings ?? []) total += typeof warning === "string" ? warning.length : 0;
+	for (const page of Array.isArray(result.pages) ? result.pages : []) {
+		const text = page?.status === "ok" ? page.markdown : page?.reason;
+		total += typeof text === "string" ? text.length : 0;
+	}
+	return total;
+}
 
 /** Lowercase letters and digits only, single spaces: OCR punctuation and line breaks do not matter. */
 function comparable(text: string): string {
@@ -50,7 +62,13 @@ export async function validateConverter(converter: PdfConverter, options: Valida
 	const started = Date.now();
 	const secrets = (options.secrets ?? []).filter((s) => s.length > 0).flatMap((s) => (s.trim() && s.trim() !== s ? [s, s.trim()] : [s]));
 	const redact = (text: string) => redactSecrets(text, secrets);
-	const leaks = (value: unknown) => secrets.length > 0 && JSON.stringify(redactDeep(value, secrets)) !== JSON.stringify(value);
+	// a walk over the strings, not a serialised copy: the answer can be tens of megabytes (re-check 2, finding 1)
+	const leaks = (value: unknown): boolean => {
+		if (secrets.length === 0) return false;
+		if (typeof value === "string") return containsSecret(value, secrets);
+		if (Array.isArray(value)) return value.some(leaks);
+		return value !== null && typeof value === "object" && Object.values(value).some(leaks);
+	};
 	const deadlineMs = options.deadlineMs ?? CONVERTER_TEST_DEADLINE_MS;
 
 	const controller = new AbortController();
@@ -72,6 +90,12 @@ export async function validateConverter(converter: PdfConverter, options: Valida
 		try {
 			const result = await converter.convert({ bytes, filename, pageCount }, { signal: controller.signal, onProgress: (stage) => options.onProgress?.(stage) });
 			if (leaks(result) || (result.warnings ?? []).includes(SECRET_REDACTED_WARNING)) leaked = true;
+			// the test PDFs hold a few sentences: a far larger answer is not a conversion of them, and the checks below
+			// (normalising, comparing) would copy it several times over
+			const size = answerChars(result);
+			if (size > VALIDATION_MAX_ANSWER_CHARS) {
+				return { ok: false, kind: "bad_response", message: `The service answered with ${size} characters of text for a test PDF that holds a few sentences`, retryable: false, raw: "" };
+			}
 			return { ok: true, result };
 		} catch (error) {
 			if (options.signal.aborted) throw error;

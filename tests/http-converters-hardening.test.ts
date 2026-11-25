@@ -4,11 +4,11 @@ import { describe, it } from "node:test";
 import { HTTP_CONVERTER_PROFILE_FORMAT, HTTP_CONVERTER_PROFILE_MAX_DEPTH, parseHttpConverterProfile, sameServiceUrl, validateHttpConverterProfile, type HttpConverterProfile } from "../src/core/http-converter-spec.ts";
 import { ConverterError, type ConvertInput, type PageResult } from "../src/core/pdf-converter.ts";
 import { createDoclingConverter } from "../src/server/converters/docling.ts";
-import { REDACTED, SECRET_REDACTED_WARNING, errorDetail, redactSecrets } from "../src/server/converters/http-common.ts";
+import { REDACTED, SECRET_REDACTED_WARNING, causeText, errorDetail, redactError, redactSecrets, storedKeyProblem } from "../src/server/converters/http-common.ts";
 import { createHttpConverter, type HttpConverterOptions } from "../src/server/converters/http-declarative.ts";
 import { MISTRAL_OCR_PRESET } from "../src/server/converters/presets.ts";
 import { BLANK_PAGE_SENTENCES, VALIDATION_SENTENCES, blankPageTestPdf, validationPdf } from "../src/server/converters/validation-fixture.ts";
-import { validateConverter, type ConverterValidationReport } from "../src/server/converters/validator.ts";
+import { VALIDATION_MAX_ANSWER_CHARS, validateConverter, type ConverterValidationReport } from "../src/server/converters/validator.ts";
 import { fakeDocling, formFields, withServer, type LoggedRequest } from "./helpers/docling-server.ts";
 import { KEY, delimitedProfile, json, pageArrayProfile, pagesAnswer, pollingProfile, routes } from "./helpers/converter-services.ts";
 
@@ -426,6 +426,76 @@ describe("the converter test: the three-page PDF with a blank middle page", () =
 			assert.match(report.checks[0]!.message, /did not finish within/);
 			assert.equal(status(report).blank_page, "skipped", "a second PDF is not sent after the first failed");
 			assert.equal(log.length, 1);
+		});
+	});
+});
+
+// ── Re-check 2 (council/reviews/wp3a2-review-2.md) ──────────────────────────
+
+describe("re-check 2: what the fixes left open", () => {
+	it("finding 1: a test answer far larger than the test PDF is refused before it is copied or compared", async () => {
+		const big = "a ".repeat(VALIDATION_MAX_ANSWER_CHARS); // twice the cap, in two-character words
+		const fake = { id: "fake", version: "1", async convert() { return { converterVersion: "v", pages: [{ page: 1, status: "ok" as const, markdown: `${VALIDATION_SENTENCES[0]} ${big}` }, { page: 2, status: "ok" as const, markdown: VALIDATION_SENTENCES[1]! }] }; } };
+		const before = process.memoryUsage().rss;
+		const report = await validateConverter(fake, { signal: signal(), secrets: [KEY] });
+		assert.equal(status(report).converted, "fail");
+		assert.match(report.checks[0]!.message, /characters of text for a test PDF that holds a few sentences/);
+		assert.equal(report.pages.length, 0, "no preview of an answer that was not read");
+		assert.ok(process.memoryUsage().rss - before < 64 * 1024 * 1024, "the oversized answer was not copied around");
+		// an answer of ordinary size still passes
+		const ok = { ...fake, async convert() { return { converterVersion: "v", pages: VALIDATION_SENTENCES.map((markdown, i) => ({ page: i + 1, status: "ok" as const, markdown })) }; } };
+		assert.equal(status(await validateConverter(ok, { signal: signal(), secrets: [KEY] })).converted, "pass");
+	});
+
+	it("finding 1: an echoed key is still found in a large answer without serialising it", async () => {
+		const fake = { id: "fake", version: "1", async convert() { return { converterVersion: "v", pages: [{ page: 1, status: "ok" as const, markdown: `${"b ".repeat(VALIDATION_MAX_ANSWER_CHARS)}${KEY}` }, { page: 2, status: "ok" as const, markdown: "x" }] }; } };
+		const report = await validateConverter(fake, { signal: signal(), secrets: [KEY] });
+		assert.equal(status(report).no_secret, "fail");
+		assert.equal(JSON.stringify(report).includes(KEY), false);
+	});
+
+	it("finding 2: a reply that is not JSON and holds the key leaves no key anywhere on the error, cause included", async () => {
+		for (const key of ["secret1234", "sk-live-secret-99887766"]) {
+			await withServer(routes({ "POST /convert": (_q, r) => { r.writeHead(200, { "content-type": "application/json" }); r.end(`${key} is invalid`); } }), async (baseUrl) => {
+				const error = await rejectsWith(make(baseUrl, pageArrayProfile(), { apiKey: key }).convert(input(), context()), "bad_response", /returned invalid JSON/);
+				assert.equal(causeText(error).includes(key.slice(0, 8)), false, causeText(error));
+				assert.equal(error.cause, undefined);
+			});
+			await withServer((_q, r) => { r.writeHead(200, { "content-type": "application/json" }); r.end(`${key} is invalid`); }, async (baseUrl) => {
+				const error = await createDoclingConverter({ baseUrl, apiKey: key, minPollIntervalMs: 1 }).convert(input(), context()).then(() => assert.fail("expected a failure"), (e: unknown) => e as ConverterError);
+				assert.equal(causeText(error).includes(key.slice(0, 8)), false, causeText(error));
+			});
+		}
+		// redactError drops a cause that carries the secret and keeps a harmless one
+		const leaky = new ConverterError("bad_response", "bad", false, { cause: new SyntaxError(`Unexpected token 's', "${KEY} inv"... is not valid JSON`) });
+		assert.equal(redactError(leaky, [KEY]).cause, undefined);
+		const harmless = new ConverterError("bad_response", "bad", false, { cause: new Error("socket hang up") });
+		assert.equal(redactError(harmless, [KEY]), harmless);
+	});
+
+	it("finding 6: the key is removed in lower-case percent-encoding and as escaped inside a broken JSON error body", () => {
+		const key = "sk+live/key=1234";
+		assert.equal(redactSecrets("a sk%2blive%2fkey%3d1234 b", [key]), `a ${REDACTED} b`);
+		const quoted = 'sk-"quote"\\slash';
+		const body = `{"detail":"bad key ${JSON.stringify(quoted).slice(1, -1)}`; // truncated, so it cannot be parsed
+		assert.equal(errorDetail(body, [quoted]).includes("quote"), false, errorDetail(body, [quoted]));
+	});
+
+	it("finding 6: a key stored before the length rule is refused when used, with a message that says what to do", async () => {
+		assert.match(storedKeyProblem("the") ?? "", /shorter than 8 characters; enter the key again/);
+		assert.equal(storedKeyProblem(KEY), undefined);
+		assert.equal(storedKeyProblem(""), undefined, "no key at all is a different case");
+		await withServer(routes({ "POST /convert": (_q, r) => json(r, pagesAnswer(["a", "b"])) }), async (baseUrl, log) => {
+			await rejectsWith(make(baseUrl, pageArrayProfile(), { apiKey: "the" }).convert(input(), context()), "auth", /shorter than 8 characters/);
+			assert.equal(log.length, 0, "nothing was sent with it");
+		});
+	});
+
+	it("the Docling client does not allocate a segment per delimiter in a reply full of them", async () => {
+		const docling = fakeDocling((delimiter) => ({ status: "success", document: { md_content: delimiter.repeat(50_000), json_content: { pages: { 1: {}, 2: {} }, body: { children: [{ $ref: "#/texts/0" }] }, texts: [{ prov: [{ page_no: 1 }] }] } } }));
+		await withServer(docling.handler, async (baseUrl) => {
+			// 2 pages: the split stops at 5 segments however many delimiters the reply holds
+			await rejectsWith(createDoclingConverter({ baseUrl, apiKey: KEY, minPollIntervalMs: 1 }).convert(input(), context()), "bad_response", /returned 5 Markdown page segments/);
 		});
 	});
 });

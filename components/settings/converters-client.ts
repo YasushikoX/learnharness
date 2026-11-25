@@ -40,6 +40,6 @@ export const runConverterTest = (id: string, signal?: AbortSignal) =>
 	call<ConverterValidationReport>("/api/converters/test", { ...json("POST", { id }), ...(signal ? { signal } : {}) }, "The test could not run");
 
 export const importProfile = (text: string) =>
-	call<{ id: string; replaced: boolean; overview: ConvertersOverview }>("/api/converters/profiles", json("POST", { profile: text }), "Could not import the profile");
+	call<{ id: string; replaced: boolean; deselected?: boolean; overview: ConvertersOverview }>("/api/converters/profiles", json("POST", { profile: text }), "Could not import the profile");
 
 export const removeProfile = (id: string) => call<ConvertersOverview>(`/api/converters/profiles?id=${encodeURIComponent(id)}`, { method: "DELETE" }, "Could not remove the profile");
