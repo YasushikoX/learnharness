@@ -3,23 +3,28 @@
  * indexing (fork addition, 2026-11-24; the indexer is
  * `src/agent/subagents/material-digest.ts`). Pure.
  *
- * Page markers are the lines the pdfjs converters write: `--- Page N ---` on a
- * line of its own (`pdf-ops.ts pdfExtract` puts one newline after it and joins
- * pages with one; `pdf-markdown.ts joinPages` puts a blank line after it, joins
- * with a blank line and leaves out image-only pages, so numbers may skip). A
- * document without markers (a text note, a web page) is all page 1. Text
- * before the first marker belongs to the first marker's page.
+ * THE PAGE MARKER CONTRACT. `content.md` is always written by the host
+ * application, which owns page numbering: it writes every page marker line
+ * itself (`formatPageMarker(N)`, `--- Page N ---`, N >= 1, on a line of its own)
+ * and passes each page's own text through `escapePageMarkerLines` first, so no
+ * line of a page's text looks like a marker. Hence EVERY line matching
+ * PAGE_MARKER_PATTERN is a real page boundary, wherever it is (also where a code
+ * fence seems to be open). Page numbers may skip (an image-only page left out)
+ * or run backwards; a line `--- Page 0 ---` is not a marker. A document without
+ * markers (a text note, a web page) is all page 1. Text before the first marker
+ * belongs to the first marker's page. (The pdfjs converters `pdf-ops.ts
+ * pdfExtract` and `pdf-markdown.ts joinPages` predate this contract and do not
+ * escape yet; the host's conversion step must.)
  *
  * Headings are ATX Markdown headings (`#` to `######` and a space); they may be
  * absent (slide decks).
  *
  * Fenced code blocks (``` or ~~~, CommonMark rules: a closing fence of the same
- * character, at least as long, with nothing after it) are content: a marker-like
- * line or a heading inside one is neither a page break nor a heading, for page
- * numbers, page counting, cutting and heading paths alike. A fence that is never
- * closed is not a fence (one stray ``` line must not swallow the rest of the
- * document's page markers). Converters must not emit page markers inside fences
- * (contracts/material-digest.ts).
+ * character, at least as long, with nothing after it) never span a page
+ * boundary: the fence state resets at each marker, and a fence still open at the
+ * end of its page is not a fence (its lines are ordinary lines). A heading inside
+ * a fence that opens and closes within one page is not a heading, for cutting and
+ * heading paths alike.
  *
  * The plan: cut the document into sections at its headings, keep each section
  * that fits the budget whole, and pack consecutive pieces greedily up to the
@@ -72,8 +77,46 @@ export interface MaterialBatch {
 	charEnd: number;
 }
 
-/** A page marker line, exactly as the converters write it. */
-const PAGE_MARKER = /^--- Page (\d+) ---[ \t]*\r?$/;
+/**
+ * A page marker line (one line, without its "\n"; a trailing "\r" and trailing spaces or tabs are allowed): `--- Page N
+ * ---` with N >= 1 written without leading zeros; group 1 is N. The single source of truth for what a page boundary
+ * is (see the module comment). No `g` flag: safe to share.
+ */
+export const PAGE_MARKER_PATTERN = /^--- Page ([1-9]\d*) ---[ \t]*\r?$/;
+
+/** The page marker line for page N (no newline): `--- Page N ---`. Throws unless N is a whole number >= 1. Pure. */
+export function formatPageMarker(page: number): string {
+	if (!Number.isSafeInteger(page) || page < 1) throw new RangeError(`a page marker needs a whole page number of at least 1, got ${page}`);
+	return `--- Page ${page} ---`;
+}
+
+/** A line that looks like a marker (any number, 0 and leading zeros included) after any number of backslashes. */
+const MARKER_LIKE = /^\\*--- Page \d+ ---[ \t]*\r?$/;
+/** An escaped marker-like line: one backslash, then a marker-like line (group 1). */
+const ESCAPED_MARKER_LIKE = /^\\(\\*--- Page \d+ ---[ \t]*\r?)$/;
+
+/**
+ * One page's own text made safe to place after its marker in `content.md`: every line that looks like a page marker
+ * (`--- Page N ---` for any N, after any number of leading backslashes) gets one more leading backslash, so
+ * `--- Page 3 ---` becomes `\--- Page 3 ---` and `\--- Page 3 ---` becomes `\\--- Page 3 ---`. No line of the result
+ * matches PAGE_MARKER_PATTERN. Markdown renders `\-` as `-`, so the text displays unchanged. Every other line, line
+ * endings included, is kept as it is. Inverse: unescapePageMarkerLines. Pure.
+ */
+export function escapePageMarkerLines(pageMarkdown: string): string {
+	return pageMarkdown
+		.split("\n")
+		.map((line) => (MARKER_LIKE.test(line) ? `\\${line}` : line))
+		.join("\n");
+}
+
+/** The inverse of escapePageMarkerLines: one leading backslash removed from each escaped marker-like line. Pure. */
+export function unescapePageMarkerLines(escaped: string): string {
+	return escaped
+		.split("\n")
+		.map((line) => ESCAPED_MARKER_LIKE.exec(line)?.[1] ?? line)
+		.join("\n");
+}
+
 const HEADING = /^(#{1,6})[ \t]+(.*?)[ \t#]*\r?$/;
 const FENCE_OPEN = /^[ \t]{0,3}(`{3,}|~{3,})/;
 const FENCE_CLOSE = /^[ \t]{0,3}(`{3,}|~{3,})[ \t]*\r?$/;
@@ -96,9 +139,9 @@ interface Structure {
 	lineStarts: number[];
 	/** contentBefore[i]: how many content lines (not blank, not a page marker, not a heading outside a fence) precede line i. */
 	contentBefore: number[];
-	/** The page markers outside fences, in document order. */
+	/** The page markers (every PAGE_MARKER_PATTERN line), in document order. */
 	pages: PageMark[];
-	/** The headings outside fences, in document order. */
+	/** The headings outside fences (fences closed on their own page), in document order. */
 	headings: HeadingMark[];
 	/** Starts of lines that follow a blank line (paragraph starts), ascending. */
 	paragraphs: number[];
@@ -119,40 +162,48 @@ function linesOf(text: string): { starts: number[]; texts: string[] } {
 	return { starts, texts };
 }
 
-/** fenced[i]: line i is a fence delimiter of a closed fence or inside one. */
-function fencedLines(texts: readonly string[]): boolean[] {
-	const fenced = texts.map(() => false);
-	// The closing-fence candidates, in order: an opener looks only at these.
-	const closers: { line: number; char: string; length: number }[] = [];
-	texts.forEach((t, line) => {
+/**
+ * fenced[i]: line i is a delimiter of, or inside, a fence that opens and closes on one page (no marker line between).
+ * Linear: for each line, the longest closing fence of each character from there to the end of its page is known, so an
+ * opener that is never closed on its page is skipped at once, and a closed one is scanned only up to its closer.
+ */
+function fencedLines(texts: readonly string[], isMarker: readonly boolean[]): boolean[] {
+	const n = texts.length;
+	const closer = texts.map((t) => {
 		const m = FENCE_CLOSE.exec(t);
-		if (m) closers.push({ line, char: m[1]![0]!, length: m[1]!.length });
+		return m ? { char: m[1]![0]!, length: m[1]!.length } : null;
 	});
-	let from = 0; // closers before this index are behind the scan
-	for (let i = 0; i < texts.length; i++) {
+	// longest[c][i]: the longest closer of character c on lines i.. up to the next marker line (0 when none).
+	const longest = { "`": new Array<number>(n + 1).fill(0), "~": new Array<number>(n + 1).fill(0) };
+	for (let i = n - 1; i >= 0; i--) {
+		for (const c of ["`", "~"] as const) {
+			const own = closer[i]?.char === c ? closer[i]!.length : 0;
+			longest[c][i] = isMarker[i] ? 0 : Math.max(own, longest[c][i + 1]!);
+		}
+	}
+	const fenced = new Array<boolean>(n).fill(false);
+	for (let i = 0; i < n; i++) {
+		if (isMarker[i]) continue;
 		const open = FENCE_OPEN.exec(texts[i]!);
 		if (!open) continue;
+		const char = open[1]![0] as "`" | "~";
+		const length = open[1]!.length;
 		// a backtick fence's info string may not contain a backtick (CommonMark)
-		if (open[1]![0] === "`" && texts[i]!.slice(open[0].length).includes("`")) continue;
-		while (from < closers.length && closers[from]!.line <= i) from++;
-		let close = -1;
-		for (let c = from; c < closers.length; c++) {
-			if (closers[c]!.char === open[1]![0] && closers[c]!.length >= open[1]!.length) {
-				close = closers[c]!.line;
-				break;
-			}
-		}
-		if (close < 0) continue; // never closed: not a fence
+		if (char === "`" && texts[i]!.slice(open[0].length).includes("`")) continue;
+		if (longest[char][i + 1]! < length) continue; // not closed on its page: not a fence
+		let close = i + 1;
+		while (!(closer[close]?.char === char && closer[close]!.length >= length)) close++;
 		for (let j = i; j <= close; j++) fenced[j] = true;
 		i = close;
 	}
 	return fenced;
 }
 
-/** The page markers, headings, paragraph starts and content lines of a document, fences respected. Pure. */
+/** The page markers, headings, paragraph starts and content lines of a document (see the module comment). Pure. */
 function structureOf(text: string): Structure {
 	const { starts, texts } = linesOf(text);
-	const fenced = fencedLines(texts);
+	const isMarker = texts.map((t) => PAGE_MARKER_PATTERN.test(t));
+	const fenced = fencedLines(texts, isMarker);
 	const pages: PageMark[] = [];
 	const headings: HeadingMark[] = [];
 	const paragraphs: number[] = [];
@@ -171,15 +222,14 @@ function structureOf(text: string): Structure {
 		if (blank) continue;
 		for (const w of waiting) w.firstContent = start;
 		waiting = [];
-		if (fenced[i]) {
-			content++;
-			continue;
-		}
-		const marker = PAGE_MARKER.exec(line);
-		if (marker) {
-			const mark = { start, page: Number(marker[1]), firstContent: text.length };
+		if (isMarker[i]) {
+			const mark = { start, page: Number(PAGE_MARKER_PATTERN.exec(line)![1]), firstContent: text.length };
 			pages.push(mark);
 			waiting.push(mark);
+			continue;
+		}
+		if (fenced[i]) {
+			content++;
 			continue;
 		}
 		const heading = HEADING.exec(line);
@@ -213,7 +263,7 @@ function inside(sorted: readonly number[], start: number, end: number): number[]
 	return sorted.slice(from, to);
 }
 
-/** The highest page marker number in a document (markers in fenced code are not markers); 1 without markers. Pure. */
+/** The highest page marker number in a document (escaped marker-like lines are text); 1 without markers. Pure. */
 export function pageCountOf(contentMd: string): number {
 	const { pages } = structureOf(contentMd);
 	return pages.reduce((max, p) => Math.max(max, p.page), 1);

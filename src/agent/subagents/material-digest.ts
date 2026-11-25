@@ -2,10 +2,12 @@ import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import {
 	MATERIAL_DIGEST_VERSION,
+	type DigestBatch,
 	type DigestBatchRef,
 	type DigestConcept,
 	type DigestFailedBatch,
 	type DigestFigure,
+	type DigestIndexedBatch,
 	type DigestTerm,
 	type MaterialDigest,
 } from "../../core/contracts/material-digest.ts";
@@ -18,31 +20,36 @@ import { pageCountOf, splitMaterial, type MaterialBatch, type SplitOptions } fro
  * (core/material-split.ts) and writes its digest (contracts/material-digest.ts):
  * every term with its earliest page and, separately, the material's explicit
  * definition and its page (or none, for a term the material uses without
- * defining it), the checkable concepts, the figures, and the source profile the
- * catalog already reads (core/materials.ts).
+ * defining it), the checkable concepts, the figures, each batch's summary, and
+ * the source profile the catalog already reads (core/materials.ts).
  *
  * Calls: one per batch, each a JSON object validated against BATCH_SCHEMA (every
- * page one the batch's text is actually on, no blank text); an invalid reply is
- * asked again once with the validation errors; a batch that still fails, or
- * whose call throws, is recorded in `failedBatches` and the rest carry on. A
- * thrown call is not retried here: retrying transient transport errors (rate
- * limits, timeouts) is the injected `complete`'s job. With more than one batch
- * one more call (the reduce) writes the profile from bounded notes (at most
- * REDUCE_REQUEST_MAX_CHARS, whatever the document's size); a single batch's one
- * call writes the profile too, so a slide deck costs exactly one call. The
- * profile is validated on its own (a recognised section with a body) and gets its
- * own one retry; when it still fails, the digest keeps every extracted note and
- * has `profile: null` with `profileError`. When no batch could be indexed the
- * digest has empty lists, every batch in `failedBatches` and no profile. Only an
- * empty document and an abort throw (an abort also when it lands during the last
- * call).
+ * page one the batch's text is actually on, no blank text, every term and
+ * concept name one that has an id); an invalid reply is asked again once with
+ * the validation errors; a batch that still fails, or whose call throws, is
+ * recorded as failed and the rest carry on. A thrown call is not retried here:
+ * retrying transient transport errors (rate limits, timeouts) is the injected
+ * `complete`'s job. With more than one batch one more call (the reduce) writes
+ * the profile from bounded notes (at most REDUCE_REQUEST_MAX_CHARS, whatever the
+ * document's size); a single batch's one call writes the profile too, so a slide
+ * deck costs exactly one call. The profile is validated on its own (a recognised
+ * section with a body; a code fence around it is removed) and gets its own one
+ * retry; when it still fails, the digest keeps every extracted note and has
+ * `profile: null` with `profileError`. When no batch could be indexed the digest
+ * has empty lists, every batch failed and no profile. Only an empty document and
+ * an abort throw (an abort also when it lands during the last call); once an
+ * abort is requested no further `onActivity` line is sent.
+ *
+ * Later, from the stored digest alone: `buildReduceRequest` rebuilds the exact
+ * reduce request (no model call), `rewriteProfile` runs only the profile step
+ * again, and `batchFromRef` rebuilds a batch from content.md to re-run it.
  *
  * The model call is injected (`DigestModelCall`): no engine, store or file here.
  * Batches run one after another.
  */
 
-/** Bump when the prompts, schema, ids or merge rules change enough to re-index. 2: explicit definitions, new ids, alias rules. */
-export const MATERIAL_INDEXER_VERSION = 2;
+/** Bump when the prompts, schema, ids or merge rules change enough to re-index. 3: new ids, stricter alias merging. */
+export const MATERIAL_INDEXER_VERSION = 3;
 
 /** One model call, no tools: system prompt and user text in, the reply text out. */
 export type DigestModelCall = (request: { system: string; user: string }, signal?: AbortSignal) => Promise<string>;
@@ -59,8 +66,12 @@ export interface MaterialDigestDeps {
 	signal?: AbortSignal;
 	/** The batch budget and token estimate (core/material-split.ts defaults). */
 	split?: SplitOptions;
+	/** Progress lines; never called once `signal` is aborted. */
 	onActivity?: (line: string) => void;
 }
+
+/** What re-running the profile step needs. */
+export type ProfileDeps = Pick<MaterialDigestDeps, "complete" | "name" | "signal" | "onActivity">;
 
 /** The longest user message of the reduce call, its retry included, in characters (about 16k tokens). */
 export const REDUCE_REQUEST_MAX_CHARS = 64_000;
@@ -72,6 +83,8 @@ export const EXTRACTION_OVERHEAD_MAX_CHARS = 10_000;
 /** The longest heading path shown in any request, in characters (each title is cut to HEADING_TITLE_MAX_CHARS). */
 export const HEADING_PATH_MAX_CHARS = 160;
 const HEADING_TITLE_MAX_CHARS = 60;
+/** The longest heading title stored in digest.json (DigestBatchRef.headingPath). */
+const STORED_TITLE_MAX_CHARS = 200;
 /** The longest document name shown in a request. */
 const NAME_MAX_CHARS = 200;
 /** The longest page list shown in an extraction request. */
@@ -84,6 +97,8 @@ const MAX_ERROR_CHARS = 1_000;
 const MAX_REJECTED_CHARS = 4_000;
 /** Room kept in the reduce request for its retry (the rejected reply, the error, the instruction). */
 const RETRY_RESERVE_CHARS = MAX_REJECTED_CHARS + MAX_ERROR_CHARS + 600;
+/** The longest line of failed parts in the reduce notes. */
+const FAILED_LINE_MAX_CHARS = 2_000;
 
 const nonBlank = Type.String({ pattern: "\\S" });
 const pageNumber = Type.Integer({ minimum: 1 });
@@ -131,7 +146,7 @@ Write the section headings exactly as above, in English, whatever the material's
 
 const EXTRACTION_RULES = `You are an indexing specialist inside a learning application. You read one part of a student's course material (a slide deck, a textbook chapter, notes) and index it completely, so that nothing a student must learn from it is missed.
 
-The material is Markdown. A line "--- Page N ---" starts page N; text before the first such line is on the page stated in the request. Inside a fenced code block (between \`\`\` or ~~~ lines) such a line, or a "#" heading, is only an example in the text, not a page break or a heading.
+The material is Markdown. Every line "--- Page N ---" starts page N, wherever it is; text before the first such line is on the page stated in the request. A line that starts with a backslash ("\\--- Page N ---") is ordinary text, not a page break. A "#" line inside a fenced code block (between \`\`\` or ~~~ lines) is an example in the text, not a heading.
 
 Reply with ONE JSON object and nothing else (no prose, no code fence), with these fields:
 - "summaryBullets": short bullets, in order, of what this part covers.
@@ -152,11 +167,24 @@ Reply with the profile only (Markdown, starting at its first "## " heading; not 
 
 ${PROFILE_FORMAT}`;
 
-/** One line of model text: whitespace collapsed, cut to `max` characters with an ellipsis. Pure. */
+const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
+
+/**
+ * One line of model text: whitespace collapsed, cut to at most `max` characters with an ellipsis. The cut is at a word
+ * boundary; only a single word longer than the whole room is cut inside (never inside a surrogate pair). Pure.
+ */
 function clip(text: string, max: number): string {
 	const flat = text.replace(/\s+/g, " ").trim();
 	if (flat.length <= max) return flat;
-	return `${flat.slice(0, Math.max(0, max - 1)).replace(/[\ud800-\udbff]$/, "")}…`;
+	if (max < 1) return "";
+	const room = max - 1;
+	let cut = flat.slice(0, room);
+	if (flat[room] !== " ") {
+		const space = cut.lastIndexOf(" ");
+		if (space > 0) cut = cut.slice(0, space);
+	}
+	if (cut.length > 0 && isHighSurrogate(cut.charCodeAt(cut.length - 1))) cut = cut.slice(0, -1);
+	return `${cut.trimEnd()}…`;
 }
 
 /** A heading path for a request: each title cut, the whole at most HEADING_PATH_MAX_CHARS (outermost and innermost kept). Pure. */
@@ -184,6 +212,25 @@ function pageList(pages: readonly number[], max: number): string {
 }
 
 const pagesLabel = (a: number, b: number) => (a === b ? `page ${a}` : `pages ${a}-${b}`);
+
+/**
+ * A reply with its code fence removed when the fence wraps the profile: an opening fence line before the first "## "
+ * heading, the matching closing fence as the reply's last line, and a "## " heading inside. Otherwise the reply as it
+ * is (a code block inside a profile section stays). Pure.
+ */
+function unwrapFence(text: string): string {
+	const trimmed = text.trim();
+	const open = /^(`{3,}|~{3,})[^\n]*\n/m.exec(trimmed);
+	if (!open) return trimmed;
+	const firstHeading = trimmed.search(/^## /m);
+	if (firstHeading >= 0 && firstHeading < open.index) return trimmed;
+	const fence = open[1]!;
+	const close = new RegExp(`\\n[ \\t]{0,3}${fence[0] === "`" ? "`" : "~"}{${fence.length},}[ \\t]*$`).exec(trimmed);
+	const innerStart = open.index + open[0].length;
+	if (!close || close.index < innerStart - 1) return trimmed;
+	const inner = trimmed.slice(innerStart, close.index);
+	return /^## /m.test(inner) ? inner : trimmed;
+}
 
 /** The profile proper: from its first section heading on (same rule as material-profiler.ts profileBody). */
 function profileBody(text: string): string {
@@ -215,11 +262,11 @@ function parseReply(reply: string): unknown {
 type Checked<T> = { ok: true; value: T } | { ok: false; error: string };
 
 /**
- * A profile, or what is wrong with it: from its first "## " heading on, with at least one of the six PROFILE_HEADINGS
- * (any other section, or a missing one, is allowed) whose section has text. Pure.
+ * A profile, or what is wrong with it: a code fence around it removed, from its first "## " heading on, with at least
+ * one of the six PROFILE_HEADINGS (any other section, or a missing one, is allowed) whose section has text. Pure.
  */
 export function validateProfile(text: string): Checked<string> {
-	const body = profileBody(text);
+	const body = profileBody(unwrapFence(text));
 	const sections = body
 		.split(/^(?=## )/m)
 		.filter((s) => s.startsWith("## "))
@@ -235,7 +282,27 @@ export function validateProfile(text: string): Checked<string> {
 	return { ok: true, value: body };
 }
 
-/** The notes of one reply, or the problems with it. Every page must be one the batch is on (`pages`). Pure. */
+/** A reduce reply judged as a profile; a profile wrapped in {"profile": "…"} is still the profile. Pure. */
+function validateReduceReply(reply: string): Checked<string> {
+	let text = reply;
+	if (/^\s*(```(json)?\s*)?\{/i.test(reply)) {
+		try {
+			const value = parseReply(reply) as { profile?: unknown } | null;
+			if (value && typeof value.profile === "string") text = value.profile;
+		} catch {
+			// not JSON: judged as Markdown
+		}
+	}
+	return validateProfile(text);
+}
+
+/** Text that is only whitespace and invisible characters (soft hyphens, zero-width characters) once normalised. */
+const isInvisible = (text: string) => slugOf(text) === "";
+
+/**
+ * The notes of one reply, or the problems with it. Every page must be one the batch is on (`pages`); every term and
+ * concept name must give an id (not only whitespace and invisible characters), and no text may be invisible. Pure.
+ */
 export function validateBatchReply(reply: string, batch: Pick<MaterialBatch, "pages">): Checked<BatchNotes> {
 	let value: unknown;
 	try {
@@ -248,6 +315,22 @@ export function validateBatchReply(reply: string, batch: Pick<MaterialBatch, "pa
 		return { ok: false, error: clip(`the JSON does not match the format: ${errors.join("; ")}`, MAX_ERROR_CHARS) };
 	}
 	const notes = Value.Clean(BATCH_SCHEMA, structuredClone(value)) as BatchNotes;
+	const blank: string[] = [];
+	const visible = (where: string, text: string) => {
+		if (isInvisible(text)) blank.push(`${where}: has only invisible characters (it must name something)`);
+	};
+	notes.summaryBullets.forEach((b, i) => visible(`/summaryBullets/${i}`, b));
+	notes.terms.forEach((t, i) => {
+		visible(`/terms/${i}/term`, t.term);
+		if (t.definition !== null) visible(`/terms/${i}/definition`, t.definition);
+	});
+	notes.concepts.forEach((c, i) => {
+		visible(`/concepts/${i}/name`, c.name);
+		visible(`/concepts/${i}/statement`, c.statement);
+	});
+	notes.figures.forEach((f, i) => visible(`/figures/${i}/caption`, f.caption));
+	if (blank.length > 0) return { ok: false, error: clip(`the JSON does not match the format: ${blank.slice(0, MAX_ERRORS_SHOWN).join("; ")}`, MAX_ERROR_CHARS) };
+
 	const problems: string[] = [];
 	const onPages = new Set(batch.pages);
 	const check = (where: string, page: number) => {
@@ -264,9 +347,10 @@ export function validateBatchReply(reply: string, batch: Pick<MaterialBatch, "pa
 	if (problems.length > 0) {
 		return { ok: false, error: clip(`this part is on ${batch.pages.length === 1 ? "page" : "pages"} ${pageList(batch.pages, PAGE_LIST_MAX_CHARS)}, but ${problems.slice(0, MAX_ERRORS_SHOWN).join("; ")}`, MAX_ERROR_CHARS) };
 	}
+	notes.summaryBullets = notes.summaryBullets.map((b) => b.trim());
 	for (const t of notes.terms) {
 		t.term = t.term.trim();
-		t.aliases = t.aliases.map((a) => a.trim()).filter((a) => a !== ""); // a blank alias carries nothing: dropped, not a retry
+		t.aliases = t.aliases.map((a) => a.trim()).filter((a) => !isInvisible(a)); // a blank alias carries nothing: dropped, not a retry
 		t.definition = t.definition?.trim() ?? null;
 		// a definition is a mention: the first mention is never after it
 		if (t.definitionPage !== null && t.definitionPage < t.page) t.page = t.definitionPage;
@@ -301,8 +385,14 @@ function isAbort(err: unknown, signal: AbortSignal | undefined): boolean {
 	return signal?.aborted === true || (err instanceof Error && err.name === "AbortError");
 }
 
+/** A progress line, unless an abort was requested (then the abort is thrown instead). */
+function activity(deps: Pick<MaterialDigestDeps, "signal" | "onActivity">, line: string): void {
+	deps.signal?.throwIfAborted();
+	deps.onActivity?.(line);
+}
+
 /** One model call: its reply, or the error it threw. Aborts throw, also when the abort lands while the call runs. */
-async function ask(deps: MaterialDigestDeps, system: string, user: string): Promise<Checked<string>> {
+async function ask(deps: Pick<MaterialDigestDeps, "complete" | "signal">, system: string, user: string): Promise<Checked<string>> {
 	deps.signal?.throwIfAborted();
 	let reply: string;
 	try {
@@ -316,7 +406,13 @@ async function ask(deps: MaterialDigestDeps, system: string, user: string): Prom
 }
 
 /** A validated call: the reply, asked once more with its errors when it fails `validate`. A thrown call is not retried. */
-async function callValidated<T>(deps: MaterialDigestDeps, system: string, user: string, again: string, validate: (reply: string) => Checked<T>): Promise<Checked<T>> {
+async function callValidated<T>(
+	deps: Pick<MaterialDigestDeps, "complete" | "signal">,
+	system: string,
+	user: string,
+	again: string,
+	validate: (reply: string) => Checked<T>,
+): Promise<Checked<T>> {
 	let request = user;
 	let last = "";
 	for (let attempt = 0; attempt < 2; attempt++) {
@@ -367,11 +463,15 @@ async function callSingle(deps: MaterialDigestDeps, batch: MaterialBatch): Promi
 	return { notes, profile };
 }
 
-/** Merge the batches' terms (see the module comment of core/glossary.ts for the alias rule). Pure. */
+/**
+ * Merge the batches' terms (the alias rule: core/glossary.ts unifyByAlias). The input must be validated
+ * (validateBatchReply): a term without an id throws instead of being dropped. Pure.
+ */
 export function mergeTerms(perBatch: readonly BatchTerm[][]): DigestTerm[] {
-	const occurrences = perBatch.flat().flatMap((t, order) => {
+	const occurrences = perBatch.flat().map((t, order) => {
 		const key = slugOf(t.term);
-		return key === "" ? [] : [{ t, order, key, aliasKeys: t.aliases.map(slugOf).filter((k) => k !== "" && k !== key) }];
+		if (key === "") throw new Error(`a term without a name reached mergeTerms (${JSON.stringify(t.term)}): validate the notes first`);
+		return { t, order, key, aliasKeys: t.aliases.map(slugOf).filter((k) => k !== "" && k !== key) };
 	});
 	const groupOf = new Map<string, typeof occurrences>();
 	for (const occ of occurrences) {
@@ -427,13 +527,13 @@ export function mergeTerms(perBatch: readonly BatchTerm[][]): DigestTerm[] {
 	return out.sort((a, b) => a.first - b.first).map((e) => e.term);
 }
 
-/** Merge the batches' concepts by id: the earliest page and its statement. Pure. */
+/** Merge the batches' concepts by id: the earliest page and its statement. A concept without an id throws (validate first). Pure. */
 export function mergeConcepts(perBatch: readonly BatchNotes["concepts"][]): DigestConcept[] {
 	const byId = new Map<string, DigestConcept>();
 	for (const concepts of perBatch) {
 		for (const c of concepts) {
 			const id = conceptId(c.name);
-			if (id === "c_") continue;
+			if (id === "c_") throw new Error(`a concept without a name reached mergeConcepts (${JSON.stringify(c.name)}): validate the notes first`);
 			const seen = byId.get(id);
 			if (!seen) byId.set(id, { id, name: c.name.trim(), statement: c.statement.trim(), page: c.page });
 			else if (c.page < seen.page) Object.assign(seen, { name: c.name.trim(), statement: c.statement.trim(), page: c.page });
@@ -448,7 +548,7 @@ function mergeFigures(perBatch: readonly BatchNotes["figures"][]): DigestFigure[
 	const out: DigestFigure[] = [];
 	for (const figures of perBatch) {
 		for (const f of figures) {
-			const key = `${f.page}\u0000${f.caption.trim()}`;
+			const key = `${f.page}|${f.caption.trim()}`;
 			if (seen.has(key)) continue;
 			seen.add(key);
 			out.push({ page: f.page, caption: f.caption.trim() });
@@ -465,7 +565,7 @@ interface NotesDetail {
 	figures: boolean;
 	supporting: "full" | "names" | "none";
 	concepts: "full" | "names" | "none";
-	/** fill: as many core names as the room left holds, in first-mention order, on one line. */
+	/** fill: as many core names as the room left holds (at least their reserved share), in first-mention order, on one line. */
 	core: "full" | "names" | "fill" | "none";
 }
 
@@ -486,24 +586,106 @@ const NOTES_LADDER: readonly NotesDetail[] = [
 	{ bullets: 1, chars: 60, headingPath: false, figures: false, supporting: "none", concepts: "none", core: "fill" },
 ];
 
+/** An indexed part as the reduce notes read it. */
+export type ReducePart = Pick<DigestIndexedBatch, "index" | "pageStart" | "pageEnd" | "headingPath" | "summaryBullets">;
+/** A failed part as the reduce notes read it. */
+export type ReduceFailedPart = Pick<DigestFailedBatch, "index" | "pageStart" | "pageEnd">;
+
 export interface ReduceNotesInput {
-	/** The indexed batches with their notes, in order. */
-	parts: readonly { batch: MaterialBatch; notes: BatchNotes }[];
-	failed: readonly DigestFailedBatch[];
+	/** The indexed batches, in order. */
+	parts: readonly ReducePart[];
+	/** The failed batches, in order. */
+	failed: readonly ReduceFailedPart[];
 	/** The merged lists (deduplicated across batches). */
 	terms: readonly DigestTerm[];
 	concepts: readonly DigestConcept[];
 	figures: readonly DigestFigure[];
 }
 
-/** The notes at one level of detail; `maxChars` is the room a "fill" list of core terms may take up to. */
-function renderNotes(input: ReduceNotesInput, d: NotesDetail, failedLine: string, maxChars: number): string {
+/** The share of the notes budget kept for core term names at every level of detail. */
+const coreReserve = (maxChars: number) => Math.floor(maxChars / 4);
+
+/** Runs of consecutive batch indexes, in order (a gap in the index always starts a new run). */
+function runsOf<T extends { index: number }>(items: readonly T[]): T[][] {
+	const runs: T[][] = [];
+	for (const item of items) {
+		const run = runs.at(-1);
+		if (run && run.at(-1)!.index + 1 === item.index) run.push(item);
+		else runs.push([item]);
+	}
+	return runs;
+}
+
+/** "Part 3" or "Parts 3-5" and the pages of a run of consecutive parts. */
+function runLabel(run: readonly { index: number; pageStart: number; pageEnd: number }[], capital: boolean): string {
+	const first = run[0]!;
+	const last = run.at(-1)!;
+	const word = capital ? "Part" : "part";
+	const which = run.length === 1 ? `${word} ${first.index + 1}` : `${word}s ${first.index + 1}-${last.index + 1}`;
+	let lo = Infinity;
+	let hi = -Infinity;
+	for (const p of run) {
+		lo = Math.min(lo, p.pageStart, p.pageEnd);
+		hi = Math.max(hi, p.pageStart, p.pageEnd);
+	}
+	return `${which}, ${pagesLabel(lo, hi)}`;
+}
+
+/**
+ * The failed parts in at most `max` characters: always how many, then as many runs of consecutive failed parts (with
+ * their pages) as fit, and how many parts are not listed. Never cut inside an item. "" when none failed (or when not
+ * even the count fits). Pure.
+ */
+function failedSummary(failed: readonly ReduceFailedPart[], max: number): string {
+	const n = failed.length;
+	if (n === 0) return "";
+	const head = `(Not indexed, so the notes are missing for ${n === 1 ? "this part" : `these ${n} parts`}: `;
+	const runs = runsOf(failed);
+	const items = runs.map((r) => runLabel(r, false));
+	const tail = (unlisted: number) => (unlisted > 0 ? ` (+${unlisted} more not listed)` : "");
+	let length = head.length + 2; // ".)"
+	let listed = 0;
+	let k = 0;
+	for (; k < items.length; k++) {
+		const next = length + (k > 0 ? 2 : 0) + items[k]!.length;
+		if (next + tail(n - listed - runs[k]!.length).length > max) break;
+		length = next;
+		listed += runs[k]!.length;
+	}
+	if (k > 0) return `${head}${items.slice(0, k).join("; ")}${tail(n - listed)}.)`;
+	const counted = `(Not indexed, so the notes are missing for ${n} ${n === 1 ? "part" : "parts"}; not listed for length.)`;
+	if (counted.length <= max) return counted;
+	const tiny = `(Not indexed: ${n} ${n === 1 ? "part" : "parts"}.)`;
+	return tiny.length <= max ? tiny : "";
+}
+
+const CORE_LABEL = "Core terms (names only, in order of first mention): ";
+
+/** As many core term names as fit in `max` characters, whole, in order, then how many are left out; "" when none. Pure. */
+function coreNamesLine(core: readonly DigestTerm[], max: number): string {
+	if (core.length === 0) return "";
+	const names = core.map((t) => clip(t.term, 60));
+	const tail = (left: number) => (left > 0 ? ` (+${left} more core terms left out for length)` : "");
+	let length = CORE_LABEL.length;
+	let k = 0;
+	for (; k < names.length; k++) {
+		const next = length + (k > 0 ? 2 : 0) + names[k]!.length;
+		if (next + tail(names.length - k - 1).length > max) break;
+		length = next;
+	}
+	if (k > 0) return `${CORE_LABEL}${names.slice(0, k).join(", ")}${tail(names.length - k)}`;
+	const none = `(${core.length} core terms, left out for length.)`;
+	return none.length <= max ? none : "";
+}
+
+/** The notes at one level of detail, or null when the level cannot give the core names their reserved share. */
+function renderNotes(input: ReduceNotesInput, d: NotesDetail, failedLine: string, maxChars: number): string | null {
 	const blocks: string[] = [];
-	const parts = input.parts.map(({ batch, notes }) => {
-		const where = d.headingPath && batch.headingPath.length > 0 ? ` (in ${formatHeadingPath(batch.headingPath)})` : "";
-		const bullets = notes.summaryBullets.slice(0, d.bullets).map((b) => `- ${clip(b, d.chars)}`);
-		const more = notes.summaryBullets.length > bullets.length ? [`- (+${notes.summaryBullets.length - bullets.length} more)`] : [];
-		return [`### Part ${batch.index + 1}: ${pagesLabel(batch.pageStart, batch.pageEnd)}${where}`, ...bullets, ...more].join("\n");
+	const parts = input.parts.map((part) => {
+		const where = d.headingPath && part.headingPath.length > 0 ? ` (in ${formatHeadingPath(part.headingPath)})` : "";
+		const bullets = part.summaryBullets.slice(0, d.bullets).map((b) => `- ${clip(b, d.chars)}`);
+		const more = part.summaryBullets.length > bullets.length ? [`- (+${part.summaryBullets.length - bullets.length} more)`] : [];
+		return [`### Part ${part.index + 1}: ${pagesLabel(part.pageStart, part.pageEnd)}${where}`, ...bullets, ...more].join("\n");
 	});
 	blocks.push(`## Parts\n${parts.join("\n")}`);
 	if (failedLine) blocks.push(failedLine);
@@ -539,106 +721,219 @@ function renderNotes(input: ReduceNotesInput, d: NotesDetail, failedLine: string
 		blocks.push(d.figures ? `## Figures\n${input.figures.map((f) => `- p. ${f.page}: ${clip(f.caption, d.chars)}`).join("\n")}` : `## Figures\n(${input.figures.length} figures, left out for length.)`);
 	}
 	if (fill.length > 0) {
-		// The core names that fit in the room the rest leaves, in first-mention order, then a count of the others.
-		const rest = blocks.join("\n\n").length;
-		const label = "Core terms (names only, in order of first mention): ";
-		let room = maxChars - rest - label.length - 60;
-		const names: string[] = [];
-		for (const t of fill) {
-			const name = clip(t.term, 60);
-			if (name.length + 2 > room) break;
-			names.push(name);
-			room -= name.length + 2;
-		}
-		const more = fill.length - names.length;
-		const line = `${label}${names.join(", ")}${more > 0 ? ` (+${more} more core terms left out for length)` : ""}`;
-		blocks[termsAt] = `${blocks[termsAt]}\n${line}`;
+		// The core names that fit in the room the rest leaves; that room must hold at least their reserved share.
+		const room = maxChars - blocks.join("\n\n").length - 1;
+		if (room < Math.min(coreNamesLine(fill, Infinity).length, coreReserve(maxChars))) return null;
+		const line = coreNamesLine(fill, room);
+		if (line) blocks[termsAt] = `${blocks[termsAt]}\n${line}`;
 	}
 	return blocks.join("\n\n");
 }
 
 /**
+ * The indexed parts as lines of at most `room` characters in all: runs of consecutive parts (never across a gap) are
+ * grouped 1, 2, 4, … parts per line until each line has room for some summary; every part is named when the labels fit
+ * at all, else as many labels as fit and how many parts are not listed. Never cut inside a word (one overlong word
+ * excepted). Pure.
+ */
+function partsLines(parts: readonly ReducePart[], room: number): string {
+	if (parts.length === 0 || room <= 0) return "";
+	const runs = runsOf(parts);
+	const longestRun = runs.reduce((m, r) => Math.max(m, r.length), 0);
+	for (let size = 1; ; size *= 2) {
+		const last = size >= longestRun;
+		const groups = runs.flatMap((r) => Array.from({ length: Math.ceil(r.length / size) }, (_, i) => r.slice(i * size, (i + 1) * size)));
+		const labels = groups.map((g) => `- ${runLabel(g, true)}`);
+		const mandatory = labels.reduce((s, l) => s + l.length, 0) + groups.length - 1;
+		if (mandatory > room) {
+			if (!last) continue;
+			// not even one label per run fits: as many as do, then the count of the rest
+			const lines: string[] = [];
+			let length = 0;
+			let listed = 0;
+			for (let i = 0; i < groups.length; i++) {
+				const tail = `(+${parts.length - listed - groups[i]!.length} more indexed parts not listed for length)`;
+				const next = length + (i > 0 ? 1 : 0) + labels[i]!.length;
+				if (next + 1 + tail.length > room) break;
+				lines.push(labels[i]!);
+				length = next;
+				listed += groups[i]!.length;
+			}
+			if (lines.length === 0) {
+				const counted = `(${parts.length} parts indexed, not listed for length.)`;
+				return counted.length <= room ? counted : "";
+			}
+			return [...lines, `(+${parts.length - listed} more indexed parts not listed for length)`].join("\n");
+		}
+		const share = Math.floor((room - mandatory) / groups.length);
+		if (share < 30 && !last) continue;
+		return groups
+			.map((g, i) => {
+				const summary = share >= 8 ? clip(g.map((p) => p.summaryBullets[0] ?? "").filter(Boolean).join("; "), share - 2) : "";
+				return summary ? `${labels[i]}: ${summary}` : labels[i]!;
+			})
+			.join("\n");
+	}
+}
+
+/** Past the ladder: grouped parts, the failed line, and a terms block that keeps the core names' reserved share. */
+function groupedNotes(input: ReduceNotesInput, maxChars: number, failedLine: string): string {
+	const SEP = 2; // "\n\n" between blocks (counted for every block, so the sum stays within maxChars)
+	const head = "## Parts (shortened)";
+	const termsHead = "## Terms";
+	const core = input.terms.filter((t) => t.tier === "core");
+	const counts = [
+		[input.terms.length - core.length, "supporting terms"],
+		[input.concepts.length, "concepts"],
+		[input.figures.length, "figures"],
+	] as const;
+	const leftOutList = counts.filter(([n]) => n > 0).map(([n, what]) => `${n} ${what}`);
+	const leftOut = leftOutList.length > 0 ? `(Left out for length: ${leftOutList.join(", ")}.)` : "";
+
+	let budget = maxChars;
+	const failedBlock = failedLine && failedLine.length + SEP <= budget ? failedLine : "";
+	if (failedBlock) budget -= failedBlock.length + SEP;
+	const termsWant = core.length > 0 ? termsHead.length + 1 + Math.min(coreNamesLine(core, Infinity).length, coreReserve(maxChars)) + SEP : 0;
+	const partsText = partsLines(input.parts, budget - termsWant - head.length - 1 - SEP);
+	const partsBlock = partsText ? `${head}\n${partsText}` : "";
+	if (partsBlock) budget -= partsBlock.length + SEP;
+
+	let termsBlock = "";
+	const room = budget - termsHead.length - 1;
+	if (room > 0) {
+		const lines: string[] = [];
+		const coreLine = coreNamesLine(core, room);
+		if (coreLine) lines.push(coreLine);
+		if (leftOut && (coreLine ? coreLine.length + 1 : 0) + leftOut.length <= room) lines.push(leftOut);
+		if (lines.length > 0) termsBlock = `${termsHead}\n${lines.join("\n")}`;
+	}
+	return [partsBlock, failedBlock, termsBlock].filter(Boolean).join("\n\n");
+}
+
+/**
  * The reduce call's notes, at most `maxChars` characters whatever the document's size: page-cited, the terms, concepts
- * and figures merged across batches (each listed once), and as much detail as fits (NOTES_LADDER; its last steps list as
- * many core term names as the room left holds). Past the ladder's end, consecutive parts share one line each, cut to an
- * equal share, so every part's pages still appear. Pure.
+ * and figures merged across batches (each listed once), and as much detail as fits (NOTES_LADDER). Core term names keep
+ * a reserved share of the budget (a quarter) at every level, and the failed parts are always counted. Past the
+ * ladder's end, runs of consecutive parts share lines (never across a gap in the index). Nothing is cut inside a word,
+ * except one word longer than its whole room. Pure.
  */
 export function batchNotesText(input: ReduceNotesInput, maxChars = REDUCE_REQUEST_MAX_CHARS - RETRY_RESERVE_CHARS): string {
-	const failedLine = input.failed.length > 0 ? `(Not indexed, the notes are missing: ${clip(input.failed.map((f) => pagesLabel(f.pageStart, f.pageEnd)).join(", "), 1_000)}.)` : "";
+	const failedLine = failedSummary(input.failed, Math.min(FAILED_LINE_MAX_CHARS, Math.max(Math.floor(maxChars / 8), Math.min(maxChars, 100))));
 	for (const detail of NOTES_LADDER) {
 		const text = renderNotes(input, detail, failedLine, maxChars);
-		if (text.length <= maxChars) return text;
+		if (text !== null && text.length <= maxChars) return text;
 	}
-	// Grouped parts: 1, 2, 4, … parts per line until the lines fit; a single line always does.
-	const head = `## Parts (shortened: one line per group of parts)`;
-	const room = maxChars - head.length - failedLine.length - 4;
-	for (let size = 1; ; size *= 2) {
-		const groups: (typeof input.parts)[] = [];
-		for (let i = 0; i < input.parts.length; i += size) groups.push(input.parts.slice(i, i + size));
-		const share = Math.floor(room / groups.length) - 1;
-		if (share < 40 && groups.length > 1) continue;
-		const lines = groups.map((g) => {
-			const first = g[0]!.batch;
-			const last = g.at(-1)!.batch;
-			const label = first === last ? `Part ${first.index + 1}` : `Parts ${first.index + 1}-${last.index + 1}`;
-			const pages = pagesLabel(Math.min(...g.map((p) => p.batch.pageStart)), Math.max(...g.map((p) => p.batch.pageEnd)));
-			return clip(`- ${label}, ${pages}: ${g.map((p) => p.notes.summaryBullets[0] ?? "").filter(Boolean).join("; ")}`, Math.max(1, share));
-		});
-		return [head, ...lines, ...(failedLine ? ["", failedLine] : [])].join("\n").slice(0, maxChars);
+	return groupedNotes(input, maxChars, failedLine);
+}
+
+/** What a digest needs to rebuild its reduce request. */
+export type ReduceSource = Pick<MaterialDigest, "pageCount" | "batches" | "terms" | "concepts" | "figures">;
+
+/**
+ * The reduce (profile) request for a digest, exactly as digestMaterial sends it, from the digest alone (a stored
+ * digest.json works): no model call. Null when no batch was indexed (there is nothing to write a profile from). Pure.
+ */
+export function buildReduceRequest(digest: ReduceSource, name?: string): { system: string; user: string } | null {
+	const parts = digest.batches.filter((b): b is DigestIndexedBatch => b.status === "indexed");
+	if (parts.length === 0) return null;
+	const failed = digest.batches.filter((b): b is DigestFailedBatch => b.status === "failed");
+	const n = digest.batches.length;
+	const header = `The material: ${name ? `"${clip(name, NAME_MAX_CHARS)}"` : "one document"}, ${digest.pageCount} ${digest.pageCount === 1 ? "page" : "pages"}, read in ${n} ${n === 1 ? "part" : "parts"}.`;
+	const notes = batchNotesText({ parts, failed, terms: digest.terms, concepts: digest.concepts, figures: digest.figures }, REDUCE_REQUEST_MAX_CHARS - RETRY_RESERVE_CHARS - header.length - 20);
+	return { system: REDUCE_RULES, user: `${header}\n\n<notes>\n${notes}\n</notes>` };
+}
+
+/** The reduce call for a digest: its profile, or why there is none. */
+async function writeProfile(deps: ProfileDeps, digest: ReduceSource): Promise<Checked<string>> {
+	const request = buildReduceRequest(digest, deps.name);
+	if (!request) return { ok: false, error: "no part of the material could be indexed" };
+	activity(deps, `indexing ${deps.name ?? "the material"}: writing the profile`);
+	const result = await callValidated(deps, request.system, request.user, AGAIN_PROFILE, validateReduceReply);
+	return result.ok ? result : { ok: false, error: `the profile could not be written: ${result.error}` };
+}
+
+/** A digest with a new profile result; everything else kept. */
+function withProfile<T extends Omit<MaterialDigest, "profile" | "profileError">>(base: T, profile: Checked<string>): MaterialDigest {
+	const { profile: _p, profileError: _e, ...rest } = base as T & { profile?: unknown; profileError?: unknown };
+	return profile.ok ? { ...rest, profile: profile.value } : { ...rest, profile: null, profileError: clip(profile.error, MAX_ERROR_CHARS) };
+}
+
+/**
+ * Run only the profile step again for a stored digest (one reduce call, its one retry), from the digest alone: the
+ * terms, concepts, figures and batches are kept as they are; the result has the new profile, or `profile: null` with
+ * `profileError` when it fails again or no batch was indexed (then no call is made). Throws on abort, and for a digest
+ * of another version (it may lack the batch notes: re-index it).
+ */
+export async function rewriteProfile(digest: MaterialDigest, deps: ProfileDeps): Promise<MaterialDigest> {
+	deps.signal?.throwIfAborted();
+	if (digest.version !== MATERIAL_DIGEST_VERSION) throw new Error(`a digest of version ${String(digest.version)} cannot be re-profiled; re-index it`);
+	const profile = await writeProfile(deps, digest);
+	deps.signal?.throwIfAborted();
+	return withProfile(digest, profile);
+}
+
+/**
+ * A stored batch rebuilt from the content.md it was split from (the same sourceHash), to re-run it alone: the same
+ * text, pages and heading path the extraction request used. Throws when the range is not inside the document. Pure.
+ */
+export function batchFromRef(contentMd: string, ref: DigestBatchRef): MaterialBatch {
+	if (ref.charStart < 0 || ref.charEnd > contentMd.length || ref.charStart >= ref.charEnd) {
+		throw new RangeError(`batch ${ref.index} (${ref.charStart}-${ref.charEnd}) is not inside this document (${contentMd.length} characters)`);
 	}
+	return {
+		index: ref.index,
+		pageStart: ref.pageStart,
+		pageEnd: ref.pageEnd,
+		pages: [...ref.pages],
+		headingPath: [...ref.headingPath],
+		text: contentMd.slice(ref.charStart, ref.charEnd),
+		charStart: ref.charStart,
+		charEnd: ref.charEnd,
+	};
+}
+
+/** A split batch as digest.json stores it (heading titles bounded). */
+function refOf(b: MaterialBatch): DigestBatchRef {
+	return {
+		index: b.index,
+		pageStart: b.pageStart,
+		pageEnd: b.pageEnd,
+		pages: [...b.pages],
+		headingPath: b.headingPath.map((t) => clip(t, STORED_TITLE_MAX_CHARS)),
+		charStart: b.charStart,
+		charEnd: b.charEnd,
+	};
 }
 
 /** Index one converted document. Throws only when it is empty or on abort (see the module comment). */
 export async function digestMaterial(contentMd: string, deps: MaterialDigestDeps): Promise<MaterialDigest> {
+	deps.signal?.throwIfAborted();
 	if (!contentMd.trim()) throw new Error("the material is empty");
 	const batches = splitMaterial(contentMd, deps.split);
 	const single = batches.length === 1;
 	const label = deps.name ?? "the material";
-	const done: { batch: MaterialBatch; notes: BatchNotes }[] = [];
-	const failedBatches: DigestFailedBatch[] = [];
-	const ref = (b: MaterialBatch): DigestBatchRef => ({ index: b.index, pageStart: b.pageStart, pageEnd: b.pageEnd, charStart: b.charStart, charEnd: b.charEnd });
+	const done: BatchNotes[] = [];
+	const planned: DigestBatch[] = [];
 	let profile: Checked<string> = { ok: false, error: "no part of the material could be indexed" };
 
 	for (const batch of batches) {
-		deps.onActivity?.(`indexing ${label}: part ${batch.index + 1} of ${batches.length} (p. ${batch.pageStart}-${batch.pageEnd})`);
+		activity(deps, `indexing ${label}: part ${batch.index + 1} of ${batches.length} (p. ${batch.pageStart}-${batch.pageEnd})`);
+		// the request shows the same bounded heading titles digest.json stores, so a re-run from the digest asks the same
+		const stored = refOf(batch);
+		const asked = { ...batch, headingPath: stored.headingPath };
 		let notes: Checked<BatchNotes>;
 		if (single) {
-			const result = await callSingle(deps, batch);
+			const result = await callSingle(deps, asked);
 			notes = result.notes;
 			if (notes.ok) profile = result.profile.ok ? result.profile : { ok: false, error: `the profile could not be written: ${result.profile.error}` };
 		} else {
-			notes = await callValidated(deps, EXTRACTION_RULES, batchRequest(batch, batches.length, deps.name, false), AGAIN_JSON, (reply) => validateBatchReply(reply, batch));
+			notes = await callValidated(deps, EXTRACTION_RULES, batchRequest(asked, batches.length, deps.name, false), AGAIN_JSON, (reply) => validateBatchReply(reply, batch));
 		}
-		if (notes.ok) done.push({ batch, notes: notes.value });
-		else failedBatches.push({ ...ref(batch), error: notes.error });
+		if (notes.ok) {
+			done.push(notes.value);
+			planned.push({ ...stored, status: "indexed", summaryBullets: notes.value.summaryBullets });
+		} else planned.push({ ...stored, status: "failed", error: notes.error });
 	}
-
-	const terms = mergeTerms(done.map((d) => d.notes.terms));
-	const concepts = mergeConcepts(done.map((d) => d.notes.concepts));
-	const figures = mergeFigures(done.map((d) => d.notes.figures));
-	const pageCount = pageCountOf(contentMd);
-
-	if (!single && done.length > 0) {
-		deps.onActivity?.(`indexing ${label}: writing the profile`);
-		const header = `The material: ${deps.name ? `"${clip(deps.name, NAME_MAX_CHARS)}"` : "one document"}, ${pageCount} pages, read in ${batches.length} parts.`;
-		const notes = batchNotesText({ parts: done, failed: failedBatches, terms, concepts, figures }, REDUCE_REQUEST_MAX_CHARS - RETRY_RESERVE_CHARS - header.length - 20);
-		const request = `${header}\n\n<notes>\n${notes}\n</notes>`;
-		const result = await callValidated(deps, REDUCE_RULES, request, AGAIN_PROFILE, (reply) => {
-			// a profile wrapped in {"profile": "…"} is still the profile
-			let text = reply;
-			if (/^\s*(```(json)?\s*)?\{/i.test(reply)) {
-				try {
-					const value = parseReply(reply) as { profile?: unknown } | null;
-					if (value && typeof value.profile === "string") text = value.profile;
-				} catch {
-					// not JSON: judged as Markdown
-				}
-			}
-			return validateProfile(text);
-		});
-		profile = result.ok ? result : { ok: false, error: `the profile could not be written: ${result.error}` };
-	}
-	deps.signal?.throwIfAborted();
 
 	const base: Omit<MaterialDigest, "profile" | "profileError"> = {
 		version: MATERIAL_DIGEST_VERSION,
@@ -646,13 +941,15 @@ export async function digestMaterial(contentMd: string, deps: MaterialDigestDeps
 		converter: deps.converter,
 		converterVersion: deps.converterVersion,
 		indexerVersion: MATERIAL_INDEXER_VERSION,
-		pageCount,
+		pageCount: pageCountOf(contentMd),
 		sourcePageCount: deps.sourcePageCount ?? null,
-		batches: batches.map(ref),
-		failedBatches,
-		terms,
-		concepts,
-		figures,
+		batches: planned,
+		failedBatches: planned.filter((b): b is DigestFailedBatch => b.status === "failed"),
+		terms: mergeTerms(done.map((n) => n.terms)),
+		concepts: mergeConcepts(done.map((n) => n.concepts)),
+		figures: mergeFigures(done.map((n) => n.figures)),
 	};
-	return profile.ok ? { ...base, profile: profile.value } : { ...base, profile: null, profileError: clip(profile.error, MAX_ERROR_CHARS) };
+	if (!single && done.length > 0) profile = await writeProfile(deps, base);
+	deps.signal?.throwIfAborted();
+	return withProfile(base, profile);
 }

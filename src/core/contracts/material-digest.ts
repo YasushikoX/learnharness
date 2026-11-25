@@ -7,19 +7,27 @@
  *
  * Ids are deterministic (`t_` / `c_` plus the key of the normalised name,
  * `core/glossary.ts slugOf`), so re-indexing a document, or indexing another
- * document that names the same term, gives the same id; names that differ in
- * anything but case, spacing, hyphenation or Unicode compatibility form get
- * different ids ("C" and "C++", "f(x)" and "f′(x)" are different terms).
+ * document that names the same term, gives the same id. Names that differ in
+ * anything but case, spacing, a dash between two letters, invisible characters
+ * (soft hyphens, zero-width characters) or the targeted foldings (ligatures,
+ * full-width forms, apostrophe and prime marks) get different ids: "C", "C++"
+ * and "C--", "x²", "x₂" and "x2", "ℝ" and "R", "f(x)" and "f′(x)" are different
+ * terms.
  *
- * Page markers: `content.md` marks page N with a line `--- Page N ---` of its
- * own. Converters must not emit a page marker inside a fenced code block (``` or
- * ~~~) and must close every fence they open: the splitter treats marker-like
- * lines and headings inside a closed fence as content (a fenced example of a
- * marker is not a page break), and a fence that is never closed as no fence.
+ * Page markers: `content.md` is written by the host application, which writes
+ * every page marker itself and escapes marker-like lines in a page's own text
+ * (`core/material-split.ts`: PAGE_MARKER_PATTERN, formatPageMarker,
+ * escapePageMarkerLines). Every marker line is a real page boundary; a code
+ * fence never spans one.
  */
 
-/** The digest.json format stamp. 2: nullable profile, explicit definitions, batch character ranges, new ids. */
-export const MATERIAL_DIGEST_VERSION = 2;
+/**
+ * The digest.json format stamp. 2: nullable profile, explicit definitions, batch character ranges, new ids.
+ * 3: new ids (no NFKC, dashes and "_" kept as symbols, invisible characters removed); every batch persists its pages
+ * and heading path, and an indexed batch its summary bullets, so the profile can be written again from the digest
+ * alone (`rewriteProfile`) and a failed batch re-run from content.md and its stored range (`batchFromRef`).
+ */
+export const MATERIAL_DIGEST_VERSION = 3;
 
 /** core: the document treats it as something a student must know. supporting: it appears in passing. */
 export type TermTier = "core" | "supporting";
@@ -57,22 +65,36 @@ export interface DigestFigure {
 	caption: string;
 }
 
-/** One batch of the split plan: its page range and where it sits in content.md. */
+/** One batch of the split plan: where it sits in content.md and what the extraction request said about it. */
 export interface DigestBatchRef {
 	index: number;
 	/** The page its first character is on. */
 	pageStart: number;
 	/** The page its last character is on (lower than pageStart only when the markers run backwards). */
 	pageEnd: number;
+	/** Every page its text is on, ascending (core/material-split.ts MaterialBatch.pages): what citations are checked against. */
+	pages: number[];
+	/** The heading titles in force where it starts, outermost first; each title whitespace-collapsed, at most 200 characters. */
+	headingPath: string[];
 	/** content.md.slice(charStart, charEnd) is the batch's text (UTF-16 offsets): a failed batch can be re-run alone. */
 	charStart: number;
 	charEnd: number;
 }
 
+/** A batch whose notes validated. */
+export interface DigestIndexedBatch extends DigestBatchRef {
+	status: "indexed";
+	/** The batch's own summary bullets, in order: the reduce step's notes for it. */
+	summaryBullets: string[];
+}
+
 /** A batch whose model output never validated (or whose call failed): its pages are not indexed. */
 export interface DigestFailedBatch extends DigestBatchRef {
+	status: "failed";
 	error: string;
 }
+
+export type DigestBatch = DigestIndexedBatch | DigestFailedBatch;
 
 interface MaterialDigestBase {
 	version: typeof MATERIAL_DIGEST_VERSION;
@@ -91,9 +113,9 @@ interface MaterialDigestBase {
 	pageCount: number;
 	/** The source's physical page count when the caller supplied it (a PDF's page count at conversion); else null. */
 	sourcePageCount: number | null;
-	/** The whole split plan, in order (failed batches included). */
-	batches: DigestBatchRef[];
-	/** The batches that could not be indexed (a subset of `batches`; all of them when nothing could be indexed). */
+	/** The whole split plan, in order, each batch indexed or failed. */
+	batches: DigestBatch[];
+	/** The failed batches (exactly the `batches` with status "failed", in order; all of them when nothing could be indexed). */
 	failedBatches: DigestFailedBatch[];
 	terms: DigestTerm[];
 	concepts: DigestConcept[];
@@ -103,6 +125,7 @@ interface MaterialDigestBase {
 /**
  * The digest.json contract. `profile` is the source profile in the Markdown format of `LessonMaterial.profile`
  * (core/materials.ts), or null with `profileError` saying why (the profile call failed, or no batch was indexed): the
- * extracted terms, concepts and figures are kept either way, and the profile can be written again later.
+ * extracted terms, concepts and figures are kept either way, and the profile can be written again later from the digest
+ * alone (agent/subagents/material-digest.ts rewriteProfile).
  */
 export type MaterialDigest = MaterialDigestBase & ({ profile: string; profileError?: undefined } | { profile: null; profileError: string });

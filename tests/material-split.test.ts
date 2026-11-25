@@ -6,7 +6,17 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { DEFAULT_BATCH_TOKENS, estimateTextTokens, pageCountOf, splitMaterial, type MaterialBatch } from "../src/core/material-split.ts";
+import {
+	DEFAULT_BATCH_TOKENS,
+	escapePageMarkerLines,
+	estimateTextTokens,
+	formatPageMarker,
+	PAGE_MARKER_PATTERN,
+	pageCountOf,
+	splitMaterial,
+	unescapePageMarkerLines,
+	type MaterialBatch,
+} from "../src/core/material-split.ts";
 
 /** The batches tile the document exactly: in order, no gap, no overlap, each text its own slice. */
 function assertTiles(doc: string, batches: readonly MaterialBatch[]): void {
@@ -176,9 +186,11 @@ describe("splitMaterial", () => {
 	});
 
 	// Review 1, defect 8: a fenced example of a page marker and a heading gave pageCount 99, a fake section and a missed
-	// real heading.
-	it("a page marker and a heading inside a fenced code block are content, for pages, counting, cuts and heading paths", () => {
-		const doc = "--- Page 1 ---\n\n# Intro\n\nText.\n\n```md\n--- Page 99 ---\n# Fake\n```\n\n# Real\n\nBody after the fence.\n";
+	// real heading. Changed for the new contract (manager's ruling after review 2): the host escapes a marker-like line in
+	// a page's text, so the example arrives as "\--- Page 99 ---"; an unescaped marker line is always a page boundary.
+	it("an escaped marker and a heading inside a fenced code block are content, for pages, counting, cuts and heading paths", () => {
+		const doc = `--- Page 1 ---\n\n# Intro\n\nText.\n\n${escapePageMarkerLines("```md\n--- Page 99 ---\n# Fake\n```")}\n\n# Real\n\nBody after the fence.\n`;
+		assert.match(doc, /^\\--- Page 99 ---$/m);
 		assert.equal(pageCountOf(doc), 1);
 		for (const budgetTokens of [3, 5, 8, 12, 1_000]) {
 			const batches = splitMaterial(doc, { budgetTokens });
@@ -195,11 +207,101 @@ describe("splitMaterial", () => {
 		assert.ok(sections.some((b) => b.text.startsWith("# Real")));
 		assert.ok(!sections.some((b) => b.text.startsWith("# Fake")));
 		// ~~~ fences too, and a longer closing fence closes a shorter opening one
-		const tilde = "--- Page 3 ---\nA\n~~~\n--- Page 98 ---\n~~~~\n--- Page 4 ---\nB\n";
+		const tilde = "--- Page 3 ---\nA\n~~~\n\\--- Page 98 ---\n# Not a heading\n~~~~\n--- Page 4 ---\n# Four\nB\n";
 		assert.equal(pageCountOf(tilde), 4);
 		const tildeBatches = splitMaterial(tilde, { budgetTokens: 4 });
 		assertTiles(tilde, tildeBatches);
 		assert.deepEqual([...new Set(tildeBatches.flatMap((b) => b.pages))].sort((a, b) => a - b), [3, 4]);
+		assert.ok(!tildeBatches.some((b) => b.headingPath.includes("Not a heading")));
+		assert.ok(tildeBatches.some((b) => b.headingPath[0] === "Four"));
+	});
+
+	// The new contract: an unescaped marker line inside what looks like an open fence is a real page boundary, and the
+	// fence ends there (it was never closed on its page, so it is not a fence).
+	it("a marker line is a page boundary even where a fence seems open; a fence never spans pages", () => {
+		const doc = "--- Page 1 ---\nIntro\n```md\ncode\n--- Page 2 ---\n# Kapittel 2\nTo\n```\n--- Page 3 ---\nTre\n";
+		assert.equal(pageCountOf(doc), 3);
+		for (const budgetTokens of [3, 6, 1_000]) {
+			const batches = splitMaterial(doc, { budgetTokens });
+			assertTiles(doc, batches);
+			assert.deepEqual([...new Set(batches.flatMap((b) => b.pages))].sort((a, b) => a - b), [1, 2, 3], `budget ${budgetTokens}`);
+			if (budgetTokens < 1_000) assert.ok(batches.some((b) => b.headingPath[0] === "Kapittel 2"), "the heading after the marker is a heading");
+		}
+	});
+
+	// Review 2, finding 4: an unclosed ```python on page 1 and a real closed block on page 52 swallowed every marker and
+	// heading between them (pages [1, 53], headings []).
+	it("review 2, finding 4: an unclosed fence on page 1 swallows nothing up to a closed fence 51 pages later", () => {
+		const pages: string[] = [];
+		for (let n = 1; n <= 53; n++) {
+			let body = `# Kapittel ${n}\n\nTekst på side ${n}.`;
+			if (n === 1) body += "\n\n```python\nprint('never closed')";
+			if (n === 52) body += "\n\n```\nreal = True\n```";
+			pages.push(`--- Page ${n} ---\n\n${body}`);
+		}
+		const doc = pages.join("\n\n");
+		assert.equal(pageCountOf(doc), 53);
+		const batches = splitMaterial(doc, { budgetTokens: 10 });
+		assertTiles(doc, batches);
+		assert.deepEqual([...new Set(batches.flatMap((b) => b.pages))].sort((a, b) => a - b), Array.from({ length: 53 }, (_, i) => i + 1));
+		const headings = new Set(batches.flatMap((b) => b.headingPath));
+		for (let n = 1; n <= 53; n++) assert.ok(headings.has(`Kapittel ${n}`), `Kapittel ${n} is a heading`);
+		assert.equal(splitMaterial(doc).length, 1);
+		assert.deepEqual(splitMaterial(doc)[0]!.pages.length, 53);
+	});
+
+	// Review 2, finding 7: "--- Page 0 ---" gave a batch pages [0], which no citation can satisfy.
+	it("review 2, finding 7: page 0 (and a number with leading zeros) is not a marker", () => {
+		assert.equal(PAGE_MARKER_PATTERN.test("--- Page 0 ---"), false);
+		assert.equal(PAGE_MARKER_PATTERN.test("--- Page 007 ---"), false);
+		assert.equal(PAGE_MARKER_PATTERN.test("--- Page 7 ---"), true);
+		assert.equal(PAGE_MARKER_PATTERN.test("--- Page 7 --- \r"), true);
+		const doc = "--- Page 0 ---\n\nNull\n\n--- Page 1 ---\n\nEn\n";
+		const batches = splitMaterial(doc, { budgetTokens: 3 });
+		assertTiles(doc, batches);
+		for (const b of batches) assert.ok(b.pages.every((p) => p >= 1), `batch ${b.index} pages ${b.pages.join(",")}`);
+		assert.equal(pageCountOf("--- Page 0 ---\nNull\n"), 1);
+		assert.deepEqual(splitMaterial("--- Page 0 ---\nNull\n")[0]!.pages, [1]);
+		assert.throws(() => formatPageMarker(0), RangeError);
+		assert.throws(() => formatPageMarker(1.5), RangeError);
+		assert.throws(() => formatPageMarker(-3), RangeError);
+	});
+
+	// The exported contract the host writes content.md with.
+	it("formatPageMarker, PAGE_MARKER_PATTERN and escapePageMarkerLines agree, and the escape round-trips", () => {
+		assert.equal(formatPageMarker(12), "--- Page 12 ---");
+		assert.equal(PAGE_MARKER_PATTERN.exec(formatPageMarker(12))![1], "12");
+		assert.equal(escapePageMarkerLines("--- Page 3 ---"), "\\--- Page 3 ---");
+		assert.equal(escapePageMarkerLines("\\--- Page 3 ---"), "\\\\--- Page 3 ---");
+		assert.equal(escapePageMarkerLines("--- Page 0 ---\r\nTekst\n  --- Page 3 ---"), "\\--- Page 0 ---\r\nTekst\n  --- Page 3 ---");
+		assert.equal(unescapePageMarkerLines("\\--- Page 3 ---\n\\\\--- Page 4 ---\n\\other"), "--- Page 3 ---\n\\--- Page 4 ---\n\\other");
+		// a document the host writes: every page's own text escaped, so only the host's markers count
+		const pageTexts = ["En\n--- Page 9 ---\n", "--- Page 1 ---", "\\--- Page 2 ---\nTo"];
+		const doc = pageTexts.map((t, i) => `${formatPageMarker(i + 1)}\n\n${escapePageMarkerLines(t)}`).join("\n\n");
+		assert.equal(pageCountOf(doc), 3);
+		assert.deepEqual(splitMaterial(doc)[0]!.pages, [1, 2, 3]);
+		const rand = mulberry32(7);
+		const lineKinds = ["--- Page 3 ---", "--- Page 0 ---", "\\--- Page 5 ---", "\\\\\\--- Page 12 --- ", "--- Page 4 ---\r", "--- Page x ---", "text", "", "\\", "--- Page 3 --- tail"];
+		for (let i = 0; i < 500; i++) {
+			const text = Array.from({ length: Math.floor(rand() * 8) }, () => lineKinds[Math.floor(rand() * lineKinds.length)]!).join("\n");
+			const escaped = escapePageMarkerLines(text);
+			assert.equal(unescapePageMarkerLines(escaped), text, JSON.stringify(text));
+			assert.ok(escaped.split("\n").every((l) => !PAGE_MARKER_PATTERN.test(l)), JSON.stringify(escaped));
+			assert.equal(escapePageMarkerLines(unescapePageMarkerLines(escaped)), escaped);
+		}
+	});
+
+	// Review 2, concern 3: fencedLines was quadratic on adversarial input (6,000 nested openers: 53 ms).
+	it("review 2, concern 3: fence detection is linear on many openers that never close", () => {
+		const lines: string[] = [];
+		for (let i = 0; i < 50_000; i++) lines.push("```a", "~~~");
+		const doc = `--- Page 1 ---\n${lines.join("\n")}\n# Slutt\nTekst\n`;
+		const started = performance.now();
+		const batches = splitMaterial(doc, { budgetTokens: 2_000 });
+		const ms = performance.now() - started;
+		assertTiles(doc, batches);
+		// the old scan compared each of the 50,000 openers with up to 100,000 closers; linear takes milliseconds
+		assert.ok(ms < 2_000, `took ${Math.round(ms)} ms`);
 	});
 
 	it("a fence that is never closed is not a fence: the page markers after it still count", () => {
@@ -241,7 +343,10 @@ describe("splitMaterial", () => {
 		assert.ok(ms < 3_000, `took ${Math.round(ms)} ms`);
 	});
 
-	it("property: seeded random documents (markers, fences, CRLF, empty pages, very long lines, emoji) always tile", () => {
+	// Extended after review 2 (it generated only closed fences, which is why finding 4 was missed): unclosed fences,
+	// fences left open across a page marker, escaped marker-like lines (page 0 only in this escaped form) and doubly
+	// escaped ones.
+	it("property: seeded random documents (markers, fences open or closed, escaped markers, CRLF, empty pages, very long lines, emoji) always tile", () => {
 		let checks = 0;
 		for (let seed = 1; seed <= 400; seed++) {
 			const rand = mulberry32(seed);
@@ -250,19 +355,26 @@ describe("splitMaterial", () => {
 			const parts: string[] = [];
 			let page = 0;
 			const count = 1 + Math.floor(rand() * 40);
+			const kinds = ["marker", "marker", "text", "text", "text", "heading", "fence", "unclosed", "across", "escaped", "blank", "long", "emoji", "empty-page", "backward"] as const;
 			for (let i = 0; i < count; i++) {
-				const kind = pick(["marker", "marker", "text", "text", "text", "heading", "fence", "blank", "long", "emoji", "empty-page", "backward"] as const);
+				const kind = pick(kinds);
 				if (kind === "marker") parts.push(`--- Page ${(page += 1 + Math.floor(rand() * 2))} ---${nl}${rand() < 0.5 ? nl : ""}`);
 				else if (kind === "backward") parts.push(`--- Page ${Math.max(1, page - 1 - Math.floor(rand() * 3))} ---${nl}`);
 				else if (kind === "empty-page") parts.push(`--- Page ${++page} ---${nl}${nl}--- Page ${++page} ---${nl}`);
 				else if (kind === "text") parts.push(`${prose(`Tekst ${i}`, 1 + Math.floor(rand() * 400))}${nl}`);
 				else if (kind === "heading") parts.push(`${"#".repeat(1 + Math.floor(rand() * 6))} Heading ${i}${nl}`);
 				else if (kind === "fence") {
-					// always closed (an unclosed fence is not a fence: its own test), the closer as long or longer
+					// closed on its page, the closer as long or longer; the example marker inside is escaped as the host does
 					const open = pick(["```", "~~~", "````"]);
 					const close = rand() < 0.3 ? `${open}${open[0]}` : open;
-					parts.push(`${open}md${nl}--- Page ${900 + i} ---${nl}# FencedFake ${i}${nl}code ${i}${nl}${close}${nl}`);
-				}
+					const example = escapePageMarkerLines(`--- Page ${pick([0, 900 + i])} ---`);
+					parts.push(`${open}md${nl}${example}${nl}# FencedFake ${i}${nl}code ${i}${nl}${close}${nl}`);
+				} else if (kind === "unclosed") parts.push(`${pick(["```python", "~~~", "````", "```"])}${nl}code ${i}${nl}`);
+				else if (kind === "across") {
+					// opened on one page, a real marker, then a closer: not a fence (it would span the boundary)
+					const open = pick(["```", "~~~"]);
+					parts.push(`${open}${nl}--- Page ${(page += 1)} ---${nl}# Across ${i}${nl}${open}${nl}`);
+				} else if (kind === "escaped") parts.push(`${escapePageMarkerLines(pick([`--- Page ${900 + i} ---`, "--- Page 0 ---", `\\--- Page ${900 + i} ---`]))}${nl}`);
 				else if (kind === "blank") parts.push(pick([nl, `${nl}${nl}`, `  ${nl}`]));
 				else if (kind === "long") parts.push(`${"L".repeat(1 + Math.floor(rand() * 60_000))}${nl}`);
 				else parts.push(`${"🙂".repeat(1 + Math.floor(rand() * 30))}${nl}`);
@@ -277,16 +389,24 @@ describe("splitMaterial", () => {
 				continue;
 			}
 			assertTiles(doc, batches);
-			const realPages = new Set([...doc.matchAll(/^--- Page (\d+) ---\r?$/gm)].map((m) => Number(m[1])).filter((n) => n < 900));
+			// the real markers are exactly the unescaped marker lines the generator wrote (escaped ones start with "\")
+			const realPages = new Set([...doc.matchAll(/^--- Page (\d+) ---\r?$/gm)].map((m) => Number(m[1])));
+			assert.ok(![...realPages].some((p) => p === 0 || p >= 900), `seed ${seed}: the generator wrote page 0 or 900+ unescaped`);
+			const seenPages = new Set<number>();
 			for (const b of batches) {
 				assert.ok(estimate(b.text) <= budgetTokens || [...b.text].length === 1, `seed ${seed}: batch ${b.index} over the budget`);
 				assert.ok(!/[\ud800-\udbff]$/.test(b.text), `seed ${seed}: a surrogate pair is cut`);
 				assert.ok(b.pages.includes(b.pageStart) && b.pages.includes(b.pageEnd), `seed ${seed}: pages hold start and end`);
-				for (const p of b.pages) assert.ok(p < 900 && (realPages.size === 0 ? p === 1 : realPages.has(p)), `seed ${seed}: page ${p} is a real marker`);
+				for (const p of b.pages) {
+					assert.ok(p >= 1 && (realPages.size === 0 ? p === 1 : realPages.has(p)), `seed ${seed}: page ${p} is a real marker`);
+					seenPages.add(p);
+				}
 				assert.ok(!b.headingPath.some((h) => h.startsWith("FencedFake")), `seed ${seed}: a fenced heading in a path`);
 				checks++;
 			}
-			assert.ok(pageCountOf(doc) < 900, `seed ${seed}: fenced markers are not counted`);
+			// no fence, open or closed, hides a real marker: every real page is some batch's page
+			for (const p of realPages) assert.ok(seenPages.has(p), `seed ${seed}: real page ${p} is missing from the batches`);
+			assert.equal(pageCountOf(doc), realPages.size === 0 ? 1 : Math.max(...realPages), `seed ${seed}: pageCount is the highest real marker`);
 		}
 		assert.ok(checks > 1_000, `${checks} batch checks`);
 	});

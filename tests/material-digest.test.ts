@@ -3,30 +3,48 @@
  * merging digests into a class glossary (core/glossary.ts). The model is a scripted fake injected through the deps,
  * never a real one: call counts (one for a single batch, batches + 1 otherwise), the retry with the validation error,
  * failed batches recorded while the others succeed, the merge of duplicate terms, stable ids, and alias matching.
- * Tests named "review 1, defect N" / "concern N" reproduce the findings of the WP3b review
- * (council/reviews/wp3b-review-1.md) with the reviewer's cases.
+ * Tests named "review 1, defect N" / "concern N" reproduce the findings of the first WP3b review
+ * (council/reviews/wp3b-review-1.md), and "review 2, finding N" / "concern" / "contract" those of the second
+ * (council/reviews/wp3b-review-2.md), with the reviewers' cases.
  */
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+	batchFromRef,
 	batchNotesText,
+	buildReduceRequest,
 	digestMaterial,
 	EXTRACTION_OVERHEAD_MAX_CHARS,
 	formatHeadingPath,
 	HEADING_PATH_MAX_CHARS,
 	MATERIAL_INDEXER_VERSION,
+	mergeConcepts,
 	mergeTerms,
 	REDUCE_REQUEST_MAX_CHARS,
+	rewriteProfile,
 	validateBatchReply,
 	validateProfile,
 	type BatchNotes,
 	type BatchTerm,
 	type DigestModelCall,
+	type ReduceFailedPart,
+	type ReducePart,
 } from "../src/agent/subagents/material-digest.ts";
-import { conceptId, findTerm, findTermCandidates, mergeGlossary, slugOf, termId } from "../src/core/glossary.ts";
+import {
+	conceptId,
+	findTerm,
+	findTermById,
+	findTermCandidates,
+	mergeGlossary,
+	normalizeName,
+	SLUG_MAX_CHARS,
+	SLUG_PREFIX_CHARS,
+	slugOf,
+	termId,
+} from "../src/core/glossary.ts";
 import { splitMaterial, type MaterialBatch } from "../src/core/material-split.ts";
-import { MATERIAL_DIGEST_VERSION, type MaterialDigest } from "../src/core/contracts/material-digest.ts";
+import { MATERIAL_DIGEST_VERSION, type DigestTerm, type MaterialDigest } from "../src/core/contracts/material-digest.ts";
 
 const META = { sourceHash: "sha256:abc", converter: "pdfjs-markdown", converterVersion: "5.4.0" };
 
@@ -98,6 +116,23 @@ function batchOf(pages: number[], index = 0): MaterialBatch {
 	return { index, pageStart: pages[0]!, pageEnd: pages.at(-1)!, pages, headingPath: [], text: "", charStart: 0, charEnd: 1 };
 }
 
+/** An indexed part as the reduce notes read it (0-based index). */
+function part(index: number, pageStart: number, pageEnd: number, summaryBullets: string[], headingPath: string[] = []): ReducePart {
+	return { index, pageStart, pageEnd, headingPath, summaryBullets };
+}
+
+/** A failed part as the reduce notes read it (0-based index). */
+function failedPart(index: number, pageStart: number, pageEnd = pageStart): ReduceFailedPart {
+	return { index, pageStart, pageEnd };
+}
+
+/** Every "Part N" / "Parts A-B" the notes name, as 1-based part numbers. */
+function namedParts(text: string): Set<number> {
+	const covered = new Set<number>();
+	for (const m of text.matchAll(/Parts? (\d+)(?:-(\d+))?/g)) for (let p = Number(m[1]); p <= Number(m[2] ?? m[1]); p++) covered.add(p);
+	return covered;
+}
+
 describe("digestMaterial", () => {
 	it("a single-batch document (a slide deck) costs exactly one call, which also writes the profile", async () => {
 		const doc = slideDeck(3, 200);
@@ -112,12 +147,14 @@ describe("digestMaterial", () => {
 		assert.match(model.calls[0]!.system, /material's own language/);
 		assert.equal(digest.profile, PROFILE, "the profile from its first ## heading on");
 		assert.equal(digest.profileError, undefined);
-		assert.deepEqual(digest.batches, [{ index: 0, pageStart: 1, pageEnd: 3, charStart: 0, charEnd: doc.length }]);
+		assert.deepEqual(digest.batches, [
+			{ index: 0, pageStart: 1, pageEnd: 3, pages: [1, 2, 3], headingPath: [], charStart: 0, charEnd: doc.length, status: "indexed", summaryBullets: ["Del fra side 1"] },
+		]);
 		assert.deepEqual(digest.failedBatches, []);
-		assert.equal(digest.version, 2);
+		assert.equal(digest.version, 3);
 		assert.equal(digest.version, MATERIAL_DIGEST_VERSION);
 		assert.equal(digest.indexerVersion, MATERIAL_INDEXER_VERSION);
-		assert.equal(MATERIAL_INDEXER_VERSION, 2);
+		assert.equal(MATERIAL_INDEXER_VERSION, 3);
 		assert.equal(digest.sourceHash, META.sourceHash);
 		assert.equal(digest.converter, META.converter);
 		assert.equal(digest.converterVersion, META.converterVersion);
@@ -145,7 +182,17 @@ describe("digestMaterial", () => {
 		assert.equal(digest.profile, PROFILE);
 		assert.deepEqual(
 			digest.batches,
-			batches.map((b) => ({ index: b.index, pageStart: b.pageStart, pageEnd: b.pageEnd, charStart: b.charStart, charEnd: b.charEnd })),
+			batches.map((b) => ({
+				index: b.index,
+				pageStart: b.pageStart,
+				pageEnd: b.pageEnd,
+				pages: b.pages,
+				headingPath: b.headingPath,
+				charStart: b.charStart,
+				charEnd: b.charEnd,
+				status: "indexed",
+				summaryBullets: [`Del fra side ${b.pageStart}`],
+			})),
 		);
 		assert.equal(digest.terms.length, batches.length);
 		assert.equal(digest.pageCount, 40);
@@ -183,14 +230,15 @@ describe("digestMaterial", () => {
 		assert.equal(model.calls.length, batches.length + 2 + 1, "two retries plus the reduce");
 		assert.deepEqual(
 			digest.failedBatches.map(({ error: _e, ...ref }) => ref),
-			[{ index: 1, pageStart: second.pageStart, pageEnd: second.pageEnd, charStart: second.charStart, charEnd: second.charEnd }],
+			[{ index: 1, pageStart: second.pageStart, pageEnd: second.pageEnd, pages: second.pages, headingPath: [], charStart: second.charStart, charEnd: second.charEnd, status: "failed" }],
 		);
 		assert.match(digest.failedBatches[0]!.error, /not one JSON object/);
 		assert.equal(digest.batches.length, batches.length, "the failed batch stays in the plan");
+		assert.deepEqual(digest.batches[1], digest.failedBatches[0]);
 		assert.equal(digest.terms.length, batches.length - 1);
 		assert.ok(digest.terms.some((t) => t.id === termId(`Begrep ${third.pageStart}`)), "the retried batch is indexed");
 		const reduce = model.calls.at(-1)!;
-		assert.match(reduce.user, new RegExp(`Not indexed, the notes are missing: pages ${second.pageStart}-${second.pageEnd}`));
+		assert.match(reduce.user, new RegExp(`Not indexed, so the notes are missing for this part: part 2, pages ${second.pageStart}-${second.pageEnd}\\.\\)`));
 	});
 
 	// Changed for the new contract: every batch failing returns a digest instead of throwing.
@@ -440,14 +488,17 @@ describe("digestMaterial", () => {
 		assert.equal(reduceCall.calls.filter(isReduce).length, 1);
 	});
 
-	// Review 1, defect 8 (the digest half): a fenced example marker gave pageCount 99.
-	it("review 1, defect 8: a fenced page marker does not count as a page", async () => {
-		const doc = "--- Page 1 ---\n\n# Intro\n\nText.\n\n```md\n--- Page 99 ---\n# Fake\n```\n\n# Real\n\nBody.\n";
+	// Review 1, defect 8 (the digest half): a fenced example marker gave pageCount 99. Changed for the new contract: the
+	// host escapes the example ("\--- Page 99 ---"), and the prompt says an unescaped marker line always starts a page.
+	it("review 1, defect 8: an escaped example marker does not count as a page, and the prompt explains both forms", async () => {
+		const doc = "--- Page 1 ---\n\n# Intro\n\nText.\n\n```md\n\\--- Page 99 ---\n# Fake\n```\n\n# Real\n\nBody.\n";
 		const model = fakeModel((call) => notesFor(call.user, { profile: PROFILE }));
 		const digest = await digestMaterial(doc, { ...META, complete: model.complete });
 		assert.equal(digest.pageCount, 1);
 		assert.match(model.calls[0]!.user, /This part's pages: 1\./);
-		assert.match(model.calls[0]!.system, /Inside a fenced code block/);
+		assert.match(model.calls[0]!.system, /Every line "--- Page N ---" starts page N, wherever it is/);
+		assert.match(model.calls[0]!.system, /A line that starts with a backslash \("\\--- Page N ---"\) is ordinary text/);
+		assert.match(model.calls[0]!.system, /A "#" line inside a fenced code block/);
 	});
 
 	// Concern 1: what to emit for a term the material uses without defining it.
@@ -502,16 +553,100 @@ describe("validateBatchReply and batchNotesText", () => {
 	});
 
 	it("review 1, defect 2: the reduce notes fit any budget and name every part, grouping parts past the detail ladder", () => {
-		const parts = Array.from({ length: 5_000 }, (_, i) => ({
-			batch: { ...batchOf([i * 3 + 1, i * 3 + 3], i), headingPath: ["Kapittel", `Seksjon ${i}`] },
-			notes: { summaryBullets: [`Del ${i} handler om noe viktig.`, "Mer.", "Enda mer."], terms: [], concepts: [], figures: [] } as BatchNotes,
-		}));
+		const parts = Array.from({ length: 5_000 }, (_, i) => part(i, i * 3 + 1, i * 3 + 3, [`Del ${i} handler om noe viktig.`, "Mer.", "Enda mer."], ["Kapittel", `Seksjon ${i}`]));
 		for (const max of [200_000, 20_000, 2_000]) {
 			const text = batchNotesText({ parts, failed: [], terms: [], concepts: [], figures: [] }, max);
 			assert.ok(text.length <= max, `${text.length} <= ${max}`);
-			const covered = new Set<number>();
-			for (const m of text.matchAll(/Parts? (\d+)(?:-(\d+))?/g)) for (let p = Number(m[1]); p <= Number(m[2] ?? m[1]); p++) covered.add(p);
+			const covered = namedParts(text);
 			for (let p = 1; p <= parts.length; p++) assert.ok(covered.has(p), `part ${p} is named at budget ${max}`);
+		}
+	});
+
+	// Review 2, finding 6, case 1: 1,000 parts with 200 core terms at the default budget gave no "## Terms" and none of
+	// the 200 core terms.
+	it("review 2, finding 6: past the detail ladder the core term names keep their reserved share", () => {
+		const parts = Array.from({ length: 1_000 }, (_, i) => part(i, i + 1, i + 1, [`Del ${i} handler om noe viktig og forklarer det grundig.`], ["Kapittel", `Seksjon ${i}`]));
+		const core = Array.from({ length: 200 }, (_, k) => ({ id: termId(`Kjernebegrep ${k}`), term: `Kjernebegrep ${k}`, aliases: [], page: k + 1, tier: "core" as const, definition: "En lang definisjon. ".repeat(10), definitionPage: k + 1 }));
+		const supporting = Array.from({ length: 300 }, (_, k) => ({ ...core[0]!, id: termId(`Støtte ${k}`), term: `Støtte ${k}`, tier: "supporting" as const }));
+		const text = batchNotesText({ parts, failed: [], terms: [...core, ...supporting], concepts: [], figures: [] });
+		assert.ok(text.length <= REDUCE_REQUEST_MAX_CHARS, `${text.length}`);
+		assert.match(text, /^## Terms$/m);
+		for (const t of core) assert.ok(new RegExp(`\\b${t.term}\\b`).test(text), `${t.term} is listed`);
+		assert.match(text, /300 supporting terms/);
+		const covered = namedParts(text);
+		for (let p = 1; p <= parts.length; p++) assert.ok(covered.has(p), `part ${p} is named`);
+		// at every budget the core names get their share: as many as fit in a quarter of it
+		for (const max of [40_000, 8_000, 2_000]) {
+			const small = batchNotesText({ parts, failed: [], terms: core, concepts: [], figures: [] }, max);
+			assert.ok(small.length <= max);
+			const listed = core.filter((t) => new RegExp(`\\b${t.term}\\b`).test(small)).length;
+			// a name and its separator are at most 18 characters; the label and the count take about 100
+			assert.ok(listed >= Math.min(200, Math.floor((max / 4 - 100) / 18)), `${listed} core names at budget ${max}`);
+			if (listed < 200) assert.ok(small.includes(`(+${200 - listed} more core terms left out for length)`), `the rest is counted at budget ${max}`);
+		}
+	});
+
+	// Review 2, finding 6, case 2: 1,500 indexed odd-numbered parts with 1,000 failed even ones read "Parts 1-3, pages
+	// 1-3" (implying the failed part 2 was included), and the failed line was clipped at 1,000 characters without a count.
+	it("review 2, finding 6: parts are never grouped across a gap, and the failed parts are always counted", () => {
+		const parts = Array.from({ length: 1_500 }, (_, k) => part(2 * k, 2 * k + 1, 2 * k + 1, [`Oddetall ${2 * k + 1} handler om noe.`]));
+		const failed = Array.from({ length: 1_000 }, (_, k) => failedPart(2 * k + 1, 2 * k + 2));
+		const text = batchNotesText({ parts, failed, terms: [], concepts: [], figures: [] });
+		assert.ok(text.length <= REDUCE_REQUEST_MAX_CHARS);
+		const failedLine = text.split("\n").find((l) => l.startsWith("(Not indexed"))!;
+		assert.ok(failedLine, "the failed line is there");
+		assert.match(failedLine, /^\(Not indexed, so the notes are missing for these 1000 parts: /);
+		assert.match(failedLine, /\.\)$/, "the failed line ends cleanly");
+		const listed = [...failedLine.matchAll(/part (\d+), page/g)].map((m) => Number(m[1]));
+		const unlisted = Number(/\(\+(\d+) more not listed\)/.exec(failedLine)?.[1] ?? 0);
+		assert.equal(listed.length + unlisted, 1_000, "every failed part is listed or counted");
+		assert.ok(listed.every((p) => p % 2 === 0));
+		// every group of parts the notes name holds only indexed (odd) parts: no range spans a failed one
+		const partsBlock = text.slice(0, text.indexOf("(Not indexed"));
+		for (const m of partsBlock.matchAll(/Parts? (\d+)(?:-(\d+))?/g)) {
+			for (let p = Number(m[1]); p <= Number(m[2] ?? m[1]); p++) assert.equal(p % 2, 1, `${m[0]} includes the failed part ${p}`);
+		}
+		for (let p = 1; p <= 3_000; p += 2) assert.ok(namedParts(partsBlock).has(p), `indexed part ${p} is named`);
+		// a gap splits runs in the ladder levels too: two runs, two groups
+		const two = batchNotesText({ parts: [part(0, 1, 1, ["a"]), part(1, 2, 2, ["b"]), part(3, 4, 4, ["d"])], failed: [failedPart(2, 3)], terms: [], concepts: [], figures: [] }, 120);
+		assert.ok(two.length <= 120);
+		assert.doesNotMatch(two, /Parts 1-4|Parts 2-4/);
+	});
+
+	// Review 2, finding 6, case 3: maxChars = 100 with 10 failed batches cut mid-word, and the failed line could vanish.
+	it("review 2, finding 6: a tiny budget still counts the failed parts and cuts nothing mid-word", () => {
+		const words = "Ordaaaaaaaa Ordbbbbbbbb Ordcccccccc Orddddddddd Ordeeeeeeee";
+		const parts = Array.from({ length: 5 }, (_, i) => part(i * 3, i * 3 + 1, i * 3 + 1, [words, words]));
+		const failed = Array.from({ length: 10 }, (_, i) => failedPart(15 + i, 16 + i));
+		const core = [{ id: "t_x", term: "Kjerneord", aliases: [], page: 1, tier: "core" as const, definition: null, definitionPage: null }];
+		for (const max of [100, 160, 300, 1_000, 3_000]) {
+			const text = batchNotesText({ parts, failed, terms: core, concepts: [], figures: [] }, max);
+			assert.ok(text.length <= max, `${text.length} <= ${max}`);
+			assert.match(text, /10 parts/, `the failed count at budget ${max}`);
+			for (const m of text.matchAll(/Ord[a-z]*/g)) assert.equal(m[0].length, 11, `"${m[0]}" is cut mid-word at budget ${max}`);
+			assert.doesNotMatch(text, /Kjerne(?!ord)/, `a core name is cut at budget ${max}`);
+		}
+	});
+
+	it("property: the reduce notes stay within any budget, count the failed parts and keep core names whole", () => {
+		const rand = mulberry32(11);
+		for (let round = 0; round < 150; round++) {
+			const total = 1 + Math.floor(rand() * 400);
+			const parts: ReducePart[] = [];
+			const failed: ReduceFailedPart[] = [];
+			for (let i = 0; i < total; i++) {
+				if (rand() < 0.3) failed.push(failedPart(i, i + 1));
+				else parts.push(part(i, i + 1, i + 1 + Math.floor(rand() * 2), Array.from({ length: Math.floor(rand() * 4) }, (_, b) => `Punkt ${b} om emnet i del ${i} med flere ord`), rand() < 0.5 ? ["Kap", `Seksjon ${i}`] : []));
+			}
+			const terms: DigestTerm[] = Array.from({ length: Math.floor(rand() * 300) }, (_, k) => {
+				const definition = rand() < 0.5 ? null : "Definisjon med mange ord i seg.";
+				return { id: `t_k${k}`, term: `Begrepnavn${k}`, aliases: rand() < 0.3 ? [`B${k}`] : [], page: 1, tier: rand() < 0.5 ? "core" : "supporting", definition, definitionPage: definition === null ? null : 1 };
+			});
+			const max = [300, 1_000, 5_000, 20_000, 58_000][Math.floor(rand() * 5)]!;
+			const text = batchNotesText({ parts, failed, terms, concepts: [], figures: [] }, max);
+			assert.ok(text.length <= max, `round ${round}: ${text.length} > ${max}`);
+			if (failed.length > 0) assert.match(text, new RegExp(`(these ${failed.length} parts|this part|${failed.length} parts?)`), `round ${round}: the failed count`);
+			for (const m of text.matchAll(/Begrepnavn\d*/g)) assert.ok(terms.some((t) => t.term === m[0]), `round ${round}: "${m[0]}" is a cut name`);
 		}
 	});
 });
@@ -522,7 +657,7 @@ describe("ids", () => {
 		assert.equal(termId("  eigen-VALUE "), termId("Eigen value"));
 		assert.equal(termId("Første ordens ligning"), "t_første-ordens-ligning");
 		assert.notEqual(termId("første"), termId("forste"), "diacritics are kept");
-		assert.equal(termId("ﬁnite"), termId("finite"), "NFKC folds ligatures");
+		assert.equal(termId("ﬁnite"), termId("finite"), "ligatures are folded (targeted, no longer by NFKC)");
 		assert.equal(termId("λ"), "t_λ");
 		assert.equal(termId("∇"), "t__2207");
 		assert.notEqual(termId("∇"), termId("∆"));
@@ -614,28 +749,40 @@ describe("mergeGlossary and findTerm", () => {
 	});
 	const digest = (sourceHash: string, terms: MaterialDigest["terms"]): Pick<MaterialDigest, "sourceHash" | "terms"> => ({ sourceHash, terms });
 
+	// Changed for the manager's merge ruling after review 2: doc-c's "Eigenvalue" (alias Egenverdi) no longer chains into
+	// Egenverdi + λ (Egenverdi declares λ, which Eigenvalue does not know); the definition is chosen by pickDefinition
+	// (doc-b's core definition over doc-a's supporting one).
 	it("merges documents by id and by unambiguous alias, keeps per-document citations, core if any says core", () => {
 		const a = digest("doc-a", [term("Egenverdi", 4, "supporting", ["λ"], "Et tall λ slik at Av = λv."), term("Matrise", 1, "core")]);
 		const b = digest("doc-b", [term("λ", 12, "core", [], "Egenverdien."), term("matrise", 2, "supporting", [], null)]);
-		const c = digest("doc-c", [term("Eigenvalue", 7, "supporting", ["Egenverdi"])]);
-		const glossary = mergeGlossary([a, b, c]);
+		const glossary = mergeGlossary([a, b]);
 
 		assert.deepEqual(Object.keys(glossary.terms).sort(), ["t_egenverdi", "t_matrise"]);
 		const eigen = glossary.terms["t_egenverdi"]!;
-		assert.deepEqual(eigen.ids, ["t_egenverdi", "t_eigenvalue", "t_λ"]);
+		assert.deepEqual(eigen.ids, ["t_egenverdi", "t_λ"]);
 		assert.equal(eigen.term, "Egenverdi");
-		assert.equal(eigen.definition, "Et tall λ slik at Av = λv.");
+		assert.equal(eigen.definition, "Egenverdien.", "the core mention's definition (pickDefinition)");
 		assert.equal(eigen.tier, "core", "doc-b says core");
-		assert.deepEqual(eigen.aliases, ["λ", "Eigenvalue"]);
+		assert.deepEqual(eigen.aliases, ["λ"]);
 		assert.deepEqual(eigen.citations, [
 			{ sourceHash: "doc-a", page: 4, definition: "Et tall λ slik at Av = λv.", definitionPage: 4, tier: "supporting" },
 			{ sourceHash: "doc-b", page: 12, definition: "Egenverdien.", definitionPage: 12, tier: "core" },
-			{ sourceHash: "doc-c", page: 7, definition: "Eigenvalue er …", definitionPage: 7, tier: "supporting" },
 		]);
 		const matrise = glossary.terms["t_matrise"]!;
 		assert.equal(matrise.tier, "core");
 		assert.deepEqual(matrise.citations.map((x) => [x.sourceHash, x.page, x.definition]), [["doc-a", 1, "Matrise er …"], ["doc-b", 2, null]]);
 		assert.deepEqual(matrise.aliases, [], "a different case of the term is not an alias");
+
+		// a chain merges nothing: Eigenvalue → Egenverdi → λ stays three entries
+		const c = digest("doc-c", [term("Eigenvalue", 7, "supporting", ["Egenverdi"])]);
+		assert.deepEqual(Object.keys(mergeGlossary([a, b, c]).terms).sort(), ["t_egenverdi", "t_eigenvalue", "t_matrise", "t_λ"]);
+		// …unless every pair is linked directly: Eigenvalue knows both names, so Eigenvalue and Egenverdi merge; λ, which
+		// both declare, is ambiguous and stays its own entry
+		const c2 = digest("doc-c", [term("Eigenvalue", 7, "supporting", ["Egenverdi", "λ"])]);
+		const merged = mergeGlossary([a, b, c2]);
+		assert.deepEqual(Object.keys(merged.terms).sort(), ["t_egenverdi", "t_matrise", "t_λ"]);
+		assert.deepEqual(merged.terms["t_egenverdi"]!.ids, ["t_egenverdi", "t_eigenvalue"]);
+		assert.equal(findTerm(merged, "λ"), undefined, "λ is its own entry's name and an alias of another: ambiguous");
 	});
 
 	it("the canonical id does not depend on the order documents come in", () => {
@@ -667,10 +814,12 @@ describe("mergeGlossary and findTerm", () => {
 		// two terms that only share an alias are not merged either
 		const shared = mergeGlossary([digest("doc-a", [term("Egenverdi", 1, "core", ["λ"])]), digest("doc-b", [term("Eigenvalue", 1, "core", ["λ"])])]);
 		assert.equal(Object.keys(shared.terms).length, 2);
-		// an entry's own name still names it, even when another term uses that name as an alias
+		// Changed for the lookup ruling after review 2: an entry's own name that other terms use as an alias is ambiguous
+		// too (it used to return t_v); the candidates list all three
 		const own = mergeGlossary([digest("doc-a", [term("v", 1, "core"), term("velocity", 1, "core", ["v"]), term("voltage", 1, "core", ["v"])])]);
-		assert.equal(findTerm(own, "v")?.id, "t_v");
+		assert.equal(findTerm(own, "v"), undefined);
 		assert.deepEqual(findTermCandidates(own, "v").map((e) => e.id), ["t_v", "t_velocity", "t_voltage"]);
+		assert.equal(findTermById(own, "t_v")?.id, "t_v");
 	});
 
 	// Review 1, defect 9: A (Beta, alias Alpha) and B (Alpha) gave t_alpha; [A, B, A] gave t_beta and citations [a, b, a].
@@ -693,7 +842,11 @@ describe("mergeGlossary and findTerm", () => {
 		assert.equal(findTerm(glossary, "  EGENVERDI ")?.id, "t_egenverdi");
 		assert.equal(findTerm(glossary, "λ")?.id, "t_egenverdi");
 		assert.equal(findTerm(glossary, "eigen-value")?.id, "t_egenverdi");
-		assert.equal(findTerm(glossary, "t_egenverdi")?.id, "t_egenverdi");
+		// changed for the lookup ruling: an id is looked up by findTermById; plain text is never read as an id
+		assert.equal(findTerm(glossary, "t_egenverdi"), undefined);
+		assert.equal(findTermById(glossary, "t_egenverdi")?.id, "t_egenverdi");
+		assert.equal(findTermById(glossary, "egenverdi"), undefined);
+		assert.equal(findTermById(glossary, "t_constructor"), undefined);
 		assert.equal(findTerm(glossary, "den deriverte")?.id, "t_den-deriverte");
 		assert.equal(findTerm(glossary, "F'(X)")?.id, "t_den-deriverte");
 		assert.equal(findTerm(glossary, "f′(x)")?.id, "t_den-deriverte");
@@ -709,4 +862,313 @@ describe("mergeGlossary and findTerm", () => {
 		const proto = mergeGlossary([digest("doc-a", [term("constructor", 1, "core", ["__proto__"])])]);
 		assert.equal(findTerm(JSON.parse(JSON.stringify(proto)) as typeof proto, "constructor")?.id, "t_constructor");
 	});
+
+	// Review 2, finding 1: unifyByAlias merged unrelated terms through a flipped alias direction or a hub.
+	it("review 2, finding 1: a flipped alias, a hub or a chain merges nothing, in any input order", () => {
+		const velocity = digest("doc-1", [term("velocity", 1, "core", ["v"], "rate of change of position")]);
+		const v = digest("doc-2", [term("v", 1, "core", ["voltage"], "electric potential difference")]);
+		const voltage = digest("doc-3", [term("voltage", 1, "core", [])]);
+		const permutations = <T>(xs: T[]): T[][] => (xs.length <= 1 ? [xs] : xs.flatMap((x, i) => permutations([...xs.slice(0, i), ...xs.slice(i + 1)]).map((p) => [x, ...p])));
+
+		// all three documents: was ONE entry t_v with ids [t_v, t_velocity, t_voltage]
+		for (const order of permutations([velocity, v, voltage])) {
+			const g = mergeGlossary(order);
+			assert.deepEqual(Object.keys(g.terms).sort(), ["t_v", "t_velocity", "t_voltage"]);
+			for (const entry of Object.values(g.terms)) assert.equal(entry.ids.length, 1);
+			assert.deepEqual(g, mergeGlossary([velocity, v, voltage]), "the same glossary in any order");
+		}
+		// docs 1 and 2 only: velocity and v merged, and findTerm("velocity") returned voltage's definition
+		for (const order of permutations([velocity, v])) {
+			const g = mergeGlossary(order);
+			assert.deepEqual(Object.keys(g.terms).sort(), ["t_v", "t_velocity"]);
+			assert.equal(findTerm(g, "velocity")?.definition, "rate of change of position");
+			assert.equal(findTerm(g, "voltage")?.id, "t_v", "voltage is only v's alias");
+		}
+		// a hub: v declares both velocity and voltage, which are terms of their own
+		const hub = [digest("doc-1", [term("v", 1, "core", ["velocity", "voltage"])]), digest("doc-2", [term("velocity", 1, "core")]), digest("doc-3", [term("voltage", 1, "core")])];
+		for (const order of permutations(hub)) assert.deepEqual(Object.keys(mergeGlossary(order).terms).sort(), ["t_v", "t_velocity", "t_voltage"]);
+		// the same cases inside one document (mergeTerms across batches)
+		const flipped = mergeTerms([[modelTerm("velocity", 1, "core", "rate of change of position", ["v"])], [modelTerm("v", 1, "core", "electric potential difference", ["voltage"])], [modelTerm("voltage", 1, "core", null)]]);
+		assert.deepEqual(flipped.map((t) => t.id).sort(), ["t_v", "t_velocity", "t_voltage"]);
+		const hubTerms = mergeTerms([[modelTerm("v", 1, "core", null, ["velocity", "voltage"])], [modelTerm("velocity", 1, "core")], [modelTerm("voltage", 1, "core")]]);
+		assert.deepEqual(hubTerms.map((t) => t.id).sort(), ["t_v", "t_velocity", "t_voltage"]);
+		// review 1's shared symbol still merges nothing, and a clear synonym still merges, in any order
+		const shared = [digest("d1", [term("velocity", 1, "core", ["v"])]), digest("d2", [term("voltage", 1, "core", ["v", "U"])]), digest("d3", [term("internal energy", 1, "core", ["U"])])];
+		for (const order of permutations(shared)) assert.equal(Object.keys(mergeGlossary(order).terms).length, 3);
+		const ols = [digest("d1", [term("ordinary least squares", 3, "core", ["OLS"])]), digest("d2", [term("OLS", 2, "supporting", [], null)])];
+		for (const order of permutations(ols)) assert.deepEqual(Object.values(mergeGlossary(order).terms).map((e) => e.ids), [["t_ols", "t_ordinary-least-squares"]]);
+		// mutual aliases are a clear synonym too
+		const mutual = mergeGlossary([digest("d1", [term("ordinary least squares", 3, "core", ["OLS"])]), digest("d2", [term("OLS", 2, "core", ["ordinary least squares"])])]);
+		assert.equal(Object.keys(mutual.terms).length, 1);
+		// but not when the aliased entry declares a name the other does not know
+		const extra = mergeGlossary([digest("d1", [term("ordinary least squares", 3, "core", ["OLS"])]), digest("d2", [term("OLS", 2, "core", ["optimal load sharing"])])]);
+		assert.equal(Object.keys(extra.terms).length, 2);
+	});
+
+	// Review 2, finding 3: findTerm picked one entry when a term's own name was also an alias of others, and the t_
+	// prefix shadowed literal terms.
+	it("review 2, finding 3: plain-text lookup refuses an ambiguous name, and ids have their own lookup", () => {
+		const g = mergeGlossary([
+			digest("doc-1", [term("velocity", 1, "core", ["v"]), term("voltage", 2, "core", ["v"])]),
+			digest("doc-2", [term("v", 3, "supporting", [], null)]),
+		]);
+		assert.equal(findTerm(g, "v"), undefined, "was the supporting t_v");
+		assert.deepEqual(findTermCandidates(g, "v").map((e) => e.id), ["t_v", "t_velocity", "t_voltage"]);
+		const tc = mergeGlossary([digest("doc-1", [term("c", 1, "core", [], "speed of light"), term("t_c", 2, "core", [], "critical temperature")])]);
+		assert.equal(findTerm(tc, "t_c")?.definition, "critical temperature", "was c");
+		assert.equal(findTerm(tc, "c")?.definition, "speed of light");
+		assert.equal(findTermById(tc, "t_c")?.definition, "speed of light");
+		assert.equal(findTermById(tc, termId("t_c"))?.definition, "critical temperature");
+		assert.deepEqual(findTermCandidates(tc, "t_c").map((e) => e.id), [termId("t_c")]);
+	});
+
+	// Review 2, finding 5: the top-level definition and the display form depended on input order.
+	it("review 2, finding 5: the definition is chosen by pickDefinition and the display form deterministically, in any order", () => {
+		const d1 = digest("d1", [term("Entropy", 1, "supporting", [], "Informal intro gloss.")]);
+		const d2 = digest("d2", [term("entropy", 1, "core", [], "S = k ln W.")]);
+		const forward = mergeGlossary([d1, d2]);
+		const backward = mergeGlossary([d2, d1]);
+		assert.deepEqual(forward, backward);
+		assert.equal(forward.terms["t_entropy"]!.definition, "S = k ln W.");
+		assert.equal(forward.terms["t_entropy"]!.term, "Entropy", "the smallest sourceHash's spelling");
+		// a tie in tier and page goes to the smaller sourceHash
+		const b = digest("b", [term("Rang", 2, "core", [], "Definisjon fra b.")]);
+		const a = digest("a", [term("rang", 2, "core", [], "Definisjon fra a.")]);
+		for (const order of [[a, b], [b, a]]) {
+			const entry = mergeGlossary(order).terms["t_rang"]!;
+			assert.equal(entry.definition, "Definisjon fra a.");
+			assert.equal(entry.term, "rang");
+			assert.deepEqual(entry.citations.map((c) => c.sourceHash), ["a", "b"]);
+		}
+	});
+
+	it("a digest term without a name is refused, not dropped", () => {
+		assert.throws(() => mergeGlossary([digest("d", [term(String.fromCharCode(0x200b), 1, "core")])]), /without a name/);
+	});
 });
+
+describe("review 2: ids", () => {
+	// Review 2, finding 2: hyphens, "_" and NFKC folding made distinct notation share an id; "_" and "---" vanished.
+	it("review 2, finding 2: maths and CS notation keep distinct ids", () => {
+		const families: string[][] = [
+			["C", "C--", "C++"],
+			["-1", "1"],
+			["f^-1(x)", "f^1(x)"],
+			["O(n-1)", "O(n 1)"],
+			["x-y", "x_y"],
+			["a−b", "a-b"],
+			["x²", "x₂", "x2"],
+			["ℝ²", "R2"],
+			["ℝ", "R"],
+			["ℂ", "C"],
+			["10²", "102"],
+		];
+		for (const family of families) {
+			const ids = family.map(termId);
+			assert.equal(new Set(ids).size, family.length, `${family.join(" / ")} → ${ids.join(" / ")}`);
+			assert.equal(new Set(family.map(conceptId)).size, family.length);
+		}
+		// still one key: a dash between two letters, case, spacing, ligatures, full-width forms, primes
+		assert.equal(termId("Navier–Stokes"), termId("navier stokes"));
+		assert.equal(termId("ＡＢＣ＋"), termId("abc+"));
+		assert.equal(termId("f″(x)"), termId("f''(x)"));
+		// not folded, as ruled: Turkish dotted I and ß keep JS lower-casing
+		assert.notEqual(termId("İstanbul"), termId("Istanbul"));
+		assert.notEqual(termId("Maß"), termId("MASS"));
+	});
+
+	it("review 2, finding 2: a name of symbols only has an id and is kept; a name with no visible character is a retry", async () => {
+		assert.equal(termId("_"), "t__5f");
+		assert.equal(conceptId("---"), "c__2d-_2d-_2d");
+		const kept = mergeTerms([[modelTerm("_", 1, "core", "Plassholder.")]]);
+		assert.deepEqual(kept.map((t) => t.id), ["t__5f"]);
+		assert.deepEqual(mergeConcepts([[{ name: "---", statement: "En skillelinje.", page: 1 }]]).map((c) => c.id), ["c__2d-_2d-_2d"]);
+
+		const zw = String.fromCharCode(0x200b);
+		const soft = String.fromCharCode(0xad);
+		const bad = { summaryBullets: ["Tegn"], terms: [modelTerm(zw, 1, "core"), modelTerm("_", 1, "core")], concepts: [{ name: `${soft} `, statement: "Noe.", page: 1 }, { name: "---", statement: "Linje.", page: 1 }], figures: [] };
+		const good = { ...bad, terms: [modelTerm("_", 1, "core")], concepts: [{ name: "---", statement: "Linje.", page: 1 }] };
+		const model = fakeModel((_call, n) => JSON.stringify({ ...(n === 0 ? bad : good), profile: PROFILE }));
+		const digest = await digestMaterial("--- Page 1 ---\n\nTegn.\n", { ...META, complete: model.complete });
+		assert.equal(model.calls.length, 2, "the invisible names go into the retry");
+		assert.match(model.calls[1]!.user, /\/terms\/0\/term: has only invisible characters/);
+		assert.match(model.calls[1]!.user, /\/concepts\/0\/name: has only invisible characters/);
+		assert.deepEqual(digest.terms.map((t) => t.id), ["t__5f"]);
+		assert.deepEqual(digest.concepts.map((c) => c.id), ["c__2d-_2d-_2d"]);
+		assert.throws(() => mergeTerms([[modelTerm(zw, 1, "core")]]), /without a name/);
+		assert.throws(() => mergeConcepts([[{ name: zw, statement: "x", page: 1 }]]), /without a name/);
+	});
+
+	// Review 2, finding 8: soft hyphens and zero-width characters from PDF extraction split one term into several ids.
+	it("review 2, finding 8: soft hyphens and zero-width characters do not change an id", () => {
+		const plain = termId("eigenvalue");
+		for (const code of [0xad, 0x200b, 0x200c, 0x200d, 0x2060, 0xfeff]) assert.equal(termId(`eigen${String.fromCharCode(code)}value`), plain, `U+${code.toString(16)}`);
+		const [merged, ...rest] = mergeTerms([[modelTerm("eigenvalue", 1, "core")], [modelTerm(`eigen${String.fromCharCode(0xad)}value`, 2, "supporting")]]);
+		assert.equal(rest.length, 0);
+		assert.equal(merged!.id, plain);
+	});
+
+	// Review 2, contract: the comment said long keys keep their start and end; the code keeps the start plus a hash.
+	it("review 2, contract: a long key is its first SLUG_PREFIX_CHARS code points, then ~ and an 11-character hash", () => {
+		const name = `${"ø".repeat(150)}a`;
+		const key = slugOf(name);
+		assert.equal([...key].length, SLUG_MAX_CHARS);
+		assert.equal(key.slice(0, SLUG_PREFIX_CHARS), "ø".repeat(SLUG_PREFIX_CHARS));
+		assert.match(key, new RegExp(`^ø{${SLUG_PREFIX_CHARS}}~[0-9a-z]{11}$`));
+		assert.notEqual(key, slugOf(`${"ø".repeat(150)}b`));
+		assert.equal(slugOf("~"), "_7e", "a ~ in a name never looks like the hash separator");
+	});
+
+	it("property: distinct names from the collision families of both reviews get distinct ids; presentation never matters; normalising is idempotent", () => {
+		// each atom is one name; atoms that start and end with a word character may also be joined by a space
+		const atoms = [
+			"c", "c++", "c--", "-1", "1", "f^-1(x)", "f^1(x)", "o(n-1)", "o(n", "1)", "x_y", "x", "y", "a−b", "a", "b", "x²", "x₂", "x2", "ℝ²", "r2",
+			"ℝ", "r", "ℂ", "10²", "102", "_", "---", "f(x)", "f'(x)", "f''(x)", "∇", "u2207", "a+b", "eigenvalue", "eigen", "value", "v", "velocity",
+			"voltage", "t_c", "ℝⁿ", "x⁻¹", "𝔸", "første", "forste", "λ", "~", "_7e", `${"x".repeat(120)}a`, `${"x".repeat(120)}b`, "navier", "stokes",
+		];
+		const wordBounded = atoms.filter((a) => /^[\p{L}\p{N}]/u.test(a) && /[\p{L}\p{N}]$/u.test(a) && !/[^\p{L}\p{N}]/u.test(a));
+		const invisible = [0xad, 0x200b, 0x200c, 0x200d, 0x2060, 0xfeff].map((c) => String.fromCharCode(c));
+		const primes = ["'", "′", "’", "ʼ"];
+		const rand = mulberry32(23);
+		const pick = <T>(items: readonly T[]): T => items[Math.floor(rand() * items.length)]!;
+		/** One presentation of a canonical name: case, invisible characters, spacing, full-width forms, primes, NFD. */
+		const present = (canonical: string): string => {
+			let out = "";
+			for (const ch of canonical.replace(/''/g, () => (rand() < 0.3 ? "″" : "''"))) {
+				let c = ch;
+				if (c === "'") c = pick(primes);
+				else if (/[a-z]/.test(c) && rand() < 0.3) c = c.toUpperCase();
+				if (/[!-~]/.test(c) && c !== " " && rand() < 0.1) c = String.fromCharCode(c.charCodeAt(0) + 0xfee0);
+				if (c === " ") c = pick([" ", "  ", "\t", " \n "]);
+				out += c;
+				if (rand() < 0.1) out += pick(invisible);
+			}
+			const padded = `${rand() < 0.2 ? " " : ""}${out}${rand() < 0.2 ? "  " : ""}`;
+			return rand() < 0.2 ? padded.normalize("NFD") : padded;
+		};
+		const idOf = new Map<string, string>();
+		const canonicalOf = new Map<string, string>();
+		for (let i = 0; i < 4_000; i++) {
+			const canonical = rand() < 0.7 ? pick(atoms) : `${pick(wordBounded)} ${pick(wordBounded)}`;
+			const name = present(canonical);
+			const id = termId(name);
+			assert.equal(idOf.get(canonical) ?? id, id, `${JSON.stringify(name)} is ${canonical}, so ${idOf.get(canonical)}, got ${id}`);
+			idOf.set(canonical, id);
+			assert.equal(canonicalOf.get(id) ?? canonical, canonical, `${JSON.stringify(canonical)} and ${JSON.stringify(canonicalOf.get(id))} share ${id}`);
+			canonicalOf.set(id, canonical);
+			assert.equal(normalizeName(normalizeName(name)), normalizeName(name), `normalising ${JSON.stringify(name)} twice`);
+			assert.equal(slugOf(normalizeName(name)), slugOf(name));
+			assert.notEqual(slugOf(name), "");
+		}
+		assert.ok(idOf.size > 300, `${idOf.size} distinct names checked`);
+	});
+});
+
+describe("review 2: concerns and the version 3 contract", () => {
+	// Review 2, concern 1: a profile wrapped in a code fence was accepted with its trailing fence.
+	it("review 2, concern 1: a profile wrapped in a code fence is unwrapped before validation", async () => {
+		for (const wrapped of [`\`\`\`markdown\n${PROFILE}\n\`\`\``, `Here is the profile:\n\n\`\`\`md\n${PROFILE}\n\`\`\`\n`, `~~~~\n${PROFILE}\n~~~~`]) {
+			const checked = validateProfile(wrapped);
+			assert.ok(checked.ok, wrapped);
+			assert.equal((checked as { value: string }).value, PROFILE);
+		}
+		// a code block inside a section is part of the profile
+		const withCode = `${PROFILE}\n\n## Exercises\nOppgaver som denne:\n\`\`\`\nf(x) = x^2\n\`\`\``;
+		assert.equal((validateProfile(withCode) as { value: string }).value, withCode);
+		const twoBlocks = `## Contents\nA\n\`\`\`\nx\n\`\`\`\n## Exercises\n\`\`\`\ny\n\`\`\``;
+		assert.equal((validateProfile(twoBlocks) as { value: string }).value, twoBlocks);
+		// end to end, on the reduce path and inside the JSON of a single batch
+		const reduceModel = fakeModel((call) => (isReduce(call) ? `\`\`\`markdown\n${PROFILE}\n\`\`\`` : notesFor(call.user)));
+		assert.equal((await digestMaterial(slideDeck(40, 1_500), { ...META, complete: reduceModel.complete })).profile, PROFILE);
+		const singleModel = fakeModel((call) => notesFor(call.user, { profile: `\`\`\`markdown\n${PROFILE}\n\`\`\`` }));
+		assert.equal((await digestMaterial(slideDeck(3, 200), { ...META, complete: singleModel.complete })).profile, PROFILE);
+	});
+
+	// Review 2, concern 2: a pre-aborted digestMaterial called onActivity once before throwing.
+	it("review 2, concern 2: no onActivity line once an abort is requested", async () => {
+		const pre = new AbortController();
+		pre.abort();
+		const lines: string[] = [];
+		const unused = fakeModel(() => "no");
+		await assert.rejects(digestMaterial(slideDeck(40, 1_500), { ...META, complete: unused.complete, signal: pre.signal, onActivity: (l) => lines.push(l) }), { name: "AbortError" });
+		assert.deepEqual(lines, []);
+		assert.equal(unused.calls.length, 0);
+
+		const during = new AbortController();
+		const seen: string[] = [];
+		const aborting = fakeModel((call) => {
+			during.abort();
+			return notesFor(call.user);
+		});
+		await assert.rejects(digestMaterial(slideDeck(40, 1_500), { ...META, complete: aborting.complete, signal: during.signal, onActivity: (l) => seen.push(l) }), { name: "AbortError" });
+		assert.equal(seen.length, 1, "only the line before the first call");
+		assert.equal(aborting.calls.length, 1);
+	});
+
+	// Review 2, contract: digest.json did not persist per-batch summaries, pages or heading paths, so the profile could not
+	// be rewritten nor a failed batch re-run without re-extracting.
+	it("review 2, contract: the reduce request is rebuilt exactly from a stored digest, and rewriteProfile re-runs only the profile", async () => {
+		const doc = `# Kapittel 1\n\n${slideDeck(40, 1_500)}`;
+		const plan = splitMaterial(doc, SMALL);
+		const failing = plan[2]!;
+		const model = fakeModel((call) => (isReduce(call) ? "no profile" : materialOf(call.user) === failing.text ? "nope" : notesFor(call.user)));
+		const digest = await digestMaterial(doc, { ...META, complete: model.complete, split: SMALL, name: "Forelesning 3" });
+		assert.equal(digest.profile, null, "the profile failed twice");
+		assert.equal(digest.failedBatches.length, 1);
+		const stored = JSON.parse(JSON.stringify(digest)) as MaterialDigest;
+		// every batch persists its pages and heading path; an indexed one its bullets
+		for (const [i, b] of stored.batches.entries()) {
+			assert.deepEqual(b.pages, plan[i]!.pages);
+			assert.deepEqual(b.headingPath, plan[i]!.headingPath);
+			if (b.status === "indexed") assert.deepEqual(b.summaryBullets, [`Del fra side ${b.pageStart}`]);
+			else assert.equal(b.index, failing.index);
+		}
+		// the rebuilt request is the one the model saw, with no model call
+		const reduceCalls = model.calls.filter(isReduce);
+		assert.deepEqual(buildReduceRequest(stored, "Forelesning 3"), { system: reduceCalls[0]!.system, user: reduceCalls[0]!.user });
+
+		// re-run only the profile: one call, everything else kept
+		const again = fakeModel((call) => (isReduce(call) ? PROFILE : "an extraction call"));
+		const rewritten = await rewriteProfile(stored, { complete: again.complete, name: "Forelesning 3" });
+		assert.equal(again.calls.length, 1);
+		assert.equal(again.calls[0]!.user, reduceCalls[0]!.user);
+		assert.equal(rewritten.profile, PROFILE);
+		assert.equal(rewritten.profileError, undefined);
+		assert.ok(!("profileError" in rewritten));
+		const { profile: _a, profileError: _b, ...kept } = stored;
+		const { profile: _c, ...keptAfter } = rewritten;
+		assert.deepEqual(keptAfter, kept);
+		// a failing rewrite keeps the notes too; a digest with nothing indexed makes no call; another version is refused
+		const bad = await rewriteProfile(stored, { complete: fakeModel(() => "still no").complete });
+		assert.equal(bad.profile, null);
+		assert.match(bad.profileError!, /the profile could not be written/);
+		const nothing = await digestMaterial(slideDeck(40, 1_500), { ...META, complete: fakeModel(() => "no").complete });
+		const idle = fakeModel(() => PROFILE);
+		assert.equal(buildReduceRequest(nothing), null);
+		assert.match((await rewriteProfile(nothing, { complete: idle.complete })).profileError!, /no part of the material could be indexed/);
+		assert.equal(idle.calls.length, 0);
+		await assert.rejects(rewriteProfile({ ...stored, version: 2 } as unknown as MaterialDigest, { complete: idle.complete }), /version 2/);
+		const aborted = new AbortController();
+		aborted.abort();
+		await assert.rejects(rewriteProfile(stored, { complete: idle.complete, signal: aborted.signal }), { name: "AbortError" });
+
+		// a failed batch is rebuilt from content.md and its stored ref exactly as it was split, ready to re-run alone
+		const failedRef = stored.failedBatches[0]!;
+		assert.deepEqual(batchFromRef(doc, failedRef), failing);
+		for (const [i, b] of stored.batches.entries()) assert.deepEqual(batchFromRef(doc, b), plan[i]);
+		assert.equal(validateBatchReply(notesFor(`, pages ${failing.pageStart}-${failing.pageEnd}.`), batchFromRef(doc, failedRef)).ok, true);
+		assert.throws(() => batchFromRef(doc.slice(0, 10), failedRef), RangeError);
+	});
+});
+
+/** A seeded PRNG (mulberry32): the property tests' inputs are the same on every run. */
+function mulberry32(seed: number): () => number {
+	let a = seed >>> 0;
+	return () => {
+		a = (a + 0x6d2b79f5) >>> 0;
+		let t = a;
+		t = Math.imul(t ^ (t >>> 15), t | 1);
+		t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
+}
