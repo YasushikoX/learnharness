@@ -148,6 +148,8 @@ export function placementGradedBeforeTurn(m: unknown): boolean {
 	return !!details && !details.dismissed && !details.sketch;
 }
 
+const imageModel = () => effectiveSettings().models.image;
+
 const jobRunner = createJobRunner({
 	chatStore: stores.chatStore,
 	jobStore: stores.jobStore,
@@ -169,6 +171,7 @@ const jobRunner = createJobRunner({
 	// null = honestly unavailable; the dispatch-level drop (below) uses the
 	// same signal so keyless servers never see the research tool at all.
 	searchProvider,
+	imageModel,
 });
 /** The app's ONE extraction pipeline instance — both front doors share it:
  *  quiz-triggered session runs (turn-service) and notes imports
@@ -976,7 +979,7 @@ export async function handleChatInput(
 		? buildAgent({ ...agentOpts, teaching })
 		// ASK (2026-11-25, agent/ask-agent.ts): the course's open-questions agent, from turn 1, on the session's own model.
 		: course?.mode === "ask"
-			? createAskAgent({ jobs: { chatId, jobStore: stores.jobStore, spawn: (job, input) => void jobRunner.runJob(job.id, input), searchAvailable } }, agentOpts)
+			? createAskAgent({ jobs: { chatId, jobStore: stores.jobStore, spawn: (job, input) => void jobRunner.runJob(job.id, input), searchAvailable, imageModel } }, agentOpts)
 		: course?.mode === "placement" && course.skills
 			? createPlacementAgent({ skills: course.skills, placementSkills: course.placementSkills, sessionModel: conversation }, agentOpts)
 		: record.kind === "practice"
@@ -998,6 +1001,7 @@ export async function handleChatInput(
 							jobStore: stores.jobStore,
 							spawn: (job, input) => void jobRunner.runJob(job.id, input),
 							searchAvailable,
+							imageModel,
 						},
 						...(graphToolsEnabled(effective) ? { graph: { chatStore: stores.chatStore, graphStore: stores.graphStore } } : {}),
 						// COURSE SESSIONS (docs/courses.md §1.4): the problem tool
@@ -1020,6 +1024,7 @@ export async function handleChatInput(
 						// The registry drop's signal (2026-09-20): no live engine
 						// = no research tool in the teacher's registry.
 						searchAvailable,
+						imageModel,
 						// A course lesson (owner, 2026-11-13): its skill, for the final problem and the grader's rating of it.
 						// WP5: and, when the class has vocabulary coverage, the skill's terms for the finish check.
 						...(course?.mode === "learn" && course.lessonSkill ? { lesson: { skill: course.lessonSkill, sessionModel: conversation, ...(course.openerSkills ? { openerSkills: course.openerSkills } : {}), ...(course.vocabulary ? { vocabulary: course.vocabulary } : {}) } } : {}),
@@ -1037,6 +1042,7 @@ export async function handleChatInput(
 						jobStore: stores.jobStore,
 						spawn: (job, input) => void jobRunner.runJob(job.id, input),
 						searchAvailable,
+						imageModel,
 						// The map reader (wave 7): the prober reads the learner's
 						// knowledge graph through tools when the gate opens —
 						// graph master switch AND the agent.graphTools toggle.

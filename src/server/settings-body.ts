@@ -533,9 +533,17 @@ export function parseModelsSettingsBody(body: unknown): SettingsBodyResult<Model
 	if (!raw) return { ok: false, error: "Invalid JSON body" };
 	const settings: ModelsSettings = {};
 	for (const key of Object.keys(raw)) {
+		if (key === "image") {
+			const image = asRecord(raw.image);
+			if (!image || typeof image.provider !== "string" || !image.provider.trim() || typeof image.id !== "string" || !image.id.trim() || Object.keys(image).some((field) => field !== "provider" && field !== "id")) {
+				return { ok: false, error: "image must be {provider, id} with no thinking or cache fields" };
+			}
+			settings.image = { provider: image.provider, id: image.id };
+			continue;
+		}
 		const known = MODEL_SLOTS as readonly string[];
 		if (!known.includes(key)) {
-			return { ok: false, error: `unknown slot "${key}" (supported: ${known.join(", ")})` };
+			return { ok: false, error: `unknown model setting "${key}" (supported: ${[...known, "image"].join(", ")})` };
 		}
 		const parsed = parseRoleOverride(raw[key], key);
 		if (!parsed.ok) return { ok: false, error: parsed.error };

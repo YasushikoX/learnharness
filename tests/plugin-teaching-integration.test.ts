@@ -46,6 +46,8 @@ test("external teaching example composes native tools, validated workers, separa
 	const model = worker.getModel(), pin = { provider: model.provider, id: model.id };
 	const slot = { model: pin, thinkingLevel: "off" as const };
 	const catalog: ModelCatalogResponse = {
+		imageModels: [],
+		image: null,
 		models: [{ ...pin, name: "Offline fixture", reasoning: false, supportedLevels: [], input: ["text"], contextWindow: 10000, maxTokens: 1024, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
 		providers: [{ id: pin.provider, envVar: "FIXTURE_ONLY", keyPresent: true }], defaults: slot,
 		slots: { strong: slot, cheap: slot, vision: slot }, rolePins: {} as ModelCatalogResponse["rolePins"],

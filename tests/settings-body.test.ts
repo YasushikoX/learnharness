@@ -321,6 +321,16 @@ describe("parseModelsSettingsBody (model slots wave, 2026-09-20)", () => {
 		}
 	});
 
+	it("parses an optional direct image model and rejects malformed choices", () => {
+		assert.deepEqual(parseModelsSettingsBody({ image: { provider: "openrouter", id: "google/gemini-3-pro-image-preview" } }), {
+			ok: true,
+			settings: { image: { provider: "openrouter", id: "google/gemini-3-pro-image-preview" } },
+		});
+		for (const image of [{}, { provider: "openrouter" }, { provider: "openrouter", id: "x", thinkingLevel: "high" }, null, "x"]) {
+			assert.equal(parseModelsSettingsBody({ image }).ok, false, JSON.stringify(image));
+		}
+	});
+
 	it("{} is the legal clear-slots write", () => {
 		const r = parseModelsSettingsBody({});
 		assert.ok(r.ok);
@@ -330,7 +340,7 @@ describe("parseModelsSettingsBody (model slots wave, 2026-09-20)", () => {
 	it("unknown slots are 400s with the supported list", () => {
 		const bad = parseModelsSettingsBody({ mega: { thinkingLevel: "high" } });
 		assert.equal(bad.ok, false);
-		if (!bad.ok) assert.match(bad.error, /unknown slot "mega" \(supported: strong, cheap, vision\)/);
+		if (!bad.ok) assert.match(bad.error, /unknown model setting "mega" \(supported: strong, cheap, vision, image\)/);
 	});
 
 	it("a present-but-empty slot object is rejected (absent slot = unset)", () => {

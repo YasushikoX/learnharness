@@ -353,9 +353,10 @@ describe("steer helpers (contracts.ts)", () => {
 			cacheWriteTokens: undefined,
 			reasoningTokens: undefined,
 			cacheWrite1hTokens: undefined,
-			calls: [{ inputTokens: 10, outputTokens: 5, cacheReadTokens: 4, cacheWriteTokens: undefined, cacheWrite1hTokens: undefined, reasoningTokens: undefined }],
+			calls: [{ model: "z-ai/glm-5.3-flash", inputTokens: 10, outputTokens: 5, cacheReadTokens: 4, cacheWriteTokens: undefined, cacheWrite1hTokens: undefined, reasoningTokens: undefined }],
 			steps: 1,
 			lastStep: {
+				model: "z-ai/glm-5.3-flash",
 				cacheWrite1hTokens: undefined,
 				inputTokens: 10,
 				outputTokens: 5,
@@ -375,6 +376,7 @@ describe("steer helpers (contracts.ts)", () => {
 		assert.equal(total.steps, 2, "one step per model call, reported or not");
 		assert.equal(total.calls?.length, 2);
 		assert.deepEqual(total.lastStep, {
+			model: "z-ai/glm-5.3-flash",
 			cacheWrite1hTokens: undefined,
 			inputTokens: 20,
 			outputTokens: 0,

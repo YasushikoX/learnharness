@@ -60,7 +60,10 @@ function qwenModel() {
 
 describe("the model catalog projection", () => {
 	it("serves the keyed providers' catalogs with the picker's DTO shape", () => {
-		const { models, defaults, providers, slots } = modelCatalog();
+		const { models, imageModels, defaults, providers, slots } = modelCatalog();
+		assert.ok(imageModels.some((m) => m.provider === "openrouter" && m.output.includes("image")));
+		assert.ok(imageModels.every((m) => !("supportedLevels" in m) && !("contextWindow" in m)));
+		assert.ok(imageModels.every((m) => !["openrouter/auto", "openrouter/auto-beta", "openrouter/auto-code"].includes(m.id)));
 		// 0.85.1 ships 366 OpenRouter models — the exact count is pi's, but
 		// the shape and the config models' presence are ours to pin.
 		assert.ok(models.length > 300, `expected a full catalog, got ${models.length}`);
@@ -211,6 +214,15 @@ describe("the models-section validation gate", () => {
 			validateModelsSettings({ vision: { model: { provider: "openrouter", id: "nope/nope" } } }).ok,
 			false,
 		);
+	});
+
+	it("validates image models separately and preserves them through level clamping", () => {
+		const image = { provider: "openrouter", id: piModels().getModelsOfType("image", "openrouter")[0]!.id };
+		assert.deepEqual(validateModelsSettings({ image }), { ok: true });
+		assert.equal(validateModelsSettings({ image: { ...image, id: "not-an-image-model" } }).ok, false);
+		assert.deepEqual(clampModelsLevels({ image }).image, image);
+		const previous = { image: { provider: "disconnected", id: "saved-image-model" } };
+		assert.deepEqual(validateModelsSettings(previous, previous), { ok: true });
 	});
 
 	it("thinking levels never reject a slot write (owner, interlude 2026-09-22)", () => {

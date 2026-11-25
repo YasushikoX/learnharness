@@ -14,7 +14,7 @@ Object.assign(globalThis, { window: dom.window, document: dom.document, Element:
 
 test("cache hit rate appears only inside expanded session stats, follows the session log, and needs no pricing", async () => {
 	const originalFetch = globalThis.fetch;
-	const catalog: ModelCatalogResponse = { models: [], providers: [], defaults: null,
+	const catalog: ModelCatalogResponse = { models: [], imageModels: [], image: null, providers: [], defaults: null,
 		slots: { strong: null, cheap: null, vision: null }, rolePins: {} as ModelCatalogResponse["rolePins"] };
 	globalThis.fetch = async (input) => {
 		if (input === "/api/models") return Response.json(catalog);

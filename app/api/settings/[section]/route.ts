@@ -149,8 +149,9 @@ export async function PUT(request: Request, ctx: { params: Promise<{ section: st
 
 	// Read-modify-write ONE section of the record; everything else rides
 	// along untouched (other sections, unknown keys — sanitize preserves).
-	// Model profiles: a models / agent.models change lands in the active profile too
-	// (a built-in active profile forks into a user copy) — core/profiles.ts.
+	// Model profiles: a slot / agent.models change lands in the active profile too
+	// (a built-in active profile forks into a user copy). Global models.image changes
+	// stay outside profiles — core/profiles.ts.
 	const written = { ...record, [section]: sectionOut };
 	const next = section === "models" || section === "agent" ? syncActiveProfile(record, written) : written;
 	const stored = writeSettingsRecord(next);

@@ -307,6 +307,32 @@ export function workerRequestStream(streamFn: StreamFunction, owner?: AbortSigna
 	return wrapped;
 }
 
+/** Promise-based provider calls use the same pool and cancellation contract as streams. */
+export async function workerRequest<T>(operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
+	if (signal?.aborted) throw signal.reason ?? new DOMException("Worker model request cancelled", "AbortError");
+	const controller = new AbortController();
+	let cancelAdmission: () => void = () => {};
+	const run = new Promise<T>((resolve, reject) => {
+		cancelAdmission = acquire(pool(), (release) => {
+			void Promise.resolve().then(() => operation(controller.signal)).then(resolve, reject).finally(release);
+		});
+	});
+	let rejectAbort!: (reason?: unknown) => void;
+	const aborted = new Promise<never>((_resolve, reject) => { rejectAbort = reject; });
+	const onAbort = () => {
+		const reason = signal?.reason ?? new DOMException("Worker model request cancelled", "AbortError");
+		controller.abort(reason);
+		cancelAdmission();
+		rejectAbort(reason);
+	};
+	signal?.addEventListener("abort", onAbort, { once: true });
+	try { return await Promise.race([run, aborted]); }
+	finally {
+		signal?.removeEventListener("abort", onAbort);
+		cancelAdmission();
+	}
+}
+
 /** One owner per background run, not per admitted model request. Closing the
  * scope also retires a parked child when the job exits on a tool turn. */
 export function createWorkerRequestScope(streamFn: StreamFunction, signal?: AbortSignal) {

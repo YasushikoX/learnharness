@@ -47,6 +47,8 @@ const again = { name: "again", label: "again", description: "Continue", paramete
 
 function nativeCatalogFor(model: { provider: string; id: string }): ModelCatalogResponse {
 	return {
+		imageModels: [],
+		image: null,
 		models: [{ ...model, name: "Fixture", reasoning: true, input: ["text"], supportedLevels: ["off", "high"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 8192, maxTokens: 1024 }],
 		providers: [{ id: model.provider, envVar: "FIXTURE_KEY", keyPresent: true }],
 		defaults: { model },

@@ -247,13 +247,15 @@ export interface ModelsSettings {
 	strong?: ModelSlot;
 	cheap?: ModelSlot;
 	vision?: ModelSlot;
+	/** Optional image generator. Unlike chat slots, this has no thinking or cache settings. */
+	image?: { provider: string; id: string };
 }
 
 // ─── Model profiles ──────────────────────────────────────────────────────────
 
 /** One saved model profile: the three slots plus the per-role overrides —
- *  nothing else (owner, 2026-11: models only). Applying a profile REPLACES the
- *  live `models` section and `agent.models` with these. */
+ *  nothing else (owner, 2026-11: models only). Applying a profile REPLACES those
+ *  slots and `agent.models`; the global `models.image` selection is preserved. */
 export interface ModelProfile {
 	models?: ModelsSettings;
 	roles?: Partial<Record<BackgroundModelRole, RoleModelOverride>>;
@@ -665,7 +667,7 @@ export interface UserSettings {
 	agent?: AgentSettings;
 	/** The strong/cheap/vision model slots (model slots wave, 2026-09-20). */
 	models?: ModelsSettings;
-	/** Saved model profiles (core/profiles.ts). Mirrors the live `models` + `agent.models` for the active profile. */
+	/** Saved model profiles (core/profiles.ts). Mirrors the live model slots + `agent.models` for the active profile; global `models.image` is excluded. */
 	profiles?: ProfilesSettings;
 	/** The custom OpenAI-compatible endpoint (non-secret config only). */
 	customProvider?: CustomProviderSettings;
@@ -850,6 +852,13 @@ function sanitizeModels(raw: Record<string, unknown>): ModelsSettings {
 			if (CACHE_RETENTIONS.includes(retention as CacheRetention)) cleaned.cacheRetention = retention as CacheRetention;
 		}
 		if (Object.keys(cleaned).length) out[slot] = cleaned;
+	}
+	const image = raw.image;
+	if (image && typeof image === "object" && !Array.isArray(image)) {
+		const value = image as Record<string, unknown>;
+		if (typeof value.provider === "string" && value.provider.trim() && typeof value.id === "string" && value.id.trim()) {
+			out.image = { provider: value.provider, id: value.id };
+		}
 	}
 	return out;
 }

@@ -7,6 +7,7 @@ import type { JobStore } from "../../core/ports.ts";
 import { checkLearnerImage } from "./learner-image.ts";
 import { checkPdfPage } from "./pdf-figure.ts";
 import { resolveSourcePath } from "./fs-shared.ts";
+import type { ImageModelSelection } from "../image-generation.ts";
 
 /**
  * Async sub-agent job tools (vision §2.5; W2/W6 kinds + the pi-model
@@ -31,6 +32,8 @@ export interface JobToolContext {
 	 *  Research dispatch does not depend on it: web_fetch is keyless and
 	 *  web_search reports a missing provider as a recoverable tool result. */
 	searchAvailable?: () => boolean;
+	/** Explicit generator choice, read at dispatch so an unset choice fails the call. */
+	imageModel?: () => ImageModelSelection | undefined;
 	/** The Ask agent's wording (2026-11-25): visual and demo say "answer" instead of "teach" and name no tool Ask lacks
 	 *  (it has no `ls`). Same jobs, same runner. */
 	wording?: "ask";
@@ -63,6 +66,14 @@ export const visualInputSchema = Type.Object({
 			"The maker sees NOTHING else of the lesson; a wrong or vague brief produces a wrong figure. " +
 			"With an image: which features to mark and what each label says.",
 	}),
+	generate: Type.Optional(
+		Type.String({
+			minLength: 1,
+			description:
+				"Prompt for an illustrative generated raster base to compose into the figure. Use for appearance that is hard to draw precisely in SVG. " +
+				"Never use generated imagery as factual evidence; keep exact labels, arrows, and claims in deterministic SVG. Never together with image or pdf.",
+		}),
+	),
 	image: Type.Optional(
 		Type.String({
 			description:
@@ -145,6 +156,8 @@ const VISUAL_DESCRIPTION =
 	"Dispatch a background sub-agent that hand-authors ONE precise SVG figure, renders it, LOOKS at the render, and iterates " +
 	"until correct. Use it for exact spatial pictures auto-layout diagrams can't do: coordinate geometry, number lines, vectors, " +
 	"function plots, physical layouts. For flows/relations/taxonomies write mermaid inline instead. " +
+	"Use it for any subject when a custom static picture helps: scientific illustration, maps, timelines, comparisons, sequences, geometry, or physical layouts. " +
+	"Pass `generate` to create an illustrative raster base, then compose exact labels and arrows in SVG. Generated imagery supplies appearance, never factual evidence. " +
 	"Pass `image` (a learner image file) to have the maker annotate that picture — arrows, outlines, labels — instead. " +
 	"Pass `pdf` ({ path, page }) to annotate a figure on one page of a learner's PDF: the maker crops it from that page itself; " +
 	"name the exact page and describe the figure in the brief so the maker can find it. " +
@@ -172,7 +185,8 @@ const ASK_DEMO_DESCRIPTION =
 	"you show it with show_figure. Write a precise brief: concept, controls, interactions, style.";
 const ASK_VISUAL_DESCRIPTION =
 	"Dispatch a background sub-agent that hand-authors ONE precise SVG figure, renders it, LOOKS at the render, and iterates until correct: " +
-	"exact spatial pictures auto-layout diagrams can't do (coordinate geometry, number lines, vectors, function plots, physical layouts). " +
+	"custom pictures for any subject (scientific illustration, maps, timelines, comparisons, sequences, geometry, physical layouts). " +
+	"Pass `generate` for an illustrative raster base with exact SVG labels and arrows; generated appearance is never factual evidence. " +
 	"Pass `pdf` ({ path, page }) to mark up a figure on one page of one of the class's PDFs, with the path from the material section: " +
 	"the maker crops it from that page itself; name the page and describe the figure in the brief. " +
 	"The call is ASYNC and fire-and-forget — it resolves immediately; the verified figure arrives later as a new message and stays hidden until " +
@@ -215,6 +229,8 @@ export function jobTools(ctx: JobToolContext): Record<string, AgentTool<any>> {
 			execute: serverExecute("visual", visualInputSchema, async (input, { toolCallId, signal }) => {
 				if (!ctx.jobStore.findJobByToolCallId(ctx.chatId, toolCallId)) {
 					if (input.image !== undefined && input.pdf !== undefined) throw new Error("Pass either image or pdf, not both.");
+					if (input.generate !== undefined && (input.image !== undefined || input.pdf !== undefined)) throw new Error("Pass generate by itself, not with image or pdf.");
+					if (input.generate !== undefined && !ctx.imageModel?.()) throw new Error("Image generation is not configured — choose an image model in Settings → Agent → Models.");
 					if (input.image !== undefined) await checkLearnerImage(input.image);
 					if (input.pdf !== undefined) await checkPdfPage(input.pdf.path, input.pdf.page, signal);
 				}

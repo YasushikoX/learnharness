@@ -42,6 +42,7 @@ import {
 	type GraphSettings,
 	type ModelSlot,
 	type ModelSlotName,
+	type ModelsSettings,
 	type RoleModelOverride,
 	type UserSettings,
 } from "./settings.ts";
@@ -93,7 +94,7 @@ export interface EffectiveSettings {
 	 *  NULL when the tier holds no model (no factory floor — BYOK all the
 	 *  way down, owner 2026-09-22). These are the tier-level views the
 	 *  picker captions and the per-need refusal gates read. */
-	models: Record<ModelSlotName, EffectiveSlot | null>;
+	models: Record<ModelSlotName, EffectiveSlot | null> & Pick<ModelsSettings, "image">;
 	appearance: EffectiveAppearance;
 	graph: Required<GraphSettings>;
 	/** Compaction (owner round 14): resolved concrete — absent record
@@ -222,6 +223,7 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 			strong: resolveSlot(modelsSection.strong),
 			cheap: resolveSlot(modelsSection.cheap),
 			vision: resolveSlot(modelsSection.vision),
+			...(modelsSection.image ? { image: modelsSection.image } : {}),
 		},
 		appearance: {
 			theme: appearance.theme ?? factoryAppearance.theme,

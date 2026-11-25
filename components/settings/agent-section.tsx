@@ -98,6 +98,7 @@ import { prettyModel } from "@/components/usage-format";
 import { cn } from "@/lib/utils";
 import { SettingsGroup, SettingsList, SettingsRow, SettingsMenuTrigger, SettingsSegmentedControl, Toggle, CommitInput } from "./controls.tsx";
 import { ModelMenuList, ThinkingMenuList } from "./model-menu";
+import { SearchMenuList } from "./search-menu-list";
 import { ChatGPTBackgroundAccess } from "./chatgpt-connection";
 import { upstreamSelectionTools } from "../fork-switches.ts";
 import { NativeSubscriptionBackgroundAccess } from "./subscription-connections";
@@ -301,6 +302,13 @@ export function composeSlotModel(
 	return next;
 }
 
+export function composeImageModel(models: ModelsSettings | undefined, selection: { provider: string; id: string } | undefined): ModelsSettings {
+	const next = { ...models };
+	if (selection) next.image = selection;
+	else delete next.image;
+	return next;
+}
+
 /** Retention is slot-only; selecting Pi default removes the field entirely. */
 export function composeSlotCacheRetention(models: ModelsSettings | undefined, slot: ModelSlotName, value: CacheRetention | undefined): ModelsSettings {
 	const next = { ...models?.[slot] };
@@ -465,6 +473,7 @@ export function AgentSection({
 }) {
 	const { catalog: body, failed: catalogFailed, refresh: refreshCatalog } = useModelCatalog();
 	const catalog = body?.models;
+	const imageCatalog = body?.imageModels;
 	const slots = body?.slots;
 	/** The live search state (/api/search) — the row's reason line. */
 	const [folderInput, setFolderInput] = useState("");
@@ -487,7 +496,7 @@ export function AgentSection({
 	const [switchError, setSwitchError] = useState<string | null>(null);
 	/** One open dropdown for the whole section: which slot (or the search
 	 *  row), which kind. */
-	const [openMenu, setOpenMenu] = useState<{ target: ModelSlotName | BackgroundModelRole | "search" | "profile"; kind: "model" | "thinking" | "engine" | "cache" | "profile" } | null>(null);
+	const [openMenu, setOpenMenu] = useState<{ target: ModelSlotName | BackgroundModelRole | "search" | "profile" | "image"; kind: "model" | "thinking" | "engine" | "cache" | "profile" } | null>(null);
 	const [advancedModels, setAdvancedModels] = useState(false);
 	const [workerConcurrencyError, setWorkerConcurrencyError] = useState<string | null>(null);
 	const menuAnchorRef = useRef<HTMLSpanElement>(null);
@@ -913,6 +922,53 @@ export function AgentSection({
 						</SettingsRow>
 					);
 				})}
+				{(() => {
+					const selection = models?.image;
+					const open = openMenu?.target === "image" && openMenu.kind === "model";
+					return <SettingsRow
+						label="Image generation"
+						hint="Optional generated illustrations for visual explanations; unavailable until selected"
+						testid="slot-row-image"
+					>
+						<span ref={open ? menuAnchorRef : undefined} className="relative flex items-center gap-2">
+							<MenuTrigger
+								value={selection ? prettyModel(selection.id) : ""}
+								hint={selection ? `${selection.provider}:${selection.id}` : undefined}
+								emptyLabel="—"
+								ariaLabel="Image generation model"
+								testid="slot-model-image"
+								open={open}
+								onClick={() => setOpenMenu(open ? null : { target: "image", kind: "model" })}
+								widthClass="min-w-20"
+							/>
+							{open && <MenuShell
+								preferredSide="down"
+								anchorTestid="slot-model-image"
+								testid="slot-model-menu-image"
+								onClose={() => { setOpenMenu(null); return "closed"; }}
+								menuClass="flex w-[22rem] flex-col lh-menu"
+							>
+								<button type="button" data-testid="image-model-clear" className="mb-1 rounded-lg px-2 py-1.5 text-left hover:bg-muted" onClick={() => { onModelsChange(composeImageModel(models, undefined)); setOpenMenu(null); }}>None</button>
+								<SearchMenuList
+									items={imageCatalog}
+									itemKey={(m) => `${m.provider}/${m.id}`}
+									searchTerms={(m) => [m.provider, m.id, m.name]}
+									compare={(a, b) => a.id.localeCompare(b.id)}
+									isSelected={(m) => m.id === selection?.id && m.provider === selection.provider}
+									onPick={(entry) => { onModelsChange(composeImageModel(models, { provider: entry.provider, id: entry.id })); setOpenMenu(null); }}
+									searchTestid="model-search"
+									listTestid="model-list"
+									optionTestid={(m) => `image-model-option-${m.id.replace(/[^a-z0-9-]/gi, "_")}`}
+									placeholder="Search image models…"
+									loading="Loading image models…"
+									empty="No image models match."
+									renderItem={(m) => <><span className="truncate text-card-foreground">{m.name}</span><span className="truncate text-muted-foreground">{m.provider} · {m.id}</span></>}
+								/>
+								<div className="mt-1 border-t px-2 pt-1.5 text-xs text-muted-foreground">{imageCatalog?.length ? "Used only when a visual requests generated imagery" : "No image models — add an OpenRouter key in Keys"}</div>
+							</MenuShell>}
+						</span>
+					</SettingsRow>;
+				})()}
 				<SettingsRow label="Cache retention" hint="Customize the cache preference for each model slot">
 					<Button type="button" variant="ghost" data-testid="models-advanced" aria-expanded={advancedModels}
 						onClick={() => { setAdvancedModels(!advancedModels); setOpenMenu(null); }}>

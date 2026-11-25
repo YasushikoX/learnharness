@@ -5,6 +5,7 @@ import { chatStore } from "../src/store/chats.ts";
 import { graphStore } from "../src/store/graph.ts";
 import { PATHS, SOURCES_FILE } from "../config.ts";
 import { callCost, jobCost, sessionCost, turnCost } from "../src/server/pricing.ts";
+import { piModels } from "../src/agent/models.ts";
 import { sumSteps } from "../src/core/prices.ts";
 import type { CallUsage, ExtractionRunUsage, JobRecord, TurnUsage } from "../src/core/contracts.ts";
 
@@ -56,6 +57,29 @@ test("legacy flat-rate jobs remain priceable; missing usage stays absent", () =>
 	assert.equal(jobCost({}), null);
 	const job: Pick<JobRecord, "usage"> = { usage: { model: "openrouter:z-ai/glm-5.3-flash", inputTokens: 1_000_000, outputTokens: 100_000, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, steps: 4 } };
 	assert.ok(jobCost(job)! > 0);
+});
+
+test("mixed image and visual-maker calls retain their total cost", () => {
+	const generated = call({ model: "openrouter:openai/gpt-image-1", inputTokens: 10, outputTokens: 100 });
+	const maker = call({ model: "openrouter:z-ai/glm-5.3-flash", inputTokens: 10_000, outputTokens: 2_000 });
+	const imageCost = callCost(generated, generated.model!);
+	const makerCost = callCost(maker, maker.model!);
+	assert.ok(imageCost !== null && imageCost > 0);
+	assert.ok(makerCost !== null && makerCost > 0);
+	const job: Pick<JobRecord, "usage"> = { usage: {
+		model: maker.model!, inputTokens: 10_010, outputTokens: 2_100, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0,
+		steps: 2, calls: [generated, maker],
+	} };
+	assert.equal(jobCost(job), imageCost + makerCost);
+});
+
+test("per-image products with zero token rates are unpriced, never free", () => {
+	const ratesZero = (cost: { input: number; output: number; cacheRead: number; cacheWrite: number }) =>
+		[cost.input, cost.output, cost.cacheRead, cost.cacheWrite].every((rate) => rate === 0);
+	const model = piModels().getModelsOfType("image", "openrouter").find((candidate) =>
+		[candidate.cost, ...(candidate.cost.tiers ?? [])].every(ratesZero));
+	assert.ok(model, "the real catalog includes a per-image product");
+	assert.equal(callCost(call(), `openrouter:${model.id}`), null);
 });
 
 test("appendTurnUsage: idempotent per turn; continuations survive saveMessages; list omits log", () => {

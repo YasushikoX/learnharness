@@ -31,6 +31,7 @@ provider did not report that field; absence must not be interpreted as zero.
 
 ```ts
 export interface CallUsage {
+    model?: string;
     inputTokens: number | undefined;
     outputTokens: number | undefined;
     cacheReadTokens: number | undefined;
@@ -42,12 +43,21 @@ export interface CallUsage {
 
 **Member index** (including nested object members; inherited members are defined in the linked base types):
 
+- [model](#callusage-model)
 - [inputTokens](#callusage-inputtokens)
 - [outputTokens](#callusage-outputtokens)
 - [cacheReadTokens](#callusage-cachereadtokens)
 - [cacheWriteTokens](#callusage-cachewritetokens)
 - [cacheWrite1hTokens](#callusage-cachewrite1htokens)
 - [reasoningTokens](#callusage-reasoningtokens)
+
+### CallUsage model
+
+Actual provider:id when a job combines multiple model types.
+
+```ts
+model?: string;
+```
 
 ### CallUsage inputTokens
 

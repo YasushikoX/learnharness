@@ -6,6 +6,7 @@
 
 - [CatalogDefaults](#catalogdefaults) — supporting declaration
 - [CatalogProvider](#catalogprovider) — supporting declaration
+- [ImageModelCatalogEntry](#imagemodelcatalogentry) — supporting declaration
 - [ModelCatalogEntry](#modelcatalogentry) — supporting declaration
 - [ModelCatalogResponse](#modelcatalogresponse)
 - [RolePins](#rolepins) — supporting declaration
@@ -104,6 +105,52 @@ Custom keyless connections can be available without an API key.
 
 ```ts
 keyPresent: boolean;
+```
+
+## ImageModelCatalogEntry
+
+Supporting declaration used by a public type. This is not an additional runtime API or SDK helper.
+
+Client-safe image-generator choice for Settings.
+
+```ts
+export interface ImageModelCatalogEntry {
+    id: string;
+    name: string;
+    provider: string;
+    output: ("text" | "image")[];
+}
+```
+
+**Member index** (including nested object members; inherited members are defined in the linked base types):
+
+- [id](#imagemodelcatalogentry-id)
+- [name](#imagemodelcatalogentry-name)
+- [provider](#imagemodelcatalogentry-provider)
+- [output](#imagemodelcatalogentry-output)
+
+### ImageModelCatalogEntry id
+
+```ts
+id: string;
+```
+
+### ImageModelCatalogEntry name
+
+```ts
+name: string;
+```
+
+### ImageModelCatalogEntry provider
+
+```ts
+provider: string;
+```
+
+### ImageModelCatalogEntry output
+
+```ts
+output: ("text" | "image")[];
 ```
 
 ## ModelCatalogEntry
@@ -247,6 +294,11 @@ GET /api/models response.
 ```ts
 export interface ModelCatalogResponse {
     models: ModelCatalogEntry[];
+    imageModels: ImageModelCatalogEntry[];
+    image: {
+        provider: string;
+        id: string;
+    } | null;
     defaults: CatalogDefaults | null;
     rolePins: RolePins;
     slots: SlotPins;
@@ -254,11 +306,15 @@ export interface ModelCatalogResponse {
 }
 ```
 
-**Related types:** [CatalogDefaults](contracts-models.md#catalogdefaults), [CatalogProvider](contracts-models.md#catalogprovider), [ModelCatalogEntry](contracts-models.md#modelcatalogentry), [RolePins](contracts-models.md#rolepins), [SlotPins](contracts-models.md#slotpins).
+**Related types:** [CatalogDefaults](contracts-models.md#catalogdefaults), [CatalogProvider](contracts-models.md#catalogprovider), [ImageModelCatalogEntry](contracts-models.md#imagemodelcatalogentry), [ModelCatalogEntry](contracts-models.md#modelcatalogentry), [RolePins](contracts-models.md#rolepins), [SlotPins](contracts-models.md#slotpins).
 
 **Member index** (including nested object members; inherited members are defined in the linked base types):
 
 - [models](#modelcatalogresponse-models)
+- [imageModels](#modelcatalogresponse-imagemodels)
+- [image](#modelcatalogresponse-image)
+- [image.provider](#modelcatalogresponse-imageprovider)
+- [image.id](#modelcatalogresponse-imageid)
 - [defaults](#modelcatalogresponse-defaults)
 - [rolePins](#modelcatalogresponse-rolepins)
 - [slots](#modelcatalogresponse-slots)
@@ -268,6 +324,37 @@ export interface ModelCatalogResponse {
 
 ```ts
 models: ModelCatalogEntry[];
+```
+
+### ModelCatalogResponse imageModels
+
+Image generators, separate from chat models including image-input models.
+
+```ts
+imageModels: ImageModelCatalogEntry[];
+```
+
+### ModelCatalogResponse image
+
+Saved generator choice, projected separately so setup cannot erase it.
+
+```ts
+image: {
+    provider: string;
+    id: string;
+} | null;
+```
+
+### ModelCatalogResponse image.provider
+
+```ts
+provider: string;
+```
+
+### ModelCatalogResponse image.id
+
+```ts
+id: string;
 ```
 
 ### ModelCatalogResponse defaults

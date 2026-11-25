@@ -83,6 +83,7 @@ describe("sanitizeUserSettings", () => {
 			models: {
 				strong: { model: { provider: "zai", id: "glm-5.3-flash" }, thinkingLevel: "low" },
 				cheap: { thinkingLevel: "medium" },
+				image: { provider: "openrouter", id: "google/gemini-3-pro-image-preview" },
 			},
 			appearance: {
 				theme: "catppuccin-latte",
