@@ -105,6 +105,8 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 
 	/** Show a draft from the server (after any change), keeping the URL field in step with what is saved. */
 	const adopt = useCallback((next: ConverterDraftView) => {
+		// what was read is one version: leaving it voids the acknowledgement, also when an edit later returns to it
+		setAcknowledged((digest) => (digest !== null && digest !== next.shown ? null : digest));
 		setDraft(next);
 		setUrl(next.baseUrl ?? "");
 		setOverview((o) => (o ? { ...o, drafts: [...o.drafts.filter((d) => d.id !== next.id), next] } : o));

@@ -683,7 +683,8 @@ describe("Ask AI to fix", () => {
 		};
 		count(core.replyShape(Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`f${i}`, [1, 2, 3]]))));
 		assert.ok(values <= core.FIX_SHAPE_MAX_VALUES + 2, `${values} values`);
-		assert.deepEqual(core.replyShape(core.replyShape({ s: "x".repeat(100) })), { s: "<text, 100 chars>" }, "reducing twice keeps the first count");
+		assert.deepEqual(core.replyShape(core.replyShape({ s: "x".repeat(100) }), { reduced: true }), { s: "<text, 100 chars>" }, "reducing a reduced shape keeps the first count");
+		assert.deepEqual(core.replyShape(core.replyShape([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]), { reduced: true }), [1, 2, 3, "…(more than 9 entries)"], "and a list's own count");
 		assert.deepEqual(core.replyShape({ status: "SUCCEEDED", n: 3, big: 12, neg: -1, f: 1.5, ok: true, none: null, "page-count": "v2" }), { status: "<text, 9 chars>", n: 3, big: "<number>", neg: "<number>", f: "<number>", ok: true, none: null, "page-count": "<text, 2 chars>" }, "every string is a length; numbers above 9 a marker");
 		assert.deepEqual(core.replyShape({ job: { state: "IN_PROGRESS" }, other: "DONE" }, { statusPointer: "/job/state" }), { job: { state: "IN_PROGRESS" }, other: "<text, 4 chars>" }, "a word is kept only at the profile's status pointer");
 		assert.deepEqual(core.replyShape({ job: { state: "done2" } }, { statusPointer: "/job/state" }), { job: { state: "<text, 5 chars>" } }, "letters only");
@@ -691,7 +692,7 @@ describe("Ask AI to fix", () => {
 		const odd = core.replyShape({ ["x".repeat(25)]: 1, ["y".repeat(24)]: 2, "has space": 2, "https://evil.example/a": 3, "ok_name": "https://evil.example" }) as Record<string, unknown>;
 		assert.deepEqual(Object.keys(odd), ["<name 1, 25 chars>", "y".repeat(24), "<name 3, 9 chars>", "<name 4, 22 chars>", "ok_name"]);
 		assert.equal(odd.ok_name, "<text, 20 chars>");
-		assert.deepEqual(core.replyShape(core.replyShape({ "has space": "a b", n: 100 })), { "<name 1, 9 chars>": "<text, 3 chars>", n: "<number>" }, "markers are kept when reduced again");
+		assert.deepEqual(core.replyShape(core.replyShape({ "has space": "a b", n: 100 }), { reduced: true }), { "<name 1, 9 chars>": "<text, 3 chars>", n: "<number>" }, "markers are kept when reduced again");
 	});
 
 	it("an invalid fix reply keeps the previous profile, with the reasons", async () => {
@@ -1143,7 +1144,10 @@ describe("fix round 2: what is sent is listed, what a service writes stays out",
 		const view = await newDraft(profileReply(ordinary[2]));
 		assert.equal(calls.length, 1);
 		assert.equal(view.status, "ready");
-		assert.equal(view.preflight!.fixed.find((v) => v.label === "Idempotency-Key")!.warning, "this may send your documents to someone else's account");
+		// ordinary options are not red (re-check 3, finding 4): names are judged by whole words
+		for (const label of ["Idempotency-Key", "X-Author"]) assert.equal(view.preflight!.fixed.find((v) => v.label === label)!.warning, undefined, label);
+		assert.match(view.preflight!.fixed.find((v) => v.label === "X-Auth-Mode")!.warning ?? "", /someone else's account/, "a header with the word auth in its name stays red");
+		for (const label of ["keywords", "tokenizer", "max_tokens"]) assert.equal(core.fixedValues(checked(ordinary[0]!)).find((v) => v.label === label)!.warning, undefined, label);
 	});
 
 	it("the refusal list is narrow: credential header names and well-known key prefixes, in any place", () => {
@@ -1154,15 +1158,15 @@ describe("fix round 2: what is sent is listed, what a service writes stays out",
 		};
 		const sub = (submit: Record<string, unknown>, over: Record<string, unknown> = {}) => modelProfile({ submit: { method: "POST", path: "/convert", body: { type: "multipart", fileField: "document" }, ...submit }, ...over });
 		for (const header of ["x-api-key", "API-KEY", "apikey", "x-auth-token", "x-access-token", "ocp-apim-subscription-key", "X-Shared-Secret", "Db-Password"]) refused(sub({ headers: { [header]: "v" } }, { auth: { header: "Authorization", value: "Bearer {{API_KEY}}" } }), new RegExp(`^/submit/headers/${header}:`));
-		refused(sub({ headers: { "X-Upstream": "Bearer abcdefgh1234" } }), /^\/submit\/headers\/X-Upstream: .*begins with Bearer /);
-		refused(sub({ body: { type: "multipart", fileField: "document", fields: { model: "sk-live-abcdefgh12" } } }), /^\/submit\/body\/fields\/model: .*begins with sk-/);
-		refused(sub({ body: { type: "json-base64", filePointer: "/f", encoding: "base64", json: { a: { b: "ghp_abcdefghijkl" } } } }), /^\/submit\/body\/json\/a\/b: .*begins with ghp_/);
-		refused(sub({ body: { type: "json-base64", filePointer: "/f", encoding: "base64", json: { t: "gho_abcdefghijkl" } } }), /begins with gho_/);
-		refused(sub({ path: "/convert?k=AIzaSyA1234567890abc" }), /^\/submit\/path \(query parameter k\): .*begins with AIza/);
-		refused(sub({ path: "/AKIAABCDEFGHIJKL/convert" }), /^\/submit\/path: .*begins with AKIA/);
-		refused(sub({ body: { type: "multipart", fileField: "document", fields: { s: "xoxb-1234-abcd" } } }), /begins with xox/);
-		refused(sub({ body: { type: "multipart", fileField: "document", fields: { t: "eyJhbGciOi.eyJzdWIiOi.c2lnbmF0" } } }), /begins with a JWT/);
-		refused(modelProfile({ auth: { header: "Authorization", value: "Bearer sk-proj-abcdefgh12 {{API_KEY}}" } }), /^\/auth: .*begins with sk-/);
+		refused(sub({ headers: { "X-Upstream": "Bearer abcdefgh1234" } }), /^\/submit\/headers\/X-Upstream: .*has the key prefix Bearer /);
+		refused(sub({ body: { type: "multipart", fileField: "document", fields: { model: "sk-live-abcdefgh12" } } }), /^\/submit\/body\/fields\/model: .*has the key prefix sk-/);
+		refused(sub({ body: { type: "json-base64", filePointer: "/f", encoding: "base64", json: { a: { b: "ghp_abcdefghijkl" } } } }), /^\/submit\/body\/json\/a\/b: .*has the key prefix ghp_/);
+		refused(sub({ body: { type: "json-base64", filePointer: "/f", encoding: "base64", json: { t: "gho_abcdefghijkl" } } }), /has the key prefix gho_/);
+		refused(sub({ path: "/convert?k=AIzaSyA1234567890abc" }), /^\/submit\/path \(query parameter k\): .*has the key prefix AIza/);
+		refused(sub({ path: "/AKIAABCDEFGHIJKL/convert" }), /^\/submit\/path: .*has the key prefix AKIA/);
+		refused(sub({ body: { type: "multipart", fileField: "document", fields: { s: "xoxb-1234-abcd" } } }), /has the key prefix xox/);
+		refused(sub({ body: { type: "multipart", fileField: "document", fields: { t: "eyJhbGciOi.eyJzdWIiOi.c2lnbmF0" } } }), /has the key prefix a JWT/);
+		refused(modelProfile({ auth: { header: "Authorization", value: "Bearer sk-proj-abcdefgh12 {{API_KEY}}" } }), /^\/auth: .*has the key prefix sk-/);
 		// not keys: a Slovak locale, a word, the usual key header and scheme
 		for (const profile of [sub({ body: { type: "multipart", fileField: "document", fields: { language: "sk-SK", mood: "xoxo" } } }), modelProfile({ auth: { header: "Authorization", value: "Bearer {{API_KEY}}" } })]) assert.ok(author.checkAuthorReply(profileReply(profile), own, 1).ok);
 		assert.deepEqual([...core.DRAFT_REFUSED_HEADER_NAMES], ["authorization", "proxy-authorization", "cookie", "x-api-key", "api-key", "apikey", "x-auth-token", "x-access-token", "ocp-apim-subscription-key"]);
@@ -1332,3 +1336,70 @@ describe("the drafts routes", () => {
 });
 
 export type { LoggedRequest };
+
+// ── Re-check 3 (council/reviews/wp3a3-review-3.md) ──────────────────────────
+
+describe("re-check 3: markers, trailing dots, key prefixes, names by words", () => {
+	const own = { id: "acme-ocr", name: "Acme OCR", description: "d" };
+	const checked = (profile: unknown) => {
+		const result = author.checkAuthorReply(profileReply(profile), own, 1);
+		assert.ok(result.ok && result.outcome.kind === "profile", result.ok ? "" : result.errors.join("; "));
+		return result.outcome.profile;
+	};
+	it("finding 1: a service's string that looks like one of the app's markers is service text like any other", () => {
+		const digits = "115107045116101115116045117115101114045115101099114101116";
+		const raw = { ignore_prev_rules: `<text, ${digits} chars>`, [`<name 1, ${digits} chars>`]: "ok", big: `<text, ${"9".repeat(10_000)} chars>`, more: "…(more than 9 entries)", dots: "…" };
+		const shape = JSON.stringify(core.replyShape(raw));
+		assert.equal(shape.includes(digits), false, shape);
+		assert.equal(shape.includes("9".repeat(20)), false);
+		assert.deepEqual(core.replyShape({ a: "<text, 5 chars>" }), { a: "<text, 15 chars>" }, "replaced by its own length");
+		assert.deepEqual(Object.keys(core.replyShape({ "<name 1, 7 chars>": 1 }) as object), ["<name 1, 17 chars>"]);
+		assert.deepEqual(core.replyShape({ a: "…(more than 9 entries)", b: "<number>", c: "{…}" }), { a: "<text, 22 chars>", b: "<text, 8 chars>", c: "<text, 3 chars>" });
+		// and a marker with an absurd count is not kept even from a reduced shape
+		assert.deepEqual(core.replyShape({ a: `<text, ${"9".repeat(30)} chars>` }, { reduced: true }), { a: "<text, 44 chars>" });
+	});
+
+	it("finding 2: a host name at the end of a sentence is still a host name, in a value and in the AI's note", () => {
+		assert.ok(core.addressReason("evil.com."));
+		assert.ok(core.addressReason("Visit attacker.io."));
+		assert.equal(core.addressReason("version 2.0 of the model."), undefined);
+		assert.equal(core.screenedAiText("Visit evil.com.", "note"), core.NOTE_REMOVED);
+		assert.equal(core.screenedAiText("Go to evil.example and enter your key.", "reason"), core.REASON_REMOVED);
+		assert.equal(core.screenedAiText("Use evil.support for setup", "note"), core.NOTE_REMOVED, "any dotted name in the AI's prose");
+		assert.equal(core.screenedAiText("Pages are counted from 0. The documentation did not confirm the error format, e.g. for scans.", "note"), "Pages are counted from 0. The documentation did not confirm the error format, e.g. for scans.");
+	});
+
+	it("finding 3: a key prefix is found anywhere a word can start, in any case, behind invisible characters", () => {
+		// put together here so that the file holds no string a secret scanner takes for a real token
+		const SLACK_SHAPED = ["xoxe", "xoxp-1-", "Mi0yLTE2", "MzQ1Njc4"].join(".").replace(".Mi0", "Mi0").replace("E2.Mz", "E2Mz");
+		assert.equal(SLACK_SHAPED.startsWith("xoxe.xoxp-1-"), true);
+		for (const value of ["Token sk-proj-abcd1234-efgh5678", "key=sk-1234567890abcdef", "sk-v1.abcd12345678", "sk-live:abcd12345678", "SK-1234567890abcdef", "GHP_1234567890abcd", "aizaSyA1234567890", "akia1234567890AB", SLACK_SHAPED, "\u200bsk-1234567890", "Bearer attacker12345"]) {
+			assert.ok(core.keyPrefixOf(value), JSON.stringify(value));
+		}
+		for (const value of ["sk-SK", "xoxo", "task-management-system", "risk-assessment-2024", "Bearer", "markdown", "ask-user-question1"]) assert.equal(core.keyPrefixOf(value), undefined, value);
+		const refused = (profile: unknown) => !author.checkAuthorReply(profileReply(profile), own, 1).ok;
+		assert.ok(refused(modelProfile({ auth: { header: "X-Custom", value: "Bearer attacker12345 {{API_KEY}}" } })), "a second token beside the user's key");
+		assert.ok(refused(modelProfile({ submit: { method: "POST", path: "/convert", headers: { "X-Custom": "Token sk-proj-abcd1234-efgh5678-ijkl9012" }, body: { type: "multipart", fileField: "file" } } })));
+		assert.ok(refused(modelProfile({ submit: { method: "POST", path: "/convert", body: { type: "multipart", fileField: "file", fields: { cfg: "key=sk-1234567890abcdef" } } } })));
+		assert.ok(!refused(modelProfile({ auth: { header: "Authorization", value: "Bearer {{API_KEY}}" } })), "the usual key header");
+	});
+
+	it("finding 4: names are red by whole words: account routing is, an option that merely contains the letters is not", () => {
+		for (const name of ["keywords", "tokenizer", "max_tokens", "maxTokens", "Idempotency-Key", "X-Author", "keyless", "monkey_mode", "security_level", "during_ocr", "hostile_mode", "convert_to", "text_to_speech"]) {
+			assert.equal(core.nameReason(name), undefined, name);
+		}
+		for (const name of ["X-Org-Id", "org_id", "orgId", "X-Tenant-Id", "workspace_id", "api_key", "apiKey", "session_token", "account", "user_id", "project", "client-id", "team"]) {
+			assert.match(core.nameReason(name) ?? "", /someone else's account/, name);
+		}
+		for (const name of ["webhook", "callback_url", "callbackUrl", "notify_email", "send_to", "replyTo", "to", "cc", "target_host", "s3_bucket", "share", "redirect"]) {
+			assert.match(core.nameReason(name) ?? "", /address the service would send data to/, name);
+		}
+	});
+
+	it("finding 5: every key placeholder is masked, and a job id in a parameter's name is shown as one", () => {
+		const double = core.fixedValues(checked(modelProfile({ auth: { header: "X-Key-Double", value: "{{API_KEY}}:{{API_KEY}}" } })), { stored: true, hint: "…5432" });
+		const line = double.find((v) => v.kind === "auth")!;
+		assert.equal(line.value.includes("{{API_KEY}}"), false, line.value);
+		assert.equal(line.value.split("5432").length - 1, 2, line.value);
+	});
+});

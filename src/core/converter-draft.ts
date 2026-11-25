@@ -36,7 +36,7 @@ export * from "./converter-draft-view.ts";
  *     is listed by default), and Approve always needs "I have read these values", tied to the version on screen. Red
  *     rules (`redReason`: addresses, account-like names, opaque runs, invisible characters) only decide which are
  *     shown first, with a reason.
- *   - a draft is refused only for a credential header of its own or a value that begins with a well-known key prefix
+ *   - a draft is refused only for a credential header of its own or a value that holds a well-known key prefix
  *     (`draftCredentialProblems`); the acknowledgement is the gate for everything else.
  *   - the format documentation the model reads (`profileFormatGuide`) is generated from the validator's schema and
  *     constants, so it cannot drift from what the validator accepts (a test checks every schema field is described).
@@ -365,7 +365,10 @@ export const REASON_REMOVED = "The AI says this service cannot be described by a
  * the reply is read and again whenever a draft file is read.
  */
 export function screenedAiText(text: string, kind: "note" | "reason"): string {
-	if (text !== NOTE_REMOVED && text !== REASON_REMOVED && (UNSEEN_IN_PROSE.test(text) || addressReason(text) !== undefined)) return kind === "note" ? NOTE_REMOVED : REASON_REMOVED;
+	// stricter than for profile values (re-check 3): in the AI's prose any dotted name (word.word) counts as an address,
+	// whatever its ending; a note that names a JSON field as `result.pages` is replaced too, which is the safe side
+	const dotted = /[a-z0-9-]+\.[a-z]{2,}/i.test(text);
+	if (text !== NOTE_REMOVED && text !== REASON_REMOVED && (UNSEEN_IN_PROSE.test(text) || dotted || addressReason(text) !== undefined)) return kind === "note" ? NOTE_REMOVED : REASON_REMOVED;
 	return plainLine(text, DRAFT_NOTE_MAX_CHARS);
 }
 
@@ -447,16 +450,49 @@ const ADDRESS_VALUE_RULES: readonly [RegExp, string][] = [
 	[/\b(?:\d{1,3}\.){3}\d{1,3}\b/, "it is an IP address"],
 	[/(?:^|[^\w.-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}(?::\d{1,5}\b|\/)/i, "it is a host name with a path or port"],
 	[new RegExp(`(?:^|[^\\w.-])www\\.`, "i"), "it is a host name"],
-	[new RegExp(`(?:^|[^\\w.-])(?:[a-z0-9-]+\\.)+(?:${COMMON_TLDS}|[a-z]{2})(?![\\w.-])`, "i"), "it is a host name"],
+	[new RegExp(`(?:^|[^\\w.-])(?:[a-z0-9-]+\\.)+(?:${COMMON_TLDS}|[a-z]{2})(?![\\w-]|\\.[a-z0-9])`, "i"), "it is a host name"],
 ];
 
-/** Names (header names, field names, any segment of a JSON Pointer or path, query parameters) that suggest an address. */
-const ADDRESS_NAME = /callback|webhook|hook|notif|redirect|return_?(?:url|to|address)|url|uri|endpoint|e-?mail|mail_?to|forward|upload_?to|destination|^dest(?:ination)?$|target|bucket|^s3|sink|host|domain|server|address|^addr|recipient|channel|href|^link|send_?to|reply_?to|^to$|^cc$|^bcc$|^ip$|proxy|^ping|share/i;
-/** Names that suggest a key, a token, or someone's tenant, account, organisation, workspace, project, user, customer,
+/**
+ * A name as words (re-check 3, finding 4): split at anything that is not a letter or digit and at camelCase
+ * boundaries, lower case. Names are judged word by word, so `security_level` is not red for the `uri` inside it, nor
+ * `keywords` for `key`, nor `tokenizer` for `token`.
+ */
+export function nameWords(name: string): string[] {
+	return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+/** Words that suggest an address the service would send data to. */
+const ADDRESS_WORDS = new Set([
+	"callback", "callbacks", "webhook", "webhooks", "hook", "hooks", "notify", "notification", "notifications", "notif", "redirect", "url", "urls", "uri", "uris",
+	"endpoint", "endpoints", "email", "emails", "mail", "mailto", "forward", "destination", "dest", "target", "bucket", "s3", "sink", "host", "hostname", "domain",
+	"server", "address", "addr", "recipient", "recipients", "channel", "href", "link", "proxy", "ping", "share", "ip",
+]);
+/** Whole names that suggest one (too short or too common to count as a word inside a longer name). */
+const ADDRESS_WHOLE_NAMES = new Set(["to", "cc", "bcc"]);
+/** Word pairs that suggest one: `send_to`, `reply-to`, `returnTo`, `upload_to`, `mail_to`, `forward_to`. */
+const ADDRESS_WORD_PAIRS = /(?:^| )(?:send|reply|return|upload|mail|forward|deliver|post|notify) to(?: |$)/;
+/** Words that suggest a key, a token, or someone's tenant, account, organisation, workspace, project, user, customer,
  *  team, client or subscription (ruling 2 of fix round 2: red, never refused). */
-const ACCOUNT_NAME = /key|token|secret|auth|passw|credential|session|signature|tenant|account|acct|organi[sz]ation|^org$|org_?id|workspace|^ws$|project|user|customer|team|client|subscription|owner|recipient|channel/i;
-/** The same words without the ones every key header has (the key header's own name is judged by these). */
-const ACCOUNT_ONLY_NAME = /tenant|account|acct|organi[sz]ation|^org$|org_?id|workspace|^x-ws$|project|user|customer|team|client|owner|recipient|channel/i;
+const ACCOUNT_WORDS = new Set([
+	"key", "keys", "apikey", "token", "secret", "secrets", "auth", "password", "passwd", "credential", "credentials", "session", "signature", "tenant", "account",
+	"acct", "organization", "organisation", "org", "workspace", "ws", "project", "user", "username", "customer", "team", "client", "subscription", "owner",
+	"recipient", "channel",
+]);
+/** The same without the words every key header has (the key header's own name is judged by these). */
+const ACCOUNT_ONLY_WORDS = new Set([...ACCOUNT_WORDS].filter((w) => !["key", "keys", "apikey", "token", "secret", "secrets", "auth", "password", "passwd", "credential", "credentials", "session", "signature", "subscription"].includes(w)));
+/** Ordinary options whose names hold one of those words: never red as names. */
+const ORDINARY_NAMES = new Set(["idempotency key", "max tokens", "min tokens", "num tokens", "max output tokens", "max new tokens", "max completion tokens", "x idempotency key"]);
+
+const suggestsAddress = (name: string): boolean => {
+	const words = nameWords(name);
+	return ADDRESS_WHOLE_NAMES.has(words.join(" ")) || words.some((w) => ADDRESS_WORDS.has(w)) || ADDRESS_WORD_PAIRS.test(words.join(" "));
+};
+const suggestsAccount = (name: string, only = false): boolean => {
+	const words = nameWords(name);
+	if (ORDINARY_NAMES.has(words.join(" "))) return false;
+	return words.some((w) => (only ? ACCOUNT_ONLY_WORDS : ACCOUNT_WORDS).has(w));
+};
 /** The usual names of the one key header: not red as names. */
 const USUAL_KEY_HEADERS = new Set(["authorization", "x-api-key", "api-key", "apikey", "x-key", "key", "x-auth-token", "x-access-token", "x-api-token", "ocp-apim-subscription-key", "x-goog-api-key", "x-functions-key", "subscription-key"]);
 /** The usual words before the key in its header ("Bearer {{API_KEY}}"). */
@@ -488,8 +524,8 @@ const UNSEEN_REASON = "it holds invisible or control characters (shown as \\u{�
 /** Why a name (or one segment of a pointer or path) stands out, or undefined (pure; exported for tests). */
 export function nameReason(name: string): string | undefined {
 	const decoded = percentDecoded(name);
-	if (ADDRESS_NAME.test(decoded)) return "its name suggests an address the service would send data to";
-	if (ACCOUNT_NAME.test(decoded)) return ACCOUNT_REASON;
+	if (suggestsAddress(decoded)) return "its name suggests an address the service would send data to";
+	if (suggestsAccount(decoded)) return ACCOUNT_REASON;
 	return undefined;
 }
 
@@ -576,7 +612,7 @@ function pathItems(request: "submit" | "poll" | "result") {
 		out.push({ kind: "path", request, label: `${request} path`, value: shownPlaceholders(bare), at, names, texts });
 		for (const q of queryParameters(path)) {
 			const raw = q.raw !== `${q.name}=${q.value}` ? q.raw : undefined;
-			out.push({ kind: "query", request, label: q.name, value: shownPlaceholders(q.value), ...(raw !== undefined ? { raw } : {}), at: `${at} (query parameter ${q.name})`, names: [q.name], texts: [q.value.replace(/\{\{\w+\}\}/g, "")] });
+			out.push({ kind: "query", request, label: shownPlaceholders(q.name), value: shownPlaceholders(q.value), ...(raw !== undefined ? { raw } : {}), at: `${at} (query parameter ${q.name})`, names: [q.name], texts: [q.value.replace(/\{\{\w+\}\}/g, "")] });
 		}
 	};
 }
@@ -589,7 +625,7 @@ const FIELD_RULES: Readonly<Record<string, FieldRule>> = {
 		const lower = auth.header.toLowerCase();
 		const around = auth.value.split("{{API_KEY}}").map((t) => t.trim()).filter(Boolean);
 		const usualScheme = around.length <= 1 && USUAL_KEY_SCHEMES.has((around[0] ?? "").toLowerCase()) && auth.value.trimStart().indexOf("{{API_KEY}}") >= auth.value.trimStart().length - "{{API_KEY}}".length;
-		const reason = !USUAL_KEY_HEADERS.has(lower) && (ACCOUNT_ONLY_NAME.test(lower) || ADDRESS_NAME.test(lower)) ? ACCOUNT_REASON
+		const reason = !USUAL_KEY_HEADERS.has(lower) && (suggestsAccount(lower, true) || suggestsAddress(lower)) ? ACCOUNT_REASON
 			: !usualScheme ? "the key header sends text besides your key, chosen by the documentation: it may route your key or documents to someone else's account"
 			: undefined;
 		out.push({ kind: "auth", request: "every request", label: auth.header, value: shownPlaceholders(auth.value), at: "/auth", names: [], texts: around, ...(reason ? { reason } : {}) });
@@ -709,7 +745,7 @@ export function fixedValues(profile: HttpConverterProfile, credential?: Credenti
 	const mask = credential?.stored && credential.hint ? `${KEY_MASK}${credential.hint.replace(/^…/, "")}` : KEY_MASK;
 	const out = sentItems(profile).map((item): FixedValue => {
 		const warning = redReason(item);
-		const value = item.kind === "auth" ? item.value.replace(KEY_MASK, mask) : item.value;
+		const value = item.kind === "auth" ? item.value.replaceAll(KEY_MASK, mask) : item.value;
 		return { kind: item.kind, request: item.request, label: visibleText(item.label), value: visibleText(value), ...(item.raw !== undefined ? { raw: visibleText(item.raw) } : {}), ...(warning ? { warning } : {}) };
 	});
 	return [...out.filter((v) => v.warning), ...out.filter((v) => !v.warning)];
@@ -732,19 +768,23 @@ export const DRAFT_REFUSED_HEADER_NAMES = ["authorization", "proxy-authorization
  * locale such as `sk-SK` or a word such as `xoxo` is not taken for a key).
  */
 export const DRAFT_KEY_PREFIXES: readonly (readonly [string, RegExp])[] = [
-	["sk-", /^sk-[A-Za-z0-9_-]{8,}/],
-	["Bearer ", /^Bearer\s+\S{8,}/i],
-	["ghp_", /^ghp_[A-Za-z0-9]{8,}/],
-	["gho_", /^gho_[A-Za-z0-9]{8,}/],
-	["AIza", /^AIza[0-9A-Za-z_-]{8,}/],
-	["AKIA", /^AKIA[0-9A-Z]{8,}/],
-	["xox", /^xox[a-z]-[A-Za-z0-9-]{4,}/],
-	["a JWT", /^eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/],
+	["sk-", /(?:^|[^A-Za-z0-9])sk-[A-Za-z0-9_.:-]{8,}/i],
+	["Bearer ", /(?:^|[^A-Za-z0-9])Bearer\s+\S{8,}/i],
+	["ghp_", /(?:^|[^A-Za-z0-9])ghp_[A-Za-z0-9]{8,}/i],
+	["gho_", /(?:^|[^A-Za-z0-9])gho_[A-Za-z0-9]{8,}/i],
+	["AIza", /(?:^|[^A-Za-z0-9])AIza[0-9A-Za-z_-]{8,}/i],
+	["AKIA", /(?:^|[^A-Za-z0-9])AKIA[0-9A-Za-z]{8,}/i],
+	["xox", /(?:^|[^A-Za-z0-9])xox(?:[a-z]-|e\.xox[a-z]-)[A-Za-z0-9-]{4,}/i],
+	["a JWT", /(?:^|[^A-Za-z0-9])eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/],
 ];
 
-/** The key prefix a value begins with, or undefined (pure; exported for tests). */
+/**
+ * The key prefix a value holds, or undefined (pure; exported for tests). Looked for anywhere a word can start, in any
+ * letter case, with invisible characters removed first (re-check 3, finding 3): `Token sk-…`, `key=sk-…`, `SK-…` and
+ * a zero-width space before the prefix are all the same key.
+ */
 export function keyPrefixOf(value: string): string | undefined {
-	const text = value.trim();
+	const text = value.replace(new RegExp(UNSEEN.source, "gu"), "");
 	return DRAFT_KEY_PREFIXES.find(([, rule]) => rule.test(text))?.[0];
 }
 
@@ -753,7 +793,7 @@ const REFUSAL_ADVICE = "remove it, or, if the service really needs it, write the
 /**
  * Why a DRAFTED profile is refused (pure; exported for tests). The acknowledgement of everything it sends is the
  * gate, so this is narrow: a fixed header named exactly like a credential header (DRAFT_REFUSED_HEADER_NAMES) or whose
- * name contains `secret` or `password`; and any value or name, in any place, that begins with a well-known key
+ * name contains `secret` or `password`; and any value or name, in any place, that holds a well-known key
  * prefix (DRAFT_KEY_PREFIXES). Everything else is listed, and at most red.
  */
 export function draftCredentialProblems(profile: HttpConverterProfile): string[] {
@@ -766,9 +806,10 @@ export function draftCredentialProblems(profile: HttpConverterProfile): string[]
 				continue;
 			}
 		}
-		const pieces = item.kind === "auth" ? item.texts.flatMap((t) => t.split(/[\s,;]+/)) : [...item.texts, ...item.names];
+		// the whole text and its parts: "Bearer <token>" needs the whole, "key=sk-…" is found either way
+		const pieces = [...item.texts, ...item.names];
 		const prefix = pieces.map(keyPrefixOf).find(Boolean);
-		if (prefix) errors.push(`${item.at}: holds what looks like a key (it begins with ${prefix}); a drafted profile may not send a key of its own; ${REFUSAL_ADVICE}`);
+		if (prefix) errors.push(`${item.at}: holds what looks like a key (it has the key prefix ${prefix}); a drafted profile may not send a key of its own; ${REFUSAL_ADVICE}`);
 	}
 	return errors;
 }
@@ -799,7 +840,7 @@ export function describeProfile(profile: HttpConverterProfile, baseUrl: string |
 		body: body.type === "multipart"
 			? `The PDF is uploaded as the form field "${visibleText(body.fileField)}" (multipart/form-data).`
 			: `The PDF is sent inside a JSON body at ${visibleText(body.filePointer)}, as ${body.encoding === "data-url" ? "a base64 data URL" : "base64 text"}.`,
-		...(profile.auth ? { auth: { header: profile.auth.header, value: profile.auth.value.replace("{{API_KEY}}", masked) } } : {}),
+		...(profile.auth ? { auth: { header: profile.auth.header, value: profile.auth.value.replaceAll("{{API_KEY}}", masked) } } : {}),
 		fixed,
 		...(poll ? { poll: visibleText(`The upload's answer holds a job id at ${poll.jobIdPointer}. Then ${poll.method ?? "GET"} ${urlFor(baseUrl, poll.path)} every ${((poll.intervalMs ?? POLL_DEFAULT_INTERVAL_MS) / 1000).toString()} s${poll.maxPolls ? `, at most ${poll.maxPolls} times` : ""}, reading the state at ${poll.statusPointer} (${statuses}).`) } : {}),
 		...(profile.result ? { result: visibleText(`${profile.result.method ?? "GET"} ${urlFor(baseUrl, profile.result.path)} fetches the finished answer.`) } : {}),
@@ -819,8 +860,9 @@ export const FIX_MAX_ANSWERS = 3;
 export const FIX_FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,23}$/;
 /** A value at the profile's own status pointer kept as it is: a word of at most 16 letters (`_` and `-` inside). */
 export const FIX_STATUS_TOKEN = /^[A-Za-z][A-Za-z_-]{0,15}$/;
-const STRING_MARKER = /^<text, \d+ chars>$/;
-const NAME_MARKER = /^<name \d+, \d+ chars>$/;
+const STRING_MARKER = /^<text, \d{1,9} chars>$/;
+const NAME_MARKER = /^<name \d{1,2}, \d{1,9} chars>$/;
+const COUNT_MARKER = /^…\((?:[1-9] entries in all|more than 9 entries)\)$/;
 const NUMBER_MARKER = "<number>";
 const MARKERS = new Set(["…", "[…]", "{…}", NUMBER_MARKER, "…(more than 9 entries)"]);
 
@@ -829,6 +871,12 @@ export interface ShapeOptions {
 	allowed?: (text: string) => boolean;
 	/** The profile's status pointer, in a status answer: the only place a short word is kept as it is. */
 	statusPointer?: string;
+	/**
+	 * The value is a shape this function already produced (the draft file's, on its way to the fix call), so its
+	 * markers are kept as they are. NEVER set for a service's own answer (re-check 3, finding 1): there a string that
+	 * looks like a marker is service text like any other, and is replaced by its length.
+	 */
+	reduced?: boolean;
 }
 
 /**
@@ -845,13 +893,16 @@ export function replyShape(value: unknown, options: ShapeOptions = {}): unknown 
 	const walk = (node: unknown, depth: number, at: string): unknown => {
 		if (--budget < 0) return "…";
 		if (typeof node === "string") {
-			if (STRING_MARKER.test(node) || MARKERS.has(node) || /^…\([1-9] entries in all\)$/.test(node)) return node;
+			if (options.reduced && (STRING_MARKER.test(node) || MARKERS.has(node) || COUNT_MARKER.test(node))) return node;
 			return at === options.statusPointer && FIX_STATUS_TOKEN.test(node) && allowed(node) ? node : `<text, ${node.length} chars>`;
 		}
 		if (typeof node === "number") return Number.isInteger(node) && node >= 0 && node <= 9 ? node : NUMBER_MARKER;
 		if (node === null || typeof node !== "object") return typeof node === "boolean" ? node : null;
 		if (depth >= 8) return Array.isArray(node) ? "[…]" : "{…}";
 		if (Array.isArray(node)) {
+			// a reduced list keeps its own count (its last entry), instead of being counted again as four entries
+			const tail = node.at(-1);
+			if (options.reduced && node.length <= 4 && typeof tail === "string" && COUNT_MARKER.test(tail)) return [...node.slice(0, -1).map((v, i) => walk(v, depth + 1, `${at}/${i}`)), tail];
 			const head = node.slice(0, 3).map((v, i) => walk(v, depth + 1, `${at}/${i}`));
 			return node.length > 3 ? [...head, node.length <= 9 ? `…(${node.length} entries in all)` : "…(more than 9 entries)"] : head;
 		}
@@ -863,7 +914,7 @@ export function replyShape(value: unknown, options: ShapeOptions = {}): unknown 
 				out["…"] = "…";
 				break;
 			}
-			const name = NAME_MARKER.test(key) || key === "…" || (FIX_FIELD_NAME.test(key) && allowed(key)) ? key : `<name ${fields}, ${key.length} chars>`;
+			const name = (options.reduced && (NAME_MARKER.test(key) || key === "…")) || (FIX_FIELD_NAME.test(key) && allowed(key)) ? key : `<name ${fields}, ${key.length} chars>`;
 			Object.defineProperty(out, name, { value: walk((node as Record<string, unknown>)[key], depth + 1, `${at}/${pointerPart(key)}`), enumerable: true, configurable: true, writable: true });
 		}
 		return out;
@@ -967,7 +1018,7 @@ export function reportForModel(report: ConverterValidationReport, answers: reado
 		answers: echoed ? [] : answers.slice(0, FIX_MAX_ANSWERS).map((a) => ({
 			pdf: a.pdf === "blank-middle" ? "blank-middle" : "two-page",
 			stage: a.stage === "poll" || a.stage === "result" ? a.stage : "submit",
-			shape: replyShape(a.shape, { ...(options.allowed ? { allowed: options.allowed } : {}), ...(a.stage === "poll" && options.statusPointer !== undefined ? { statusPointer: options.statusPointer } : {}) }),
+			shape: replyShape(a.shape, { reduced: true, ...(options.allowed ? { allowed: options.allowed } : {}), ...(a.stage === "poll" && options.statusPointer !== undefined ? { statusPointer: options.statusPointer } : {}) }),
 		})),
 	};
 }
