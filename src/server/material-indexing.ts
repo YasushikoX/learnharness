@@ -7,6 +7,7 @@ import type { MaterialStore } from "../core/ports.ts";
 import {
 	digestMaterial,
 	failedBatchesOf,
+	hasProfile,
 	MATERIAL_INDEXER_VERSION,
 	parseStoredDigest,
 	rewriteProfile,
@@ -74,6 +75,8 @@ export interface IndexMaterialOptions {
 	model: MaterialProfilerOptions;
 	/** An indexing the user asked for: ignores the stored digest and an interrupted marker. */
 	force?: boolean;
+	/** What the caller does about the profile when the run gives none, for the notes (default "profiler", the upload hook). */
+	fallback?: ProfileFallback;
 	onProgress?: (progress: MaterialIndexingProgress | undefined) => void;
 }
 
@@ -168,8 +171,28 @@ function pageRanges(batches: readonly { pageStart: number; pageEnd: number }[]):
 	return `${shown.join(", ")}${batches.length > 6 ? ` and ${batches.length - 6} more` : ""}`;
 }
 
-/** What the material shows about a digest: a missing profile (error) and parts that could not be indexed (warning). Pure. */
-export function digestNotes(digest: MaterialDigest): { error?: MaterialIndexingError; warnings: string[] } {
+/**
+ * What happens to the material's profile when an indexing run gives none, so the notes say what actually happened:
+ * profiler: the caller reads it the old way (the upload hook); kept: the material keeps the profile it has (a retry);
+ * none: it has none and none is read now.
+ */
+export type ProfileFallback = "profiler" | "kept" | "none";
+
+const FALLBACK_CLAUSE: Record<ProfileFallback, string> = {
+	profiler: "so the profile was read the old way",
+	kept: "so the material keeps the profile it had",
+	none: "so this PDF has no profile from it",
+};
+
+/** The fallback a retry has: the profile the material has is kept, or there is none. */
+export const keptOrNone = (material: Pick<LessonMaterial, "profile">): ProfileFallback => (material.profile ? "kept" : "none");
+
+/**
+ * What the material shows about a digest: a missing profile (error) and parts that could not be indexed (warning).
+ * "Has a profile" is hasProfile's answer, the same test the upload hook uses. The note names the action that can
+ * work: rewriting the profile needs at least one indexed part, otherwise the indexing is retried. Pure.
+ */
+export function digestNotes(digest: MaterialDigest, fallback: ProfileFallback = "profiler"): { error?: MaterialIndexingError; warnings: string[] } {
 	const warnings: string[] = [];
 	const failed = failedBatchesOf(digest);
 	if (failed.length > 0) {
@@ -178,15 +201,27 @@ export function digestNotes(digest: MaterialDigest): { error?: MaterialIndexingE
 			`${failed.length} of ${n} ${n === 1 ? "part" : "parts"} of this PDF could not be indexed (pages ${pageRanges(failed)}), so their terms are missing from the class glossary. Retry the indexing to read them again.`,
 		);
 	}
-	if (digest.profile !== null) return { warnings };
-	return {
-		error: { kind: "no_profile", message: `The whole-document index has no profile (${digest.profileError}), so the profile was read the old way. Rewrite the profile to try again.`, retryable: true },
-		warnings,
-	};
+	if (hasProfile(digest)) return { warnings };
+	const action = hasIndexedPart(digest) ? "Rewrite the profile to try again." : "Retry the indexing to try again.";
+	const why = digest.profile === null ? digest.profileError : "its profile is not valid";
+	return { error: { kind: "no_profile", message: `The whole-document index has no profile (${why}), ${FALLBACK_CLAUSE[fallback]}. ${action}`, retryable: true }, warnings };
 }
 
-function failedError(error: unknown): MaterialIndexingError {
-	return { kind: "failed", message: `Indexing this PDF failed (${error instanceof Error ? error.message : String(error)}), so the profile was read the old way. Retry the indexing to try again.`, retryable: true };
+/** Whether at least one part of a digest was indexed (the profile step has notes to write from). Pure. */
+export const hasIndexedPart = (digest: Pick<MaterialDigest, "batches">): boolean => digest.batches.some((b) => b.status === "indexed");
+
+function failedError(error: unknown, fallback: ProfileFallback): MaterialIndexingError {
+	return { kind: "failed", message: `Indexing this PDF failed (${error instanceof Error ? error.message : String(error)}), ${FALLBACK_CLAUSE[fallback]}. Retry the indexing to try again.`, retryable: true };
+}
+
+/** The note a converted PDF without a current index shows while no vision model is configured (with why a stored index is not used). */
+export function pendingIndexingError(invalidReason?: string): MaterialIndexingError {
+	const stored = invalidReason ? ` Its stored index is not valid (${invalidReason}), so it is not used.` : "";
+	return {
+		kind: "pending",
+		message: `Indexing this PDF is pending: no vision model is configured (Settings → Agent: the vision slot reads source material).${stored} Retry the indexing once one is.`,
+		retryable: true,
+	};
 }
 
 /** A PDF's physical page count; undefined when it cannot be opened. */
@@ -209,6 +244,7 @@ async function pdfPageCount(file: string, signal: AbortSignal): Promise<number |
  */
 export async function indexMaterialContent(ownerId: string, material: LessonMaterial, opts: IndexMaterialOptions): Promise<MaterialIndexingOutcome> {
 	const { signal, store } = opts;
+	const fallback = opts.fallback ?? "profiler";
 	signal.throwIfAborted();
 	const content = readConvertedContent(ownerId, material.id, store);
 	if (!content) return { status: "not_converted", calls: 0, warnings: [] };
@@ -216,14 +252,14 @@ export async function indexMaterialContent(ownerId: string, material: LessonMate
 	const startedPath = store.auxPath(ownerId, material.id, MATERIAL_INDEXING_STARTED);
 	if (!opts.force) {
 		const stored = readDigest(digestPath);
-		if (stored && digestIsCurrent(stored, content.key)) return { status: "unchanged", digest: stored, calls: 0, ...digestNotes(stored) };
+		if (stored && digestIsCurrent(stored, content.key)) return { status: "unchanged", digest: stored, calls: 0, ...digestNotes(stored, fallback) };
 	}
 	const started = opts.force ? undefined : readStarted(startedPath);
 	const attempt = started?.sourceHash === content.key.sourceHash ? started.attempt + 1 : 1;
 	if (attempt > MAX_ATTEMPTS) {
 		const error: MaterialIndexingError = {
 			kind: "interrupted",
-			message: "Indexing this PDF was interrupted twice (the app stopped while it ran), so it was not started again and the profile was read the old way. Retry the indexing to try again.",
+			message: `Indexing this PDF was interrupted twice (the app stopped while it ran), so it was not started again, ${FALLBACK_CLAUSE[fallback].replace(/^so /, "and ")}. Retry the indexing to try again.`,
 			retryable: true,
 		};
 		return { status: "interrupted", calls: 0, error, warnings: [] };
@@ -242,10 +278,10 @@ export async function indexMaterialContent(ownerId: string, material: LessonMate
 		});
 		signal.throwIfAborted();
 		writeFileAtomicSync(digestPath, `${JSON.stringify(digest, null, "\t")}\n`);
-		return { status: "indexed", digest, calls, ...digestNotes(digest) };
+		return { status: "indexed", digest, calls, ...digestNotes(digest, fallback) };
 	} catch (error) {
 		if (signal.aborted) throw error;
-		return { status: "failed", calls, error: failedError(error), warnings: [] };
+		return { status: "failed", calls, error: failedError(error, fallback), warnings: [] };
 	} finally {
 		fs.rmSync(startedPath, { force: true });
 		opts.onProgress?.(undefined);
@@ -263,21 +299,31 @@ export async function indexPdfMaterial(ownerId: string, material: LessonMaterial
 		outcome = await indexMaterialContent(ownerId, material, opts);
 	} catch (error) {
 		if (opts.signal.aborted) return undefined;
-		outcome = { status: "failed", calls: 0, error: failedError(error), warnings: [] };
+		outcome = { status: "failed", calls: 0, error: failedError(error, opts.fallback ?? "profiler"), warnings: [] };
 	}
 	if (opts.signal.aborted) return undefined;
 	if (outcome.status === "not_converted") return outcome;
+	// A run that failed or was not started leaves the stored digest as it was: when that digest still describes
+	// content.md, its warnings (failed parts) still apply and are kept, and so is the call count that produced it.
+	const warnings = outcome.status === "failed" || outcome.status === "interrupted" ? currentDigestWarnings(ownerId, material.id, opts.store) : outcome.warnings;
 	opts.store.update(ownerId, material.id, {
 		indexingError: outcome.error,
-		indexingWarnings: outcome.warnings.length > 0 ? outcome.warnings : undefined,
+		indexingWarnings: warnings.length > 0 ? warnings : undefined,
 		...(outcome.status === "indexed" ? { indexingCalls: outcome.calls } : {}),
 	});
 	return outcome;
 }
 
-/** The material fields a digest with a profile sets. */
+/** The warnings of the stored digest when it is current for content.md; [] otherwise. */
+function currentDigestWarnings(ownerId: string, materialId: string, store: MaterialStore): string[] {
+	const content = readConvertedContent(ownerId, materialId, store);
+	const stored = content && readDigest(store.auxPath(ownerId, materialId, MATERIAL_DIGEST_FILE));
+	return content && stored && digestIsCurrent(stored, content.key) ? digestNotes(stored).warnings : [];
+}
+
+/** The material fields a digest with a profile sets (hasProfile first). */
 export function profileFromDigest(digest: MaterialDigest & { profile: string }): Partial<LessonMaterial> {
-	return { status: "ready", profile: digest.profile, ...(digest.sourcePageCount !== null ? { pages: digest.sourcePageCount } : {}), error: undefined };
+	return { status: "ready", profile: digest.profile, profileFromDigest: true, ...(digest.sourcePageCount !== null ? { pages: digest.sourcePageCount } : {}), error: undefined };
 }
 
 /** Whether a material can be indexed now: a PDF with a successful conversion. */
@@ -285,22 +331,91 @@ export function canIndexMaterial(ownerId: string, material: LessonMaterial, stor
 	return material.kind === "pdf" && readConvertedContent(ownerId, material.id, store) !== undefined;
 }
 
-/** Whether a material's profile can be rewritten from its digest: a current digest.json. */
-export function canRewriteProfile(ownerId: string, material: LessonMaterial, store: MaterialStore): boolean {
+/**
+ * Why a material's profile cannot be rewritten from its digest now, in words for the user (naming the action that
+ * can work); undefined when it can: a converted PDF with a current, valid digest.json with at least one indexed part.
+ */
+export function rewriteRefusal(ownerId: string, material: LessonMaterial, store: MaterialStore): string | undefined {
 	const content = material.kind === "pdf" ? readConvertedContent(ownerId, material.id, store) : undefined;
-	const digest = content && readDigest(store.auxPath(ownerId, material.id, MATERIAL_DIGEST_FILE));
-	return !!content && !!digest && digestIsCurrent(digest, content.key);
+	if (!content) return "Only a converted PDF has a whole-document index: convert it first";
+	const stored = readStoredDigest(store.auxPath(ownerId, material.id, MATERIAL_DIGEST_FILE));
+	if ("problem" in stored) {
+		if (stored.problem.kind === "missing") return "This material has no whole-document index yet: retry the indexing first";
+		if (stored.problem.kind === "invalid") return `This material's stored index is not valid (${stored.problem.reason}), so it is not used: retry the indexing first`;
+		return "This material's index is of an older version: retry the indexing first";
+	}
+	if (!digestIsCurrent(stored.digest, content.key)) return "This material's index no longer matches its converted text: retry the indexing first";
+	if (!hasIndexedPart(stored.digest)) return "No part of this PDF could be indexed, so there is nothing to write a profile from: retry the indexing first";
+	return undefined;
+}
+
+/** Whether a material's profile can be rewritten from its digest (rewriteRefusal has nothing against it). */
+export function canRewriteProfile(ownerId: string, material: LessonMaterial, store: MaterialStore): boolean {
+	return rewriteRefusal(ownerId, material, store) === undefined;
 }
 
 /**
  * Index a material again on purpose (server/materials.ts retryMaterialIndexing): the whole document, ignoring the
  * stored digest and an interrupted marker. A digest with a profile replaces the material's profile; otherwise the
- * profile it has is kept and the note says why. Never rejects.
+ * profile it has is kept (no old profiler runs here) and the note says so. Never rejects.
  */
 export async function retryPdfIndexing(ownerId: string, material: LessonMaterial, opts: Omit<IndexMaterialOptions, "force">): Promise<void> {
-	const outcome = await indexPdfMaterial(ownerId, material, { ...opts, force: true });
+	const outcome = await indexPdfMaterial(ownerId, material, { ...opts, force: true, fallback: keptOrNone(material) });
 	const digest = outcome?.digest;
-	if (digest?.profile && !opts.signal.aborted) opts.store.update(ownerId, material.id, profileFromDigest({ ...digest, profile: digest.profile }));
+	if (digest && hasProfile(digest) && !opts.signal.aborted) opts.store.update(ownerId, material.id, profileFromDigest(digest));
+}
+
+/** What dropStaleIndex left: whether content.md can be indexed, and what it removed. */
+export interface StaleIndexResult {
+	/** content.md and a successful conversion.json exist. */
+	converted: boolean;
+	/** A digest describing the current content.md (its hash, converter and converter version) is on disk. */
+	describes: boolean;
+	/** The material's profile came from a digest that no longer describes content.md and was removed. */
+	profileDropped: boolean;
+	/** A digest.json that is not a valid digest was kept for the indexer's skip rule (it re-indexes it): why it is invalid. */
+	invalidReason?: string;
+}
+
+/**
+ * THE INDEX INVARIANT (review 4, finding 1): a material's digest.json, its profile when it came from a digest
+ * (`profileFromDigest`), and its indexing fields (indexingError, indexingWarnings, indexingCalls) always describe the
+ * content.md that is on disk now, or are absent. Called after every conversion run, whichever way it ended (the only
+ * writer and remover of a PDF's content.md is the conversion, server/material-conversion.ts): when no digest on disk
+ * describes the current content.md (same hash, converter and converter version), it removes a digest of other content,
+ * the indexing fields, and a profile that came from a digest; with no content.md at all it removes any digest.json. An
+ * invalid digest.json beside a current content.md is left for the skip rule, which indexes it again (its reason is
+ * returned). The interrupted marker is removed when it is for other content, or always when `forced` (a run the user
+ * asked for starts its attempts again). Re-indexing is the caller's job. Never throws on a missing file.
+ */
+export function dropStaleIndex(ownerId: string, material: LessonMaterial, store: MaterialStore, opts: { forced?: boolean } = {}): StaleIndexResult {
+	const content = material.kind === "pdf" ? readConvertedContent(ownerId, material.id, store) : undefined;
+	const digestPath = store.auxPath(ownerId, material.id, MATERIAL_DIGEST_FILE);
+	const startedPath = store.auxPath(ownerId, material.id, MATERIAL_INDEXING_STARTED);
+	const started = readStarted(startedPath);
+	if (started && (opts.forced || !content || started.sourceHash !== content.key.sourceHash)) fs.rmSync(startedPath, { force: true });
+	const stored = readStoredDigest(digestPath);
+	const valid = "digest" in stored ? stored.digest : undefined;
+	if (content && valid && describesContent(valid, content.key)) return { converted: true, describes: true, profileDropped: false };
+	const invalidReason = content && "problem" in stored && stored.problem.kind === "invalid" ? stored.problem.reason : undefined;
+	if (invalidReason === undefined) fs.rmSync(digestPath, { force: true });
+	// a profile from a digest that no longer describes content.md (the flag, or, for a record written before the flag, the stored digest's own profile)
+	const fromDigest = material.profileFromDigest === true || (valid !== undefined && material.profile !== undefined && valid.profile === material.profile);
+	const stale = material.indexingError !== undefined || material.indexingWarnings !== undefined || material.indexingCalls !== undefined || fromDigest;
+	if (stale) {
+		store.update(ownerId, material.id, {
+			indexingError: undefined,
+			indexingWarnings: undefined,
+			indexingCalls: undefined,
+			...(fromDigest ? { profile: undefined, profileFromDigest: undefined } : {}),
+		});
+	}
+	return { converted: !!content, describes: false, profileDropped: fromDigest, ...(invalidReason !== undefined ? { invalidReason } : {}) };
+}
+
+/** A digest was built from this content.md and conversion (its indexer version aside). Pure. */
+export function describesContent(digest: MaterialDigest, key: DigestKey): boolean {
+	return digest.sourceHash === key.sourceHash && digest.converter === key.converter && digest.converterVersion === key.converterVersion;
 }
 
 /**
@@ -312,6 +427,7 @@ export async function retryPdfIndexing(ownerId: string, material: LessonMaterial
 export async function rewritePdfProfile(ownerId: string, material: LessonMaterial, opts: Omit<IndexMaterialOptions, "force">): Promise<void> {
 	const { signal, store } = opts;
 	if (!canRewriteProfile(ownerId, material, store)) return;
+	const fallback = keptOrNone(material);
 	const digestPath = store.auxPath(ownerId, material.id, MATERIAL_DIGEST_FILE);
 	let calls = 0;
 	let digest: MaterialDigest;
@@ -327,20 +443,20 @@ export async function rewritePdfProfile(ownerId: string, material: LessonMateria
 		rewriteError = result.error;
 		writeFileAtomicSync(digestPath, `${JSON.stringify(digest, null, "\t")}\n`);
 	} catch (error) {
-		if (!signal.aborted) store.update(ownerId, material.id, { indexingError: failedError(error) });
+		if (!signal.aborted) store.update(ownerId, material.id, { indexingError: failedError(error, fallback) });
 		return;
 	} finally {
 		opts.onProgress?.(undefined);
 	}
 	const before = store.list(ownerId).find((m) => m.id === material.id)?.indexingCalls ?? 0;
-	const notes = digestNotes(digest);
+	const notes = digestNotes(digest, fallback);
 	const warnings = [...notes.warnings];
-	if (rewriteError !== null && digest.profile !== null) warnings.push(`Writing the profile again failed (${rewriteError}); the previous profile is kept.`);
+	if (rewriteError !== null && hasProfile(digest)) warnings.push(`Writing the profile again failed (${rewriteError}); the previous profile is kept.`);
 	store.update(ownerId, material.id, {
 		indexingError: notes.error,
 		indexingWarnings: warnings.length > 0 ? warnings : undefined,
 		indexingCalls: before + calls,
-		...(digest.profile !== null ? profileFromDigest({ ...digest, profile: digest.profile }) : {}),
+		...(hasProfile(digest) ? profileFromDigest(digest) : {}),
 	});
 }
 
@@ -389,33 +505,82 @@ export interface CourseGlossary extends Glossary {
 	incomplete: CourseGlossaryGap[];
 }
 
+/** What the glossary reads of one PDF material: its current digest, or why it has none. */
+type MaterialGlossaryRead = { digest: MaterialDigest } | { reason: "no_digest" | "outdated" } | { reason: "invalid"; detail: string };
+
+/** How many materials' reads the glossary cache keeps (least recently used first out). */
+export const GLOSSARY_CACHE_MAX = 512;
+const glossaryReads = new Map<string, { stamp: string; read: MaterialGlossaryRead }>();
+
+/** A file's identity for the cache: modification time, size and inode ("-" when it is missing). */
+function fileStamp(file: string): string {
+	try {
+		const st = fs.statSync(file);
+		return `${st.mtimeMs}:${st.size}:${st.ino}`;
+	} catch {
+		return "-";
+	}
+}
+
+/** One PDF material's glossary read, from the files (no cache). */
+function readForGlossary(ownerId: string, materialId: string, store: MaterialStore): MaterialGlossaryRead {
+	const content = readConvertedContent(ownerId, materialId, store);
+	if (!content) return { reason: "no_digest" };
+	const stored = readStoredDigest(store.auxPath(ownerId, materialId, MATERIAL_DIGEST_FILE));
+	if ("problem" in stored) {
+		if (stored.problem.kind === "missing") return { reason: "no_digest" };
+		return stored.problem.kind === "invalid" ? { reason: "invalid", detail: stored.problem.reason } : { reason: "outdated" };
+	}
+	return digestIsCurrent(stored.digest, content.key) ? { digest: stored.digest } : { reason: "outdated" };
+}
+
 /**
- * The class glossary of a course, built on every call from the digests on disk (uncached: a few small JSON reads and
- * a hash of each content.md, no model call). Null for an unknown course.
+ * One PDF material's glossary read through the cache: keyed by the material's digest.json path (which names its owner
+ * and id, so a material moved to another course is a different entry), valid while digest.json, content.md and
+ * conversion.json keep their modification time, size and inode (a re-index, a re-conversion or a deletion changes
+ * them; every writer replaces the file atomically, so the inode changes too). At most GLOSSARY_CACHE_MAX entries.
  */
-export function courseGlossary(courseId: string, store: MaterialStore = stores.materialStore): CourseGlossary | null {
+function cachedReadForGlossary(ownerId: string, materialId: string, store: MaterialStore): MaterialGlossaryRead {
+	const key = store.auxPath(ownerId, materialId, MATERIAL_DIGEST_FILE);
+	const stamp = [MATERIAL_DIGEST_FILE, PDF_CONTENT_FILE, PDF_CONVERSION_SIDECAR].map((f) => fileStamp(store.auxPath(ownerId, materialId, f))).join("|");
+	const hit = glossaryReads.get(key);
+	glossaryReads.delete(key);
+	if (hit && hit.stamp === stamp) {
+		glossaryReads.set(key, hit);
+		return hit.read;
+	}
+	const read = readForGlossary(ownerId, materialId, store);
+	glossaryReads.set(key, { stamp, read });
+	while (glossaryReads.size > GLOSSARY_CACHE_MAX) glossaryReads.delete(glossaryReads.keys().next().value!);
+	return read;
+}
+
+/** Empty the glossary cache (tests). */
+export function clearCourseGlossaryCache(): void {
+	glossaryReads.clear();
+}
+
+/** How many materials' reads the glossary cache holds (tests). */
+export const courseGlossaryCacheSize = (): number => glossaryReads.size;
+
+/**
+ * The class glossary of a course, built on every call from the digests on disk (no model call). Each material's
+ * digest and content hash are read once and cached until its files change (cachedReadForGlossary); `cache: false`
+ * reads everything again (the result is the same). Null for an unknown course.
+ */
+export function courseGlossary(courseId: string, store: MaterialStore = stores.materialStore, opts: { cache?: boolean } = {}): CourseGlossary | null {
 	if (!stores.courseStore.getCourse(courseId)) return null;
 	const indexed: CourseGlossary["indexed"] = [];
 	const incomplete: CourseGlossaryGap[] = [];
 	const digests: MaterialDigest[] = [];
 	for (const m of store.list(courseId)) {
 		const ref = { id: m.id, name: m.name };
-		const content = m.kind === "pdf" ? readConvertedContent(courseId, m.id, store) : undefined;
-		const stored = content ? readStoredDigest(store.auxPath(courseId, m.id, MATERIAL_DIGEST_FILE)) : undefined;
-		if (!content || !stored || ("problem" in stored && stored.problem.kind === "missing")) {
-			incomplete.push({ ...ref, kind: m.kind, reason: "no_digest" });
+		const read: MaterialGlossaryRead = m.kind !== "pdf" ? { reason: "no_digest" } : opts.cache === false ? readForGlossary(courseId, m.id, store) : cachedReadForGlossary(courseId, m.id, store);
+		if (!("digest" in read)) {
+			incomplete.push({ ...ref, kind: m.kind, reason: read.reason, ...(read.reason === "invalid" ? { detail: read.detail } : {}) });
 			continue;
 		}
-		if ("problem" in stored) {
-			const invalid = stored.problem.kind === "invalid";
-			incomplete.push({ ...ref, kind: m.kind, reason: invalid ? "invalid" : "outdated", ...(invalid ? { detail: stored.problem.reason } : {}) });
-			continue;
-		}
-		const digest = stored.digest;
-		if (!digestIsCurrent(digest, content.key)) {
-			incomplete.push({ ...ref, kind: m.kind, reason: "outdated" });
-			continue;
-		}
+		const digest = read.digest;
 		digests.push(digest);
 		indexed.push({ ...ref, sourceHash: digest.sourceHash });
 		const failed = failedBatchesOf(digest);

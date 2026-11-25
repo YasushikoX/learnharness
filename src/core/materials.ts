@@ -56,6 +56,12 @@ export interface LessonMaterial {
 	indexingProgress?: MaterialIndexingProgress;
 	/** The reading profile (Markdown, page-cited for PDFs). */
 	profile?: string;
+	/**
+	 * PDFs: the profile was written by the whole-document index (digest.json), so it describes the content.md that
+	 * index was built from and is removed or replaced whenever that content changes (server/material-indexing.ts,
+	 * dropStaleIndex). Absent for a profile the old profiler read from the original.
+	 */
+	profileFromDigest?: boolean;
 	/** DERIVED on read, never stored: the material's name, profile and text
 	 *  arrived by sync but its original file is on the device it was uploaded
 	 *  to. The profile still works; reading or searching the original does not. */
@@ -65,10 +71,11 @@ export interface LessonMaterial {
 /**
  * Why a PDF's whole-document index did not give its profile (server/material-indexing.ts). failed: indexing threw;
  * no_profile: the index was built but its profile step failed (the extracted terms are kept); interrupted: the app
- * stopped during indexing twice in a row, so it is not started a third time.
+ * stopped during indexing twice in a row, so it is not started a third time; pending: the PDF has converted text but
+ * no current index, and none can be built until a vision model is configured.
  */
 export interface MaterialIndexingError {
-	kind: "failed" | "no_profile" | "interrupted";
+	kind: "failed" | "no_profile" | "interrupted" | "pending";
 	/** Shown to the user. */
 	message: string;
 	retryable: boolean;
