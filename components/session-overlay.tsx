@@ -102,7 +102,7 @@ export function MermaidOverlay({
 	const [svg, setSvg] = useState<string | null>(rawSvg ?? null);
 	const [error, setError] = useState<string | null>(null);
 	const [attempt, setAttempt] = useState(0);
-	const { resolvedMode } = useAppearance();
+	const { resolvedMode, colors } = useAppearance();
 	useEffect(() => {
 		if (image) {
 			setSvg(null);
@@ -118,7 +118,7 @@ export function MermaidOverlay({
 		let cancelled = false;
 		setSvg(null);
 		setError(null);
-		renderMermaid(chart, resolvedMode)
+		renderMermaid(chart, resolvedMode, colors)
 			.then((s) => {
 				if (!cancelled) setSvg(s);
 			})
@@ -128,7 +128,7 @@ export function MermaidOverlay({
 		return () => {
 			cancelled = true;
 		};
-	}, [rawSvg, chart, image, attempt, resolvedMode]);
+	}, [rawSvg, chart, image, attempt, resolvedMode, colors]);
 
 	const rootRef = useRef<HTMLDivElement>(null);
 	const layer = useInteractionLayer({
@@ -288,7 +288,7 @@ export function MermaidOverlay({
 							)}
 						</div>
 						<div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between p-2">
-							<span className="text-xs text-muted-foreground/60">
+							<span className="text-xs text-muted-foreground">
 									<span className="[@media(hover:none)]:hidden">Drag to pan · scroll to zoom</span>
 									<span className="hidden [@media(hover:none)]:inline">Drag to pan · pinch to zoom</span>
 								</span>
