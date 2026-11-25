@@ -33,9 +33,9 @@ import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 
-import { parseCliLine } from "../src/agent/claude-code/cli-events.ts";
+import { isSuccessfulResultLine, parseCliLine } from "../src/agent/claude-code/cli-events.ts";
 import { isNarrationBlock } from "../src/agent/narration-guard.ts";
-import { ClaudeCodeError } from "../src/agent/claude-code/constants.ts";
+import { ClaudeCodeError, cliEndingOf, setClaudeCliObservationCapture, type ClaudeCliEnding } from "../src/agent/claude-code/constants.ts";
 import { LIVE_PROCESS_IDLE_TIMEOUT_MS, liveProcessIdleTimeoutMs } from "../src/agent/claude-code/live-processes.ts";
 import { CLAUDE_CODE_MODELS, createClaudeCodeProvider } from "../src/agent/claude-code/provider.ts";
 import { authEnvRecord } from "../src/core/auth-env.ts";
@@ -49,7 +49,7 @@ import { runPiTurn, TURN_KEEPALIVE, TURN_KEEPALIVE_MS } from "../src/server/pi/u
 import { SessionModel, sseEvents } from "../components/session-core.ts";
 import { cutOffReplyAtEnd } from "../src/core/input-events.ts";
 import type { LhMessage } from "../src/core/native-messages.ts";
-import { TurnTimeline, type TurnTimelineLine } from "../src/server/turn-timeline.ts";
+import { TurnTimeline, type TurnTimelineLine, type TurnTimelineObservationLine } from "../src/server/turn-timeline.ts";
 
 const FAKE_CLAUDE = fileURLToPath(new URL("./fixtures/claude-code/fake-claude.mjs", import.meta.url));
 const FIXTURES = fileURLToPath(new URL("./fixtures/claude-code/", import.meta.url));
@@ -365,6 +365,85 @@ async function assertCleanedUp(call: RunCall): Promise<void> {
 	await waitForRemoval(dirname(getFlagValue(call.args, "--system-prompt-file")));
 }
 
+// ─── Follow-ups 1, the ordering table (council/reviews/followups-1-review-1.md) ─────────────────────────────────────
+// Every row asserts four things: how many times the turn settles, its text and stop reason, the recorded cliEnding
+// (assertSettledOnce), and whether the process is reused (isAlive, one spawn) or killed (assertCleanedUp).
+
+type SettleExpectation = { stopReason: AssistantMessage["stopReason"]; text?: string; error?: RegExp; cliEnding: ClaudeCliEnding | null };
+
+function assertSettledOnce(events: AssistantMessageEvent[], expected: SettleExpectation): AssistantMessage {
+	const ends = events.filter((event) => event.type === "done" || event.type === "error");
+	assert.equal(ends.length, 1, "the turn settles exactly once");
+	assert.equal(events.at(-1), ends[0], "nothing follows the settle");
+	const end = ends[0]!;
+	const message = end.type === "done" ? end.message : (end as Extract<AssistantMessageEvent, { type: "error" }>).error;
+	assert.equal(message.stopReason, expected.stopReason);
+	if (expected.text !== undefined) assert.equal(getText(message), expected.text);
+	if (expected.error) assert.match(message.errorMessage ?? "", expected.error);
+	assert.equal(cliEndingOf(message), expected.cliEnding);
+	return message;
+}
+
+function isAlive(call: RunCall): boolean {
+	return call.child.exitCode === null && call.child.signalCode === null;
+}
+
+async function collectTurn(streamFunction: StreamFunction<Api, SimpleStreamOptions>, messages: Message[], options?: SimpleStreamOptions): Promise<AssistantMessageEvent[]> {
+	const context = normalizeContext({ systemPrompt: "You are a tutor.", messages, tools: [READ_TOOL] });
+	return collectEvents(streamFunction(getModel(), context, { sessionId: SESSION_ID, ...options }));
+}
+
+/** Records the adapter's observations (follow-ups 1) for turns started while it is set. */
+function observeCli(t: TestContext): string[] {
+	const notes: string[] = [];
+	const previous = setClaudeCliObservationCapture(() => (note) => notes.push(note));
+	t.after(() => setClaudeCliObservationCapture(previous));
+	return notes;
+}
+
+async function until(condition: () => boolean, timeoutMs = 5000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (!condition() && Date.now() < deadline) await sleep(10);
+}
+
+/** A turn that must stay open (as on main): its events, and whether it settled, once `ready` holds (bounded) plus a
+ *  further quiet period. The child is killed by createFakeRun's cleanup. */
+async function collectOpenTurn(streamFunction: StreamFunction<Api, SimpleStreamOptions>, messages: Message[], ready: () => boolean, options?: SimpleStreamOptions): Promise<{ events: AssistantMessageEvent[]; settled: boolean }> {
+	const context = normalizeContext({ systemPrompt: "You are a tutor.", messages, tools: [READ_TOOL] });
+	const events: AssistantMessageEvent[] = [];
+	let settled = false;
+	void collectEvents(streamFunction(getModel(), context, { sessionId: SESSION_ID, ...options }), (event) => events.push(event)).then(() => { settled = true; });
+	await until(() => ready() || settled);
+	await sleep(300);
+	return { events, settled };
+}
+
+function assertStillOpen({ events, settled }: { events: AssistantMessageEvent[]; settled: boolean }): void {
+	assert.equal(settled, false, "the turn is still open");
+	assert.equal(events.some((event) => event.type === "done" || event.type === "error"), false, "nothing settled it");
+	assert.equal(events.some((event) => event.type === "toolcall_end"), false, "no tool call is handed over for execution");
+}
+
+/** One text message's opening lines: message_start, a text block and its text; the caller decides how it ends. */
+function textOpening(text: string): string[] {
+	return [
+		streamEvent({ type: "message_start", message: { usage: {} } }),
+		streamEvent({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }),
+		streamEvent({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text } }),
+	];
+}
+
+function successResult(stopReason?: string): string {
+	return JSON.stringify({ type: "result", subtype: "success", is_error: false, ...(stopReason ? { stop_reason: stopReason } : {}) });
+}
+
+function occurrences(text: string, part: string): number {
+	return text.split(part).length - 1;
+}
+
+const WAIT_FOR_TEST = JSON.stringify({ fake: "wait-for-message" });
+const startCall = (toolUse: ToolUse) => JSON.stringify({ fake: "start-call", id: toolUse.id, name: toolUse.name, arguments: toolUse.arguments });
+
 test("toClaudeArgs includes every isolation flag from Global Constraints", () => {
 	const input = {
 		model: "opus",
@@ -674,6 +753,8 @@ test("a bare-only rejection may finish with ordinary text instead of an MCP retr
 	assert.equal(done.reason, "stop");
 	assert.equal(getText(done.message), "hello there");
 	assert.equal(events.some((event) => event.type === "toolcall_end"), false);
+	// Ordering 3: several messages inside the CLI, then one result after the last message_stop.
+	assertSettledOnce(events, { stopReason: "stop", text: "hello there", cliEnding: "message-stop" });
 	await assertCleanedUp(getOnlyCall(calls));
 });
 
@@ -770,6 +851,15 @@ test('missing binary → error "claude CLI not found"', async () => {
 
 	assert.equal(getErrorMessage(events), ClaudeCodeError.CliNotFound);
 	await waitForRemoval(cwd);
+});
+
+test("ordering 17: a failed start settles once as start-failed, and the next turn settles at message_stop in a fresh process", async (t) => {
+	const fresh = createFakeRun(t, readFixtureLines("text.jsonl"));
+	let starts = 0;
+	const stream = createClaudeCodeStreamFunction((args, options) => (++starts === 1 ? null : fresh.runClaude(args, options)));
+	assertSettledOnce(await collectTurn(stream, [HI]), { stopReason: "error", error: /claude CLI not found/, cliEnding: "start-failed" });
+	assertSettledOnce(await collectTurn(stream, [HI]), { stopReason: "stop", text: "hello there", cliEnding: "message-stop" });
+	await assertCleanedUp(getOnlyCall(fresh.calls));
 });
 
 test('signed-out fixture → error "not signed in"', async (t) => {
@@ -875,6 +965,21 @@ test("abort kills the process and ends with error(aborted)", async (t) => {
 	assert.equal(error.reason, "aborted");
 
 	await assertCleanedUp(getOnlyCall(calls));
+});
+
+test("ordering 15: an abort settles once as aborted and kills the process; the next turn settles at message_stop in a fresh one", async (t) => {
+	const aborting = createFakeRun(t, [streamEvent({ type: "message_start", message: { usage: {} } }), HOLD]);
+	const fresh = createFakeRun(t, readFixtureLines("text.jsonl"));
+	const stream = createClaudeCodeStreamFunction((args, options) => (aborting.calls.length === 0 ? aborting : fresh).runClaude(args, options));
+	const controller = new AbortController();
+	const context = normalizeContext({ systemPrompt: "You are a tutor.", messages: [HI], tools: [READ_TOOL] });
+	const events = await collectEvents(stream(getModel(), context, { sessionId: SESSION_ID, signal: controller.signal }), (event) => {
+		if (event.type === "start") controller.abort();
+	});
+	assertSettledOnce(events, { stopReason: "aborted", error: /aborted/, cliEnding: "aborted" });
+	await assertCleanedUp(getOnlyCall(aborting.calls));
+	assertSettledOnce(await collectTurn(stream, [HI, { role: "user", content: "again", timestamp: 1 }]), { stopReason: "stop", text: "hello there", cliEnding: "message-stop" });
+	await assertCleanedUp(getOnlyCall(fresh.calls));
 });
 
 test("cwd is an empty temp dir; prompt and mcp config live in a separate private dir", async (t) => {
@@ -1051,18 +1156,228 @@ test("parseCliLine ignores non-JSON, system, rate-limit and successful result li
 	assert.equal(parseCliLine("not json"), null);
 	assert.equal(parseCliLine("null"), null);
 	assert.equal(parseCliLine('{"type":"system","subtype":"init"}'), null);
+	assert.equal(parseCliLine('{"type":"system","subtype":"thinking_tokens"}'), null);
 	assert.equal(parseCliLine('{"type":"rate_limit_event"}'), null);
 	assert.equal(parseCliLine('{"type":"result","is_error":false,"result":"hello there"}'), null);
+	assert.equal(parseCliLine('{"type":"result","subtype":"success","is_error":false,"result":"hello there","stop_reason":"end_turn"}'), null);
 	assert.equal(parseCliLine('{"type":"assistant","error":null,"message":{"content":[{"type":"text","text":"hello there"}]}}'), null);
 });
+
+test("isSuccessfulResultLine (follow-ups 1, observation only) knows a successful result line and nothing else", () => {
+	assert.equal(isSuccessfulResultLine('{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'), true);
+	assert.equal(isSuccessfulResultLine('{"type":"result"}'), true);
+	assert.equal(isSuccessfulResultLine('{"type":"result","is_error":true}'), false);
+	assert.equal(isSuccessfulResultLine('{"type":"assistant"}'), false);
+	assert.equal(isSuccessfulResultLine("not json"), false);
+	assert.equal(isSuccessfulResultLine("null"), false);
+	assert.equal(isSuccessfulResultLine("5"), false);
+});
+
+// ─── Follow-ups 1: how the claude CLI ends a turn ──────────────────────────────────────────────────────────────────
+// The sequences of line types the real CLI (2.1.330, `--model opus`, the app's own arguments, no tools) wrote on
+// 2026-11-25, rebuilt with minimal fields and no captured text: effort low, and effort high with thinking (the
+// thinking-only `system/thinking_tokens` progress lines included). Both end message_stop, then a successful result, and
+// the CLI then waits on stdin for the next prompt.
+const cliSystem = (subtype: string) => JSON.stringify({ type: "system", subtype });
+const cliAssistant = (types: string[]) => JSON.stringify({ type: "assistant", message: { content: types.map(type => ({ type })) } });
+const cliResult = (stopReason?: string) => JSON.stringify({ type: "result", subtype: "success", is_error: false, ...(stopReason ? { stop_reason: stopReason } : {}) });
+const CAPTURED_ENDINGS: Record<string, string[]> = {
+	"effort low": [
+		cliSystem("ui_invalidate"), cliSystem("init"), cliSystem("status"),
+		streamEvent({ type: "message_start", message: { usage: {} } }),
+		streamEvent({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }),
+		streamEvent({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } }),
+		cliAssistant(["text"]),
+		streamEvent({ type: "content_block_stop", index: 0 }),
+		streamEvent({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: {} }),
+		streamEvent({ type: "message_stop" }),
+		cliResult("end_turn"),
+	],
+	"effort high, thinking omitted": [
+		cliSystem("ui_invalidate"), cliSystem("init"), cliSystem("status"),
+		streamEvent({ type: "message_start", message: { usage: {} } }),
+		streamEvent({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }),
+		cliSystem("thinking_tokens"),
+		streamEvent({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "" } }),
+		cliSystem("thinking_tokens"),
+		streamEvent({ type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig" } }),
+		cliAssistant(["thinking"]),
+		streamEvent({ type: "content_block_stop", index: 0 }),
+		streamEvent({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } }),
+		streamEvent({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "ok" } }),
+		cliAssistant(["text"]),
+		streamEvent({ type: "content_block_stop", index: 1 }),
+		streamEvent({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: {} }),
+		streamEvent({ type: "message_stop" }),
+		cliResult("end_turn"),
+	],
+};
+for (const [name, lines] of Object.entries(CAPTURED_ENDINGS)) {
+	test(`the real CLI's ending (${name}) ends the app's turn at message_stop`, async (t) => {
+		const { events, calls } = await runScenario(t, [...lines, HOLD], { reasoning: "high" });
+		const done = getLastEvent(events);
+		assert.ok(done.type === "done");
+		assert.equal(done.message.stopReason, "stop");
+		assert.equal(getText(done.message), "ok");
+		assert.equal(cliEndingOf(done.message), "message-stop");
+		assertSettledOnce(events, { stopReason: "stop", text: "ok", cliEnding: "message-stop" }); // ordering 1, a first turn
+		await assertCleanedUp(getOnlyCall(calls));
+	});
+}
+
+// Known, deliberately unchanged (follow-ups 1, final round): as on main, a successful `result` settles nothing. A turn
+// whose stream never reaches message_stop stays open, exactly as on main; the adapter only records that the result came.
+test("known, deliberately unchanged (as main): a successful result with no message_stop leaves the turn open; the timeline gets an observation line at once and no finish line", async (t) => {
+	const lines = [
+		streamEvent({ type: "message_start", message: { usage: {} } }),
+		streamEvent({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }),
+		streamEvent({ type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig" } }),
+		streamEvent({ type: "content_block_stop", index: 0 }),
+		streamEvent({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } }),
+		streamEvent({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "part of the reply" } }),
+		cliAssistant(["thinking", "text"]),
+		cliResult("end_turn"),
+		HOLD,
+	];
+	const { runClaude, calls } = createFakeRun(t, lines);
+	const agent = new Agent({ initialState: { messages: [HI], model: getModel(), thinkingLevel: "high" }, streamFn: createClaudeCodeStreamFunction(runClaude) });
+	let line: TurnTimelineLine | undefined;
+	const observations: TurnTimelineObservationLine[] = [];
+	const timeline = new TurnTimeline({ chatId: SESSION_ID, turnId: "test", provider: "claude-code", model: "opus", thinking: true }, result => { line = result; }, undefined, undefined, observation => observations.push(observation));
+	runPiTurn({ agent, timeline, onFinish() {} });
+	await until(() => observations.length > 0);
+	await sleep(300);
+	assert.equal(observations.length, 1, "written at once, while the turn is still open");
+	const [observation] = observations;
+	assert.ok(observation && !Number.isNaN(Date.parse(observation.at)));
+	assert.deepEqual({ ...observation, at: "" }, { kind: "observation", turnId: "test", chatId: SESSION_ID, at: "", note: "result-before-stream-end" }, "ids, the time and the fixed note only");
+	assert.doesNotMatch(JSON.stringify(observation), /part of the reply/);
+	assert.equal(line, undefined, "no finish line: the turn has not finished");
+	assert.equal(isAlive(getOnlyCall(calls)), true, "nothing killed the process");
+	agent.abort();
+	await assertCleanedUp(getOnlyCall(calls));
+	await until(() => line !== undefined);
+	assert.equal((line as TurnTimelineLine | undefined)?.streamEnd, "aborted", "the turn ended only when the learner stopped it");
+	assert.equal(observations.length, 1);
+});
+
+test("each other ending is named: assistant error, result error, process exit", async (t) => {
+	const cases: [string[], ClaudeCliEnding][] = [
+		[[JSON.stringify({ type: "assistant", error: "rate_limit", message: { content: [] } }), HOLD], "assistant-error"],
+		[[JSON.stringify({ type: "result", subtype: "error_during_execution", is_error: true }), HOLD], "result-error"],
+		[[streamEvent({ type: "message_start", message: { usage: {} } }), exitWith(1, "")], "process-exit"],
+	];
+	for (const [lines, ending] of cases) {
+		const { events, calls } = await runScenario(t, lines);
+		const error = getLastEvent(events);
+		assert.ok(error.type === "error");
+		assert.equal(cliEndingOf(error.error), ending);
+		assertSettledOnce(events, { stopReason: "error", cliEnding: ending }); // ordering 18: error lines mid-turn
+		await assertCleanedUp(getOnlyCall(calls));
+	}
+});
+
+test("ordering 4, known, deliberately unchanged (as main): a success result while the app holds a tool call is recorded only; the process stays and the answer's turn stays open", async (t) => {
+	const notes = observeCli(t);
+	const ask: Message = { role: "user", content: "Teach me the planets.", timestamp: 0 };
+	const question: ToolUse = { id: "toolu_held_then_result", name: "read", arguments: { path: "a" } };
+	const held = createFakeRun(t, [...toToolUseMessage([question]), startCall(question), WAIT_FOR_TEST, successResult("end_turn"), HOLD]);
+	const stream = createClaudeCodeStreamFunction(held.runClaude);
+	const message = assertSettledOnce(await collectTurn(stream, [ask]), { stopReason: "toolUse", text: "", cliEnding: "tool-admission" });
+	const heldCall = getOnlyCall(held.calls);
+	assert.equal(isAlive(heldCall), true, "held while the app runs the tool");
+	assert.deepEqual(notes, []);
+	heldCall.child.send("continue"); // the CLI ends its prompt while the call is still held
+	await until(() => notes.length > 0);
+	await sleep(300);
+	assert.deepEqual(notes, ["result-before-stream-end"]);
+	assert.equal(isAlive(heldCall), true, "as on main, nothing kills it");
+
+	// The learner answers: the answer goes to the same process, which has ended its prompt, so the turn stays open.
+	const reply = await collectOpenTurn(stream, [ask, message, toToolResult(question, "contents of a")], () => false);
+	assertStillOpen(reply);
+	assert.equal(held.calls.length, 1, "no fresh process");
+	assert.deepEqual(notes, ["result-before-stream-end"], "the answer's turn saw no result line");
+});
+
+test("ordering 4b: a success result while a tool call is held, then an abort instead of an answer: one settle, the abort kills the process, the next message starts fresh", async (t) => {
+	const notes = observeCli(t);
+	const question: ToolUse = { id: "toolu_held_then_abort", name: "read", arguments: { path: "a" } };
+	const held = createFakeRun(t, [...toToolUseMessage([question]), startCall(question), WAIT_FOR_TEST, successResult(), HOLD]);
+	const fresh = createFakeRun(t, readFixtureLines("text.jsonl"));
+	const stream = createClaudeCodeStreamFunction((args, options) => (held.calls.length === 0 ? held : fresh).runClaude(args, options));
+	const controller = new AbortController();
+	const first = await collectTurn(stream, [HI], { signal: controller.signal });
+	const message = assertSettledOnce(first, { stopReason: "toolUse", cliEnding: "tool-admission" });
+	const heldCall = getOnlyCall(held.calls);
+	heldCall.child.send("continue");
+	await until(() => notes.length > 0);
+	await sleep(100);
+	assert.equal(isAlive(heldCall), true, "the result alone kills nothing (as on main)");
+	controller.abort();
+	await assertCleanedUp(heldCall);
+	assert.equal(first.filter((event) => event.type === "done" || event.type === "error").length, 1, "the abort settles nothing again");
+	const aborted: ToolResultMessage = { ...toToolResult(question, "The learner stopped the turn."), isError: true };
+	const next = await collectTurn(stream, [HI, message, aborted, { role: "user", content: "next", timestamp: 1 }]);
+	assertSettledOnce(next, { stopReason: "stop", text: "hello there", cliEnding: "message-stop" });
+	await assertCleanedUp(getOnlyCall(fresh.calls));
+	assert.deepEqual(notes, ["result-before-stream-end"]);
+});
+
+test("ordering 5, known, deliberately unchanged (as main): after a tool round trip, a reply with no message_stop stays open when its result comes; recorded only", async (t) => {
+	const notes = observeCli(t);
+	const read: ToolUse = { id: "toolu_round_trip_no_stop", name: "read", arguments: { path: "a" } };
+	const { runClaude, calls } = createFakeRun(t, [...toToolUseMessage([read]), callTool(read), ...textOpening("after the tool"), successResult("end_turn"), HOLD]);
+	const stream = createClaudeCodeStreamFunction(runClaude);
+	const message = assertSettledOnce(await collectTurn(stream, [HI]), { stopReason: "toolUse", cliEnding: "tool-admission" });
+	assert.equal(isAlive(getOnlyCall(calls)), true);
+	assertStillOpen(await collectOpenTurn(stream, [HI, message, toToolResult(read, "A")], () => notes.length > 0));
+	assert.deepEqual(notes, ["result-before-stream-end"]);
+	assert.equal(isAlive(getOnlyCall(calls)), true, "nothing killed the process");
+});
+
+{
+	const read: ToolUse = { id: "toolu_defensive_row", name: "read", arguments: { path: "a" } };
+	const toolBlock = (index: number, name = "mcp__learnharness__read") => [
+		streamEvent({ type: "content_block_start", index, content_block: { type: "tool_use", id: read.id, name, input: {} } }),
+		streamEvent({ type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: JSON.stringify(read.arguments) } }),
+	];
+	const blockStop = (index: number) => streamEvent({ type: "content_block_stop", index });
+	const delta = (stopReason: string) => streamEvent({ type: "message_delta", delta: { stop_reason: stopReason }, usage: {} });
+	const thinkingOpening = [streamEvent({ type: "message_start", message: { usage: {} } }), streamEvent({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } })];
+	const rows: { row: string; lines: string[] }[] = [
+		{ row: "6: text and message_delta(end_turn), no message_stop", lines: [...textOpening("the reply"), blockStop(0), delta("end_turn"), successResult("end_turn")] },
+		{ row: "7: text and message_delta(max_tokens), no message_stop", lines: [...textOpening("partial"), delta("max_tokens"), successResult()] },
+		{ row: "7b: text then result(max_tokens), no message_delta", lines: [...textOpening("the reply"), successResult("max_tokens")] },
+		{ row: "8: thinking only, then result(end_turn)", lines: [...thinkingOpening, streamEvent({ type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig" } }), successResult("end_turn")] },
+		{ row: "8b: thinking only, then result(max_tokens)", lines: [...thinkingOpening, successResult("max_tokens")] },
+		{ row: "9: a tool call ending at message_stop, then result(tool_use) with no call reaching the bridge", lines: [...toToolUseMessage([read]), successResult("tool_use")] },
+		{ row: "9b: text, a tool call and message_delta(tool_use), no message_stop", lines: [...textOpening("Here is a question."), blockStop(0), ...toolBlock(1), blockStop(1), delta("tool_use"), successResult("tool_use")] },
+		{ row: "10: text and a tool call with no message_delta, then result(tool_use)", lines: [...textOpening("Here is a question."), blockStop(0), ...toolBlock(1), blockStop(1), successResult("tool_use")] },
+		{ row: "10b: text and a tool call still open, then a result with no stop reason", lines: [...textOpening("Here is a question."), ...toolBlock(1), successResult()] },
+		{ row: "10c: text and a bare harness call, then result(end_turn)", lines: [...textOpening("Here is a question."), blockStop(0), ...toolBlock(1, "read"), blockStop(1), successResult("end_turn")] },
+		{ row: "11: a message of rejected bare calls, then text with no message_delta", lines: [...toBareToolUseMessage([read]), rejectBareCall(read), ...textOpening("the reply"), successResult("end_turn")] },
+		{ row: "11b: a message of rejected bare calls, then thinking only", lines: [...toBareToolUseMessage([read]), rejectBareCall(read), ...thinkingOpening, successResult("end_turn")] },
+	];
+	for (const { row, lines } of rows) test(`ordering ${row}: known, deliberately unchanged (as main): the turn stays open, the result is recorded only`, async (t) => {
+		const notes = observeCli(t);
+		const { runClaude, calls } = createFakeRun(t, [...lines, HOLD]);
+		assertStillOpen(await collectOpenTurn(createClaudeCodeStreamFunction(runClaude), [HI], () => notes.length > 0));
+		assert.deepEqual(notes, ["result-before-stream-end"]);
+		assert.equal(isAlive(getOnlyCall(calls)), true, "nothing killed the process");
+	});
+}
 
 test("trailing toolResults matching a live process continue it: held calls answered, new assistant message streamed, no new spawn", async (t) => {
 	const readA: ToolUse = { id: "toolu_continue_a", name: "read", arguments: { path: "a" } };
 	const { runClaude, calls } = createFakeRun(t, [...toToolUseMessage([readA]), callTool(readA), REPLY]);
 	const streamFunction = createClaudeCodeStreamFunction(runClaude);
-	const toolMessage = await runTurn(streamFunction, [HI]);
+	const toolEvents = await collectTurn(streamFunction, [HI]);
+	const toolMessage = assertSettledOnce(toolEvents, { stopReason: "toolUse", text: "", cliEnding: "tool-admission" }); // ordering 2
+	assert.equal(isAlive(getOnlyCall(calls)), true, "held for the tool result");
 
-	const reply = await runTurn(streamFunction, [HI, toolMessage, toToolResult(readA, "contents of a")]);
+	const replyEvents = await collectTurn(streamFunction, [HI, toolMessage, toToolResult(readA, "contents of a")]);
+	const reply = assertSettledOnce(replyEvents, { stopReason: "stop", text: "contents of a", cliEnding: "message-stop" });
 
 	assert.equal(toolMessage.stopReason, "toolUse");
 	assert.equal(getText(reply), "contents of a");
@@ -1174,6 +1489,33 @@ test("worker releases its only permit before tools but continues in the same Cla
 	assert.deepEqual(usage, [10, 0, 0]);
 	assert.equal(result.text, "evidence 1 | evidence 2");
 	await assertCleanedUp(getOnlyCall(calls));
+});
+
+test("ordering 13: a parked worker resumed in the same child settles once at message_stop, its late result ignored", { timeout: 8000 }, async t => {
+	const notes = observeCli(t);
+	const reply = [...textOpening("worker reply"), streamEvent({ type: "content_block_stop", index: 0 }), streamEvent({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: {} }), streamEvent({ type: "message_stop" }), successResult("end_turn")];
+	const { runClaude, calls } = createFakeRun(t, [...toToolUseMessage([HELD_READ]), callTool(HELD_READ), ...reply, HOLD]);
+	const scope = createWorkerRequestScope(admittedClaude(runClaude));
+	t.after(() => scope.close());
+	const parked = assertSettledOnce(await collectTurn(scope.streamFn, [HI]), { stopReason: "toolUse", cliEnding: "tool-admission" });
+	assert.equal(isAlive(getOnlyCall(calls)), true, "parked for the worker's tool");
+	const resumed = await collectTurn(scope.streamFn, [HI, parked, toToolResult(HELD_READ, "evidence")]);
+	assertSettledOnce(resumed, { stopReason: "stop", text: "worker reply", cliEnding: "message-stop" });
+	assert.equal(calls.length, 1, "resumed in the same child");
+	await assertCleanedUp(getOnlyCall(calls));
+	assert.deepEqual(notes, [], "a result after message_stop is the normal ending: nothing recorded");
+});
+
+test("ordering 13b, known, deliberately unchanged (as main): a parked worker resumed in the same child whose reply gets a result but no message_stop stays open; recorded only", { timeout: 8000 }, async t => {
+	const notes = observeCli(t);
+	const { runClaude, calls } = createFakeRun(t, [...toToolUseMessage([HELD_READ]), callTool(HELD_READ), ...textOpening("worker reply"), successResult("end_turn"), HOLD]);
+	const scope = createWorkerRequestScope(admittedClaude(runClaude));
+	t.after(() => scope.close());
+	const parked = assertSettledOnce(await collectTurn(scope.streamFn, [HI]), { stopReason: "toolUse", cliEnding: "tool-admission" });
+	assertStillOpen(await collectOpenTurn(scope.streamFn, [HI, parked, toToolResult(HELD_READ, "evidence")], () => notes.length > 0));
+	assert.deepEqual(notes, ["result-before-stream-end"]);
+	assert.equal(calls.length, 1, "resumed in the same child");
+	assert.equal(isAlive(getOnlyCall(calls)), true, "nothing killed the process");
 });
 
 test("uncapped research through normal admission delivers a brief after thirteen Claude tool-use responses", { timeout: 8000 }, async t => {

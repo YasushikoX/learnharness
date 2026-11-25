@@ -29,8 +29,8 @@ import type { LhMessage } from "../../core/native-messages.ts";
 import { offerWorkerContinuation } from "../worker-request-admission.ts";
 import { ClaudeLaunchError, createClaudeLauncher } from "./launch.ts";
 import { observePlanUsage } from "./plan-usage.ts";
-import { parseCliLine, type CliBlock, type CliEvent, type CliUsage } from "./cli-events.ts";
-import { ClaudeCodeError } from "./constants.ts";
+import { isSuccessfulResultLine, parseCliLine, type CliBlock, type CliEvent, type CliUsage } from "./cli-events.ts";
+import { captureClaudeCliObservationSink, ClaudeCodeError, markCliEnding, type ClaudeCliEnding, type ClaudeCliObservation } from "./constants.ts";
 import { ContextWindowProbe } from "./context-window.ts";
 import { addLiveProcess, getIdleProcess, getLiveProcess, LIVE_PROCESS_IDLE_TIMEOUT_MS, removeLiveProcess, type LiveProcess } from "./live-processes.ts";
 import { forkChildEnv, idleReuse } from "./fork-extensions.ts";
@@ -162,6 +162,8 @@ class ClaudeTurn {
 	skippedBareCall = false;
 	started = false;
 	finished = false;
+	/** Where this turn's observations go (follow-ups 1), captured in the turn's own context. Written to, never read. */
+	private readonly observations = captureClaudeCliObservationSink();
 
 	constructor(
 		private readonly stream: AssistantMessageEventStream,
@@ -248,15 +250,15 @@ class ClaudeTurn {
 			case "messageStop":
 				// Tool intent is not execution admission. The process publishes only
 				// calls that actually reach the authenticated MCP bridge.
-				if (this.output.stopReason !== "toolUse") this.finish();
+				if (this.output.stopReason !== "toolUse") this.finish("message-stop");
 				return;
 
 			case "assistantError":
-				this.fail(getAssistantErrorMessage(event.error, event.text), "error");
+				this.fail(getAssistantErrorMessage(event.error, event.text), "error", "assistant-error");
 				return;
 
 			case "resultError":
-				this.fail(event.text, "error");
+				this.fail(event.text, "error", "result-error");
 				return;
 		}
 	}
@@ -280,13 +282,21 @@ class ClaudeTurn {
 			this.stream.push({ type: "toolcall_end", contentIndex, toolCall: call, partial: this.output });
 		}
 		this.output.stopReason = "toolUse";
-		this.finish();
+		this.finish("tool-admission");
 	}
 
-	fail(message: string, reason: "aborted" | "error"): void {
+	/** Fork (follow-ups 1): record what the CLI did, for diagnostics only. Never changes the turn. */
+	observe(note: ClaudeCliObservation): void {
+		console.warn(`claude CLI observation: ${note}`);
+		try { this.observations?.(note); }
+		catch { /* Diagnostics cannot interfere with the turn. */ }
+	}
+
+	fail(message: string, reason: "aborted" | "error", ending: ClaudeCliEnding = reason === "aborted" ? "aborted" : "adapter-error"): void {
 		if (this.finished) return;
 
 		this.finished = true;
+		markCliEnding(this.output, ending);
 		this.output.stopReason = reason;
 		this.output.errorMessage = message;
 		this.stream.push({ type: "error", reason, error: this.output });
@@ -385,20 +395,21 @@ class ClaudeTurn {
 		this.output.stopReason = mapped;
 	}
 
-	private finish(): void {
+	private finish(ending: ClaudeCliEnding): void {
 		const { stopReason } = this.output;
 
 		if (stopReason === "error") {
-			this.fail(this.output.errorMessage ?? REFUSAL_MESSAGE, "error");
+			this.fail(this.output.errorMessage ?? REFUSAL_MESSAGE, "error", ending);
 			return;
 		}
 
 		if (stopReason === "pending" || stopReason === "aborted") {
-			this.fail(this.output.errorMessage ?? NO_STOP_REASON_MESSAGE, "error");
+			this.fail(this.output.errorMessage ?? NO_STOP_REASON_MESSAGE, "error", ending);
 			return;
 		}
 
 		this.finished = true;
+		markCliEnding(this.output, ending);
 		this.stream.push({ type: "done", reason: stopReason, message: this.output });
 		this.stream.end();
 	}
@@ -465,7 +476,7 @@ class ClaudeProcess implements LiveProcess {
 		this.child.once("close", (code: number | null) => this.handleClose(`claude CLI exited with code ${code}`));
 		this.child.once("error", (error) => {
 			console.error("claude CLI process failed:", error);
-			this.turn.fail(START_FAILED_MESSAGE, "error");
+			this.turn.fail(START_FAILED_MESSAGE, "error", "start-failed");
 			this.handleClose(START_FAILED_MESSAGE);
 		});
 		this.child.stderr.setEncoding("utf8");
@@ -656,6 +667,10 @@ class ClaudeProcess implements LiveProcess {
 		if (this.stopping || !line.trim()) return;
 		observePlanUsage(line); // fork: the plan pill's rate_limit_event
 		if (this.contextProbe?.handle(JSON.parse(line))) return;
+		// Fork (follow-ups 1): recorded only, the turn carries on exactly as before (parseCliLine ignores this line below). A
+		// successful result normally follows message_stop on an idle process; here the turn is still open or its tool calls held.
+		// (the substring test keeps the second JSON.parse off every ordinary stream line)
+		if ((!this.turn.finished || !this.idle) && line.includes('"result"') && isSuccessfulResultLine(line)) this.turn.observe("result-before-stream-end");
 		const event = parseCliLine(line);
 		if (!event) return;
 		if (event.type === "toolResults") {
@@ -714,7 +729,7 @@ class ClaudeProcess implements LiveProcess {
 		// Keep the abort listener until that error is consumed or retired.
 		if (!this.pendingError || !this.workerOwner) this.setSignal(undefined);
 		if (this.stderr.trim()) console.error("claude CLI stderr:", this.stderr.trim());
-		this.turn.fail(message, "error");
+		this.turn.fail(message, "error", "process-exit");
 		removeTurnResources(this.bridge, this.files).catch((error: unknown) => {
 			console.error("claude CLI cleanup failed:", error);
 		});
@@ -812,7 +827,7 @@ async function startProcess(
 	}
 
 	if (!child) {
-		turn.fail(ClaudeCodeError.CliNotFound, "error");
+		turn.fail(ClaudeCodeError.CliNotFound, "error", "start-failed");
 		await removeTurnResources(bridge, files);
 		return;
 	}
@@ -835,7 +850,7 @@ export function createClaudeCodeStreamFunction(runClaude: RunClaude): StreamFunc
 
 		startProcess(runClaude, turn, model, context, options, owner, configuration, env).catch((error: unknown) => {
 			console.error("claude CLI turn failed:", error);
-			turn.fail(options?.signal?.aborted ? ABORT_MESSAGE : error instanceof ClaudeLaunchError ? error.message : START_FAILED_MESSAGE, options?.signal?.aborted ? "aborted" : "error");
+			turn.fail(options?.signal?.aborted ? ABORT_MESSAGE : error instanceof ClaudeLaunchError ? error.message : START_FAILED_MESSAGE, options?.signal?.aborted ? "aborted" : "error", options?.signal?.aborted ? "aborted" : "start-failed");
 		});
 
 		return stream;

@@ -538,6 +538,9 @@ export function failedResponseAtEnd(messages: readonly LhMessage[]): Extract<LhM
 	return undefined;
 }
 
+/** The server's refusal of a `continue` whose record no longer owes a reply (another tab's turn answered it): the client
+ *  treats it as "the session moved on" and syncs, never posting again (follow-ups 1, finding 2). */
+export const CONTINUE_NOT_OWED_TEXT = "The session moved on: the tutor already replied. Syncing the session.";
 /** Learner-facing: why a failure or an empty cut-off has no Retry once a compaction landed after it. */
 export const RETRY_AFTER_COMPACTION_TEXT = "This response cannot be retried after compaction. Send a new message to continue.";
 
@@ -548,6 +551,8 @@ export interface CutOffReply {
 	hasText: boolean;
 	/** An empty cut-off re-runs from its input, which a later compaction changed: like Retry, it is not offered. */
 	blockedByCompaction?: true;
+	/** An empty cut-off of a Continue: the reply's first part is on screen, the continuation added nothing (follow-ups 1). */
+	afterContinue?: true;
 	/** The recovery turn's temporary history omits these (pi's continue() rejects an assistant tail). */
 	omittedOnRetry: Set<string>;
 }
@@ -569,8 +574,9 @@ export function cutOffReplyAtEnd(messages: readonly LhMessage[]): CutOffReply | 
 		if (!cutOffWithoutText(message)) return { messageId: message.id, hasText: true, omittedOnRetry: new Set() };
 		// The cut-off, and earlier empty cut-offs and failed attempts in a row (a Retry that was cut off again), leave
 		// the tail. A cut-off with tool calls ends in pi's error results, which stay: the model re-issues those calls.
-		const { ids: omittedOnRetry } = failedTail(messages);
-		return { messageId: message.id, hasText: false, omittedOnRetry, ...(compacted ? { blockedByCompaction: true as const } : {}) };
+		const { ids: omittedOnRetry, before } = failedTail(messages);
+		const afterContinue = before?.role === "custom" && before.customType === "reply-recovery";
+		return { messageId: message.id, hasText: false, omittedOnRetry, ...(compacted ? { blockedByCompaction: true as const } : {}), ...(afterContinue ? { afterContinue: true as const } : {}) };
 	}
 }
 
@@ -578,6 +584,12 @@ export function requireCutOffReply(messages: readonly LhMessage[], messageId: st
 	const cutoff = cutOffReplyAtEnd(messages);
 	if (!cutoff || cutoff.messageId !== messageId) throw new ChatInputError("This cut-off reply is no longer the latest reply. Refresh the session.");
 	if (cutoff.blockedByCompaction) throw new ChatInputError(RETRY_AFTER_COMPACTION_TEXT);
+	// Follow-ups 1 (retryDrops' guard): an empty cut-off re-runs from the input before it; pi's continue() rejects an
+	// assistant there.
+	if (!cutoff.hasText) {
+		const { before } = failedTail(messages);
+		if (!before || before.role === "assistant") throw new ChatInputError("This cut-off reply has no input to retry from. Send a new message to continue.");
+	}
 	return cutoff;
 }
 
