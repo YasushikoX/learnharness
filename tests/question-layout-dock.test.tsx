@@ -159,6 +159,40 @@ test("adaptation on: question left, options + confidence right (one scroller), t
 	assert.equal(layouts.at(-1), null, "unmount clears the layout");
 });
 
+// Review finding 4: with "Ask about this" open (wordingOnly) the options are hidden, yet the adaptive columns kept their
+// empty answer column (Chrome: 340px of a 944px dock, the wording got 548px). The two-column request is suspended while
+// wording-only is active and comes back, from the saved measurements, when the clarification closes.
+test("wording-only suspends the adaptive columns and restores them when the clarification closes", async () => {
+	// The reviewer's dock: 944px wide, so 944 - 34 chrome = 910px of card inner width available.
+	const wide: QuestionLayoutRequest = { available: 910, base: 702, floor: 368, key: "font" };
+	const layouts: (QuestionLayout | null)[] = [];
+	const host = document.createElement("div"); document.body.append(host);
+	const root = createRoot(host);
+	const render = (wordingOnly: boolean) => act(async () => root.render(
+		<QuestionDock toolName="quiz" toolCallId="q-wording-only" input={input} expanded onExpand={() => {}} onSubmit={() => {}}
+			dictationClaim={false} wordingOnly={wordingOnly} layoutRequest={wide} onLayout={(l) => layouts.push(l)} />,
+	));
+	try {
+		await render(false);
+		const dock = host.querySelector('[data-testid="question-dock"]')!;
+		assert.equal(dock.getAttribute("data-question-layout"), "columns", "two columns before the clarification opens");
+		const options = host.querySelector("[data-question-options]");
+		const measured = measurements;
+
+		await render(true);
+		assert.equal(dock.getAttribute("data-question-layout"), "stacked", "no columns while the options are hidden");
+		assert.equal(host.querySelector('[data-testid="question-columns"]'), null, "no empty answer column takes width from the wording");
+		assert.equal(layouts.at(-1), null, "the dock is told there is no adaptive layout (its baseline width returns)");
+		assert.equal(host.querySelector("[data-question-options]"), options, "the options stay mounted (a half-made selection survives)");
+
+		await render(false);
+		assert.equal(dock.getAttribute("data-question-layout"), "columns", "the columns come back when the clarification closes");
+		assert.equal(layouts.at(-1)?.kind, "columns");
+		assert.equal(measurements, measured, "restored from the saved measurements, nothing re-measured");
+		assert.equal(host.querySelector("[data-question-options]"), options);
+	} finally { await act(async () => root.unmount()); host.remove(); }
+});
+
 test("a remounted question reuses its solved layout without measuring", async () => {
 	const first: (QuestionLayout | null)[] = [];
 	const a = await mount(request, first, "q-reuse");

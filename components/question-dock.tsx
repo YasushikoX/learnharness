@@ -924,7 +924,9 @@ function QuestionDockForm({
 	// not under the options, so the layout probe sees no confidence row (confidence: null).
 	const layout = useQuestionLayout({
 		cacheId: qd.id,
-		request: layoutRequest ?? null,
+		// Wording-only ("Ask about this" open) hides the options, so the two-column request is suspended: an empty
+		// answer column must not take width from the wording. It returns, from the saved measurements, when the card closes.
+		request: wordingOnly ? null : layoutRequest ?? null,
 		identity: qd,
 		live: () => {
 			const root = rootRef.current;
