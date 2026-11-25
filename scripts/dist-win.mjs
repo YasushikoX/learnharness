@@ -55,7 +55,15 @@ run("build", "npm", ["run", "build"]);
 run("initialize providers offline (fresh trace)", "node", [path.join("scripts", "smoke-provider-runtime.mjs")]);
 run("curate the server payload", "node", [path.join("scripts", "build-server.mjs")]);
 run("smoke-boot the server in Electron's Node", "node", [path.join("scripts", "smoke-server.mjs"), "--electron"]);
-run("package", "npx", ["electron-builder", "--win", "--x64", "--publish", "never"]);
+// LH_BUILD_VERSION (fork addition, 2026-11-25): the version the PACKAGED APP carries, e.g. 0.7.0-fork.2, so a later
+// build is an update to an earlier one. package.json keeps the upstream release it is based on (the plugin host and
+// the upstream notice read that); only the app shell, the installer's name and the update feed carry this one.
+const buildVersion = (process.env.LH_BUILD_VERSION ?? "").trim();
+if (buildVersion && !/^\d+\.\d+\.\d+-fork\.\d+$/.test(buildVersion)) {
+	console.error(`[dist-win] LH_BUILD_VERSION must look like 0.7.0-fork.2, got ${JSON.stringify(buildVersion)}`);
+	process.exit(1);
+}
+run("package", "npx", ["electron-builder", "--win", "--x64", "--publish", "never", ...(buildVersion ? [`-c.extraMetadata.version=${buildVersion}`] : [])]);
 
 const unpacked = path.join("dist", "win-unpacked");
 const payload = path.join(unpacked, "resources", "server", "standalone");
@@ -63,7 +71,7 @@ run("initialize packaged providers offline (host Node)", "node", [path.join("scr
 run("initialize packaged providers offline (packaged Electron Node)", "node", [path.join("scripts", "smoke-provider-runtime.mjs"), "--standalone", payload, "--runtime", path.join(unpacked, "LearnHarness.exe")]);
 
 const { version } = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
-const installer = path.join(ROOT, "dist", `LearnHarness-${version}-x64-setup.exe`);
+const installer = path.join(ROOT, "dist", `LearnHarness-${buildVersion || version}-x64-setup.exe`);
 if (!fs.existsSync(installer)) {
 	console.error(`[dist-win] expected installer missing: ${installer}`);
 	process.exit(1);

@@ -22,7 +22,8 @@ const nextConfig: NextConfig = {
 		proxyClientMaxBodySize: Math.max(MATERIAL_MAX_BYTES + 1024 * 1024, MAX_IMPORT_BODY_BYTES),
 	},
 	// Public build metadata only; no new runtime Electron version API.
-	env: { LH_VERSION: pkg.version, LH_HOMEPAGE: pkg.homepage },
+	// LH_BUILD_VERSION: a fork build's own version (0.7.0-fork.2), shown in Settings; package.json keeps the upstream release
+	env: { LH_VERSION: process.env.LH_BUILD_VERSION?.trim() || pkg.version, LH_HOMEPAGE: pkg.homepage },
 	// Desktop target (Electron wrapper, 2026-09-17): standalone output = a
 	// self-contained .next/standalone/server.js the Electron shell spawns
 	// on 127.0.0.1. Harmless for plain web deploys (extra build output).

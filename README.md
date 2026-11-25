@@ -1,4 +1,39 @@
-> **This is YasushikoX's fork**, aimed at studying school classes from class material. [FORK.md](FORK.md) lists what it changes and the status of each change. Everything below is the README of [Tobias Samsonsen's fork](https://github.com/TobiasSamsonsen/learnharness), which this one builds on, and which in turn builds on [LearnHarness](https://github.com/amosblomqvist/learnharness) by Amos Blomqvist.
+# LearnHarness for school classes
+
+This is YasushikoX's fork of LearnHarness, changed for one job: studying a university class from its own lecture PDFs. It builds on [Tobias Samsonsen's fork](https://github.com/TobiasSamsonsen/learnharness), which added courses, exams and spaced practice to [the original by Amos Blomqvist](https://github.com/amosblomqvist/learnharness). Licence: AGPL-3.0, like both.
+
+**Download:** installers for Windows and macOS (Apple Silicon) are on the [Releases page](https://github.com/YasushikoX/learnharness/releases). They are unsigned builds: Windows SmartScreen asks once, and on a Mac the first launch is right-click → Open. To run from source instead, see [Install this fork](#install-this-fork) below.
+
+## What is different in this version
+
+**The class's PDFs are read whole, and the tutor teaches from them**
+- A PDF is converted to page-marked text once, when you add it, by a converter you choose in Settings → PDF conversion: the built-in reader (no setup), a self-hosted [Docling](https://github.com/docling-project/docling-serve) server (reads scans and formulas), Mistral OCR (a preset not yet checked against the live service), or any other service described by a small profile file. If no option fits your service, "Draft a connector with AI" writes that profile from the service's documentation; you see every value it would send before you approve it. [docs/pdf-converters.md](docs/pdf-converters.md)
+- The whole document is then indexed, not skimmed: a summary, the vocabulary with definitions and page numbers, the concepts and the figures. The indexes of a class's documents make up its glossary.
+- When you approve a class's skill map, every core term from the material has to be assigned to a skill or left out on purpose. Each lesson is told which terms it owes, with the class's own definition and page, and the course page shows per skill how many terms were introduced and checked. [docs/courses.md](docs/courses.md)
+
+**Questions and explanations**
+- Concept checks and calculations are short written answers by default, graded against key points the tutor commits before you answer; you see the points afterwards, marked met or missed. Multiple choice stays for predictions and for questions where the wrong options are the point.
+- Each question records how demanding it is, and the tutor is told to step up after a confident correct answer and never to ask for something the text just said.
+- Explanations are held to one idea at a time: a few sentences, then a picture, a worked line or a check.
+- Every figure the tutor shows carries a "Look at" note, and every interactive demo a "Try this" with something to predict first.
+
+**A third way into a class: Questions**
+- Next to Learn and Practice, a class has Questions: ask anything about the class and get a short answer from its material with page citations, or a plain statement that the material does not cover it. Nothing asked there counts toward grades or mastery.
+
+**Fewer replies that stop halfway**
+- The stream is kept alive while the model thinks; a reply cut off at the model's limit shows a notice with Continue; a dropped connection shows Retry and brings back the reply. A per-turn timing log (`node scripts/turn-timeline.mjs`) records when each turn started and how it ended, so a turn that hangs leaves a trace.
+
+**Smaller things**
+- Questions can be read aloud with the system's voices (formulas are spoken correctly or called "formula").
+- Confidence is a 0–100 slider again; the buttons remain as a setting.
+- Switching between conversations loads about 25 KB instead of about 3 MB.
+
+**What has not been proven yet.** All of this passes the test suite and was reviewed change by change, but it has had little real use so far. In particular the new teaching prompts have not been tuned against a real model, and the vocabulary tracking is strict about what counts as "introduced" (so it will sometimes repeat a term). The check that can refuse finishing a lesson over unintroduced terms is therefore an opt-in setting, off by default.
+
+[FORK.md](FORK.md) lists every change with its status, and how the installers are built. Everything below is the README of Tobias Samsonsen's fork, which this one builds on; its install and usage instructions apply here too.
+
+---
+
 
 <p align="center">
   <picture>

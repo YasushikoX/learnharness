@@ -1,10 +1,19 @@
 name: Build installers (fork)
 
-# Unsigned installers of this fork, built on the owner's own machines (fork addition, 2026-11-25).
-# Manual only: Actions tab → "Build installers (fork)" → Run workflow. Nothing is published; the
-# installers are attached to the run as artifacts.
+# Installers of this fork, built on the owner's own machines (fork addition, 2026-11-25).
+# Manual only: Actions tab → "Build installers (fork)" → Run workflow.
 #
-# Both jobs need a self-hosted runner carrying the label `lh-build`:
+#   - `build`: this fork's build number. The packaged app's version becomes
+#     <package.json version>-fork.<build>, for example 0.7.0-fork.2. package.json itself keeps the
+#     upstream release the fork is based on (the plugin host and the upstream notice read that).
+#   - `publish`: off = the installers are only attached to the run (artifacts, 30 days).
+#     On = after BOTH builds succeed, a public release `v<version>` is created on this repository
+#     with the installers and the update metadata. Installed copies look for updates in this
+#     repository's releases, so a published build with a higher number reaches them by itself
+#     (Windows; the macOS app is ad-hoc signed and has to be replaced by hand, see docs).
+#     Release notes come from docs/fork-releases/<version>.md when that file exists.
+#
+# Both build jobs need a self-hosted runner carrying the label `lh-build`:
 #   - Windows x64: the NSIS installer, built by scripts/dist-win.mjs (the same pipeline as the
 #     upstream release job; never cross-built, the server payload carries native binaries).
 #   - macOS arm64: the DMG and ZIP, ad-hoc signed and not notarized (first launch: right-click → Open,
@@ -17,6 +26,14 @@ name: Build installers (fork)
 on:
   workflow_dispatch:
     inputs:
+      build:
+        description: Fork build number (1, 2, 3 …); higher than the last published one
+        type: string
+        required: true
+      publish:
+        description: Publish a release with the installers (needs both builds)
+        type: boolean
+        default: false
       windows:
         description: Build the Windows installer
         type: boolean
@@ -37,15 +54,45 @@ env:
   NEXT_TELEMETRY_DISABLED: "1"
 
 jobs:
+  version:
+    name: Version
+    if: github.repository == 'YasushikoX/learnharness'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: v
+        env:
+          BUILD: ${{ inputs.build }}
+          PUBLISH: ${{ inputs.publish }}
+          BOTH: ${{ inputs.windows && inputs.macos }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! [[ "$BUILD" =~ ^[1-9][0-9]*$ ]]; then echo "::error::build must be a whole number from 1, got '$BUILD'"; exit 1; fi
+          base=$(node -p "require('./package.json').version")
+          if ! [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "::error::package.json version must be x.y.z, got '$base'"; exit 1; fi
+          version="$base-fork.$BUILD"
+          if [[ "$PUBLISH" == "true" ]]; then
+            if [[ "$BOTH" != "true" ]]; then echo "::error::publishing needs both the Windows and the macOS build"; exit 1; fi
+            if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo "::error::release v$version already exists; use a higher build number"; exit 1; fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building $version" >> "$GITHUB_STEP_SUMMARY"
+
   windows:
     name: Windows x64 installer
-    if: github.repository == 'YasushikoX/learnharness' && inputs.windows
+    needs: version
+    if: inputs.windows
     runs-on: [self-hosted, Windows, X64, lh-build]
     timeout-minutes: 90
     defaults:
       run:
         # cmd, not PowerShell: npm is a .cmd shim, and PowerShell's execution policy can refuse npm.ps1
         shell: cmd
+    env:
+      LH_BUILD_VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -65,16 +112,20 @@ jobs:
           path: |
             dist/*.exe
             dist/*.blockmap
-            dist/latest*.yml
+            dist/*.yml
+            !dist/builder-*.yml
 
   macos:
     name: macOS arm64 app
-    if: github.repository == 'YasushikoX/learnharness' && inputs.macos
+    needs: version
+    if: inputs.macos
     runs-on: [self-hosted, macOS, ARM64, lh-build]
     timeout-minutes: 90
     defaults:
       run:
         shell: bash
+    env:
+      LH_BUILD_VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -101,7 +152,8 @@ jobs:
           # signature, library validation would refuse the app's own Electron framework and the app would not
           # start (the packaged smoke test below caught exactly that). Without it the microphone needs no
           # entitlement, only the usage text the app already carries.
-          npx electron-builder --mac --arm64 --publish never -c.mac.notarize=false -c.mac.identity=- -c.mac.hardenedRuntime=false "${icon[@]}"
+          npx electron-builder --mac --arm64 --publish never -c.mac.notarize=false -c.mac.identity=- -c.mac.hardenedRuntime=false \
+            "-c.extraMetadata.version=$LH_BUILD_VERSION" "${icon[@]}"
           codesign --verify --deep --strict dist/mac-arm64/LearnHarness.app
           codesign -dv dist/mac-arm64/LearnHarness.app 2>&1 | grep -E "Identifier=|Signature="
       - name: Initialize packaged providers offline (host and packaged Electron Node)
@@ -120,4 +172,32 @@ jobs:
             dist/*.dmg
             dist/*.zip
             dist/*.blockmap
-            dist/latest*.yml
+            dist/*.yml
+            !dist/builder-*.yml
+
+  release:
+    name: Publish the release
+    needs: [version, windows, macos]
+    if: inputs.publish
+    # GitHub's own runner: this job only moves files that the two builds already made
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+      - name: Create the release
+        run: |
+          ls -la artifacts/*/
+          notes="docs/fork-releases/$VERSION.md"
+          args=(--title "LearnHarness $VERSION" --target "$GITHUB_SHA")
+          if [[ -f "$notes" ]]; then args+=(--notes-file "$notes"); else args+=(--generate-notes); fi
+          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" "${args[@]}" \
+            artifacts/learnharness-windows-x64/* artifacts/learnharness-mac-arm64/*
+          echo "Published https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION" >> "$GITHUB_STEP_SUMMARY"

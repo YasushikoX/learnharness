@@ -35,6 +35,8 @@ Changes are designed, written and cross-reviewed by AI coding agents (Claude, GP
 - Amos Blomqvist for LearnHarness.
 - Tobias Samsonsen for the courses fork this is based on.
 
-## Building installers
+## Building installers and publishing a release
 
-Actions → **Build installers (fork)** → Run workflow builds an unsigned Windows installer and an unsigned macOS app on the owner's self-hosted runners (label `lh-build`) and attaches them to the run. See `.github/workflows/fork-build.yml` for what it runs and for the note on self-hosted runners in a public repository. Installed builds look for updates in this repository's releases only.
+Actions → **Build installers (fork)** → Run workflow, with a build number. It builds the Windows installer and the macOS app on the owner's self-hosted runners (label `lh-build`); the packaged app's version is `<package.json version>-fork.<build>`. With **publish** off the installers are only attached to the run. With **publish** on, and after both builds pass their checks, a public release `v<version>` is created with the installers and the update metadata; notes come from `docs/fork-releases/<version>.md`. A release is published when a round of changes is finished, not for every build.
+
+Installed copies look for updates in this repository's releases only. Windows copies update themselves from a published build with a higher number; the macOS app is ad-hoc signed and has to be replaced by hand. See `.github/workflows/fork-build.yml` for what runs and for the note on self-hosted runners in a public repository.
