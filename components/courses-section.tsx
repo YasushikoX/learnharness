@@ -116,16 +116,16 @@ export function CourseRow({
 			data-testid="course-row"
 			data-course-id={course.id}
 			className={cn(
-				"relative mb-0.5 flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left transition-colors hover:bg-accent",
-				active && "bg-accent",
+				"relative mb-0.5 flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left transition-colors hover:bg-raised",
+				active && "bg-raised",
 			)}
 		>
 			<span className="min-w-0 flex-1">
-				<span className="block truncate text-sm">{course.title}</span>
+				<span className="block truncate text-[13px] font-medium leading-[18px]">{course.title}</span>
 				{meta.status !== null ? (
 					<span className="block truncate text-xs text-muted-foreground">{meta.status}</span>
 				) : meta.percent !== null ? (
-					<span className="grid grid-cols-[4.5ch_6.5ch_auto] gap-x-2 truncate text-xs text-muted-foreground" aria-label={courseMeta(course)}>
+					<span className="grid grid-cols-[4ch_6ch_minmax(0,1fr)] gap-x-2 truncate text-xs leading-4 tabular-nums text-muted-foreground" aria-label={courseMeta(course)}>
 						<span>{meta.percent}</span>
 						<span>{meta.days}</span>
 						<span>{meta.due}</span>

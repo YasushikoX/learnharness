@@ -137,11 +137,11 @@ export function TodaySection() {
 				data-testid="today-link"
 				aria-current={active ? "page" : undefined}
 				className={cn(
-					"lh-touch flex w-full items-center gap-2 rounded-lg px-2 py-1 text-sm font-medium transition-colors hover:bg-accent",
-					active ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
+					"lh-touch flex h-8 w-full items-center gap-2 rounded-lg px-2 text-[13px] font-medium transition-colors hover:bg-raised",
+					active ? "bg-raised text-foreground" : "text-muted-foreground hover:text-foreground",
 				)}
 			>
-				<CalendarCheckIcon className="size-3.5" />
+				<CalendarCheckIcon className="size-4" />
 				Today
 				<span className="font-normal tabular-nums text-muted-foreground">{count}</span>
 				<ChevronRightIcon className="ml-auto size-3.5" />

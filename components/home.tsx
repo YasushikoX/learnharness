@@ -1,7 +1,7 @@
 "use client";
 
 import { uploadDraftMaterials } from "@/components/materials-client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { SurfaceRegion, usePageSurfaceBoundary, useSurfaceChromeStyle } from "./plugin-surfaces";
 import { CornerDownLeftIcon, DumbbellIcon } from "lucide-react";
@@ -24,6 +24,7 @@ import { SessionStarter } from "@/components/start-session";
 import type { TurnUsage } from "@/src/core";
 import { enterSends, isCoarsePointer } from "@/components/enter-submits";
 import { useServerReachable } from "@/components/server-events";
+import { Button } from "@/components/ui/button";
 
 /**
  * Home — the knowledge graph is the main view, full-bleed edge to edge
@@ -48,6 +49,17 @@ export function Home({
 	const surfaceTarget = usePageSurfaceBoundary({ active: pathname === "/", viewKey: "/", bodyRef });
 	const chromeStyle = useSurfaceChromeStyle(surfaceTarget);
 	const [folderFilterSlot, setFolderFilterSlot] = useState<HTMLElement | null>(null);
+	const dockRef = useRef<HTMLDivElement>(null);
+	const [dockHeight, setDockHeight] = useState(0);
+	useLayoutEffect(() => {
+		const dock = dockRef.current;
+		if (!dock) return;
+		const measure = () => setDockHeight(dock.getBoundingClientRect().height);
+		measure();
+		const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+		observer?.observe(dock);
+		return () => observer?.disconnect();
+	}, []);
 	const [topic, setTopic] = useState("");
 	/* The topic MIRROR ("nothing gets lost" round, 2026-10-01 — same
 	 * mechanics as the chat composer, owner's consistency ruling): a
@@ -201,6 +213,7 @@ export function Home({
 				{rendering ? (
 					<GraphView
 						folderFilterSlot={folderFilterSlot}
+							bottomInset={dockHeight + 12}
 						chainSelectOpen={chainSelectOpen}
 						practiceSelection={pickedIds}
 						onPracticeSelectionChange={setPracticeProps}
@@ -221,7 +234,7 @@ export function Home({
 			    OVER the graph (no gradient: the graph runs clean under it to the
 			    bottom edge). Matches chat.tsx's DOCK geometry (max-w-[46rem]
 			    px-4) so nothing shifts when a session starts (owner). */}
-			<div className="pointer-events-none absolute inset-x-0 bottom-0 pb-[calc(1.25rem+var(--lh-safe-bottom))]">
+			<div ref={dockRef} className="pointer-events-none absolute inset-x-0 bottom-0 pb-[calc(1.25rem+var(--lh-safe-bottom))]">
 				<div className="pointer-events-auto mx-auto w-full max-w-[46rem] px-4">
 					{/* The pick bar (owner vision, 2026-10-04): the chain
 					    table's selection is PERSISTENT — picked
