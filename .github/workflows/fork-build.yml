@@ -1,0 +1,118 @@
+name: Build installers (fork)
+
+# Unsigned installers of this fork, built on the owner's own machines (fork addition, 2026-11-25).
+# Manual only: Actions tab → "Build installers (fork)" → Run workflow. Nothing is published; the
+# installers are attached to the run as artifacts.
+#
+# Both jobs need a self-hosted runner carrying the label `lh-build`:
+#   - Windows x64: the NSIS installer, built by scripts/dist-win.mjs (the same pipeline as the
+#     upstream release job; never cross-built, the server payload carries native binaries).
+#   - macOS arm64: the DMG and ZIP, unsigned and not notarized (first launch: right-click → Open,
+#     or `xattr -dr com.apple.quarantine /Applications/LearnHarness.app`).
+#
+# SELF-HOSTED RUNNERS ON A PUBLIC REPOSITORY run whatever a workflow tells them to, on the owner's
+# machines. This workflow only starts by hand (write access needed), and the repository requires
+# approval before any workflow from an outside contributor's pull request runs (Settings → Actions →
+# General → "Require approval for all external contributors"). Keep both that way.
+on:
+  workflow_dispatch:
+    inputs:
+      windows:
+        description: Build the Windows installer
+        type: boolean
+        default: true
+      macos:
+        description: Build the macOS app
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-build-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  windows:
+    name: Windows x64 installer
+    if: github.repository == 'YasushikoX/learnharness' && inputs.windows
+    runs-on: [self-hosted, Windows, X64, lh-build]
+    timeout-minutes: 90
+    defaults:
+      run:
+        # cmd, not PowerShell: npm is a .cmd shim, and PowerShell's execution policy can refuse npm.ps1
+        shell: cmd
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+      - run: npm ci
+      - run: npm run plugins:setup
+      # build → smoke the fresh trace → curate the server payload → smoke it in Electron's Node →
+      # package → smoke the packaged app (scripts/dist-win.mjs)
+      - run: npm run desktop:dist:win
+      - name: Save the installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: learnharness-windows-x64
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest*.yml
+
+  macos:
+    name: macOS arm64 app
+    if: github.repository == 'YasushikoX/learnharness' && inputs.macos
+    runs-on: [self-hosted, macOS, ARM64, lh-build]
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+      - run: npm ci
+      - run: npm run plugins:setup
+      - run: npm run build
+      # Check the fresh trace before any static copying/curation.
+      - run: node scripts/smoke-provider-runtime.mjs
+      - run: node scripts/build-server.mjs
+      - run: node scripts/smoke-server.mjs --electron
+      - name: Package, unsigned (no publish, no notarization)
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          # The app icon is an Icon Composer document (build/icon.icon), which only Xcode 26's actool
+          # compiles. A machine with the command line tools alone uses the classic icon instead.
+          icon=()
+          if ! xcrun --find actool >/dev/null 2>&1; then
+            echo "::notice::No actool here (Xcode is not installed): packaging with build/icon.icns"
+            icon=(-c.mac.icon=build/icon.icns)
+          fi
+          npx electron-builder --mac --arm64 --publish never -c.mac.notarize=false "${icon[@]}"
+      - name: Initialize packaged providers offline (host and packaged Electron Node)
+        run: |
+          app="dist/mac-arm64/LearnHarness.app/Contents"
+          payload="$app/Resources/server/standalone"
+          node scripts/smoke-provider-runtime.mjs --standalone "$payload"
+          node scripts/smoke-provider-runtime.mjs --standalone "$payload" --runtime "$app/MacOS/LearnHarness"
+      - name: Save the app
+        uses: actions/upload-artifact@v7
+        with:
+          name: learnharness-mac-arm64
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.blockmap
+            dist/latest*.yml

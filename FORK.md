@@ -34,3 +34,7 @@ Changes are designed, written and cross-reviewed by AI coding agents (Claude, GP
 
 - Amos Blomqvist for LearnHarness.
 - Tobias Samsonsen for the courses fork this is based on.
+
+## Building installers
+
+Actions → **Build installers (fork)** → Run workflow builds an unsigned Windows installer and an unsigned macOS app on the owner's self-hosted runners (label `lh-build`) and attaches them to the run. See `.github/workflows/fork-build.yml` for what it runs and for the note on self-hosted runners in a public repository. Installed builds look for updates in this repository's releases only.

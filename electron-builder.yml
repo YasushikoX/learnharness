@@ -190,8 +190,10 @@ publish:
   # Fork (2026-10-24): the feed is THIS fork's releases. Pointing at
   # upstream would "update" an installed fork to upstream's build and drop
   # the fork's features (Claude Code provider, languages, local dictation).
+  # This fork of the fork (2026-11-25): YasushikoX/learnharness. With no published release there,
+  # an installed build simply finds no update; it never "updates" to another fork's build.
   - provider: github
-    owner: TobiasSamsonsen
+    owner: YasushikoX
     repo: learnharness
     # All three CI jobs contribute assets; only the owner publishes it.
     releaseType: draft

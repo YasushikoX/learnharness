@@ -68,7 +68,7 @@ export const FORK_FEATURES = [
 	"lesson languages and the language directives (src/core/language.ts)",
 	"local dictation with the Whisper worker (src/server/stt-local.ts, src/server/stt/worker.mjs)",
 	"the upstream release notice (src/core/upstream.ts)",
-	"the fork's own update feed (owner TobiasSamsonsen in electron-builder.yml)",
+	"the fork's own update feed (owner YasushikoX in electron-builder.yml)",
 ] as const;
 
 /**
