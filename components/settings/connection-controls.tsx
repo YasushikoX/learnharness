@@ -2,14 +2,19 @@
 import { HostDialog } from "@/components/host-dialog";
 import type { CloseOutcome } from "@/components/interaction-layers";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { SettingsRow } from "./controls";
 
-export function ConnectionRow({ label, action, actionVariant, disabled, onAction, children, testid, actionTestid, labelClassName }: { label: string; action: string; actionVariant?: "outline" | "ghost"; disabled: boolean; onAction: () => void; children?: React.ReactNode; testid?: string; actionTestid?: string; labelClassName?: string }) {
+export function ConnectionRow({ label, action, actionVariant, disabled, onAction, children, testid, actionTestid, setup = false }: { label: string; action: string; actionVariant?: "outline" | "ghost"; disabled: boolean; onAction: () => void; children?: React.ReactNode; testid?: string; actionTestid?: string; setup?: boolean }) {
 	const variant = actionVariant ?? (action === "Connect" ? "outline" : "ghost");
-	return <div className="flex flex-wrap items-center gap-3" data-testid={testid}>
-		<span className={labelClassName ?? "font-ui text-xs text-foreground"}>{label}</span>
-		{children}
-		<Button type="button" size="xs" variant={variant} className={`lh-hit cursor-pointer disabled:cursor-not-allowed ${variant === "outline" ? "" : "text-muted-foreground hover:text-foreground"}`} data-testid={actionTestid} disabled={disabled} onClick={onAction}>{action}</Button>
+	const button = <Button type="button" size={setup ? "xs" : "default"} variant={variant} className={cn("lh-hit cursor-pointer disabled:cursor-not-allowed", variant === "ghost" && "text-muted-foreground hover:text-foreground")} data-testid={actionTestid} disabled={disabled} onClick={onAction}>{action}</Button>;
+	if (setup) return <div className="flex flex-wrap items-center gap-3" data-testid={testid}>
+		<span className="font-ui text-xs text-foreground">{label}</span>
+		{children}{button}
 	</div>;
+	return <SettingsRow label={label} testid={testid}>
+		<div className="flex min-w-0 max-w-full items-center justify-end gap-2">{children}{button}</div>
+	</SettingsRow>;
 }
 
 export function ConnectionFooter({ leading, children, testid }: { leading?: React.ReactNode; children: React.ReactNode; testid?: string }) {
@@ -22,7 +27,7 @@ export function ConnectionFooter({ leading, children, testid }: { leading?: Reac
 export function ConnectionDialog({ children, onClose, busy, label, testid, backdropTestid }: { children: React.ReactNode; onClose: () => CloseOutcome; busy: boolean; label: string; testid: string; backdropTestid: string }) {
 	return <HostDialog open onClose={onClose} aria-label={label}
 		backdropProps={{ className: "fixed inset-0 z-[60] flex items-center justify-center lh-scrim", "data-testid": backdropTestid }}
-		frame={<div aria-busy={busy} data-testid={testid} onClick={(event) => event.stopPropagation()} className="settings-dialog-pop mx-4 max-h-[85vh] w-full max-w-lg overflow-y-auto lh-dialog p-6" />}>
+		frame={<div aria-busy={busy} data-testid={testid} onClick={(event) => event.stopPropagation()} className="mx-4 max-h-[85vh] w-full max-w-lg overflow-y-auto lh-dialog p-6" />}>
 		{children}
 	</HostDialog>;
 }

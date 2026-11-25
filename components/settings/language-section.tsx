@@ -12,6 +12,7 @@ import {
 	type LocalSttStatus,
 } from "@/src/core";
 import { SettingsGroup, SettingsRow, ThinSelect, Toggle } from "@/components/settings/controls";
+import { Button } from "@/components/ui/button";
 import { nativeSpeechReady } from "@/components/dictation-native";
 
 /**
@@ -136,19 +137,19 @@ export function DictationEngineRows({
 					hint={m.repo}
 					testid={`row-stt-model-${m.language}`}
 				>
-					<span className="flex items-center gap-2">
-						<span className="font-mono text-xs text-muted-foreground" data-testid={`stt-model-${m.language}-status`}>
+					<span className="flex flex-wrap items-center justify-end gap-2">
+						<span className="text-sm text-muted-foreground" data-testid={`stt-model-${m.language}-status`}>
 							{localModelLine(m)}
 						</span>
 						{(m.state === "absent" || m.state === "error") && (
-							<button
+							<Button
 								type="button"
+								variant="outline"
 								onClick={() => download(m.language)}
 								data-testid={`stt-model-${m.language}-download`}
-								className="lh-touch lh-press rounded-md bg-primary/20 px-3 py-1 text-xs font-medium text-primary hover:bg-primary/30"
 							>
 								Download
-							</button>
+							</Button>
 						)}
 					</span>
 				</SettingsRow>

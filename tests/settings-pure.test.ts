@@ -325,17 +325,17 @@ describe("classifyKeys — the Keys section's two-group projection", () => {
 });
 
 describe("keyStatusLine — the minimal at-a-glance state", () => {
-	it("present file key: tail + chars, no source suffix", () => {
+	it("a saved key displays just its masked tail", () => {
 		assert.equal(
 			keyStatusLine({ id: "X", info: null, present: true, masked: "…ab12 (64 chars)", source: "file", shadowedByEnv: false }),
-			"…ab12 · 64",
+			"…ab12",
 		);
 	});
 
 	it("env-owned key carries the 'env' marker (the row renders read-only)", () => {
 		assert.equal(
 			keyStatusLine({ id: "X", info: null, present: true, masked: "…ca10 (73 chars)", source: "env", shadowedByEnv: false }),
-			"…ca10 · 73 · env",
+			"…ca10 · env",
 		);
 	});
 

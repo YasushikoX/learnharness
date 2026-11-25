@@ -23,6 +23,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ModelCatalogEntry } from "@/src/core";
 import { CLAUDE_CODE_PROVIDER, CUSTOM_PROVIDER, fuzzyScore, subscriptionLabel } from "@/src/core";
 import { formatTokens } from "@/components/usage-format";
+import { Input } from "@/components/ui/input";
 import { SearchMenuList } from "./search-menu-list";
 
 function priceLabel(cost: ModelCatalogEntry["cost"]): string {
@@ -129,9 +130,7 @@ export function ThinkingMenuList({
 						type="button"
 						data-testid={`thinking-option-${level}`}
 						onClick={() => onPick(level)}
-						className={`flex items-center justify-between rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted ${
-							level === effectiveLevel ? "bg-muted/60 text-card-foreground" : "text-card-foreground"
-						}`}
+						className={`lh-menu-item justify-between ${level === effectiveLevel ? "bg-raised" : ""}`}
 					>
 						<span>{level}</span>
 						{level === effectiveLevel && <span aria-hidden>✓</span>}
@@ -179,7 +178,7 @@ export function ProviderMenuList({
 
 	return (
 		<>
-			<input
+			<Input
 				ref={searchRef}
 				data-testid="provider-search"
 				value={query}
@@ -207,7 +206,8 @@ export function ProviderMenuList({
 					}
 				}}
 				placeholder="Search providers…"
-				className="lh-input mb-1.5 w-full rounded-lg border bg-background px-2 py-1.5 text-foreground outline-none focus:ring-1 focus:ring-ring"
+				aria-label="Search providers"
+				className="mb-1"
 			/>
 			{results.length === 0 && (
 				<div className="px-2 py-3 text-center text-muted-foreground">No providers match.</div>
@@ -219,10 +219,9 @@ export function ProviderMenuList({
 							type="button"
 							data-testid={`provider-option-${p.id.replace(/[^a-z0-9-]/gi, "_")}`}
 							data-idx={i}
+							data-highlighted={i === menuIdx ? "" : undefined}
 							onClick={() => onPick(p)}
-							className={`flex w-full items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-left outline-none transition-colors hover:bg-muted ${
-								i === menuIdx ? "bg-accent/40 ring-1 ring-inset ring-border" : ""
-							}`}
+							className="lh-menu-item w-full justify-between"
 						>
 							<span className="truncate text-card-foreground">{p.label}</span>
 							<span className="shrink-0 font-mono text-xs text-muted-foreground">{p.envVar}</span>
@@ -309,7 +308,7 @@ export function FontMenuList({
 
 	return (
 		<>
-			<input
+			<Input
 				ref={searchRef}
 				data-testid="font-search"
 				value={query}
@@ -337,7 +336,8 @@ export function FontMenuList({
 					}
 				}}
 				placeholder="Search fonts…"
-				className="lh-input mb-1.5 w-full rounded-lg border bg-background px-2 py-1.5 text-foreground outline-none focus:ring-1 focus:ring-ring"
+				aria-label="Search fonts"
+				className="mb-1"
 			/>
 			{!families && <div className="px-2 py-3 text-center text-muted-foreground">Loading fonts…</div>}
 			<ul ref={listRef} data-testid="font-list" className="flex max-h-72 flex-col overflow-y-auto px-1">
@@ -351,10 +351,9 @@ export function FontMenuList({
 									type="button"
 									data-testid={isDefault ? "font-option-default" : `font-option-${family.replace(/[^a-z0-9-]/gi, "_")}`}
 									data-idx={i}
+									data-highlighted={i === menuIdx ? "" : undefined}
 									onClick={() => onPick(family)}
-									className={`flex w-full items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-left outline-none transition-colors hover:bg-muted ${
-										i === menuIdx ? "bg-accent/40 ring-1 ring-inset ring-border" : ""
-									}${effective && i !== menuIdx ? " bg-muted/60" : ""}`}
+									className={`lh-menu-item w-full justify-between ${effective ? "bg-raised" : ""}`}
 								>
 									<span className="truncate text-card-foreground">{family ?? "Source Sans 3"}</span>
 									<span className="shrink-0 text-muted-foreground">{isDefault ? "default" : effective && <span aria-hidden>✓</span>}</span>
@@ -368,10 +367,9 @@ export function FontMenuList({
 							type="button"
 							data-testid="font-option-custom"
 							data-idx={0}
+							data-highlighted={menuIdx === 0 ? "" : undefined}
 							onClick={() => onPick(customFamily)}
-							className={`flex w-full items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-left outline-none transition-colors hover:bg-muted ${
-								menuIdx === 0 ? "bg-accent/40 ring-1 ring-inset ring-border" : ""
-							}`}
+							className="lh-menu-item w-full justify-between"
 						>
 							<span className="truncate text-card-foreground">Use “{customFamily}”</span>
 							<span className="shrink-0 text-muted-foreground">custom</span>

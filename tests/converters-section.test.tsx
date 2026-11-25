@@ -236,7 +236,7 @@ describe("Settings → PDF conversion", () => {
 			assert.equal(ui.q("converter-active"), null);
 			const use = ui.q<HTMLButtonElement>("converter-use")!;
 			assert.equal(use.textContent, "Use for new PDFs");
-			assert.equal(use.parentElement, ui.q("converter-destination")!.parentElement, "the action sits beside the destination line");
+			assert.ok(ui.q("converter-destination-row")?.contains(use), "the action sits in the destination row");
 			await ui.click("converter-use");
 			assert.deepEqual(ui.calls.at(-1), { method: "PUT", url: "/api/converters", body: { id: "mistral-ocr", select: true } });
 			assert.equal(ui.text("converter-active"), "In use for new PDFs");

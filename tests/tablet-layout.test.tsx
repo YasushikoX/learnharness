@@ -9,6 +9,7 @@ import React from "react";
 (globalThis as Record<string, unknown>).React = React;
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { renderToStaticMarkup as renderBare } from "react-dom/server";
 import { InteractionLayersProvider } from "../components/interaction-layers";
@@ -23,9 +24,11 @@ describe("settings dialog below 1024px", () => {
 
 	it("fills the screen, square and borderless, padded by the safe-area insets", () => {
 		const dialog = html.match(/<div[^>]*data-testid="settings-dialog"[^>]*>/)?.[0] ?? "";
-		for (const cls of ["max-lg:h-full", "max-lg:w-full", "max-lg:max-w-none", "max-lg:rounded-none", "max-lg:border-0"]) {
+		for (const cls of ["max-lg:h-full", "max-lg:w-full", "lh-settings-frame"]) {
 			assert.ok(dialog.includes(cls), cls);
 		}
+		const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+		assert.match(css, /@media \(width < 64rem\)\s*\{\s*\.lh-settings-frame\s*\{[^}]*border:\s*0;[^}]*border-radius:\s*0;[^}]*box-shadow:\s*none;/);
 		for (const side of ["top", "right", "bottom", "left"]) assert.ok(dialog.includes(`var(--lh-safe-${side})`), side);
 	});
 
