@@ -36,10 +36,12 @@ import {
 
 /** One row's status line. Pure — exported for pins. */
 export function materialStatusLine(m: LessonMaterial): string {
-	if (m.status === "reading") return "reading…";
-	if (m.status === "error") return `not read${m.error ? ` — ${m.error}` : ""}`;
+	const p = m.conversionProgress;
+	if (m.status === "reading") return p ? `reading… · converting: ${p.stage}${p.donePages !== undefined && p.totalPages ? ` ${p.donePages}/${p.totalPages}` : ""}` : "reading…";
+	const note = m.conversionError ? ` · ${m.conversionError.message}` : m.conversionWarnings?.length ? ` · ${m.conversionWarnings.join(" ")}` : "";
+	if (m.status === "error") return `not read${m.error ? ` — ${m.error}` : ""}${note}`;
 	const base = m.kind === "pdf" && m.pages ? `${m.pages} pages` : m.kind === "web" ? "web page" : m.kind === "image" ? "image" : "text";
-	return m.originalElsewhere ? `${base} · original on another device` : base;
+	return `${m.originalElsewhere ? `${base} · original on another device` : base}${note}`;
 }
 
 /** The pill's label. Pure. */
@@ -198,7 +200,7 @@ export function MaterialsControl({
 										<span className="block truncate text-foreground" title={m.url ?? m.name}>
 											{m.name}
 										</span>
-										<span className={`block truncate ${m.status === "error" ? "text-error" : "text-muted-foreground"}`} title={m.error}>
+										<span className={`block truncate ${m.status === "error" ? "text-error" : "text-muted-foreground"}`} title={m.error ?? m.conversionError?.message ?? m.conversionWarnings?.join(" ")}>
 											{materialStatusLine(m)}
 										</span>
 									</span>

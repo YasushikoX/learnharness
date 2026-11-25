@@ -9,6 +9,7 @@ export function createPdfjsConverter(): PdfConverter {
 	return {
 		id: "pdfjs",
 		version: PDFJS_CONVERTER_VERSION,
+		local: true,
 		maxBytes: MATERIAL_MAX_BYTES,
 		maxPages: PDF_MAX_PAGES,
 		async convert(input, ctx) {

@@ -28,7 +28,6 @@ import {
 	ModelsNotConfiguredError,
 	PROVIDER_KEY_MISSING_CODE,
 	ProviderKeyMissingError,
-	PDF_MAX_PAGES,
 	type EmissionStats,
 } from "@/src/core";
 
@@ -53,6 +52,7 @@ interface ImportResult {
 	notice?: string;
 }
 
+const MAX_PDF_PAGES = 1000;
 const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46, 0x2d]; // "%PDF-"
 
 type NotesFile = { kind: "notes"; text: string; notice?: string } | { kind: "refused"; error: string };
@@ -65,7 +65,7 @@ async function readNotesFile(file: File): Promise<NotesFile> {
 		if (bytes.subarray(0, 8192).includes(0)) return { kind: "refused", error: "This file isn't plain text." };
 		return { kind: "notes", text: new TextDecoder().decode(bytes) };
 	}
-	const pdf = await convertPdf(bytes, PDF_MAX_PAGES);
+	const pdf = await convertPdf(bytes, MAX_PDF_PAGES);
 	switch (pdf.kind) {
 		case "unreadable":
 			return { kind: "refused", error: "Could not open this PDF." };

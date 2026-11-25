@@ -117,6 +117,37 @@ export function unescapePageMarkerLines(escaped: string): string {
 		.join("\n");
 }
 
+/** One page of a `content.md` as written by the host (see contentPages). */
+export interface ContentPage {
+	/** The marker's page number (1 for a document without markers). */
+	page: number;
+	/** The page's own text: the lines after its marker up to the next marker, unescaped (escapePageMarkerLines undone). */
+	text: string;
+}
+
+/**
+ * The pages of a `content.md`, in document order, by THE PAGE MARKER CONTRACT: every PAGE_MARKER_PATTERN line is a
+ * boundary; text before the first marker belongs to the first marker's page; a document without markers is all page
+ * 1. A page's text is the lines between its marker line and the next marker line joined by "\n", so leading blank
+ * lines and line endings survive and `pages.map((p) => formatPageMarker(p.page) + "\n" +
+ * escapePageMarkerLines(p.text)).join("\n")` reads back to the same pages. A page number that appears twice gives two
+ * entries. Pure.
+ */
+export function contentPages(contentMd: string): ContentPage[] {
+	const lines = contentMd.split("\n");
+	const pages: { page: number; lines: string[] }[] = [];
+	const before: string[] = [];
+	for (const line of lines) {
+		const marker = PAGE_MARKER_PATTERN.exec(line);
+		if (marker) pages.push({ page: Number(marker[1]), lines: [] });
+		else if (pages.length === 0) before.push(line);
+		else pages[pages.length - 1]!.lines.push(line);
+	}
+	if (pages.length === 0) return [{ page: 1, text: unescapePageMarkerLines(contentMd) }];
+	if (before.length > 0) pages[0]!.lines.unshift(...before);
+	return pages.map((p) => ({ page: p.page, text: unescapePageMarkerLines(p.lines.join("\n")) }));
+}
+
 const HEADING = /^(#{1,6})[ \t]+(.*?)[ \t#]*\r?$/;
 const FENCE_OPEN = /^[ \t]{0,3}(`{3,}|~{3,})/;
 const FENCE_CLOSE = /^[ \t]{0,3}(`{3,}|~{3,})[ \t]*\r?$/;

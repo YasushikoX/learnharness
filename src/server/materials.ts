@@ -17,14 +17,14 @@ import { fetchLink } from "../agent/tools/web.ts";
 import { materialTools } from "../agent/tools/materials.ts";
 import type { MaterialStore } from "../core/ports.ts";
 import { lectureNotesForTurn } from "./lecture-notes.ts";
-import { ensureMaterialContent } from "./material-conversion.ts";
-import { ConverterError } from "../core/pdf-converter.ts";
+import { convertPdfMaterial } from "./material-conversion.ts";
+import type { MaterialConversionProgress } from "../core/pdf-converter.ts";
 import { stores } from "./stores.ts";
 
 /**
  * Lesson source material — the service seam (fork addition, 2026-10-24;
  * model: core/materials.ts). Adds uploads and links, profiles each
- * material ONCE in the background (PDF conversion, then profiling through the
+ * material ONCE in the background (one run per material, through the
  * shared background-LLM permits), and hands each turn its prompt section
  * and lookup tools. A turn waits briefly for profiles still being read.
  *
@@ -41,6 +41,7 @@ type Result<T> = { ok: true; value: T } | { ok: false; status: number; error: st
 interface Run {
 	promise: Promise<void>;
 	controller: AbortController;
+	progress?: MaterialConversionProgress;
 }
 const KEY = Symbol.for("lh.materialRuns");
 function runs(): Map<string, Run> {
@@ -49,6 +50,11 @@ function runs(): Map<string, Run> {
 	return g[KEY];
 }
 const runKey = (chatId: string, id: string) => `${chatId}/${id}`;
+/** A conversion's progress onto its live run (listMaterials shows it). */
+const progressTo = (key: string) => (progress: MaterialConversionProgress | undefined) => {
+	const run = runs().get(key);
+	if (run) run.progress = progress;
+};
 
 /** How many materials are being read right now (the idle check reads this). */
 export function materialRunCount(): number {
@@ -75,16 +81,18 @@ function startProfile(chatId: string, material: LessonMaterial): Promise<void> {
 	const controller = new AbortController();
 	const { materialStore } = stores;
 	const promise = (async () => {
+		// PDF → content.md first (material-conversion.ts); it never fails the material, and the profiler below reads the original.
+		if (material.kind === "pdf") await convertPdfMaterial(chatId, material, controller.signal, materialStore, stores.settingsStore.readSettings()?.pdfConversion, { onProgress: progressTo(key) });
+		if (controller.signal.aborted) return;
+		const spec = resolveRoleSpec("pdfReader", stores.settingsStore.readSettings());
+		if (!spec) {
+			materialStore.update(chatId, material.id, {
+				status: "error",
+				error: "no vision model is configured (Settings → Agent: the vision slot reads source material)",
+			});
+			return;
+		}
 		try {
-			if (material.kind === "pdf") await ensureMaterialContent(chatId, material, controller.signal);
-			const spec = resolveRoleSpec("pdfReader", stores.settingsStore.readSettings());
-			if (!spec) {
-				materialStore.update(chatId, material.id, {
-					status: "error",
-					error: "no vision model is configured (Settings → Agent: the vision slot reads source material)",
-				});
-				return;
-			}
 			// The profiler's model requests pass the process-wide worker-request admission (the one background-LLM pool).
 			const result = await profileMaterial(
 				{
@@ -103,14 +111,12 @@ function startProfile(chatId: string, material: LessonMaterial): Promise<void> {
 				profile: result.profile,
 				...(result.pages !== undefined ? { pages: result.pages } : {}),
 				error: undefined,
-				conversionError: undefined,
 			});
 		} catch (err) {
 			if (controller.signal.aborted) return; // removed while reading
 			materialStore.update(chatId, material.id, {
 				status: "error",
-				error: err instanceof ConverterError ? `PDF conversion failed [${err.kind}]: ${err.message}` : err instanceof Error ? err.message : String(err),
-				conversionError: err instanceof ConverterError ? err.kind : undefined,
+				error: err instanceof Error ? err.message : String(err),
 			});
 		}
 	})().finally(() => runs().delete(key));
@@ -123,9 +129,31 @@ export function listMaterials(chatId: string): LessonMaterial[] {
 	const materials = stores.materialStore.list(chatId);
 	for (const m of materials) if (m.status === "reading" && !runs().has(runKey(chatId, m.id))) void startProfile(chatId, m);
 	// Source files do not sync (owner decision, 2026-11-02): a material that arrived from another device has no original here.
-	return materials.map((m) =>
-		m.status !== "reading" && !fs.existsSync(stores.materialStore.filePath(chatId, m)) ? { ...m, originalElsewhere: true } : m,
-	);
+	return materials.map((stored) => {
+		const progress = runs().get(runKey(chatId, stored.id))?.progress;
+		const m = progress ? { ...stored, conversionProgress: progress } : stored;
+		return m.status !== "reading" && !fs.existsSync(stores.materialStore.filePath(chatId, m)) ? { ...m, originalElsewhere: true } : m;
+	});
+}
+
+/**
+ * Convert a PDF material again on purpose (after a failure, an interrupted
+ * conversion or a fallback): the skip key and the interrupted marker are
+ * ignored. Its profile is kept; a removal aborts the run like a read.
+ */
+export function retryMaterialConversion(ownerId: string, id: string): Result<LessonMaterial> {
+	const material = stores.materialStore.list(ownerId).find((m) => m.id === id);
+	if (!material) return { ok: false, status: 404, error: "Unknown material" };
+	if (material.kind !== "pdf") return { ok: false, status: 400, error: "Only a PDF is converted" };
+	const key = runKey(ownerId, id);
+	if (runs().has(key)) return { ok: false, status: 409, error: `${material.name} is still being read` };
+	const controller = new AbortController();
+	const settings = stores.settingsStore.readSettings()?.pdfConversion;
+	const promise = convertPdfMaterial(ownerId, material, controller.signal, stores.materialStore, settings, { force: true, onProgress: progressTo(key) })
+		.then(() => {}, () => {})
+		.finally(() => runs().delete(key));
+	runs().set(key, { promise, controller });
+	return { ok: true, value: material };
 }
 
 /** Add an uploaded file. */

@@ -13,7 +13,7 @@
  * notes' provenance, graph/sources.json) — a different thing.
  */
 
-import type { ConverterErrorKind } from "./pdf-converter.ts";
+import type { MaterialConversionError, MaterialConversionProgress } from "./pdf-converter.ts";
 
 export type MaterialKind = "pdf" | "text" | "image" | "web";
 
@@ -40,8 +40,12 @@ export interface LessonMaterial {
 	addedMidLesson?: boolean;
 	status: MaterialStatus;
 	error?: string;
-	/** The converter failure category when PDF conversion, rather than profiling, failed. */
-	conversionError?: ConverterErrorKind;
+	/** PDFs: the conversion to content.md failed (the material still works through pdfjs). */
+	conversionError?: MaterialConversionError;
+	/** PDFs: what the user should know about a conversion that worked (a fallback, pages that look scanned). */
+	conversionWarnings?: string[];
+	/** DERIVED on read, never stored: the running conversion's progress. */
+	conversionProgress?: MaterialConversionProgress;
 	/** The reading profile (Markdown, page-cited for PDFs). */
 	profile?: string;
 	/** DERIVED on read, never stored: the material's name, profile and text

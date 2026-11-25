@@ -32,6 +32,7 @@ import type {
 import { BACKGROUND_MODEL_ROLES, CACHE_RETENTIONS, COMPACTION_THRESHOLD_FLOOR, CUSTOM_MODEL_PIN_FLOOR, EXTRACTION_CHUNK_TOKENS_FLOOR, isTranscriptMaxWidth, MODEL_SLOTS, normalizeBaseUrl, TRANSCRIPT_WIDTH_MAX_REM, TRANSCRIPT_WIDTH_MIN_REM } from "../core/settings.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
 import { parseRepo } from "./sync/service.ts";
+import { registeredPdfConverterIds } from "./converters/registry.ts";
 import { LESSON_LANGUAGES, isDictationEngine, isLessonLanguage } from "../core/language.ts";
 import { PACES, PACE_NOTE_MAX, isPace, normalizePaceNote, type Pace } from "../core/pace.ts";
 import { DIFFICULTIES, isDifficulty, type Difficulty } from "../core/difficulty.ts";
@@ -632,7 +633,8 @@ export function parsePdfConversionSettingsBody(body: unknown): SettingsBodyResul
 	if (!raw) return { ok: false, error: "Invalid JSON body" };
 	const settings: PdfConversionSettings = {};
 	if (raw.converter !== undefined) {
-		if (typeof raw.converter !== "string" || !raw.converter.trim()) return { ok: false, error: "converter must be a non-empty registered id" };
+		const ids = registeredPdfConverterIds();
+		if (typeof raw.converter !== "string" || !ids.includes(raw.converter.trim())) return { ok: false, error: `converter must be one of: ${ids.join(", ")}` };
 		settings.converter = raw.converter.trim();
 	}
 	if (raw.docling !== undefined) {

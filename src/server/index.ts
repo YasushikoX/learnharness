@@ -68,7 +68,8 @@ export { previewReplaceFromRepo, replaceDeviceFromRepo, runSyncNow, startSyncLoo
 export { parseRepo } from "./sync/service.ts";
 // Is the server doing work? (the Android app rests an unused server on this)
 export { serverBusy, type BusyReport } from "./busy.ts";
-export { addLinkMaterial, addUploadedMaterial, listMaterials, removeMaterial } from "./materials.ts";
+export { addLinkMaterial, addUploadedMaterial, listMaterials, removeMaterial, retryMaterialConversion } from "./materials.ts";
+export { configureDocling } from "./converters/auth.ts";
 // Lecture notes (fork addition, 2026-11-19 — docs/courses.md "Lecture notes").
 export {
 	createLectureNote,
