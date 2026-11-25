@@ -302,7 +302,7 @@ export function ClarifyLayer({ threads, busyKey, error, ask, draft, onDraftDone,
 						>
 							<span
 								className={cn(
-									"flex size-6 items-center justify-center rounded-full border text-[11px] font-medium shadow-sm transition-colors",
+									"flex size-6 items-center justify-center rounded-full border text-xs font-medium shadow-sm transition-colors",
 									openKey === key ? "border-primary bg-primary text-primary-foreground" : "border-border bg-popover text-popover-foreground hover:bg-accent",
 									!thread && "border-dashed",
 								)}
@@ -405,7 +405,7 @@ function ClarifyCard({
 			data-session-find-exclude=""
 			data-testid="clarify-card"
 			style={{ position: "fixed", left: place.left, top: place.bottom === undefined || place.fill ? place.top : undefined, bottom: place.bottom, width: place.width, maxHeight: place.maxHeight }}
-			className="z-50 flex flex-col overflow-hidden rounded-xl border border-border bg-popover text-sm text-popover-foreground shadow-xl"
+			className="z-50 flex flex-col overflow-hidden lh-popover text-sm text-popover-foreground"
 			onKeyDown={(e) => {
 				if (e.key === "Escape") {
 					e.stopPropagation();
@@ -422,7 +422,7 @@ function ClarifyCard({
 					onClick={onClose}
 					aria-label="Close"
 					data-testid="clarify-close"
-					className="lh-touch shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+					className="lh-touch shrink-0 rounded-sm p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
 				>
 					<XIcon className="size-4" aria-hidden />
 				</button>
@@ -452,7 +452,7 @@ function ClarifyCard({
 			)}
 
 			<div className="border-t border-border/60 p-2">
-				<div className="flex items-end gap-1.5 rounded-[10px] border border-border/70 bg-background/60 transition-colors focus-within:border-primary/50">
+				<div className="flex items-end gap-1.5 rounded-md border border-border/70 bg-background/60 transition-colors focus-within:border-primary/50">
 					<textarea
 						ref={fieldRef}
 						value={question}

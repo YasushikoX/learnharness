@@ -1,5 +1,6 @@
 "use client";
 
+import { ChevronDown } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatSettings, ModelCatalogEntry, ModelCatalogResponse, ModelsSettings, UserSettings } from "@/src/core";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -293,7 +294,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 					aria-expanded={open === "model"}
 					// Chrome look (owner, fix wave round 3): matches the graph view's floating top-right buttons
 					// (import notes, gear, coverage) — blurred, fuller opacity, shadowed.
-					className="lh-touch flex items-center gap-1.5 rounded-full border bg-card/85 px-2.5 py-1 whitespace-nowrap shadow-lg backdrop-blur transition-colors hover:border-border hover:bg-muted"
+					className="lh-touch flex h-7 items-center gap-1.5 rounded-md border border-input bg-card px-2.5 font-mono text-xs whitespace-nowrap transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised"
 				>
 					<span className="text-card-foreground">{effectiveId ? prettyModel(effectiveId) : "—"}</span>
 					{/* a session still loading has no model yet: one dash, not a pair */}
@@ -305,7 +306,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 							</span>
 						</>
 					)}
-					<span aria-hidden className="text-xs text-muted-foreground">▾</span>
+					<ChevronDown aria-hidden strokeWidth={1.75} className="size-3.5 shrink-0 text-muted-foreground" />
 				</button>
 			</Hint>
 
@@ -317,7 +318,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 					anchorRef={containerRef}
 					testid="model-menu" onClose={() => { setOpen(null); return "closed"; }}
 					preferredSide="up"
-					menuClass="flex w-[22rem] flex-col rounded-xl border bg-card p-2 text-xs shadow-xl"
+					menuClass="flex w-[22rem] flex-col lh-menu"
 				>
 					{error && <div className="mb-1.5 text-destructive">{error}</div>}
 					{catalog && levels.length > 0 && (

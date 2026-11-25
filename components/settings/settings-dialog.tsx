@@ -187,7 +187,7 @@ function SettingsDialog({
 		renderFrame={(frame, layerClose) => <HostDialog open layerId={layerId} ownerId={null}
 			onClose={layerClose} frame={frame} aria-label="Settings"
 			backdropProps={{
-				className: "fixed inset-0 z-50 flex items-center justify-center bg-background/80",
+				className: "fixed inset-0 z-50 flex items-center justify-center lh-scrim",
 				"data-testid": "settings-backdrop",
 			}}>{frame.props.children}</HostDialog>} />;
 }
@@ -450,7 +450,7 @@ export function SettingsDialogBody({
 					// Below 1024px (M5, the sidebar drawer's line) the dialog IS the
 					// screen: edge to edge, padded by the safe-area insets.
 					// It grows with the screen up to 1120x800, keeping a margin (owner, 2026-11-16: 920x620 left a tablet's room unused).
-					"settings-dialog-pop flex h-[min(800px,calc(100vh-4rem))] w-[min(1120px,90vw)] flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl " +
+					"settings-dialog-pop flex h-[min(800px,calc(100vh-4rem))] w-[min(1120px,90vw)] flex-col overflow-hidden lh-dialog " +
 					"max-lg:h-full max-lg:max-h-none max-lg:w-full max-lg:max-w-none max-lg:rounded-none max-lg:border-0 max-lg:shadow-none " +
 					"max-lg:pb-[var(--lh-safe-bottom)] max-lg:pl-[var(--lh-safe-left)] max-lg:pr-[var(--lh-safe-right)] max-lg:pt-[var(--lh-safe-top)]"
 				}
@@ -471,7 +471,7 @@ export function SettingsDialogBody({
 						</svg>
 					</button>
 				)}
-				<h2 className="font-title text-2xl tracking-tight">
+				<h2 className="lh-page-title">
 					{view === "page" ? (
 						<>
 							<span className="lg:hidden">{navSections.find((s) => s.id === selected)?.label}</span>
@@ -552,7 +552,7 @@ export function SettingsDialogBody({
 											setActive(s.id);
 											setView("page");
 										}}
-										className="lh-touch lh-press flex min-h-14 w-full items-center gap-3 rounded-lgi bg-accent/60 px-4 py-3 text-left transition-colors hover:bg-accent active:rounded-xl"
+										className="lh-touch lh-press flex min-h-14 w-full items-center gap-3 rounded-lg bg-accent/60 px-4 py-3 text-left transition-colors hover:bg-accent"
 									>
 										<span className="min-w-0 flex-1">
 											<span className="block font-ui text-sm text-foreground">{s.label}</span>
@@ -592,11 +592,11 @@ export function SettingsDialogBody({
 						: activePlugin ? <PluginSettingsPage key={`${activePlugin.info.id}/${activePlugin.info.revision}`} plugin={activePlugin} />
 							: activePluginId !== null ? <p role="status" className="px-6 py-5 text-xs text-muted-foreground">Loading plugins…</p>
 								: record === undefined ? (
-						<p className="px-6 py-5 text-xs text-muted-foreground/70">
+						<p className="px-6 py-5 text-xs text-muted-foreground">
 							Loading settings…
 						</p>
 					) : record === null ? (
-						<p className="px-6 py-5 text-xs text-muted-foreground/70">
+						<p className="px-6 py-5 text-xs text-muted-foreground">
 							Settings could not be loaded — refresh to retry.
 						</p>
 					) : (

@@ -338,7 +338,7 @@ export function CoverageRing({
 					ref={panelRef}
 					data-testid="coverage-ring-popover"
 					style={{ zIndex: INTERACTION_LAYER_Z_BASE + popupLayer.order }}
-					className="absolute top-full right-0 mt-1.5 w-64 max-w-[calc(100vw-1rem)] rounded-xl border bg-card p-3 text-xs shadow-xl"
+					className="absolute top-full right-0 mt-1.5 w-64 max-w-[calc(100vw-1rem)] lh-popover p-3 text-xs"
 				>
 					<CoverageRingDetail coverage={coverage} chunkTokens={graph.chunkTokens} />
 				</div>
@@ -380,7 +380,7 @@ export function CoverageRingGlyph({ fill, running }: { fill: number; running: bo
 export function CoverageRingDetail({ coverage, chunkTokens }: { coverage: SessionCoverage; chunkTokens: number }) {
 	return (
 		<>
-			<div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+			<div className="mb-2 lh-eyebrow text-muted-foreground">
 				Extraction coverage
 			</div>
 			<div className="flex flex-col gap-1 text-muted-foreground">

@@ -1,5 +1,6 @@
 "use client";
 
+import { buttonVariants } from "@/components/ui/button";
 import { Children, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -104,7 +105,7 @@ function PlacementOffer({ total, busy, onTake, onSkip }: { total: number; busy: 
 				first. What you already know is credited, so you start at your weak spots instead of the most basic skill.
 			</p>
 			<div className="mt-2.5 flex flex-wrap items-center gap-2">
-				<button type="button" className={cn(BTN, "border-foreground/40 text-foreground")} disabled={busy} data-testid="placement-take" onClick={onTake}>
+				<button type="button" className={BTN_PRIMARY} disabled={busy} data-testid="placement-take" onClick={onTake}>
 					Take the placement test
 				</button>
 				<button type="button" className={BTN} disabled={busy} data-testid="placement-skip" onClick={onSkip}>
@@ -136,10 +137,10 @@ export function dueShort(skill: Pick<CourseSkillView, "learned" | "reviewAt">, n
 function Figure({ value, label, testid, accent, meter }: { value: string; label: string; testid?: string; accent?: boolean; meter?: number | null }) {
 	return (
 		<div data-testid={testid} className="min-w-0">
-			<div className="font-mono text-lg leading-none" style={accent ? { color: "var(--lh-due)" } : undefined}>
+			<div className="text-lg font-semibold leading-none tabular-nums" style={accent ? { color: "var(--lh-due)" } : undefined}>
 				{value}
 			</div>
-			<div className="mt-1 text-[11px] text-muted-foreground">{label}</div>
+			<div className="mt-1 text-xs text-muted-foreground">{label}</div>
 			{meter !== undefined && meter !== null && (
 				<span role="meter" aria-label="Recall" aria-valuemin={0} aria-valuemax={100} aria-valuenow={meter} className="relative mt-1.5 block h-1 rounded-full bg-border/50">
 					<span className="block h-full rounded-full" style={{ width: `${meter}%`, backgroundColor: meter < 90 ? "var(--lh-due)" : "var(--lh-understanding-8)" }} />
@@ -153,15 +154,16 @@ function Figure({ value, label, testid, accent, meter }: { value: string; label:
 /** A prerequisite as a chip: a check when it is learned, a lock when it is not. The icon says it, not only the colour. */
 function PrereqChip({ name, learned }: { name: string; learned: boolean }) {
 	return (
-		<span data-testid="prereq-chip" data-learned={learned ? "true" : "false"} className="inline-flex items-center gap-1 rounded-full border border-border/70 px-2 py-0.5 text-[11px]">
+		<span data-testid="prereq-chip" data-learned={learned ? "true" : "false"} className="inline-flex items-center gap-1 rounded-full border border-border/70 px-2 py-0.5 text-xs">
 			{learned ? <CheckIcon role="img" aria-label="learned" className="size-3" /> : <LockIcon role="img" aria-label="not learned yet" className="size-3 text-muted-foreground" />}
 			{name}
 		</span>
 	);
 }
 
-const BTN =
-	"rounded-md border border-border px-2.5 py-1 text-xs transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50";
+/** UI round 1 (SPEC §3): ordinary actions are secondary sm Buttons; the region's one emphasised action is primary. */
+const BTN = buttonVariants({ variant: "secondary", size: "sm" });
+const BTN_PRIMARY = buttonVariants({ size: "sm" });
 /** A closed group's summary: a chevron instead of the browser's marker, the whole line a target. */
 const DETAILS_HEAD = "lh-touch flex cursor-pointer list-none items-center gap-1.5 [&::-webkit-details-marker]:hidden";
 /** Missed problems shown before "Show all" (owner, 2026-11-16). */
@@ -230,7 +232,7 @@ function SkillRow({
 				className={cn("lh-touch flex w-full items-center gap-2 py-2 text-left", choosing && !can && "opacity-50")}
 			>
 				{choosing ? (
-					<span aria-hidden data-testid={`choose-box-${skill.id}`} className={cn("flex size-4 shrink-0 items-center justify-center rounded border", checked ? "border-foreground bg-foreground text-background" : "border-border")}>
+					<span aria-hidden data-testid={`choose-box-${skill.id}`} className={cn("flex size-4 shrink-0 items-center justify-center rounded-sm border", checked ? "border-foreground bg-foreground text-background" : "border-border")}>
 						{checked && <CheckIcon className="size-3" />}
 					</span>
 				) : open ? (
@@ -304,7 +306,7 @@ function SkillRow({
 											<RichText className={cn(ITEM_TYPE, "font-medium text-foreground")}>{p.name}</RichText>
 											<RichText className={cn(ITEM_TYPE, "text-muted-foreground")}>{p.statement}</RichText>
 											{p.sessions.length > 0 && (
-												<span className="block text-[11px] text-muted-foreground/80">
+												<span className="block text-xs text-muted-foreground">
 													from{" "}
 													{p.sessions.map((s, i) => (
 														<span key={s.id}>
@@ -373,10 +375,10 @@ function DraftReview({
 					<li key={s.key} className="rounded-lg border border-border/60 px-3 py-2" data-testid={`draft-skill-${s.key}`}>
 						<div className="flex items-baseline gap-2">
 							<RichLine prose>{label(s)}</RichLine>
-							{s.reuse && <span className="rounded-full border border-border px-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">reused</span>}
+							{s.reuse && <span className="rounded-full border border-border px-1.5 text-xs text-muted-foreground">reused</span>}
 						</div>
 						<RichText className={cn(ITEM_TYPE, "text-muted-foreground")}>{s.statement}</RichText>
-						<p className="mt-0.5 text-[11px] text-muted-foreground/80">
+						<p className="mt-0.5 text-xs text-muted-foreground">
 							{s.requires.length > 0 ? `Requires ${s.requires.map((k) => (byKey.get(k) ? label(byKey.get(k)!) : k)).join(", ")}` : "No prerequisites"}
 							{s.restsOn.length > 0 ? ` · rests on ${s.restsOn.length} proposition${s.restsOn.length === 1 ? "" : "s"} you have learned` : ""}
 							{s.cite ? ` · ${s.cite}` : ""}
@@ -393,7 +395,7 @@ function DraftReview({
 				aria-label="Changes to the draft"
 				data-testid="draft-feedback"
 				rows={3}
-				className="lh-prose w-full rounded-lg border border-border bg-background px-3 py-2 text-(length:--lh-prose-size) outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+				className="lh-prose w-full rounded-lg border border-border bg-background px-3 py-2 text-(length:--lh-prose-size) outline-none placeholder:text-muted-foreground focus:border-muted-foreground/50"
 			/>
 			<div className="mt-2 flex items-center justify-end gap-2">
 				<button
@@ -408,7 +410,7 @@ function DraftReview({
 				>
 					Ask for changes
 				</button>
-				<button type="button" className={cn(BTN, "border-foreground/40 text-foreground")} disabled={busy} data-testid="draft-approve" onClick={onApprove}>
+				<button type="button" className={BTN_PRIMARY} disabled={busy} data-testid="draft-approve" onClick={onApprove}>
 					Approve
 				</button>
 			</div>
@@ -422,7 +424,7 @@ function SessionLink({ session }: { session: CourseView["sessions"][number] }) {
 			<Link href={`/chat/${session.id}`} className="flex items-center gap-2 rounded-md px-2 py-1 text-sm hover:bg-accent">
 				<span className="min-w-0 flex-1 line-clamp-2 break-words sm:line-clamp-none sm:block sm:truncate font-prose">{session.title}</span>
 				<span className="shrink-0 text-xs text-muted-foreground">{COURSE_MODE_LABEL[session.mode]}</span>
-				{session.finished && <CheckIcon className="size-3.5 shrink-0 text-muted-foreground/70" aria-label="Finished" />}
+				{session.finished && <CheckIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Finished" />}
 			</Link>
 		</li>
 	);
@@ -743,7 +745,7 @@ export function CourseBody({
 								focusIds={mapFocus}
 								fitted
 							/>
-							<p className="mt-1 text-[11px] text-muted-foreground/80">White: known, learned or next up · gray: locked behind a prerequisite.</p>
+							<p className="mt-1 text-xs text-muted-foreground">White: known, learned or next up · gray: locked behind a prerequisite.</p>
 						</section>
 					)}
 
@@ -783,7 +785,7 @@ export function CourseBody({
 										To review<span className={HEAD_COUNT}>{data.review.length}</span>
 									</div>
 									{fadingCount > 0 && (
-										<p className="mb-2 text-xs text-muted-foreground/80" data-testid="course-review-split">
+										<p className="mb-2 text-xs text-muted-foreground" data-testid="course-review-split">
 											{dueNowCount} due now · {fadingCount} fading before the exam
 										</p>
 									)}
@@ -938,7 +940,7 @@ export function CourseBody({
 						</button>
 						<button
 							type="button"
-							className={cn(BTN, "whitespace-nowrap border-foreground/40 text-foreground")}
+							className={cn(BTN_PRIMARY, "whitespace-nowrap")}
 							disabled={busy || chooseCount === 0 || !onPracticeSet}
 							data-testid="choose-start"
 							onClick={() => onPracticeSet?.(chosenIds)}
@@ -1138,7 +1140,7 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 					}}
 					aria-label="Course title"
 					data-testid="course-title"
-					className="lh-no-drag order-last min-w-0 basis-full resize-none overflow-y-auto bg-transparent font-title leading-tight outline-none sm:order-none sm:basis-auto sm:flex-1"
+					className="lh-no-drag order-last min-w-0 basis-full resize-none overflow-y-auto bg-transparent lh-page-title outline-none sm:order-none sm:basis-auto sm:flex-1"
 				/>
 				{progress && (
 					<span className="ml-auto shrink-0 text-xs text-muted-foreground sm:ml-0" data-testid="course-progress">
@@ -1220,11 +1222,11 @@ data={data}
 						type="button"
 						onClick={() => void remove()}
 						data-testid="course-delete"
-						className="text-xs text-muted-foreground/80 transition-colors hover:text-foreground"
+						className="text-xs text-muted-foreground transition-colors hover:text-foreground"
 					>
 						Delete course…
 					</button>
-					<p className="mt-1 text-[11px] text-muted-foreground/60">
+					<p className="mt-1 text-xs text-muted-foreground">
 						Learned: a finished lesson or a placement credit — it unlocks the skills that build on it. Known: understanding {KNOWN_UNDERSTANDING} or higher — about a month of
 						memory, built by solving it on spaced days or a confident correct answer in the placement test.
 					</p>

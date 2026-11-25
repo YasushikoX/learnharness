@@ -218,7 +218,7 @@ function unavailableReason(status: SpeechState["status"], buildFailed: boolean):
  * the question); `-my-1` keeps the mouse-sized row as tall as the label text.
  */
 export const READ_ALOUD_BUTTON_BOX =
-	"lh-touch -my-1 inline-flex h-6 w-[9.5em] shrink-0 items-center justify-center gap-1 rounded-sm px-1.5 text-[11px] font-medium normal-case tracking-normal whitespace-nowrap";
+	"lh-touch -my-1 inline-flex h-6 w-[9.5em] shrink-0 items-center justify-center gap-1 rounded-sm px-1.5 text-xs font-medium normal-case tracking-normal whitespace-nowrap";
 /** The slot holding the button at the right end of the question card's label row. */
 export const READ_ALOUD_SLOT = "ml-auto flex shrink-0 pl-1.5";
 /**
@@ -227,7 +227,7 @@ export const READ_ALOUD_SLOT = "ml-auto flex shrink-0 pl-1.5";
  * row taller.
  */
 const READ_ALOUD_REASON =
-	"w-0 min-w-0 flex-1 truncate text-right text-[11px] leading-4 font-normal normal-case tracking-normal text-muted-foreground/70";
+	"w-0 min-w-0 flex-1 truncate text-right text-xs leading-4 font-normal normal-case tracking-normal text-muted-foreground";
 
 /** The read-aloud slot as the answered card's stand-in measures it: the same box, invisible and empty. */
 export function readAloudStandIn(doc: Document): HTMLElement {

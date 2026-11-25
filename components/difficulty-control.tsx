@@ -1,5 +1,6 @@
 "use client";
 
+import { ChevronDown } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DIFFICULTIES, difficultyInfo, resolveDifficulty, type ChatSettings, type Difficulty } from "@/src/core";
 import { MenuShell } from "@/components/menu-shell";
@@ -84,7 +85,7 @@ export function DifficultyControl({ chatId, variant = "edge" }: { chatId: string
 					className={CONTROL_CLASS[variant]}
 				>
 					<span className="text-card-foreground">{difficultyInfo(current).short}</span>
-					<span aria-hidden className="text-xs text-muted-foreground">▾</span>
+					<ChevronDown aria-hidden strokeWidth={1.75} className="size-3.5 shrink-0 text-muted-foreground" />
 				</button>
 			</Hint>
 			{open && (
@@ -92,7 +93,7 @@ export function DifficultyControl({ chatId, variant = "edge" }: { chatId: string
 					anchorRef={containerRef}
 					testid="difficulty-menu"
 					preferredSide="up"
-					menuClass="flex w-72 flex-col gap-0.5 rounded-xl border bg-card p-2 text-xs shadow-xl"
+					menuClass="flex w-72 flex-col gap-0.5 lh-menu"
 				>
 					{error && <div className="mb-1.5 text-destructive">{error}</div>}
 					{DIFFICULTIES.map((d) => (
@@ -107,12 +108,12 @@ export function DifficultyControl({ chatId, variant = "edge" }: { chatId: string
 						>
 							<span className="flex flex-col">
 								<span>{d.label}</span>
-								<span className="text-[11px] text-muted-foreground/70">{d.blurb}</span>
+								<span className="text-xs text-muted-foreground">{d.blurb}</span>
 							</span>
 							{d.id === current && <span aria-hidden>✓</span>}
 						</button>
 					))}
-					<div className="px-2 pt-1 text-[11px] text-muted-foreground/70">This practice session only — takes effect on the next problem</div>
+					<div className="px-2 pt-1 text-xs text-muted-foreground">This practice session only — takes effect on the next problem</div>
 				</MenuShell>
 			)}
 		</div>

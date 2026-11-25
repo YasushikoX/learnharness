@@ -751,7 +751,7 @@ export function AgentSection({
 											anchorTestid="profile-trigger"
 											testid="profile-menu"
 											onClose={() => { setOpenMenu(null); return "closed"; }}
-											menuClass="flex w-64 flex-col gap-0.5 rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
+											menuClass="flex w-64 flex-col gap-0.5 lh-menu"
 										>
 											{list.map(({ name, builtin }) => {
 												const gone = missing(name);
@@ -862,7 +862,7 @@ export function AgentSection({
 									anchorTestid={`slot-cache-${slot}`}
 									testid={`slot-cache-menu-${slot}`}
 									onClose={() => { setOpenMenu(null); return "closed"; }}
-									menuClass="flex w-80 flex-col gap-0.5 rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
+									menuClass="flex w-80 flex-col gap-0.5 lh-menu"
 								>
 									<CacheRetentionMenu value={override?.cacheRetention} onPick={(value) => {
 										onModelsChange(composeSlotCacheRetention(models, slot, value));
@@ -875,7 +875,7 @@ export function AgentSection({
 											anchorTestid={`slot-model-${slot}`}
 										testid={`slot-model-menu-${slot}`}
 										onClose={() => { setOpenMenu(null); return "closed"; }}
-										menuClass="flex w-[22rem] flex-col rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
+										menuClass="flex w-[22rem] flex-col lh-menu"
 									>
 										<ModelMenuList
 											models={catalog ?? undefined}
@@ -904,7 +904,7 @@ export function AgentSection({
 											anchorTestid={`slot-thinking-${slot}`}
 										testid={`slot-thinking-menu-${slot}`}
 										onClose={() => { setOpenMenu(null); return "closed"; }}
-										menuClass="flex w-44 flex-col gap-0.5 rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
+										menuClass="flex w-44 flex-col gap-0.5 lh-menu"
 									>
 										<ThinkingMenuList
 											levels={levels.map(String)}
@@ -1003,7 +1003,7 @@ export function AgentSection({
 									disabled={!override}
 									onClick={() => write(null)}
 									title={`Follow ${follows} again`}
-									className="w-14 shrink-0 text-right text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:invisible"
+									className="w-14 shrink-0 text-right text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:invisible"
 								>
 									Use slot
 								</button>
@@ -1012,7 +1012,7 @@ export function AgentSection({
 										preferredSide="down"
 										anchorTestid={`role-model-${role}`}
 										testid={`role-model-menu-${role}`}
-										menuClass="flex w-[22rem] flex-col rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
+										menuClass="flex w-[22rem] flex-col lh-menu"
 									>
 										<ModelMenuList
 											models={roleCatalog ?? undefined}
@@ -1034,7 +1034,7 @@ export function AgentSection({
 										preferredSide="down"
 										anchorTestid={`role-thinking-${role}`}
 										testid={`role-thinking-menu-${role}`}
-										menuClass="flex w-44 flex-col gap-0.5 rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
+										menuClass="flex w-44 flex-col gap-0.5 lh-menu"
 									>
 										<ThinkingMenuList
 											levels={levels.map(String)}
@@ -1181,7 +1181,7 @@ export function AgentSection({
 											anchorTestid="search-engine-trigger"
 										testid="search-engine-menu"
 										onClose={() => { setOpenMenu(null); return "closed"; }}
-										menuClass="flex w-44 flex-col gap-0.5 rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
+										menuClass="flex w-44 flex-col gap-0.5 lh-menu"
 									>
 										{engineOption("auto", "Automatic", engine === null, null, () => {
 											onSectionChange(composeSearchEngine(agent, null));

@@ -225,7 +225,7 @@ function KeyTableRow({
 						data-testid={`${testid}-input`}
 						disabled={busy}
 						autoFocus
-						className="h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+						className="h-8 min-w-0 flex-1 rounded-md border border-input bg-card px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring"
 					/>
 					<button
 						type="button"
@@ -241,7 +241,7 @@ function KeyTableRow({
 						onClick={onCancel}
 						disabled={busy}
 						data-testid={`${testid}-cancel`}
-						className="shrink-0 text-xs text-muted-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
+						className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
 					>
 						Cancel
 					</button>
@@ -251,7 +251,7 @@ function KeyTableRow({
 							onClick={() => void onDelete()}
 							disabled={busy}
 							data-testid={`${testid}-delete`}
-							className="shrink-0 text-xs text-muted-foreground/70 underline-offset-2 hover:text-error hover:underline"
+							className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-error hover:underline"
 						>
 							Delete
 						</button>
@@ -285,12 +285,12 @@ function KeyTableRow({
 							target="_blank"
 							rel="noreferrer"
 							onClick={(e) => e.stopPropagation()}
-							className="text-[10px] text-muted-foreground/60 underline-offset-2 hover:text-foreground hover:underline"
+							className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
 						>
 							key ↗
 						</a>
 					)}
-					<span data-testid={`${testid}-status`} className="font-mono text-[11px] text-muted-foreground">
+					<span data-testid={`${testid}-status`} className="font-mono text-xs text-muted-foreground">
 						{keyStatusLine(status)}
 					</span>
 				</span>
@@ -340,7 +340,7 @@ function AddProviderRow({
 				className="lh-touch flex w-full items-center justify-between gap-3 rounded-sm px-1 py-1.5 text-left font-ui text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
 			>
 				<span>+ Add a provider</span>
-				{addable.length > 0 && <span className="font-mono text-[11px]">{addable.length}</span>}
+				{addable.length > 0 && <span className="text-xs tabular-nums">{addable.length}</span>}
 			</button>
 			{open && (
 				<MenuShell
@@ -348,7 +348,7 @@ function AddProviderRow({
 					testid="add-provider-menu"
 					onClose={() => { setOpen(false); return "closed"; }}
 					preferredSide="down"
-					menuClass="flex w-72 flex-col rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
+					menuClass="flex w-72 flex-col lh-menu"
 				>
 					{/* Close on pick (owner, fix wave): a chosen provider ends
 					    the dropdown — the paste row is the next step. */}
@@ -482,7 +482,7 @@ export function KeysSection({
 	}
 
 	if (loading || statuses === null) {
-		return <p className="px-6 py-5 text-xs text-muted-foreground/70">Loading keys…</p>;
+		return <p className="px-6 py-5 text-xs text-muted-foreground">Loading keys…</p>;
 	}
 
 	const { providerRows, toolRows, unknownRows, addable } = classifyKeys(statuses, providers);
@@ -581,7 +581,7 @@ export function KeysSection({
 				{unknownRows.length > 0 && <div data-testid="group-unknown-keys">
 					{unknownRows.map((status) => <div key={status.id} data-testid={`unknown-${status.id}`} className="flex items-center justify-between gap-3 px-1 py-1.5 opacity-40">
 						<span className="font-mono text-xs text-foreground">{status.id}</span>
-						<span className="font-mono text-[11px] text-muted-foreground">{status.masked}</span>
+						<span className="font-mono text-xs text-muted-foreground">{status.masked}</span>
 					</div>)}
 				</div>}
 			</SettingsGroup>
@@ -594,7 +594,7 @@ export function KeysSection({
 						className="flex w-full items-center justify-between gap-3 rounded-sm px-1 py-1.5"
 					>
 						<span className="font-ui text-xs text-foreground">Claude Code (subscription)</span>
-						<span className="font-mono text-[11px] text-muted-foreground">CLI detected · no key</span>
+						<span className="text-xs text-muted-foreground">CLI detected · no key</span>
 					</div>
 				)}
 				<SubscriptionConnections />
@@ -627,7 +627,7 @@ export function KeysSection({
 				))}
 				{label === "Dictation" && <>
 					<DictationLanguageSetting />
-					<p data-testid="dictation-setup-hint" className="px-1 text-[11px] leading-relaxed text-muted-foreground/70">
+					<p data-testid="dictation-setup-hint" className="px-1 text-xs leading-relaxed text-muted-foreground">
 						Create a <a
 							href="https://console.deepgram.com/"
 							target="_blank"
@@ -677,7 +677,7 @@ function AddProviderEditor({
 				aria-label={`${provider.label} key`}
 				data-testid={`key-${provider.id}-input`}
 				autoFocus={active}
-				className="h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+				className="h-8 min-w-0 flex-1 rounded-md border border-input bg-card px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring"
 			/>
 			<button
 				type="button"
@@ -692,7 +692,7 @@ function AddProviderEditor({
 				type="button"
 				onClick={onCancel}
 				data-testid={`key-${provider.id}-cancel`}
-				className="shrink-0 text-xs text-muted-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
+				className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
 			>
 				Cancel
 			</button>
@@ -741,7 +741,7 @@ function CustomEndpointRow({
 				className="flex w-full items-center justify-between gap-3 rounded-sm px-1 py-1.5 text-left cursor-pointer transition-colors hover:bg-accent/50"
 			>
 				<span className="font-ui text-xs text-foreground">Custom endpoint</span>
-				<span data-testid="custom-endpoint-status" className="max-w-[60%] truncate font-mono text-[11px] text-muted-foreground">
+				<span data-testid="custom-endpoint-status" className="max-w-[60%] truncate font-mono text-xs text-muted-foreground">
 					{line}
 				</span>
 			</button>
@@ -931,7 +931,7 @@ function CustomEndpointEditor({
 					data-testid="custom-baseurl-input"
 					disabled={busy}
 					autoFocus={active}
-					className="h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+					className="h-8 min-w-0 flex-1 rounded-md border border-input bg-card px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring"
 				/>
 			</div>
 			<input
@@ -942,15 +942,15 @@ function CustomEndpointEditor({
 				aria-label="Custom endpoint model IDs"
 				data-testid="custom-models-input"
 				disabled={busy}
-				className="h-7 min-w-0 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+				className="h-8 min-w-0 rounded-md border border-input bg-card px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring"
 			/>
 			<label className="flex items-center gap-2 text-xs">Authentication
 				<select aria-label="Custom endpoint authentication" data-testid="custom-auth-mode" value={authMode} disabled={busy || pinsBusy} onChange={(e) => { setAuthMode(e.target.value as "keyless" | "apiKey"); setReuseKey(false); }}>
 					<option value="keyless">Keyless</option><option value="apiKey">API key</option>
 				</select>
 			</label>
-			{authMode === "apiKey" && keySource === "env" && <p className="text-[11px] text-muted-foreground" data-testid="custom-env-owned">Environment supplies the effective key. Change the environment to replace it.</p>}
-			{authMode === "apiKey" && keyPresent && (changedTarget || keyReuseRequired) && <label className="text-[11px]"><input type="checkbox" data-testid="custom-reuse-key" checked={reuseKey} onChange={(e) => setReuseKey(e.target.checked)} /> Allow reuse of the effective existing key for this URL</label>}
+			{authMode === "apiKey" && keySource === "env" && <p className="text-xs text-muted-foreground" data-testid="custom-env-owned">Environment supplies the effective key. Change the environment to replace it.</p>}
+			{authMode === "apiKey" && keyPresent && (changedTarget || keyReuseRequired) && <label className="text-xs"><input type="checkbox" data-testid="custom-reuse-key" checked={reuseKey} onChange={(e) => setReuseKey(e.target.checked)} /> Allow reuse of the effective existing key for this URL</label>}
 			<div className="flex items-center gap-2">
 				{authMode === "apiKey" && <input
 					type="password"
@@ -964,7 +964,7 @@ function CustomEndpointEditor({
 					aria-label="Custom endpoint API key"
 					data-testid="custom-key-input"
 					disabled={busy || pinsBusy || keySource === "env"}
-					className="h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+					className="h-8 min-w-0 flex-1 rounded-md border border-input bg-card px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring"
 				/>}
 				<button
 					type="button"
@@ -980,7 +980,7 @@ function CustomEndpointEditor({
 					onClick={onCancel}
 					disabled={busy}
 					data-testid="custom-cancel"
-					className="shrink-0 text-xs text-muted-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
+					className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
 				>
 					Cancel
 				</button>
@@ -993,7 +993,7 @@ function CustomEndpointEditor({
 						onClick={async () => { setBusy(true); const err = await onDelete(revision); if (err) setError(err); setBusy(false); }}
 						disabled={busy || pinsBusy}
 						data-testid="custom-delete"
-						className="shrink-0 text-xs text-muted-foreground/70 underline-offset-2 hover:text-error hover:underline"
+						className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-error hover:underline"
 					>
 						Disconnect
 					</button>
@@ -1006,9 +1006,9 @@ function CustomEndpointEditor({
 							const d = draftOf(m);
 							return (
 								<div key={m.id} className="flex items-center gap-2" data-testid={pinTestid("custom-pin-row", m.id)}>
-									<span className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground" title={m.id}>
+									<span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground" title={m.id}>
 										{m.id}
-										<span className="block text-[10px] text-muted-foreground">Context: {d.context.trim() ? "user pin" : m.context ? `reported ${m.context}` : `fallback ${CUSTOM_MODEL_DEFAULT_CONTEXT_WINDOW}`} · Output: {d.maxTokens.trim() ? "user pin" : m.maxTokens ? `reported ${m.maxTokens}` : `fallback ${CUSTOM_MODEL_DEFAULT_MAX_TOKENS}`}</span>
+										<span className="block text-xs text-muted-foreground">Context: {d.context.trim() ? "user pin" : m.context ? `reported ${m.context}` : `fallback ${CUSTOM_MODEL_DEFAULT_CONTEXT_WINDOW}`} · Output: {d.maxTokens.trim() ? "user pin" : m.maxTokens ? `reported ${m.maxTokens}` : `fallback ${CUSTOM_MODEL_DEFAULT_MAX_TOKENS}`}</span>
 									</span>
 									<input
 										type="text"
@@ -1019,7 +1019,7 @@ function CustomEndpointEditor({
 										aria-label={`${m.id} context window in tokens`}
 										data-testid={pinTestid("custom-pin-context", m.id)}
 										disabled={pinsBusy}
-										className="h-7 w-20 shrink-0 rounded-sm border border-border bg-background px-1.5 text-right font-mono text-[11px] text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+										className="h-8 w-20 shrink-0 rounded-md border border-input bg-card px-2 text-right font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring"
 									/>
 									<input
 										type="text"
@@ -1030,7 +1030,7 @@ function CustomEndpointEditor({
 										aria-label={`${m.id} max output tokens`}
 										data-testid={pinTestid("custom-pin-maxtokens", m.id)}
 										disabled={pinsBusy}
-										className="h-7 w-20 shrink-0 rounded-sm border border-border bg-background px-1.5 text-right font-mono text-[11px] text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+										className="h-8 w-20 shrink-0 rounded-md border border-input bg-card px-2 text-right font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring"
 									/>
 									<select
 										value={d.reasoning}
@@ -1038,7 +1038,7 @@ function CustomEndpointEditor({
 										aria-label={`${m.id} reasoning effort support`}
 										data-testid={pinTestid("custom-pin-reasoning", m.id)}
 										disabled={pinsBusy}
-										className="h-7 shrink-0 rounded-sm border border-border bg-background px-1 font-ui text-[11px] text-foreground outline-none focus:border-muted-foreground/50"
+										className="h-7 shrink-0 rounded-sm border border-border bg-background px-1 font-ui text-xs text-foreground outline-none focus:border-ring"
 									>
 										<option value="">Reasoning effort: Use reported</option>
 										<option value="on">Reasoning effort: Supported</option>
@@ -1050,7 +1050,7 @@ function CustomEndpointEditor({
 					</div>
 					<div className="flex items-center gap-2">
 						{pinsError && (
-							<p role="alert" data-testid="custom-pins-error" className="text-[11px] text-error">
+							<p role="alert" data-testid="custom-pins-error" className="text-xs text-error">
 								{pinsError}
 							</p>
 						)}
@@ -1066,7 +1066,7 @@ function CustomEndpointEditor({
 					</div>
 				</div>
 			)}
-			<div className="flex flex-col gap-1 text-[11px] text-muted-foreground" data-testid="custom-help">
+			<div className="flex flex-col gap-1 text-xs text-muted-foreground" data-testid="custom-help">
 				{!setup && models.length > 0 && <p data-testid="custom-budget-help">Budget pins do not resize backend context. Blank uses reported limits, then fallback (8192 context / 4096 output). Custom pricing is unknown.</p>}
 				<p data-testid="custom-reasoning-help">Reasoning support is a capability declaration. The effort picker’s Off may not disable a custom backend’s default thinking.</p>
 			</div>

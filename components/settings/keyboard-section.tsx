@@ -125,7 +125,7 @@ export function KeyboardSection() {
 				if (!actions.length) return null;
 				return (
 					<div key={scope} ref={scope === "global" ? rootRef : undefined} data-testid={`kbd-scope-${scope}`}>
-						<p className="mb-1 text-[13px] font-medium text-muted-foreground">{label}</p>
+						<p className="mb-1 text-sm font-medium text-muted-foreground">{label}</p>
 						<div className="flex flex-col gap-2">
 							{actions.map((def) => {
 								const effective = overrides[def.id] ?? def.binding;
@@ -144,7 +144,7 @@ export function KeyboardSection() {
 												<button
 													type="button"
 													onClick={() => setRebinding(null)}
-													className="text-xs text-muted-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
+													className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
 												>
 													Cancel
 												</button>
@@ -163,7 +163,7 @@ export function KeyboardSection() {
 															type="button"
 															onClick={() => resetOne(def.id)}
 															data-testid={`kbd-reset-${def.id}`}
-															className="text-xs text-muted-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
+															className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
 														>
 															Reset
 														</button>
@@ -179,7 +179,7 @@ export function KeyboardSection() {
 				);
 			})}
 			{[...new Set(pluginRows.map(row => row.pluginId))].map(pluginId => <div key={pluginId} data-testid={`kbd-plugin-${pluginId}`}>
-				<p className="mb-1 text-[13px] font-medium text-muted-foreground">{pluginRows.find(row => row.pluginId === pluginId)!.pluginName}</p>
+				<p className="mb-1 text-sm font-medium text-muted-foreground">{pluginRows.find(row => row.pluginId === pluginId)!.pluginName}</p>
 				<div className="flex flex-col gap-2">{pluginRows.filter(row => row.pluginId === pluginId).map(row => <SettingsRow key={row.id} label={row.name}
 					hint={`${pluginShortcutScopeLabel(row)}${row.reason ? ` · Inactive: ${row.reason}` : ""}`} testid={`kbd-row-${row.id}`}>
 					<span className="flex items-center gap-2">
@@ -193,7 +193,7 @@ export function KeyboardSection() {
 				</SettingsRow>)}</div>
 			</div>)}
 			<div className="mt-1 flex items-center justify-between">
-				<span className="text-xs text-muted-foreground/70">Stored on this device (lh:keymap) — overrides only.</span>
+				<span className="text-xs text-muted-foreground">Stored on this device (lh:keymap) — overrides only.</span>
 				<button
 					type="button"
 					onClick={resetAll}

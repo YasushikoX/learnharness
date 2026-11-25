@@ -91,7 +91,7 @@ const previewComponents = {
 		? <span className="text-primary underline underline-offset-4">{children}</span>
 		: <span title={title} {...props}>{children}</span>,
 	code: ({ children }: ComponentProps<"code"> & ExtraProps) => (
-		<code data-streamdown="inline-code" className="inline-block align-middle whitespace-pre rounded px-1.5 py-0.5 font-mono leading-none">{children}</code>
+		<code data-streamdown="inline-code" className="inline-block align-middle whitespace-pre rounded-sm px-1.5 py-0.5 font-mono leading-none">{children}</code>
 	),
 	strong: MarkdownStrong,
 };

@@ -135,7 +135,7 @@ export function ConfidenceSlider({
 			disabled={dontKnowDisabled}
 			onClick={onDontKnow}
 			data-testid="dont-know-button"
-			className="lh-touch h-9 shrink-0 rounded-[6px] border border-dashed border-border/70 bg-transparent px-3 text-[11px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+			className="lh-touch h-9 shrink-0 rounded-md border border-dashed border-border/70 bg-transparent px-3 text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
 		>
 			I don&apos;t know
 		</button>
@@ -148,7 +148,7 @@ export function ConfidenceSlider({
 		>
 			{leadingSlot}
 			<div className="flex min-w-[12rem] flex-1 items-center gap-2.5">
-				<span className="shrink-0 text-[11px] font-medium text-muted-foreground">
+				<span className="shrink-0 text-xs font-medium text-muted-foreground">
 					Confidence
 				</span>
 				<div className="relative flex h-9 min-w-0 flex-1 items-center">
@@ -201,14 +201,14 @@ export function ConfidenceSlider({
 					data-testid="confidence-readout"
 					style={activeColor ? { color: activeColor } : undefined}
 					className={cn(
-						"w-[4ch] shrink-0 text-center font-mono text-sm font-medium tabular-nums",
+						"w-[4ch] shrink-0 text-center text-sm font-medium tabular-nums",
 						value === null && "text-muted-foreground",
 					)}
 				>
 					{value === null ? "—" : `${value}%`}
 				</span>
 				{showUnsetHint && value === null && (
-					<span className="hidden text-[11px] text-muted-foreground/70 sm:inline">
+					<span className="hidden text-xs text-muted-foreground sm:inline">
 						set before submitting
 					</span>
 				)}

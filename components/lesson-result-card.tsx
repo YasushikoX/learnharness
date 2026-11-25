@@ -1,5 +1,6 @@
 "use client";
 
+import { buttonVariants } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { lessonLabels, type LessonResult } from "@/src/core";
@@ -13,7 +14,8 @@ import { useNotifyHub } from "@/components/server-events";
  * finish divider mounts; nothing is stored for it (the summary is the finish_lesson call's, in the transcript).
  */
 
-const BTN = "rounded-md border border-border px-2.5 py-1 text-xs transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50";
+/** UI round 1 (SPEC §3): ordinary actions are secondary sm Buttons; the region's one emphasised action is primary. */
+const BTN = buttonVariants({ variant: "secondary", size: "sm" });
 
 /** "review in 5 days", "review tomorrow", "due for review now". Pure. */
 export function reviewInLabel(reviewAt: string | null, now: number): string | null {
@@ -42,7 +44,7 @@ export function LessonResultView({
 	const review = reviewInLabel(result.reviewAt, now);
 	return (
 		<div data-testid="lesson-result" className="my-3 rounded-xl border bg-card p-4">
-			<div className="mb-1 flex items-center justify-between gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+			<div className="mb-1 flex items-center justify-between gap-2 lh-eyebrow text-muted-foreground">
 				<span>Lesson result</span>
 				<span>{result.learned ? "learned" : "not learned yet"}</span>
 			</div>

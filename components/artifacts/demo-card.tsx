@@ -113,9 +113,9 @@ export function DemoOutputCard({
 	if (failed) {
 		return (
 			<div className="rounded-xl border bg-card p-4 text-card-foreground" data-testid="demo-card-failed">
-				<div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+				<div className="flex items-center gap-2 lh-eyebrow text-muted-foreground">
 					Interactive demo
-					<span className="rounded bg-error/15 px-1.5 py-0.5 text-error">failed</span>
+					<span className="rounded-sm bg-error/15 px-1.5 py-0.5 text-error">failed</span>
 				</div>
 				<p className="mt-2 text-sm text-muted-foreground">{result.notes ?? "The demo could not be built."}</p>
 			</div>
@@ -178,7 +178,7 @@ function DemoFrame({
 			   figure card's grammar plus a name. Switch + download far right. */}
 			<div className="flex items-center justify-between gap-2">
 				<div className="flex min-w-0 items-baseline gap-2">
-					<span className="shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+					<span className="shrink-0 lh-eyebrow text-muted-foreground">
 						interactive demo
 					</span>
 					<span className="truncate text-xs font-medium tracking-wide text-foreground">{title}</span>

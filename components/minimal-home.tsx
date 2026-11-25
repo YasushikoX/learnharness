@@ -93,7 +93,7 @@ export function KnowledgeSummary({
 				{importedNotes} {importedNotes === 1 ? "imported note" : "imported notes"}
 			</p>
 			{empty && (
-				<div className="pt-2 font-ui text-xs text-muted-foreground/70">
+				<div className="pt-2 font-ui text-xs text-muted-foreground">
 					<p>Start a session to begin learning.</p>
 					<p className="mt-1">Attach your material with the paperclip or drag and drop.</p>
 				</div>

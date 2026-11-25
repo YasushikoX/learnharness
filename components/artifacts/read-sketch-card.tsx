@@ -125,7 +125,7 @@ export function SketchReadingBody({ part, framed = false }: { part: ArtifactPart
 				</div>
 			)}
 			{dispute === "disputed" && (
-				<div data-testid="read-sketch-disputed" className="mt-2 text-xs text-muted-foreground/80">
+				<div data-testid="read-sketch-disputed" className="mt-2 text-xs text-muted-foreground">
 					You said this reading is wrong.
 				</div>
 			)}

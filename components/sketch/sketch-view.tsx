@@ -524,13 +524,13 @@ export function SketchView({
 					/>
 				)}
 {empty && ink.strokes.length === 0 && (
-					<p aria-hidden data-testid="sketch-empty-hint" className="pointer-events-none absolute inset-x-0 bottom-[20%] text-center text-sm text-muted-foreground/70">
+					<p aria-hidden data-testid="sketch-empty-hint" className="pointer-events-none absolute inset-x-0 bottom-[20%] text-center text-sm text-muted-foreground">
 						Write or draw here
 					</p>
 				)}
 				{note ? (
 					<>
-						<div className="pointer-events-none absolute left-3 top-2 flex max-w-[40%] items-center gap-2 text-xs text-muted-foreground/80">
+						<div className="pointer-events-none absolute left-3 top-2 flex max-w-[40%] items-center gap-2 text-xs text-muted-foreground">
 							<p data-testid="note-title" className="truncate">
 								{titleShowsDate(note) ? note.title : `${note.title} · ${note.date}`}
 							</p>
@@ -549,8 +549,8 @@ export function SketchView({
 				)}
 				{confirmClear && (
 					// a touch hole (data-ink-hole): the native layer must not draw under it
-					<div data-ink-hole="" data-testid="sketch-clear-dialog" role="alertdialog" aria-modal="true" aria-labelledby="sketch-clear-title" className="absolute inset-0 z-20 grid place-items-center bg-black/40 p-4">
-						<div className="w-full max-w-sm rounded-xl border bg-background p-4 text-foreground shadow-lg">
+					<div data-ink-hole="" data-testid="sketch-clear-dialog" role="alertdialog" aria-modal="true" aria-labelledby="sketch-clear-title" className="absolute inset-0 z-20 grid place-items-center lh-scrim p-4">
+						<div className="w-full max-w-sm lh-dialog p-6">
 							<h2 id="sketch-clear-title" className="text-sm font-semibold">
 								Clear the whole sketch?
 							</h2>

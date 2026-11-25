@@ -212,7 +212,7 @@ export function SkillMap({
 					<PlanDiagram layout={layout} nodes={nodes} edges={edges} statusOf={statusOf} markerId={markerId} pad={PAD} naturalSize />
 				</div>
 				<div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 p-2">
-					<span className="truncate text-[11px] text-muted-foreground/60">
+					<span className="truncate text-xs text-muted-foreground">
 						<span className="[@media(hover:none)]:hidden">
 							{atFloor ? "Zoom in to pan" : expanded ? "Drag to pan · scroll to zoom" : "Drag to pan · Ctrl+scroll to zoom"}
 						</span>

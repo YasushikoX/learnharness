@@ -9,7 +9,7 @@ import { useLayoutEffect, useRef, useState } from "react";
  */
 
 /** The title's largest and smallest font size, in CSS px. */
-export const TITLE_MAX_PX = 30;
+export const TITLE_MAX_PX = 24; // the page H1 (UI round 1, SPEC §1)
 export const TITLE_MIN_PX = 16;
 /** The most lines the title wraps onto at the smallest size. */
 export const TITLE_MAX_LINES = 3;

@@ -90,9 +90,9 @@ export function VisualOutputCard({
 	if (failed) {
 		return (
 			<div className="rounded-xl border bg-card p-4 text-card-foreground" data-testid="visual-card-failed">
-				<div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+				<div className="flex items-center gap-2 lh-eyebrow text-muted-foreground">
 					Figure
-					<span className="rounded bg-error/15 px-1.5 py-0.5 text-error">failed</span>
+					<span className="rounded-sm bg-error/15 px-1.5 py-0.5 text-error">failed</span>
 				</div>
 				<p className="mt-2 text-sm text-muted-foreground">{result.notes ?? "The figure could not be drawn."}</p>
 			</div>
@@ -144,7 +144,7 @@ export function VisualOutputCard({
 					: "mt-2 flex items-center justify-between gap-2"
 			}>
 				<div className="flex min-w-0 items-baseline gap-2">
-					<span className="shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground">Figure</span>
+					<span className="shrink-0 lh-eyebrow text-muted-foreground">Figure</span>
 					{caption && (
 						<span className="text-sm text-muted-foreground" data-testid="figure-caption">
 							{caption}

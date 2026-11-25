@@ -289,17 +289,21 @@
 }
 
 /* THE FLOATING-LAYER SURFACES (SPEC §3), shared by every menu, popover and dialog:
-   - .lh-menu: radius 12, hairline border, the pop shadow, 4px inner padding, 13px text.
+   - .lh-popover: radius 12, hairline border, the popover fill, the pop shadow (the site sets padding and text).
+   - .lh-menu: a .lh-popover with 4px inner padding and 13px text.
    - .lh-menu-item: 30px tall, radius 6, 13px; hover = the raised fill. Destructive items add .lh-menu-item-danger.
    - .lh-scrim: the dialog backdrop (black 32% light / 60% dark, a 2px blur), never a milky page-coloured wash.
    - .lh-dialog: radius 12, hairline border, the pop shadow, the card fill.
    Unlayered: they beat a site's leftover utilities (padding, radius) on purpose. */
+.lh-popover,
 .lh-menu {
 	border-radius: 12px;
 	border: 1px solid var(--border);
 	background: var(--popover);
 	color: var(--popover-foreground);
 	box-shadow: var(--lh-shadow-pop);
+}
+.lh-menu {
 	padding: 0.25rem;
 	font-size: 13px;
 	line-height: 18px;
@@ -336,6 +340,31 @@
 	background: var(--card);
 	color: var(--card-foreground);
 	box-shadow: var(--lh-shadow-pop);
+	animation: lh-pop-in var(--lh-duration-pop) var(--lh-ease);
+}
+/* Menus and popovers fade only: MenuShell measures them on mount, and a scale would skew the measured rect. */
+@keyframes lh-fade-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+.lh-popover,
+.lh-menu {
+	animation: lh-fade-in var(--lh-duration-hover) var(--lh-ease);
+}
+.lh-scrim {
+	animation: lh-fade-in var(--lh-duration-pop) var(--lh-ease);
+}
+@media (prefers-reduced-motion: reduce) {
+	.lh-dialog,
+	.lh-popover,
+	.lh-menu,
+	.lh-scrim {
+		animation: none;
+	}
 }
 
 /* Type roles that need more than a size (SPEC §1). */
@@ -349,7 +378,7 @@
 .lh-page-title {
 	font-family: var(--font-title);
 	font-size: 24px;
-	line-height: 30px;
+	line-height: 1.25;
 	font-weight: 650;
 	letter-spacing: -0.02em;
 }
@@ -832,7 +861,7 @@ html.lh-native-ink body > *:not([data-testid="sketch-view"]) {
 }
 
 .settings-dialog-pop {
-	animation: settings-pop 150ms ease-out;
+	animation: settings-pop var(--lh-duration-pop) var(--lh-ease);
 }
 
 @media (prefers-reduced-motion: reduce) {

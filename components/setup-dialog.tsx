@@ -36,6 +36,7 @@
  * CMU title, z-50.
  */
 
+import { ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { HostDialog } from "@/components/host-dialog";
 import { useInteractionLayers } from "@/components/interaction-layers";
@@ -173,12 +174,10 @@ export function SetupKeysBody({
 						data-testid="setup-key-provider"
 						aria-expanded={menuOpen}
 						onClick={onToggleMenu}
-						className="flex h-7 w-full items-center gap-1 rounded-sm border border-border bg-background px-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50"
+						className="flex h-8 w-full items-center gap-1.5 rounded-md border border-input bg-card px-2.5 text-sm text-foreground transition-colors hover:bg-raised"
 					>
 						<span className="min-w-0 flex-1 truncate text-left">{provider ? provider.label : "Pick a provider…"}</span>
-						<span aria-hidden className="text-muted-foreground">
-							▾
-						</span>
+						<ChevronDown aria-hidden strokeWidth={1.75} className="size-3.5 shrink-0 text-muted-foreground" />
 					</button>
 					{menuOpen && (
 						<MenuShell
@@ -187,7 +186,7 @@ export function SetupKeysBody({
 							onClose={() => { onCloseMenu?.(); return "closed"; }}
 							preferredSide="down"
 							align="left"
-							menuClass="flex w-[22rem] flex-col rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
+							menuClass="flex w-[22rem] flex-col lh-menu"
 						>
 							<ProviderMenuList providers={providers ?? []} onPick={onPick} />
 						</MenuShell>
@@ -208,7 +207,7 @@ export function SetupKeysBody({
 								data-testid="setup-key-input"
 								disabled={saving}
 								autoFocus
-								className="h-7 min-w-0 flex-1 rounded-sm border border-border bg-background px-1.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-muted-foreground/50"
+								className="h-8 min-w-0 flex-1 rounded-md border border-input bg-card px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring"
 							/>
 							<button
 								type="button"
@@ -452,12 +451,12 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 	/>;
 
 	return <HostDialog open onClose={() => { onClose(); return "closed"; }} aria-label="Set up your models"
-		backdropProps={{ className: "fixed inset-0 z-50 flex items-center justify-center bg-background/80", "data-testid": "setup-backdrop" }}
+		backdropProps={{ className: "fixed inset-0 z-50 flex items-center justify-center lh-scrim", "data-testid": "setup-backdrop" }}
 		frame={<div data-testid="setup-dialog"
-			className="settings-dialog-pop flex max-h-[85vh] w-[640px] max-w-[90vw] flex-col overflow-hidden rounded-md border border-border bg-card shadow-xl"
+			className="settings-dialog-pop flex max-h-[85vh] w-[640px] max-w-[90vw] flex-col overflow-hidden lh-dialog"
 			onClick={(e) => e.stopPropagation()} />}>
 				<header className="flex h-15 shrink-0 items-center gap-3 border-b border-border px-5">
-					<h2 className="font-title text-2xl tracking-tight">Set up your models</h2>
+					<h2 className="lh-section-title">Set up your models</h2>
 					<Hint label="Close" binding="escape" side="left">
 <button
 						type="button"
@@ -520,13 +519,13 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 										{!catalog?.slots?.[slot]?.model && !picked[slot] && (
 											<span
 												data-testid={`setup-needed-${slot}`}
-												className="rounded-sm border border-border px-1 py-0.5 text-[10px] font-normal tracking-wide text-muted-foreground"
+												className="rounded-sm border border-border px-1 py-0.5 text-xs font-normal tracking-wide text-muted-foreground"
 											>
 												needed
 											</span>
 										)}
 									</span>
-									<span className="text-xs text-muted-foreground/70">{SLOT_META[slot].roster}</span>
+									<span className="text-xs text-muted-foreground">{SLOT_META[slot].roster}</span>
 									{slot !== "strong" && <><ChatGPTBackgroundAccess provider={entry?.provider} /><NativeSubscriptionBackgroundAccess provider={entry?.provider} /></>}
 									<div className="flex items-center gap-2">
 										<div className="relative flex-1">
@@ -537,12 +536,10 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 												data-testid={`setup-trigger-${slot}`}
 												aria-expanded={openMenu?.slot === slot && openMenu.kind === "model"}
 												onClick={() => setOpenMenu(openMenu?.slot === slot && openMenu.kind === "model" ? null : { slot, kind: "model" })}
-												className="flex h-7 min-w-40 w-full items-center gap-1 rounded-sm border border-border bg-background px-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50"
+												className="flex h-8 min-w-40 w-full items-center gap-1.5 rounded-md border border-input bg-card px-2.5 text-sm text-foreground transition-colors hover:bg-raised"
 											>
 												<span className="min-w-0 flex-1 truncate">{entry ? prettyModel(entry.id) : "Pick a model…"}</span>
-												<span aria-hidden className="text-muted-foreground">
-													▾
-												</span>
+												<ChevronDown aria-hidden strokeWidth={1.75} className="size-3.5 shrink-0 text-muted-foreground" />
 											</button>
 											</Hint>
 											{/* Anchor by TESTID, not a ref (the settings-section pattern):
@@ -561,7 +558,7 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 													onClose={() => { setOpenMenu(null); return "closed"; }}
 													preferredSide="down"
 													align="left"
-													menuClass="flex w-[22rem] flex-col rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
+													menuClass="flex w-[22rem] flex-col lh-menu"
 												>
 													<ModelMenuList
 														models={slotCatalog}
@@ -601,9 +598,7 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 												<span className="min-w-0 flex-1 truncate text-left">
 													{entry ? (level ? THINKING_LABEL[level] ?? level : "…") : "—"}
 												</span>
-												<span aria-hidden className="text-muted-foreground">
-													▾
-												</span>
+												<ChevronDown aria-hidden strokeWidth={1.75} className="size-3.5 shrink-0 text-muted-foreground" />
 											</button>
 											{openMenu?.slot === slot && openMenu.kind === "thinking" && (
 												<MenuShell
@@ -612,7 +607,7 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 													onClose={() => { setOpenMenu(null); return "closed"; }}
 													preferredSide="down"
 													align="left"
-													menuClass="flex w-44 flex-col gap-0.5 rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
+													menuClass="flex w-44 flex-col gap-0.5 lh-menu"
 												>
 													<ThinkingMenuList
 														levels={levelsForEntry.map(String)}

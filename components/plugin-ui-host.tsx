@@ -299,7 +299,7 @@ function PluginMenu({ anchor, items, label, preferredSide = "down", closeMenu, r
 		document.addEventListener("pointerdown", pointer);
 		return () => document.removeEventListener("pointerdown", pointer);
 	});
-	return <MenuShell anchorRef={anchorRef} testid="plugin-menu" onClose={close} preferredSide={preferredSide} menuClass="flex w-56 flex-col gap-0.5 rounded-xl border bg-card p-2 text-xs shadow-xl">
+	return <MenuShell anchorRef={anchorRef} testid="plugin-menu" onClose={close} preferredSide={preferredSide} menuClass="flex w-56 flex-col gap-0.5 lh-menu">
 		<div ref={root} role="menu" aria-label={label}>{items.map((item) => <button type="button" role="menuitem" key={item.key} disabled={item.disabled}
 			className="flex w-full rounded-lg px-2 py-1.5 text-left text-card-foreground transition-colors hover:bg-muted disabled:opacity-40"
 			onClick={() => {
@@ -349,8 +349,8 @@ function PluginDialog({ title, content, onClose, runtime, opener }: PluginDialog
 		return "closed";
 	};
 	return <HostDialog open onClose={close} ownerId={ownerId.current} aria-label={title}
-		backdropProps={{ className: "fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm" }}
-		frame={<div data-plugin-ui-dialog="" tabIndex={-1} className="relative mx-4 flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border bg-card shadow-lg outline-none" />}>
+		backdropProps={{ className: "fixed inset-0 z-50 flex items-center justify-center lh-scrim" }}
+		frame={<div data-plugin-ui-dialog="" tabIndex={-1} className="relative mx-4 flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden lh-dialog outline-none" />}>
 		<div data-plugin-ui-dialog-scroll="" className="min-h-0 overflow-y-auto p-5">
 			<PluginContent content={content} runtime={runtime} />
 		</div>

@@ -1,5 +1,6 @@
 "use client";
 
+import { ChevronDown } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	DEFAULT_LESSON_LANGUAGE,
@@ -135,7 +136,7 @@ export function LanguageControl({ chatId, courseId, variant = "pill" }: { chatId
 					className={CONTROL_CLASS[variant]}
 				>
 					<span className="text-card-foreground">{lessonLanguageInfo(current).short}</span>
-					<span aria-hidden className="text-xs text-muted-foreground">▾</span>
+					<ChevronDown aria-hidden strokeWidth={1.75} className="size-3.5 shrink-0 text-muted-foreground" />
 				</button>
 			</Hint>
 			{open && (
@@ -143,7 +144,7 @@ export function LanguageControl({ chatId, courseId, variant = "pill" }: { chatId
 					anchorRef={containerRef}
 					testid="language-menu"
 					preferredSide="up"
-					menuClass="flex w-48 flex-col gap-0.5 rounded-xl border bg-card p-2 text-xs shadow-xl"
+					menuClass="flex w-48 flex-col gap-0.5 lh-menu"
 				>
 					{error && <div className="mb-1.5 text-destructive">{error}</div>}
 					{LESSON_LANGUAGES.map((l) => (
@@ -160,7 +161,7 @@ export function LanguageControl({ chatId, courseId, variant = "pill" }: { chatId
 							{l.id === current && <span aria-hidden>✓</span>}
 						</button>
 					))}
-					<div className="mt-1 border-t px-2 pt-1.5 text-[11px] text-muted-foreground/70">
+					<div className="mt-1 border-t px-2 pt-1.5 text-xs text-muted-foreground">
 						{courseId ? "This course's language — its skill map and sessions" : chatId ? "This lesson's language — teaching and dictation" : "Default for new lessons"}
 					</div>
 				</MenuShell>

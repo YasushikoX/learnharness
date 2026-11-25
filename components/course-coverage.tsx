@@ -1,5 +1,6 @@
 "use client";
 
+import { buttonVariants } from "@/components/ui/button";
 import { createContext, useContext, useState } from "react";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { lessonLabels, type CourseCoverageView, type CoverageEdit, type CoverageEntryView, type CoverageTermView } from "@/src/core";
@@ -40,8 +41,9 @@ interface CoverageContextValue {
 
 export const CoverageContext = createContext<CoverageContextValue | null>(null);
 
-const BTN = "rounded-md border border-border px-2 py-0.5 text-[11px] transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50";
-const SELECT = "rounded-md border border-border bg-background px-1.5 py-0.5 text-[11px]";
+/** UI round 1 (SPEC §3): ordinary actions are secondary xs Buttons; the region's one emphasised action is primary. */
+const BTN = buttonVariants({ variant: "secondary", size: "xs" });
+const SELECT = "rounded-md border border-border bg-background px-1.5 py-0.5 text-xs";
 
 const where = (e: CoverageEntryView) => [e.material, e.page !== null ? `p. ${e.page}` : null].filter(Boolean).join(", ");
 
@@ -52,7 +54,7 @@ function EntryLine({ entry, extra }: { entry: CoverageEntryView; extra?: React.R
 	return (
 		<div className="leading-relaxed" data-testid={`term-${entry.key}`}>
 			<span className="font-medium text-foreground">{entry.name}</span>
-			{entry.tier === "supporting" && <span className="ml-1 text-muted-foreground/80">({L.supporting})</span>}
+			{entry.tier === "supporting" && <span className="ml-1 text-muted-foreground">({L.supporting})</span>}
 			{extra}
 			<span className="block text-muted-foreground">
 				{entry.definition ?? L.noDefinition}
@@ -174,7 +176,7 @@ export function DraftTerms({ draftKey }: { draftKey: string }) {
 	if (terms.length === 0) return null;
 	const L = lessonLabels(ctx!.view.language).coverage;
 	return (
-		<p className="mt-0.5 text-[11px] text-muted-foreground/80" data-testid={`draft-terms-${draftKey}`}>
+		<p className="mt-0.5 text-xs text-muted-foreground" data-testid={`draft-terms-${draftKey}`}>
 			{L.termsHeading}: {terms.map((t) => t.name).join(", ")}
 		</p>
 	);
@@ -282,7 +284,7 @@ export function SkillTerms({ skillId }: { skillId: string }) {
 							<EntryLine
 								entry={t}
 								extra={
-									<span className={cn("ml-1.5 rounded-full border px-1.5 text-[10px]", t.state === "checked" ? "border-foreground/40 text-foreground" : "border-border text-muted-foreground")} data-testid={`term-state-${t.key}`}>
+									<span className={cn("ml-1.5 rounded-full border px-1.5 text-xs", t.state === "checked" ? "border-foreground/40 text-foreground" : "border-border text-muted-foreground")} data-testid={`term-state-${t.key}`}>
 										{stateLabel(t, L)}
 										{t.level ? ` · ${t.level}` : ""}
 										{t.deferredCount ? ` · ${L.deferredCount(t.deferredCount)}` : ""}

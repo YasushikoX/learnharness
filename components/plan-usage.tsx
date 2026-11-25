@@ -61,7 +61,7 @@ export function PlanUsage({ variant = "pill", separated = false }: { variant?: "
 				className={
 					variant === "text"
 						? `whitespace-nowrap tabular-nums ${high ? "text-error" : ""}`
-						: `rounded-full border bg-card/85 px-2 py-1 font-mono text-[11px] shadow-lg backdrop-blur ${high ? "text-error" : "text-muted-foreground"}`
+						: `rounded-md border border-input bg-card px-2 py-1 font-mono text-xs ${high ? "text-error" : "text-muted-foreground"}`
 				}
 			>
 				{variant === "text" ? "plan" : "Plan"} {pct(usage.fiveHour)}

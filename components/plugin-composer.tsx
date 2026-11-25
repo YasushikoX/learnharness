@@ -90,7 +90,7 @@ export function PluginStandardComposer({ composer, model, thinking, dictation: d
 		});
 	});
 	return <div ref={root} data-plugin-standard-composer="">
-		<div className="overflow-hidden rounded-2xl border bg-card shadow-lg">
+		<div className="overflow-hidden rounded-2xl border border-input bg-card shadow-lg transition-[border-color,box-shadow] duration-(--lh-duration-hover) ease-(--lh-ease) focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20">
 			<PluginComposer {...composer} canSend={composer.canSend ?? (composer.value.trim().length > 0 || dictation.active)}
 				onSend={async () => { await dictation.finish(); await latest.current.composer.onSend(); }} onError={onError} />
 		</div>

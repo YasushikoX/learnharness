@@ -193,7 +193,7 @@ export function DueTimeline({
 					)}
 				>
 					<span className="block text-xs text-muted-foreground">{DUE_BUCKET_LABEL[b]}</span>
-					<span className="block font-mono text-2xl leading-tight" style={b === "now" && counts.now > 0 ? { color: DUE_COLOR } : undefined}>
+					<span className="block text-2xl font-semibold leading-tight tabular-nums" style={b === "now" && counts.now > 0 ? { color: DUE_COLOR } : undefined}>
 						{counts[b]}
 					</span>
 					<span aria-hidden className="mt-1.5 block h-1 rounded-full bg-border/40">

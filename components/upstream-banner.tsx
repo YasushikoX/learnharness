@@ -130,7 +130,7 @@ export function UpstreamNotice({
 					readOnly
 					value={status.prompt ?? ""}
 					onFocus={(e) => e.currentTarget.select()}
-					className="mt-2 h-28 w-full resize-none rounded-sm border border-border bg-background p-1.5 font-mono text-[11px]"
+					className="mt-2 h-28 w-full resize-none rounded-md border border-input bg-card p-2 font-mono text-xs"
 				/>
 			)}
 		</div>

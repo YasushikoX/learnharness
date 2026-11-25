@@ -55,7 +55,7 @@ const card = "pointer-events-auto absolute top-full left-1/2 mt-2 w-[min(28rem,c
 function PanelSection({ title, children }: { title: string; children: React.ReactNode }) {
 	return (
 		<div className="flex flex-wrap items-center gap-1">
-			<span className="w-14 shrink-0 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">{title}</span>
+			<span className="w-14 shrink-0 text-muted-foreground lh-eyebrow">{title}</span>
 			{children}
 		</div>
 	);
@@ -228,7 +228,7 @@ export function SketchToolbar(p: SketchToolbarProps) {
 						>
 							<LightbulbIcon className={cn("size-4", p.hint.busy && "animate-pulse")} />
 							{p.hint.lines.length > 0 && (
-								<span aria-hidden className="absolute right-0.5 bottom-0.5 text-[9px] leading-none font-semibold text-muted-foreground">
+								<span aria-hidden className="absolute right-0.5 bottom-0.5 text-xs leading-none font-semibold text-muted-foreground">
 									{p.hint.lines.length}
 								</span>
 							)}

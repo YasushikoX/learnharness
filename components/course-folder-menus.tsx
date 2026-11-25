@@ -12,8 +12,8 @@ import { MenuShell } from "./menu-shell.tsx";
  * dismissal contract is the session menu's: a pointerdown outside the menu or its anchor closes it, Esc closes it.
  */
 
-const ITEM = "flex items-center rounded-lg px-2.5 py-1.5 text-left text-foreground transition-colors hover:bg-accent [@media(pointer:coarse)]:min-h-11";
-const MENU = "flex w-56 flex-col gap-0.5 rounded-xl border bg-card p-2 text-xs shadow-xl";
+const ITEM = "lh-menu-item text-foreground [@media(pointer:coarse)]:min-h-11";
+const MENU = "flex w-56 flex-col gap-0.5 lh-menu";
 
 /** Close the menu when a pointer goes down anywhere but on the menu or its anchor. */
 function useOutsideClose(anchorRef: RefObject<HTMLElement | null>, onClose: () => void) {
@@ -81,7 +81,7 @@ export function CourseMenu({
 						type="button"
 						data-testid="ctx-course-delete"
 						onClick={onDelete}
-						className={`${ITEM} text-muted-foreground/80 hover:text-foreground`}
+						className={`${ITEM} lh-menu-item-danger`}
 					>
 						Delete…
 					</button>

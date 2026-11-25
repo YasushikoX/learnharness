@@ -1,5 +1,6 @@
 "use client";
 
+import { buttonVariants } from "@/components/ui/button";
 import { ToolContentResponse } from "@/components/ai-elements/message";
 import { cn } from "@/lib/utils";
 import { SketchReadingBody } from "@/components/artifacts/read-sketch-card";
@@ -79,7 +80,7 @@ export function ProblemCard({ part }: ArtifactPartProps) {
 	const statement = typeof input.statement === "string" ? input.statement : "";
 	return (
 		<div data-testid="problem-card" className="lh-card-enter my-1 rounded-xl border bg-card p-4">
-			<div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Problem</div>
+			<div className="mb-1 lh-eyebrow text-muted-foreground">Problem</div>
 			<div className="lh-prose text-[15px]">
 				<ToolContentResponse>{statement}</ToolContentResponse>
 			</div>
@@ -134,7 +135,7 @@ export function ConcludeCard({ part }: ArtifactPartProps) {
 	// learner clicked; the record needs only the fact).
 	if (outcome === "dismissed") {
 		return (
-			<div data-testid="conclude-card" className="my-1 px-1 text-sm text-muted-foreground/70">
+			<div data-testid="conclude-card" className="my-1 px-1 text-sm text-muted-foreground">
 				Problem dismissed.
 			</div>
 		);
@@ -145,7 +146,7 @@ export function ConcludeCard({ part }: ArtifactPartProps) {
 			{/* The heading row (owner round 3, 2026-10-05): plain 'Concluded'
 			    eyebrow + the outcome in the quiz cards' EXACT chip register —
 			    no more two same-weight headings stacked. */}
-			<div className="mb-1 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+			<div className="mb-1 flex items-center gap-2 lh-eyebrow text-muted-foreground">
 				Concluded
 				{(OUTCOME_LABEL[outcome] ?? "") !== "" && outcome !== "dismissed" && (
 					<StatusBadge text={OUTCOME_LABEL[outcome] ?? ""} color={OUTCOME_COLOR[outcome]} />
@@ -164,7 +165,7 @@ export function ConcludeCard({ part }: ArtifactPartProps) {
 				<>
 					<div className="my-3 border-t" />
 					<div>
-						<div className="mb-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">Model solution</div>
+						<div className="mb-0.5 lh-eyebrow text-muted-foreground">Model solution</div>
 						<div className="lh-prose text-[15px]">
 							<ToolContentResponse>{reveal}</ToolContentResponse>
 						</div>
@@ -249,8 +250,8 @@ function UngradedNote({ chatId, toolCallId, reason }: { chatId: string | undefin
 	);
 }
 
-const LEARN_BTN =
-	"rounded-md border border-border px-2.5 py-1 text-xs transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50";
+/** UI round 1 (SPEC §3): ordinary actions are secondary sm Buttons; the region's one emphasised action is primary. */
+const LEARN_BTN = buttonVariants({ variant: "secondary", size: "sm" });
 
 /* THE LEARN BUTTONS (owner goal, 2026-11-07): a concluded review or practice
  * problem offers a Learn session on each skill the tutor graded `again`. The
@@ -426,7 +427,7 @@ function MetadataPopover({
 					});
 				}}
 				aria-expanded={open}
-				className="flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
+				className="flex items-center gap-1 lh-eyebrow text-muted-foreground transition-colors hover:text-foreground"
 			>
 				Metadata
 			</button>
@@ -444,7 +445,7 @@ function MetadataPopover({
 						// opening BELOW the trigger — always.
 						// capped to the room below the trigger (owner goal 2026-10-28: nothing off the screen): it scrolls inside instead
 						style={{ position: "fixed", top: anchor.top, left: anchor.left, maxHeight: `max(6rem, calc(100dvh - ${anchor.top}px - 8px))`, overflowY: "auto", zIndex: INTERACTION_LAYER_Z_BASE + popupLayer.order }}
-						className="w-80 max-w-[calc(100vw-1rem)] rounded-xl border bg-card p-4 text-left shadow-lg"
+						className="w-80 max-w-[calc(100vw-1rem)] lh-popover p-4 text-left"
 					>
 				<dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
 						<dt className="text-muted-foreground">Mode</dt>

@@ -16,7 +16,7 @@ export function AnsweredKeyPoints({ points, met }: { points: readonly string[] |
 	if (!points || points.length === 0) return null;
 	return (
 		<div className="mt-3 text-sm" data-testid="answered-key-points" data-graded={met ? "true" : "false"}>
-			<div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{labels.keyPoints}</div>
+			<div className="mb-1 lh-eyebrow text-muted-foreground">{labels.keyPoints}</div>
 			<ol className="flex flex-col gap-1">
 				{points.map((point, i) => {
 					const hit = met?.has(i + 1);

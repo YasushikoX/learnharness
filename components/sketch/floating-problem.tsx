@@ -172,7 +172,7 @@ export function FloatingProblem({
 					}
 					toggle(!box.collapsed);
 				}}
-				className="lh-touch flex cursor-grab touch-none items-center gap-1.5 rounded-full border bg-card py-1.5 pr-3 pl-2.5 text-xs font-medium tracking-wide text-muted-foreground uppercase shadow-lg transition-colors hover:text-foreground active:cursor-grabbing"
+				className="lh-touch flex cursor-grab touch-none items-center gap-1.5 rounded-full border bg-card py-1.5 pr-3 pl-2.5 text-xs font-medium text-muted-foreground shadow-lg transition-colors hover:text-foreground active:cursor-grabbing"
 			>
 				{box.collapsed ? <PenLineIcon className="size-3.5" /> : <MinusIcon className="size-3.5" />}
 				{label}
@@ -185,7 +185,7 @@ export function FloatingProblem({
 						<MessageResponse>{repairMathForDisplay(statement)}</MessageResponse>
 						{lessonText && lessonText.trim() !== "" && (
 							<details data-testid="sketch-lesson-text" className="mt-3 border-t border-border/60 pt-2 text-sm text-muted-foreground">
-								<summary className="lh-touch cursor-pointer text-xs font-medium tracking-wide uppercase">Lesson text</summary>
+								<summary className="lh-touch cursor-pointer lh-eyebrow">Lesson text</summary>
 								<div className="mt-2">
 									<MessageResponse>{repairMathForDisplay(lessonText)}</MessageResponse>
 								</div>
