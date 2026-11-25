@@ -44,8 +44,13 @@ const AUTO_READ_STORAGE_KEY = "lh:read-aloud-seen";
 const MAX_AUTO_READ_HISTORY = 200;
 
 // Survives dock remounts (refused-send draft restoration, reopened chats) so a
-// pending question is never auto-read twice.
+// pending question is never auto-read twice. Keyed on chat id + tool call id:
+// call ids are unique only within one chat (some providers send `call_0` every turn).
 const autoReadSeen = new Set<string>();
+
+function autoReadKey(chatId: string | undefined, questionId: string): string {
+	return JSON.stringify([chatId ?? "", questionId]);
+}
 
 function readStoredSeen(): Set<string> | null {
 	try {
@@ -165,6 +170,8 @@ export function useReadAloudSettings(override?: Partial<ReadAloudConfig>): ReadA
 
 export interface QuestionReadAloudProps {
 	questionId: string;
+	/** The chat the question belongs to: auto-read memory is per chat, since tool call ids repeat across chats. */
+	chatId?: string;
 	/** Displayed question payload (preferred when invoked from QuestionDock). */
 	qd?: QuestionData;
 	/** Tool kind when `qd` is provided (controls whether option descriptions are shown). */
@@ -195,10 +202,42 @@ const INITIAL_SPEECH_STATE: SpeechState = {
 	voices: [],
 };
 
-function unavailableReason(status: SpeechState["status"]): string | null {
+const NO_UTTERANCES: readonly string[] = [];
+
+function unavailableReason(status: SpeechState["status"], buildFailed: boolean): string | null {
 	if (status === "unsupported") return "Read aloud is unavailable in this browser";
 	if (status === "no-voices") return "No system speech voices installed";
+	if (buildFailed) return "This question cannot be read aloud";
 	return null;
+}
+
+/**
+ * The Play/Stop button's box. Its width is fixed (in em, so it follows the text size) so its size never depends
+ * on its label, and the answered card's stand-in (`readAloudStandIn`) reserves exactly the same box. `lh-touch`
+ * grows it to 44 px on touch screens, and the label row grows with it (the button sits in the row, never over
+ * the question); `-my-1` keeps the mouse-sized row as tall as the label text.
+ */
+export const READ_ALOUD_BUTTON_BOX =
+	"lh-touch -my-1 inline-flex h-6 w-[9.5em] shrink-0 items-center justify-center gap-1 rounded-sm px-1.5 text-[11px] font-medium normal-case tracking-normal whitespace-nowrap";
+/** The slot holding the button at the right end of the question card's label row. */
+export const READ_ALOUD_SLOT = "ml-auto flex shrink-0 pl-1.5";
+/**
+ * Why the button is disabled: visible beside the label when there is room, truncated otherwise. It takes no
+ * width of its own (`w-0 flex-1`), so the label wraps exactly as in the stand-in, and one line never makes the
+ * row taller.
+ */
+const READ_ALOUD_REASON =
+	"w-0 min-w-0 flex-1 truncate text-right text-[11px] leading-4 font-normal normal-case tracking-normal text-muted-foreground/70";
+
+/** The read-aloud slot as the answered card's stand-in measures it: the same box, invisible and empty. */
+export function readAloudStandIn(doc: Document): HTMLElement {
+	const slot = doc.createElement("div");
+	slot.className = READ_ALOUD_SLOT;
+	const box = doc.createElement("span");
+	box.className = cn(READ_ALOUD_BUTTON_BOX, "invisible");
+	box.setAttribute("aria-hidden", "true");
+	slot.append(box);
+	return slot;
 }
 
 /**
@@ -209,6 +248,7 @@ function unavailableReason(status: SpeechState["status"]): string | null {
  */
 export function QuestionReadAloud({
 	questionId,
+	chatId,
 	qd,
 	kind = "quiz",
 	wordingOnly = false,
@@ -236,10 +276,16 @@ export function QuestionReadAloud({
 		return options;
 	}, [qd, kind, wordingOnly, options]);
 
-	const utterances = useMemo(
-		() => buildQuestionSpeech({ question: resolvedQuestion, context: resolvedContext, options: resolvedOptions, language }),
-		[resolvedQuestion, resolvedContext, resolvedOptions, language],
-	);
+	// Very deep nesting can overflow the parser's stack (the renderer fails the same way): the dock still renders
+	// and only the button is disabled.
+	const built = useMemo(() => {
+		try {
+			return buildQuestionSpeech({ question: resolvedQuestion, context: resolvedContext, options: resolvedOptions, language });
+		} catch {
+			return null;
+		}
+	}, [resolvedQuestion, resolvedContext, resolvedOptions, language]);
+	const utterances = built ?? NO_UTTERANCES;
 
 	// Keep latest playback inputs in refs so event listeners and auto-read never churn.
 	const latestRef = useRef({ utterances, language, config, active });
@@ -325,54 +371,59 @@ export function QuestionReadAloud({
 	// Auto-read once per pending question when enabled and visible (persists across dock remounts).
 	useEffect(() => {
 		if (!config.autoRead || !active || speech.status !== "ready" || utterances.length === 0) return;
-		if (hasAutoReadQuestion(questionId)) return;
-		markAutoReadQuestion(questionId);
+		const key = autoReadKey(chatId, questionId);
+		if (hasAutoReadQuestion(key)) return;
+		markAutoReadQuestion(key);
 		speakNow();
-	}, [config.autoRead, active, speech.status, questionId, utterances.length, speakNow]);
+	}, [config.autoRead, active, speech.status, chatId, questionId, utterances.length, speakNow]);
 
-	const reason = unavailableReason(speech.status);
-	const disabled = reason !== null || utterances.length === 0;
+	// While the voice list is still loading the button waits, without a reason (it would flash before voices arrive).
+	const reason = unavailableReason(speech.status, built === null);
+	const disabled = reason !== null || speech.status === "loading" || utterances.length === 0;
 	const speaking = speech.speaking;
-	// Changing label alone communicates state — never combine with aria-pressed.
-	const actionLabel = speaking ? "Stop reading question" : "Read question aloud";
+	// Changing label alone communicates state — never combine with aria-pressed. The accessible
+	// name starts with the visible text, so voice control ("click Read aloud") finds it.
+	const actionLabel = speaking ? "Stop reading the question" : "Read aloud the question";
 	const tooltip = reason
 		? reason
-		: shortcutLabel
-			? `${actionLabel} (${shortcutLabel})`
-			: actionLabel;
+		: speech.status === "loading"
+			? "Loading system voices…"
+			: shortcutLabel
+				? `${actionLabel} (${shortcutLabel})`
+				: actionLabel;
 
+	// Rendered as two items of the question card's label row (see `readAloudStandIn`): the reason, then the slot.
 	return (
-		<div className={cn("inline-flex shrink-0 items-center gap-1.5", className)}>
+		<>
 			{reason && (
-				<span
-					id={reasonId}
-					data-testid="question-read-aloud-reason"
-					className="text-[11px] font-normal normal-case tracking-normal text-muted-foreground/70"
-				>
+				<span id={reasonId} data-testid="question-read-aloud-reason" title={reason} className={READ_ALOUD_REASON}>
 					{reason}
 				</span>
 			)}
-			<button
-				type="button"
-				data-testid="question-read-aloud"
-				data-speech-status={speech.status}
-				disabled={disabled}
-				aria-label={actionLabel}
-				aria-describedby={reason ? reasonId : undefined}
-				title={tooltip}
-				onClick={toggleSpeech}
-				className={cn(
-					"lh-touch inline-flex h-6 shrink-0 items-center gap-1 rounded-sm px-1.5 text-[11px] font-medium normal-case tracking-normal transition-colors",
-					disabled
-						? "cursor-not-allowed text-muted-foreground/50"
-						: speaking
-							? "bg-accent text-foreground"
-							: "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-				)}
-			>
-				{speaking ? <SquareIcon className="size-3 fill-current" aria-hidden="true" /> : <Volume2Icon className="size-3.5" aria-hidden="true" />}
-				<span>{speaking ? "Stop" : "Read aloud"}</span>
-			</button>
-		</div>
+			<div className={cn(READ_ALOUD_SLOT, className)}>
+				<button
+					type="button"
+					data-testid="question-read-aloud"
+					data-speech-status={speech.status}
+					disabled={disabled}
+					aria-label={actionLabel}
+					aria-describedby={reason ? reasonId : undefined}
+					title={tooltip}
+					onClick={toggleSpeech}
+					className={cn(
+						READ_ALOUD_BUTTON_BOX,
+						"transition-colors",
+						disabled
+							? "cursor-not-allowed text-muted-foreground/50"
+							: speaking
+								? "bg-accent text-foreground"
+								: "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+					)}
+				>
+					{speaking ? <SquareIcon className="size-3 fill-current" aria-hidden="true" /> : <Volume2Icon className="size-3.5" aria-hidden="true" />}
+					<span>{speaking ? "Stop" : "Read aloud"}</span>
+				</button>
+			</div>
+		</>
 	);
 }

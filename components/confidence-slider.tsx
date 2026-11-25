@@ -22,6 +22,12 @@ export function clampConfidenceStep(value: number): number {
 	return Math.min(CONFIDENCE_SLIDER_MAX, Math.max(CONFIDENCE_SLIDER_MIN, Math.round(clamped / CONFIDENCE_STEP) * CONFIDENCE_STEP));
 }
 
+/** Where a value sits along the 5–100 slider (0 at the left end, 1 at the right), as the native thumb places it. */
+export function sliderFraction(value: number): number {
+	const v = Math.min(CONFIDENCE_SLIDER_MAX, Math.max(CONFIDENCE_SLIDER_MIN, value));
+	return (v - CONFIDENCE_SLIDER_MIN) / (CONFIDENCE_SLIDER_MAX - CONFIDENCE_SLIDER_MIN);
+}
+
 /** Recover initial numeric confidence (5–100, or null) from a saved QuestionFormDraft. */
 export function initialConfidenceFromDraft(draft: QuestionFormDraft | undefined): number | null {
 	if (!draft) return null;
@@ -151,7 +157,7 @@ export function ConfidenceSlider({
 						aria-hidden
 						data-testid="confidence-slider-rail"
 						className="mx-2 h-1.5 w-full rounded-full border border-border"
-						style={confidenceRailStyle(value)}
+						style={confidenceRailStyle(value, CONFIDENCE_SLIDER_MIN)}
 					/>
 					<input
 						type="range"
@@ -179,7 +185,7 @@ export function ConfidenceSlider({
 					<span
 						aria-hidden
 						style={{
-							left: `calc(8px + (100% - 16px) * ${visualPct / 100})`,
+							left: `calc(8px + (100% - 16px) * ${sliderFraction(visualPct)})`,
 							borderColor: activeColor,
 							backgroundColor: activeColor ?? "var(--background)",
 						}}

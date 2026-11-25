@@ -3429,6 +3429,7 @@ export function DockOverlay({
 									layoutRequest={layoutRequest}
 									onLayout={setQuestionLayout}
 									language={language}
+									chatId={chatId}
 								/>
 							) : pluginPractice ? (
 								<PluginProblemDock {...pluginPractice} viewReader={customViewReader} expanded={expanded} onExpand={() => { setExpanded(true); void suppressFoldDuringReveal(); }} />

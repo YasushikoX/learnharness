@@ -105,10 +105,15 @@ const DIAGRAM_LANGUAGES = new Set(["plot", "blocks", "circuit", "logic", "timing
 const ALERT_MARKER_RE = /^\[!(note|tip|important|warning|caution)\][ \t]*(?:\n|$)/i;
 const RAW_BACKSLASH_COMMAND_RE = /\\[A-Za-z]/;
 
-// Same sanitisation schema Streamdown/ToolContentResponse uses, also stripping
-// `<style>` bodies so CSS text is never read aloud.
-const SPEECH_SANITIZE_SCHEMA: Schema = {
+// The sanitisation schema Streamdown/ToolContentResponse uses (hast-util-sanitize's
+// default plus `tel:` links and code `metastring`, as in Streamdown's
+// `defaultRehypePlugins.sanitize`), also stripping `<style>` bodies so CSS text is
+// never read aloud. Kept a copy so this module stays free of React; the test
+// `tests/speech-text.test.ts` fails when it drifts from the renderer's schema.
+export const SPEECH_SANITIZE_SCHEMA: Schema = {
 	...defaultSchema,
+	protocols: { ...defaultSchema.protocols, href: [...(defaultSchema.protocols?.href ?? []), "tel"] },
+	attributes: { ...defaultSchema.attributes, code: [...(defaultSchema.attributes?.code ?? []), "metastring"] },
 	strip: [...(defaultSchema.strip ?? ["script"]), "style"],
 };
 
@@ -247,7 +252,8 @@ const MATH_OPERATORS: Readonly<Record<string, string>> = {
 	angle: "angle",
 	perp: "perpendicular to",
 	parallel: "parallel to",
-	circ: "degrees",
+	// `\circ` on its own is function composition; `^\circ` (degrees) is handled by the superscript reader.
+	circ: "composed with",
 	degree: "degrees",
 	prime: "prime",
 	ell: "l",
@@ -292,6 +298,23 @@ const MATH_FUNCTIONS: Readonly<Record<string, string>> = {
 };
 
 const FUNCTION_LETTERS = new Set(["f", "g", "h", "F", "G", "H", "P", "Q"]);
+
+/** Named functions whose `^{-1}` is read as the inverse function ("inverse sine of x"); any other named function with `^{-1}` is "formula". */
+const INVERSE_NAMED_FUNCTIONS = new Set(["sin", "cos", "tan", "cot", "sec", "csc", "sinh", "cosh", "tanh"]);
+
+/**
+ * Relations end the body of a sum, product, integral or limit ("sum … of i equals …").
+ * Additive operators after such a body make the reading ambiguous, so the formula is "formula".
+ */
+const RELATION_COMMANDS = new Set([
+	"le", "leq", "leqslant", "ge", "geq", "geqslant", "ne", "neq", "approx", "simeq", "cong", "equiv", "sim",
+	"propto", "ll", "gg", "to", "rightarrow", "longrightarrow", "leftarrow", "longleftarrow", "leftrightarrow",
+	"longleftrightarrow", "Rightarrow", "implies", "Leftarrow", "Leftrightarrow", "iff", "mapsto", "in", "notin",
+	"ni", "subset", "subseteq", "supset", "supseteq", "perp", "parallel",
+]);
+const ADDITIVE_COMMANDS = new Set(["pm", "mp"]);
+const UNICODE_RELATIONS = new Set(["≤", "≥", "≠", "≈", "≡", "→", "←", "↔", "⇒", "⇔", "∈", "∉", "⊂", "⊆"]);
+const UNICODE_ADDITIVE = new Set(["±", "∓"]);
 
 const TEXT_UNWRAP_COMMANDS = new Set([
 	"text",
@@ -655,12 +678,109 @@ interface VerbalizedLatex {
 	alreadyBracketed: boolean;
 	/** True when the expression contains a comma/list separator. */
 	hasComma: boolean;
+	/** True when a sum/product/integral/limit body is still open at the end (no relation closed it). */
+	openEnded: boolean;
 }
 
 /** Wrap a verbalized sub-expression when it holds more than one token and is not already bracketed. */
 function wrapIfCompound(part: VerbalizedLatex): string {
 	if (part.tokens <= 1 || part.alreadyBracketed) return part.text;
 	return `open bracket ${part.text} close bracket`;
+}
+
+function skipSpaces(src: string, pos: number): number {
+	let k = pos;
+	while (k < src.length && /\s/.test(src[k]!)) k++;
+	return k;
+}
+
+/**
+ * True when a script just read (ending at `pos`) is followed by a second script of the same kind on the
+ * same base (`a^b^c`, `e^{-x}^2`, `x_1_2`, `x^2'`), which KaTeX rejects with a "Double superscript" error.
+ */
+function hasDoubleScript(src: string, pos: number, kind: "^" | "_"): boolean {
+	let k = skipSpaces(src, pos);
+	const other = kind === "^" ? "_" : "^";
+	if (src[k] === kind || (kind === "^" && src[k] === "'")) return true;
+	if (src[k] !== other) return false;
+	const next = readArg(src, k + 1);
+	if (!next) return false;
+	k = skipSpaces(src, next.end);
+	return src[k] === "^" || src[k] === "_" || (other === "^" && src[k] === "'");
+}
+
+/** True when an unbraced one-character script is followed by a digit (`x_12`, `x^23`): TeX scripts only the first digit, which cannot be heard. */
+function bareScriptRunsOn(src: string, argStart: number, argEnd: number): boolean {
+	const k = skipSpaces(src, argStart);
+	if (src[k] === "{" || src[k] === "\\") return false;
+	return /[0-9]/.test(src[skipSpaces(src, argEnd)] ?? "");
+}
+
+/** True when nothing after a function argument could be heard as part of it (end, an operator, a relation or a closing delimiter). */
+function isArgumentBoundary(src: string, pos: number): boolean {
+	const k = skipSpaces(src, pos);
+	if (k >= src.length) return true;
+	const ch = src[k]!;
+	if ("+-=<>,;:)]|".includes(ch)) return true;
+	if (UNICODE_MATH[ch] && !UNICODE_ATOMIC_VALUES.has(ch)) return true;
+	if (ch !== "\\") return false;
+	let j = k + 1;
+	while (j < src.length && /[A-Za-z]/.test(src[j]!)) j++;
+	const cmd = src.slice(k + 1, j);
+	if (cmd === "right") return true;
+	if (cmd === "" ) return src[k + 1] === "|" || src[k + 1] === "}";
+	return cmd in MATH_OPERATORS && !ATOMIC_SYMBOL_COMMANDS.has(cmd);
+}
+
+/**
+ * Read the argument of a function written without a call bracket or with one (`\log_2 8`, `\sin^{-1} x`,
+ * `\sin^{-1}(x)`). Returns its spoken form, wrapped by the usual rule, or null when the argument's extent
+ * is not clear from the notation.
+ */
+function readFunctionArgument(src: string, pos: number, depth: number): { text: string; end: number } | null {
+	const k = skipSpaces(src, pos);
+	if (k >= src.length) return null;
+	const delim = readDelimToken(src, k);
+	if (delim && delim.kind === "paren" && delim.dir === "open") {
+		const balanced = readBalancedDelimContent(src, delim.end, "paren");
+		if (!balanced) return null;
+		const inner = verbalizeLatex(balanced.content, depth + 1);
+		if (inner === null || !inner.text || inner.openEnded) return null;
+		// `\sin^{-1}(x)^2` — whether the power applies to the call or the argument is not spoken here.
+		if (src[skipSpaces(src, balanced.end)] === "^") return null;
+		const text = inner.tokens === 1 && !inner.hasComma && !inner.alreadyBracketed ? inner.text : wrapIfCompound(inner);
+		return { text, end: balanced.end };
+	}
+	let text: string;
+	let end: number;
+	const ch = src[k]!;
+	if (ch === "{") {
+		const group = readBraceGroup(src, k);
+		if (!group) return null;
+		const inner = verbalizeLatex(group.content, depth + 1);
+		if (inner === null || !inner.text || inner.openEnded) return null;
+		text = wrapIfCompound(inner);
+		end = group.end;
+	} else if (/[0-9]/.test(ch)) {
+		let j = k;
+		while (j < src.length && /[0-9.]/.test(src[j]!)) j++;
+		if (src[j - 1] === ".") return null;
+		text = src.slice(k, j);
+		end = j;
+	} else if (/[A-Za-z]/.test(ch)) {
+		text = ch;
+		end = k + 1;
+	} else if (ch === "\\") {
+		let j = k + 1;
+		while (j < src.length && /[A-Za-z]/.test(src[j]!)) j++;
+		const cmd = src.slice(k + 1, j);
+		if (!(cmd in GREEK_LETTERS)) return null;
+		text = GREEK_LETTERS[cmd]!;
+		end = j;
+	} else {
+		return null;
+	}
+	return isArgumentBoundary(src, end) ? { text, end } : null;
 }
 
 /** Convert a LaTeX math expression into spoken words, or the localised `"formula"` placeholder when unreliable or non-English. */
@@ -690,6 +810,10 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 	let hasComma = false;
 	let soleBracketed = false;
 	let leadingUnaryMinus = false;
+	// A sum/product/integral/limit whose body runs on: further additive terms make the reading ambiguous.
+	let openBigOp = false;
+	// Start (in `out`) of the function name a call bracket applies to, so `2 + f(x)^2` wraps only `f of x`.
+	let fnStart = 0;
 	const tokenState: { prev: "start" | "op" | "value" | "fn" | "fn-letter" } = { prev: "start" };
 	let i = 0;
 
@@ -701,7 +825,9 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 	) => {
 		const w = word.trim();
 		if (!w) return;
+		const prevKind = tokenState.prev;
 		if (out && !out.endsWith(" ")) out += " ";
+		if ((nextKind === "fn" || nextKind === "fn-letter") && prevKind !== "fn" && prevKind !== "fn-letter") fnStart = out.length;
 		out += w;
 		if (tokens === 0 && isBracketed) soleBracketed = true;
 		else soleBracketed = false;
@@ -728,6 +854,8 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 			if (inner === null) return null;
 			pushPart(inner.text, "value", inner.tokens, inner.alreadyBracketed);
 			if (inner.hasComma) hasComma = true;
+			// Braces are invisible: a sum inside them still runs on into what follows.
+			if (inner.openEnded) openBigOp = true;
 			i = group.end;
 			continue;
 		}
@@ -753,11 +881,14 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 						inner.tokens === 1 && !inner.hasComma && !inner.alreadyBracketed && !followedByPower
 							? inner.text
 							: wrapIfCompound(inner);
-					// If `f(x)^2`, wrap `open bracket f of x close bracket` so `^2` applies unambiguously to the call.
+					// If `f(x)^2`, wrap `open bracket f of x close bracket` so `^2` applies unambiguously to the call
+					// (only the call: `2 + f(x)^2` keeps "2 plus" outside the bracket).
 					if (followedByPower) {
-						out = `open bracket ${out} of ${argSpoken} close bracket`;
+						const head = out.slice(0, fnStart).trimEnd();
+						const call = out.slice(fnStart).trim();
+						out = `${head ? `${head} ` : ""}open bracket ${call} of ${argSpoken} close bracket`;
 						tokens += 1 + inner.tokens;
-						soleBracketed = true;
+						soleBracketed = head === "";
 						tokenState.prev = "value";
 					} else {
 						pushPart(`of ${argSpoken}`, "value", 1 + inner.tokens);
@@ -891,6 +1022,7 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 				else if (lower) pushPart(`${word} over ${lower.text} of`, "op", 2);
 				else if (upper) pushPart(`${word} to ${upper.text} of`, "op", 2);
 				else pushPart(cmd === "sum" || cmd === "prod" ? word : `${word} of`, "op", 2);
+				openBigOp = true;
 				continue;
 			}
 
@@ -905,6 +1037,7 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 				} else {
 					pushPart("limit", "op", 1);
 				}
+				openBigOp = true;
 				continue;
 			}
 
@@ -943,6 +1076,7 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 					const inner = verbalizeLatex(arg.content, depth + 1);
 					if (inner === null) return null;
 					pushPart(inner.text, cmd === "operatorname" ? "fn" : "value", inner.tokens, inner.alreadyBracketed);
+					if (inner.openEnded && cmd !== "boxed") openBigOp = true;
 				}
 				continue;
 			}
@@ -963,11 +1097,39 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 			}
 
 			if (cmd in MATH_OPERATORS) {
+				if (ADDITIVE_COMMANDS.has(cmd) && openBigOp) return null;
+				if (RELATION_COMMANDS.has(cmd)) openBigOp = false;
 				pushPart(MATH_OPERATORS[cmd]!, ATOMIC_SYMBOL_COMMANDS.has(cmd) ? "value" : "op", 1);
 				continue;
 			}
 
 			if (cmd in MATH_FUNCTIONS) {
+				const afterName = skipSpaces(src, i);
+				// `\sin^{-1} x` is the inverse function, not a reciprocal power; other named functions with `^{-1}` are "formula".
+				if (src[afterName] === "^") {
+					const power = readArg(src, afterName + 1);
+					if (power && power.content.trim() === "-1") {
+						if (!INVERSE_NAMED_FUNCTIONS.has(cmd) || hasDoubleScript(src, power.end, "^")) return null;
+						const arg = readFunctionArgument(src, power.end, depth);
+						if (!arg) return null;
+						pushPart(`inverse ${MATH_FUNCTIONS[cmd]!} of ${arg.text}`, "value", 2);
+						i = arg.end;
+						continue;
+					}
+				}
+				// `\log_2 8` is "log base 2 of 8".
+				if (cmd === "log" && src[afterName] === "_") {
+					const base = readArg(src, afterName + 1);
+					if (!base || hasDoubleScript(src, base.end, "_")) return null;
+					if (src[skipSpaces(src, base.end)] === "^") return null;
+					const baseSpoken = verbalizeLatex(base.content, depth + 1);
+					if (baseSpoken === null || !baseSpoken.text) return null;
+					const arg = readFunctionArgument(src, base.end, depth);
+					if (!arg) return null;
+					pushPart(`log base ${wrapIfCompound(baseSpoken)} of ${arg.text}`, "value", 2);
+					i = arg.end;
+					continue;
+				}
 				pushPart(MATH_FUNCTIONS[cmd]!, "fn", 1);
 				continue;
 			}
@@ -981,9 +1143,15 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 			const wasFn = tokenState.prev === "fn";
 			const arg = readArg(src, i + 1);
 			if (!arg) return null;
+			if (hasDoubleScript(src, arg.end, "^") || bareScriptRunsOn(src, i + 1, arg.end)) return null;
 			i = arg.end;
 			const rawExp = arg.content.trim();
 			if (!rawExp) return null;
+			// `f^{-1}(x)`: the inverse function applied to x. A bare `x^{-1}` stays a power.
+			if (rawExp === "-1" && tokenState.prev === "fn-letter" && nextNonSpaceChar(i) === "(") {
+				pushPart("inverse", "fn-letter", 1);
+				continue;
+			}
 			if (rawExp === "\\circ" || rawExp === "\\degree") {
 				pushPart("degrees", "value", 1);
 				continue;
@@ -1014,6 +1182,7 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 			const wasFnLetter = tokenState.prev === "fn-letter";
 			const arg = readArg(src, i + 1);
 			if (!arg) return null;
+			if (hasDoubleScript(src, arg.end, "_") || bareScriptRunsOn(src, i + 1, arg.end)) return null;
 			i = arg.end;
 			const sub = verbalizeLatex(arg.content, depth + 1);
 			if (sub === null || !sub.text) return null;
@@ -1022,12 +1191,14 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 		}
 
 		if (ch === "+") {
+			if (openBigOp) return null;
 			pushPart("plus", "op", 1);
 			i++;
 			continue;
 		}
 		if (ch === "-") {
 			if (tokenState.prev === "value" || tokenState.prev === "fn-letter") {
+				if (openBigOp) return null;
 				pushPart("minus", "op", 1);
 			} else {
 				if (tokens === 0) leadingUnaryMinus = true;
@@ -1037,16 +1208,19 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 			continue;
 		}
 		if (ch === "=") {
+			openBigOp = false;
 			pushPart("equals", "op", 1);
 			i++;
 			continue;
 		}
 		if (ch === "<") {
+			openBigOp = false;
 			pushPart("less than", "op", 1);
 			i++;
 			continue;
 		}
 		if (ch === ">") {
+			openBigOp = false;
 			pushPart("greater than", "op", 1);
 			i++;
 			continue;
@@ -1077,6 +1251,7 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 			continue;
 		}
 		if (ch === "," || ch === ";" || ch === ":") {
+			if (openBigOp) return null;
 			if (out && !out.endsWith(" ")) out += ",";
 			hasComma = true;
 			tokens += 1;
@@ -1090,6 +1265,8 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 		if (/[0-9]/.test(ch)) {
 			let j = i;
 			while (j < src.length && /[0-9.]/.test(src[j]!)) j++;
+			// `0.\overline{3}`: a trailing point before more notation would be heard as a pause.
+			if (src[j - 1] === "." && skipSpaces(src, j) < src.length) return null;
 			pushPart(src.slice(i, j), "value", 1);
 			i = j;
 			continue;
@@ -1117,12 +1294,15 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 		if (unicodeSpoken) {
 			if (ch === "−") {
 				if (tokenState.prev === "value" || tokenState.prev === "fn-letter") {
+					if (openBigOp) return null;
 					pushPart("minus", "op", 1);
 				} else {
 					if (tokens === 0) leadingUnaryMinus = true;
 					pushPart("negative", "op", 1);
 				}
 			} else {
+				if (UNICODE_ADDITIVE.has(ch) && openBigOp) return null;
+				if (UNICODE_RELATIONS.has(ch)) openBigOp = false;
 				pushPart(unicodeSpoken, UNICODE_ATOMIC_VALUES.has(ch) ? "value" : "op", 1);
 			}
 			i++;
@@ -1141,6 +1321,7 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 		tokens: effectiveTokens,
 		alreadyBracketed: soleBracketed,
 		hasComma,
+		openEnded: openBigOp,
 	};
 }
 
@@ -1251,14 +1432,14 @@ function cleanProseText(rawText: string, language: LessonLanguage): string {
 	let text = stripLinearEmphasis(rawText);
 	// Strip stray unreferenced footnote markers like [^1]
 	if (text.includes("[^")) {
-		text = text.replace(/\[\^[^\]\s]+\]/g, "");
+		text = text.replace(/\[\^[^\]\s]{1,64}\]/g, "");
 	}
 	// Handle bare scientific/math superscripts & subscripts outside $...$ (e.g. 10^{-3}, a_{n+1})
 	if (text.includes("^{")) {
-		text = text.replace(/(?<![A-Za-z0-9])([A-Za-z0-9]{1,24})\^\{([^{}]+)\}/g, (match) => latexToSpeech(match, language));
+		text = text.replace(/(?<![A-Za-z0-9])([A-Za-z0-9]{1,24})\^\{([^{}]{1,200})\}/g, (match) => latexToSpeech(match, language));
 	}
 	if (text.includes("_{")) {
-		text = text.replace(/(?<![A-Za-z0-9])([A-Za-z0-9]{1,24})_\{([^{}]+)\}/g, (match) => latexToSpeech(match, language));
+		text = text.replace(/(?<![A-Za-z0-9])([A-Za-z0-9]{1,24})_\{([^{}]{1,200})\}/g, (match) => latexToSpeech(match, language));
 	}
 	// Replace bare URLs in prose with localised link word
 	if (text.includes("://")) {
@@ -1266,7 +1447,7 @@ function cleanProseText(rawText: string, language: LessonLanguage): string {
 	}
 	// Safety net: never emit a raw LaTeX command in prose
 	if (text.includes("\\")) {
-		text = text.replace(/\\[A-Za-z]+(?:\{[^}]*\})*/g, phrases.formula);
+		text = text.replace(/\\[A-Za-z]+(?:\{[^}]{0,200}\})*/g, phrases.formula);
 	}
 	return text;
 }
@@ -1304,6 +1485,13 @@ function isFootnoteRefLink(node: Element): boolean {
 function isDetailsOpen(node: Element): boolean {
 	const props = node.properties ?? {};
 	return "open" in props && props.open !== false && props.open !== undefined;
+}
+
+/** What a `<details>` shows: everything when open, otherwise only its FIRST `<summary>` child (a browser shows no other). */
+function visibleDetailsChildren(node: Element): ElementContent[] {
+	if (isDetailsOpen(node)) return node.children;
+	const summary = node.children.find((c): c is Element => c.type === "element" && c.tagName === "summary");
+	return summary ? [summary] : [];
 }
 
 function isBlockElement(tagName: string): boolean {
@@ -1408,10 +1596,7 @@ function collectBlocksFromHast(root: Root, language: LessonLanguage): string[] {
 			return normalized;
 		}
 		if (tag === "details") {
-			const kids = isDetailsOpen(node)
-				? node.children
-				: node.children.filter((c): c is Element => c.type === "element" && c.tagName === "summary");
-			return kids.map(walkInline).join(" ");
+			return visibleDetailsChildren(node).map(walkInline).join(" ");
 		}
 		return node.children.map(walkInline).join("");
 	};
@@ -1433,10 +1618,7 @@ function collectBlocksFromHast(root: Root, language: LessonLanguage): string[] {
 		// Collapsed <details> contributes ONLY its <summary>; open <details> contributes summary + body.
 		if (tag === "details") {
 			flush();
-			const kids = isDetailsOpen(node)
-				? node.children
-				: node.children.filter((c): c is Element => c.type === "element" && c.tagName === "summary");
-			for (const child of kids) walkBlock(child);
+			for (const child of visibleDetailsChildren(node)) walkBlock(child);
 			flush();
 			return;
 		}

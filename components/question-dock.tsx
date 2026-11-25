@@ -61,7 +61,7 @@ import {
 } from "@/src/core";
 import { ConfidenceButtons } from "@/components/confidence-buttons";
 import { confidenceIndexFor, ConfidenceSlider, initialConfidenceFromDraft, stepConfidenceKey } from "@/components/confidence-slider";
-import { QuestionReadAloud } from "@/components/question-read-aloud";
+import { QuestionReadAloud, readAloudStandIn } from "@/components/question-read-aloud";
 import { useAppearance } from "@/components/settings/appearance";
 import type { PrepareBuiltinSubmission } from "./plugin-submission-adapters";
 import {
@@ -82,7 +82,9 @@ const useIsoLayoutEffect = typeof window === "undefined" ? useEffect : useLayout
 // ─── The question card's static geometry ────────────────────────────────────
 // Shared by the card's JSX and by questionCardStandIn below (answered cards
 // measure a stand-in of the question card, so both solve the same layout).
-const QC_LABEL = "mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground";
+// Fork: the label row also holds the read-aloud button (in the row, never over the question; the stand-in reserves its box).
+const QC_LABEL = "mb-1 flex items-center text-xs font-medium uppercase tracking-wide text-muted-foreground";
+const QC_LABEL_TEXT = "min-w-0 [overflow-wrap:anywhere]";
 const QC_QUESTION = "mb-3 font-medium";
 const QC_CONTEXT = "mb-3 text-sm text-muted-foreground";
 const QC_OPTION_LIST = "flex flex-col gap-2 pb-2";
@@ -130,7 +132,7 @@ export function questionCardStandIn(doc: Document, c: QuestionCardContent): { qu
 	};
 	const contents = (live: HTMLElement) => [...live.childNodes].map((n) => (n instanceof HTMLElement ? cloneWithImageSizes(n) : n.cloneNode(true)));
 	const question = el("div", "",
-		el("div", QC_LABEL, c.label + (c.multiSelect ? " · select all that apply" : "")),
+		el("div", QC_LABEL, el("span", QC_LABEL_TEXT, c.label + (c.multiSelect ? " · select all that apply" : "")), readAloudStandIn(doc)),
 		el("div", QC_QUESTION, ...contents(c.question)),
 	);
 	if (c.context) question.append(el("div", QC_CONTEXT, ...contents(c.context)));
@@ -238,6 +240,8 @@ export interface QuestionDockProps {
 	onLayout?: (layout: QuestionLayout | null) => void;
 	/** Lesson language for read-aloud voice selection. */
 	language?: LessonLanguage;
+	/** The chat the question is in (read-aloud remembers auto-read questions per chat). */
+	chatId?: string;
 	/** Override the confidence control mode (defaults to Appearance setting). */
 	confidenceControl?: ConfidenceControl;
 }
@@ -267,6 +271,7 @@ export function QuestionDock({
 	layoutRequest,
 	onLayout,
 	language,
+	chatId,
 	confidenceControl,
 }: QuestionDockProps) {
 	// The probe-phase names (owner, 2026-10-09) canonicalize onto their
@@ -335,6 +340,7 @@ export function QuestionDock({
 					layoutRequest={layoutRequest}
 					onLayout={onLayout}
 					language={language}
+					chatId={chatId}
 					confidenceControl={confidenceControl}
 				/>
 			</div>
@@ -435,6 +441,7 @@ function QuestionDockForm({
 	layoutRequest,
 	onLayout,
 	language,
+	chatId,
 	confidenceControl,
 }: Omit<QuestionDockProps, "expanded" | "onExpand" | "reveal">) {
 	const kind = toolQuestionKind(toolName);
@@ -889,6 +896,11 @@ function QuestionDockForm({
 				setKbdIdx(next);
 				if (t?.closest?.("[data-kbdrow]")) focusRow(next);
 			} else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+				// Global confidence highlight (owner, UI round 2026-10-01; the
+				// buttons since 2026-10-28): the SAME pattern as ↑/↓ over the
+				// rows — works wherever focus sits. ←/→ move the highlight over
+				// the five levels and Enter presses it. Dead on "I don't know".
+				// From unset, either arrow lands on 50 (the middle stop). (Fork: in slider mode ←/→ step the slider by 5.)
 				if (e.defaultPrevented || kind !== "quiz" || sel.dontKnow) return;
 				e.preventDefault();
 				setConf((c) => stepConfidenceKey(confidenceMode, c, e.key));
@@ -988,12 +1000,14 @@ function QuestionDockForm({
 	// The question part (label, question, context) and the answer list are
 	// shared by both arrangements; the refs feed the layout probe.
 	const questionPart = (
-		<div ref={questionPartRef} data-question-part="" className="relative">
+		<div ref={questionPartRef} data-question-part="">
 			<div className={QC_LABEL}>
-				{questionCardLabel(toolName, kind, qd.questionType)}
-				{qd.mode === "multi-select" && " · select all that apply"}
+				<span className={QC_LABEL_TEXT}>
+					{questionCardLabel(toolName, kind, qd.questionType)}
+					{qd.mode === "multi-select" && " · select all that apply"}
+				</span>
+				<QuestionReadAloud questionId={toolCallId} chatId={chatId} qd={qd} kind={kind} wordingOnly={wordingOnly} language={language} active={Boolean(active)} stopRef={stopSpeechRef} />
 			</div>
-			<QuestionReadAloud questionId={toolCallId} qd={qd} kind={kind} wordingOnly={wordingOnly} language={language} active={Boolean(active)} stopRef={stopSpeechRef} className="absolute -top-1 right-0" />
 			{/* The wording is markable for "Ask about this" (owner, 2026-11-06): the stem and the context, not the options. */}
 			<ClarifyWording messageId={messageId} callId={toolCallId} dock>
 				<div className={QC_QUESTION}>

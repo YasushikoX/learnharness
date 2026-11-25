@@ -63,14 +63,17 @@ export function confidenceColor(value: number): string {
 	return CONFIDENCE_COLORS[CONFIDENCE_COLORS.length - 1]!;
 }
 
-/** The rail's paint for a confidence value (0–100), or null while unset (empty track with stop ticks). */
-export function confidenceRailStyle(value: number | null): CSSProperties {
+/** The rail's paint for a confidence value (0–100), or null while unset (empty track with stop ticks).
+ *  `scaleMin` is the value at the rail's left end (the slider's runs 5–100), so fill and ticks sit where the thumb does. */
+export function confidenceRailStyle(value: number | null, scaleMin = 0): CSSProperties {
 	const clamped = value === null ? null : Math.max(0, Math.min(100, value));
+	const at = (v: number) => Math.max(0, Math.min(100, ((v - scaleMin) / (100 - scaleMin)) * 100));
 	const fill = clamped === null
 		? "linear-gradient(90deg, transparent 0%, transparent 100%)"
 		: (() => {
 			const color = confidenceColor(clamped);
-			return `linear-gradient(90deg, ${color} 0%, ${color} ${clamped}%, transparent ${clamped}%, transparent 100%)`;
+			const end = at(clamped);
+			return `linear-gradient(90deg, ${color} 0%, ${color} ${end}%, transparent ${end}%, transparent 100%)`;
 		})();
 	return {
 		backgroundColor: "var(--background)",
@@ -79,7 +82,7 @@ export function confidenceRailStyle(value: number | null): CSSProperties {
 			...[30, 50, 70, 90].map(() => `linear-gradient(90deg, ${RAIL_TICK}, ${RAIL_TICK})`),
 		].join(", "),
 		backgroundSize: ["100% 100%", "1px 100%", "1px 100%", "1px 100%", "1px 100%"].join(", "),
-		backgroundPosition: ["0 0", ...[30, 50, 70, 90].map((p) => `${p}% 0`)].join(", "),
+		backgroundPosition: ["0 0", ...[30, 50, 70, 90].map((p) => `${at(p)}% 0`)].join(", "),
 		backgroundRepeat: "no-repeat",
 	};
 }

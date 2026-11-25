@@ -15,7 +15,13 @@ import {
 	type SpeechUtteranceLike,
 	type SpeechVoiceLike,
 } from "../components/speech-controller.ts";
-import { clearAutoReadHistory, QuestionReadAloud, speechOptionsFromQuestion } from "../components/question-read-aloud.tsx";
+import {
+	clearAutoReadHistory,
+	QuestionReadAloud,
+	READ_ALOUD_BUTTON_BOX,
+	READ_ALOUD_SLOT,
+	speechOptionsFromQuestion,
+} from "../components/question-read-aloud.tsx";
 import { QuestionDock, questionCardStandIn } from "../components/question-dock.tsx";
 import { ToolContentResponse } from "../components/ai-elements/message.tsx";
 import { markdownToSpeech } from "../src/core/speech-text.ts";
@@ -219,12 +225,58 @@ describe("pickSpeechVoice and SpeechController", () => {
 	it("handles late-loading voices via voiceschanged", () => {
 		const mock = createMockSynthesis([]);
 		const ctl = createSpeechController({ synthesis: mock.synthesis, Utterance: mock.Utterance, cancelGapMs: 0 });
-		assert.equal(ctl.getState().status, "no-voices");
+		// Review 2 finding 5: an empty list at start is still loading, not "no voices".
+		assert.equal(ctl.getState().status, "loading");
 
 		mock.setVoices(VOICES);
 		assert.equal(ctl.getState().status, "ready");
 		assert.equal(ctl.getState().voices.length, VOICES.length);
 		ctl.dispose();
+	});
+
+	it("reports no voices only once the voice list has settled empty (review 2, finding 5)", () => {
+		// Settled by a voiceschanged that brings no voices.
+		const empty = createMockSynthesis([]);
+		const timers = createFakeTimers();
+		const ctl = createSpeechController({
+			synthesis: empty.synthesis,
+			Utterance: empty.Utterance,
+			cancelGapMs: 0,
+			scheduleTimer: timers.scheduleTimer,
+			cancelTimer: timers.cancelTimer,
+		});
+		assert.equal(ctl.getState().status, "loading");
+		assert.equal(ctl.speak(["Hello."], { language: "en" }), false);
+		assert.equal(ctl.getState().status, "loading", "a press while loading does not declare the list empty");
+		empty.setVoices([]);
+		assert.equal(ctl.getState().status, "no-voices");
+		assert.equal(timers.pending.size, 0, "the settle wait is cancelled once voiceschanged fired");
+		ctl.dispose();
+
+		// Settled by the wait running out (engines that never fire voiceschanged).
+		const silent = createMockSynthesis([]);
+		const timers2 = createFakeTimers();
+		const ctl2 = createSpeechController({
+			synthesis: silent.synthesis,
+			Utterance: silent.Utterance,
+			cancelGapMs: 0,
+			voiceSettleMs: 1234,
+			scheduleTimer: timers2.scheduleTimer,
+			cancelTimer: timers2.cancelTimer,
+		});
+		assert.equal(ctl2.getState().status, "loading");
+		assert.equal([...timers2.pending.values()][0]!.ms, 1234);
+		timers2.fireNext();
+		assert.equal(ctl2.getState().status, "no-voices");
+		ctl2.dispose();
+
+		// Voices present at start: ready at once, no wait armed.
+		const timers3 = createFakeTimers();
+		const ready = createMockSynthesis(VOICES);
+		const ctl3 = createSpeechController({ synthesis: ready.synthesis, Utterance: ready.Utterance, scheduleTimer: timers3.scheduleTimer, cancelTimer: timers3.cancelTimer });
+		assert.equal(ctl3.getState().status, "ready");
+		assert.equal(timers3.pending.size, 0);
+		ctl3.dispose();
 	});
 });
 
@@ -281,6 +333,13 @@ describe("QuestionReadAloud component", () => {
 			),
 		);
 		const btn2 = host.querySelector<HTMLButtonElement>('[data-testid="question-read-aloud"]')!;
+		// While the voice list loads the button waits, and no "no voices" reason flashes (review 2, finding 5).
+		assert.equal(btn2.disabled, true);
+		assert.equal(btn2.dataset.speechStatus, "loading");
+		assert.equal(host.querySelector('[data-testid="question-read-aloud-reason"]'), null);
+		assert.equal(btn2.getAttribute("aria-describedby"), null);
+		// The list settles empty: now the reason shows.
+		await act(async () => noVoices.setVoices([]));
 		const reason2 = host.querySelector<HTMLElement>('[data-testid="question-read-aloud-reason"]')!;
 		assert.equal(btn2.disabled, true);
 		assert.match(reason2.textContent ?? "", /no system speech voices/i);
@@ -322,20 +381,23 @@ describe("QuestionReadAloud component", () => {
 		const btn = () => host.querySelector<HTMLButtonElement>('[data-testid="question-read-aloud"]')!;
 		assert.equal(btn().disabled, false);
 		assert.equal(btn().getAttribute("aria-pressed"), null);
-		assert.equal(btn().getAttribute("aria-label"), "Read question aloud");
+		assert.equal(btn().getAttribute("aria-label"), "Read aloud the question");
 		assert.equal(btn().textContent, "Read aloud");
+		// Review 2 finding 9: the accessible name starts with the visible text (voice control: "click Read aloud").
+		assert.ok(btn().getAttribute("aria-label")!.startsWith(btn().textContent!));
 
 		// Click starts speaking
 		await act(async () => btn().click());
 		assert.equal(btn().getAttribute("aria-pressed"), null);
-		assert.equal(btn().getAttribute("aria-label"), "Stop reading question");
+		assert.equal(btn().getAttribute("aria-label"), "Stop reading the question");
+		assert.ok(btn().getAttribute("aria-label")!.startsWith(btn().textContent!));
 		assert.equal(btn().textContent, "Stop");
 		assert.equal(mock.spoken[0]!.text, "Question q1?");
 		assert.equal(mock.spoken[0]!.rate, 1.5);
 
 		// Watchdog firing returns button cleanly to Read aloud (never stuck on Stop)
 		await act(async () => { timers.fireNext(); });
-		assert.equal(btn().getAttribute("aria-label"), "Read question aloud");
+		assert.equal(btn().getAttribute("aria-label"), "Read aloud the question");
 		assert.equal(btn().textContent, "Read aloud");
 
 		// Keyboard shortcut starts speaking again, then stops
@@ -423,6 +485,55 @@ describe("QuestionReadAloud component", () => {
 		await renderQ("q-auto-2", true);
 		assert.equal(mock.spoken.length, countAfterFinish + 1);
 		assert.equal(mock.spoken[mock.spoken.length - 1]!.text, "Stem q-auto-2.");
+	});
+
+	it("remembers auto-read questions per chat, since tool call ids repeat across chats (review 2, finding 3)", async () => {
+		const mock = createMockSynthesis(VOICES);
+		const renderIn = async (chatId: string, stem: string) => {
+			await act(async () =>
+				root.render(
+					<QuestionReadAloud
+						key={chatId}
+						chatId={chatId}
+						questionId="call_0"
+						question={stem}
+						active
+						settingsOverride={{ autoRead: true, rate: 1, voice: null }}
+						controllerDeps={{ synthesis: mock.synthesis, Utterance: mock.Utterance, cancelGapMs: 0 }}
+					/>,
+				),
+			);
+		};
+		await renderIn("chat-a", "Question in chat A.");
+		assert.deepEqual(mock.spoken.map((u) => u.text), ["Question in chat A."]);
+		// Same call id, another chat: a new question, read once.
+		await renderIn("chat-b", "Question in chat B.");
+		assert.deepEqual(mock.spoken.map((u) => u.text), ["Question in chat A.", "Question in chat B."]);
+		// Back in chat A (remount): not read again.
+		await renderIn("chat-a", "Question in chat A.");
+		assert.equal(mock.spoken.length, 2);
+	});
+
+	it("disables only the button when the speech text cannot be built (review 2 concern)", async () => {
+		const mock = createMockSynthesis(VOICES);
+		// Deep enough nesting to overflow the parser's stack.
+		const deep = "<div>".repeat(5_000) + "x" + "</div>".repeat(5_000);
+		await act(async () =>
+			root.render(
+				<QuestionReadAloud
+					questionId="q-deep"
+					question={deep}
+					active
+					settingsOverride={{ autoRead: true, rate: 1, voice: null }}
+					controllerDeps={{ synthesis: mock.synthesis, Utterance: mock.Utterance, cancelGapMs: 0 }}
+				/>,
+			),
+		);
+		const btn = host.querySelector<HTMLButtonElement>('[data-testid="question-read-aloud"]')!;
+		assert.ok(btn, "the control still renders");
+		assert.equal(btn.disabled, true);
+		assert.match(host.querySelector('[data-testid="question-read-aloud-reason"]')?.textContent ?? "", /cannot be read aloud/);
+		assert.equal(mock.spoken.length, 0, "auto-read does not fire");
 	});
 });
 
@@ -627,7 +738,7 @@ describe("QuestionDock read-aloud privacy, layout parity, and submit cancellatio
 		assert.ok(mock.cancels > cancelsBeforeSubmit, "submitting cancels active speech");
 	});
 
-	it("keeps the pending question part's label row and flow height identical to questionCardStandIn (Item 8)", async () => {
+	it("keeps the pending question part's label row identical to questionCardStandIn, on mouse and touch (Item 8, review 2 finding 5)", async () => {
 		const mock = createMockSynthesis(VOICES);
 		Object.defineProperty(window, "speechSynthesis", { configurable: true, value: mock.synthesis });
 		Object.defineProperty(window, "SpeechSynthesisUtterance", { configurable: true, value: mock.Utterance });
@@ -637,6 +748,7 @@ describe("QuestionDock read-aloud privacy, layout parity, and submit cancellatio
 			options: [{ label: "3" }, { label: "4" }],
 			correctAnswer: "4",
 			explanation: "2 + 2 equals 4.",
+			multiSelect: true,
 		};
 
 		await act(async () =>
@@ -659,21 +771,68 @@ describe("QuestionDock read-aloud privacy, layout parity, and submit cancellatio
 		const standIn = questionCardStandIn(document as unknown as Document, {
 			label: "Check",
 			kind: "quiz",
-			multiSelect: false,
+			multiSelect: true,
 			question: live("<p>What is 2 + 2?</p>"),
 			context: null,
 			options: [live("<p>3</p>"), live("<p>4</p>")],
 		});
 
-		// Pending label row keeps the exact same class as questionCardStandIn (no flex / button height inflation)
 		const pendingLabel = questionPart.firstElementChild as HTMLElement;
 		const standInLabel = standIn.question.firstElementChild as HTMLElement;
+		// Same row, same label text element.
 		assert.equal(pendingLabel.className, standInLabel.className);
-		assert.equal(pendingLabel.querySelector('[data-testid="question-read-aloud"]'), null);
+		assert.equal(pendingLabel.children.length, 2);
+		assert.equal(standInLabel.children.length, 2);
+		const [pendingText, pendingSlot] = [...pendingLabel.children] as HTMLElement[];
+		const [standInText, standInSlot] = [...standInLabel.children] as HTMLElement[];
+		assert.equal(pendingText!.className, standInText!.className);
+		assert.equal(pendingText!.textContent, standInText!.textContent);
+		assert.equal(pendingText!.textContent, "Check · select all that apply");
 
-		// The read-aloud control sits out of normal flow (absolute) so it does not change [data-question-part] height
-		const readAloudWrapper = host.querySelector<HTMLElement>('[data-testid="question-read-aloud"]')!.parentElement!;
-		assert.ok(readAloudWrapper.classList.contains("absolute"), "read-aloud control must be out of normal document flow");
+		// The button sits IN the row (never positioned over the question or the label) ...
+		assert.equal(questionPart.querySelector(".absolute"), null);
+		assert.ok(!questionPart.className.includes("relative"));
+		const button = pendingSlot!.querySelector<HTMLButtonElement>('[data-testid="question-read-aloud"]');
+		assert.ok(button !== null, "the read-aloud button is in the label row");
+		// ... in a slot the stand-in reserves with the same box. The box has a fixed width and carries the touch class in
+		// both, so on a coarse pointer (44 px floor) the pending row and the stand-in grow the same way.
+		assert.equal(pendingSlot!.className, READ_ALOUD_SLOT);
+		assert.equal(standInSlot!.className, READ_ALOUD_SLOT);
+		const placeholder = standInSlot!.firstElementChild as HTMLElement;
+		const boxClasses = READ_ALOUD_BUTTON_BOX.split(" ");
+		assert.deepEqual([...placeholder.classList].sort(), [...boxClasses, "invisible"].sort());
+		for (const cls of boxClasses) assert.ok(button!.classList.contains(cls), `button keeps box class ${cls}`);
+		assert.ok(boxClasses.includes("lh-touch"));
+		assert.ok(boxClasses.some((c) => /^w-\[[0-9.]+em\]$/.test(c)), "fixed width: the label (Read aloud / Stop) never changes it");
+		// Classes beyond the box only paint (colour, cursor, transition), never size.
+		for (const cls of [...button!.classList].filter((c) => !boxClasses.includes(c))) {
+			assert.match(cls, /^(transition-colors|cursor-|text-|bg-|hover:)/, `button class ${cls} must not change its size`);
+		}
+		// The stand-in adds no text (answered-card-layout pins the stand-in's text).
+		assert.equal(standInSlot!.textContent, "");
+	});
+
+	it("keeps the disabled reason from widening or heightening the label row (review 2, finding 5)", async () => {
+		await act(async () =>
+			root.render(
+				<QuestionDock
+					toolName="quiz"
+					toolCallId="layout-parity-q2"
+					input={{ question: "Q?", options: [{ label: "a" }, { label: "b" }], correctAnswer: "a", explanation: "e" } as never}
+					expanded
+					dictationClaim={false}
+					onExpand={() => {}}
+					onSubmit={() => {}}
+				/>,
+			),
+		);
+		// No speechSynthesis on this window: unsupported, so the reason shows.
+		const row = host.querySelector<HTMLElement>('[data-question-part]')!.firstElementChild as HTMLElement;
+		const reason = row.querySelector<HTMLElement>('[data-testid="question-read-aloud-reason"]')!;
+		assert.ok(reason);
+		assert.equal(reason.parentElement, row, "the reason is an item of the label row");
+		for (const cls of ["w-0", "min-w-0", "flex-1", "truncate"]) assert.ok(reason.classList.contains(cls), `reason has ${cls}`);
+		assert.equal(reason.getAttribute("title"), reason.textContent);
 	});
 
 	it("builds speech options inside question-read-aloud with displayed letters and hides quiz descriptions (Item 9)", () => {

@@ -33,7 +33,7 @@ const { CONFIDENCE_STOPS, parseExplainInput, resolveTheme } = await import("../s
 const { placementGraderPrompt } = await import("../src/agent/subagents/placement-grader.ts");
 const { AppearanceProvider, resolveAppearance, useAppearance } = await import("../components/settings/appearance.tsx");
 const { CONFIDENCE_COLORS, confidenceColor, confidenceRailStyle } = await import("../components/confidence-rail.tsx");
-const { clampConfidenceStep, CONFIDENCE_SLIDER_MIN } = await import("../components/confidence-slider.tsx");
+const { clampConfidenceStep, CONFIDENCE_SLIDER_MIN, ConfidenceSlider, sliderFraction } = await import("../components/confidence-slider.tsx");
 const { QuestionDock } = await import("../components/question-dock.tsx");
 const { PracticeDock } = await import("../components/practice-dock.tsx");
 const { AnsweredCard } = await import("../components/answered-card.tsx");
@@ -68,6 +68,34 @@ describe("confidenceColor and confidenceRailStyle", () => {
 		assert.match(String(unsetStyle.backgroundImage), /transparent 0%, transparent 100%/);
 		const setStyle = confidenceRailStyle(65);
 		assert.match(String(setStyle.backgroundImage), /65%/);
+	});
+});
+
+describe("ConfidenceSlider drawing (review 2, finding 8)", () => {
+	it("draws the thumb and the rail fill where the native 5–100 range thumb sits", () => {
+		assert.equal(sliderFraction(5), 0);
+		assert.equal(sliderFraction(100), 1);
+		assert.equal(sliderFraction(52.5), 0.5);
+		const thumbLeft = (value: number | null) => {
+			const html = renderToStaticMarkup(<ConfidenceSlider value={value} onChange={() => {}} />);
+			return /left:calc\(8px \+ \(100% - 16px\) \* ([0-9.e-]+)\)/.exec(html)?.[1];
+		};
+		// At the minimum the drawn thumb is at the left end, like the native one (was 5/100 of the rail to the right).
+		assert.equal(thumbLeft(5), "0");
+		assert.equal(thumbLeft(100), "1");
+		assert.equal(Number(thumbLeft(50)), 45 / 95);
+		// Unset shows the thumb at the 50 start, also on the 5–100 scale.
+		assert.equal(Number(thumbLeft(null)), 45 / 95);
+
+		// The rail's fill ends at the thumb, and its stop ticks sit where those values are on the slider.
+		const at = (v: number) => ((v - 5) / 95) * 100;
+		const rail = confidenceRailStyle(5, CONFIDENCE_SLIDER_MIN);
+		assert.match(String(rail.backgroundImage), / 0%, transparent 0%/);
+		const rail50 = confidenceRailStyle(50, CONFIDENCE_SLIDER_MIN);
+		assert.ok(String(rail50.backgroundImage).includes(`${at(50)}%`));
+		assert.equal(rail50.backgroundPosition, ["0 0", ...[30, 50, 70, 90].map((p) => `${at(p)}% 0`)].join(", "));
+		// The static rail (0–100) is unchanged.
+		assert.equal(confidenceRailStyle(50).backgroundPosition, "0 0, 30% 0, 50% 0, 70% 0, 90% 0");
 	});
 });
 

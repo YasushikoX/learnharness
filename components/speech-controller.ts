@@ -58,12 +58,18 @@ export interface SpeechControllerDeps {
 	watchdogMinMs?: number;
 	/** Extra watchdog budget per character at 1× rate in ms (default 150 ms). */
 	watchdogMsPerChar?: number;
+	/**
+	 * How long to wait for a first `voiceschanged` before an empty voice list counts as "no voices"
+	 * (default 2000 ms). Chromium fills the list asynchronously, so an empty list at start means "loading".
+	 */
+	voiceSettleMs?: number;
 	/** Optional timer hooks for deterministic tests. */
 	scheduleTimer?: (fn: () => void, ms: number) => unknown;
 	cancelTimer?: (handle: unknown) => void;
 }
 
-export type SpeechStatus = "ready" | "unsupported" | "no-voices";
+/** `loading`: supported, but the voice list is empty and has not settled yet (Chromium loads it asynchronously). */
+export type SpeechStatus = "ready" | "unsupported" | "loading" | "no-voices";
 
 export interface SpeechState {
 	status: SpeechStatus;
@@ -92,6 +98,7 @@ export const DEFAULT_CANCEL_GAP_MS = 40;
 export const DEFAULT_WATCHDOG_MIN_MS = 8_000;
 export const DEFAULT_WATCHDOG_MS_PER_CHAR = 150;
 export const DEFAULT_WATCHDOG_MAX_MS = 120_000;
+export const DEFAULT_VOICE_SETTLE_MS = 2_000;
 
 const LANGUAGE_PREFIXES: Readonly<Record<LessonLanguage, readonly string[]>> = {
 	en: ["en"],
@@ -209,6 +216,7 @@ export function createSpeechController(deps?: SpeechControllerDeps): SpeechContr
 	const cancelGapMs = deps?.cancelGapMs ?? DEFAULT_CANCEL_GAP_MS;
 	const watchdogMinMs = deps?.watchdogMinMs ?? DEFAULT_WATCHDOG_MIN_MS;
 	const watchdogMsPerChar = deps?.watchdogMsPerChar ?? DEFAULT_WATCHDOG_MS_PER_CHAR;
+	const voiceSettleMs = deps?.voiceSettleMs ?? DEFAULT_VOICE_SETTLE_MS;
 	const scheduleTimer = deps?.scheduleTimer ?? ((fn: () => void, ms: number) => globalThis.setTimeout(fn, ms));
 	const cancelTimer = deps?.cancelTimer ?? ((handle: unknown) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>));
 
@@ -219,6 +227,7 @@ export function createSpeechController(deps?: SpeechControllerDeps): SpeechContr
 	let activeUtterance: SpeechUtteranceLike | null = null;
 	let gapTimer: unknown = null;
 	let watchdogTimer: unknown = null;
+	let settleTimer: unknown = null;
 
 	const clearGapTimer = () => {
 		if (gapTimer !== null) {
@@ -243,12 +252,16 @@ export function createSpeechController(deps?: SpeechControllerDeps): SpeechContr
 		}
 	};
 
-	const computeStatus = (voices: readonly SpeechVoiceLike[]): SpeechStatus => {
+	let voices = readVoices();
+	// The voice list has settled once it was non-empty, `voiceschanged` fired, or the settle wait ran out.
+	let voicesSettled = voices.length > 0;
+
+	const computeStatus = (list: readonly SpeechVoiceLike[]): SpeechStatus => {
 		if (!supported) return "unsupported";
-		return voices.length > 0 ? "ready" : "no-voices";
+		if (list.length > 0) return "ready";
+		return voicesSettled ? "no-voices" : "loading";
 	};
 
-	let voices = readVoices();
 	let state: SpeechState = {
 		status: computeStatus(voices),
 		speaking: false,
@@ -264,11 +277,27 @@ export function createSpeechController(deps?: SpeechControllerDeps): SpeechContr
 		emit();
 	};
 
+	const clearSettleTimer = () => {
+		if (settleTimer !== null) {
+			cancelTimer(settleTimer);
+			settleTimer = null;
+		}
+	};
+
 	const refreshVoices = () => {
 		if (disposed || !supported) return;
+		voicesSettled = true;
+		clearSettleTimer();
 		voices = readVoices();
 		setState({ voices, status: computeStatus(voices) });
 	};
+
+	if (supported && !voicesSettled) {
+		settleTimer = scheduleTimer(() => {
+			settleTimer = null;
+			refreshVoices();
+		}, voiceSettleMs);
+	}
 
 	const onVoicesChanged = () => refreshVoices();
 	let boundPropertyHandler = false;
@@ -400,6 +429,7 @@ export function createSpeechController(deps?: SpeechControllerDeps): SpeechContr
 	const dispose = () => {
 		if (disposed) return;
 		stop();
+		clearSettleTimer();
 		disposed = true;
 		if (supported) {
 			if (typeof synthesis.removeEventListener === "function") {
