@@ -34,7 +34,7 @@ export default function UpdateBanner() {
 			<Button
 				type="button"
 				onClick={() => window.lh?.installUpdate?.()}
-				className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent/80"
+				size="sm"
 			>
 				Restart
 			</Button>
@@ -42,7 +42,9 @@ export default function UpdateBanner() {
 				type="button"
 				aria-label="Dismiss update notification"
 				onClick={() => setDismissedVersion(ready.version)}
-				className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				variant="ghost"
+				size="icon-sm"
+				className="text-muted-foreground hover:text-foreground"
 			>
 				<XIcon className="size-4" aria-hidden="true" />
 			</Button>

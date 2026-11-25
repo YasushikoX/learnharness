@@ -127,10 +127,10 @@ export function GraphFolderFilterControl({ organization, listed, selected, onCha
 						setOpen(!open);
 					}}
 					className={cn(
-						"flex h-8 items-center gap-1.5 rounded-md transition-colors hover:bg-raised",
+						"gap-1.5 font-normal",
 						activeCount > 0
-							? "border border-input bg-card px-2.5 text-foreground shadow-(--lh-shadow-pop) backdrop-blur"
-							: cn("w-[38px] justify-center", open ? "text-foreground" : "text-muted-foreground hover:text-foreground"),
+							? "border border-input bg-card px-2.5 text-foreground"
+							: cn("w-8 px-0", open ? "text-foreground" : "text-muted-foreground hover:text-foreground"),
 					)}
 				>
 					<FunnelIcon aria-hidden="true" className={cn("size-4 shrink-0", activeCount > 0 && "text-primary")} />
@@ -141,16 +141,16 @@ export function GraphFolderFilterControl({ organization, listed, selected, onCha
 			</Hint>
 			{open && (
 				<div ref={panelRef} role="group" aria-label="Show folders" tabIndex={-1} data-testid="graph-folder-filter-panel" style={{ zIndex: INTERACTION_LAYER_Z_BASE + popupLayer.order }}
-					className="absolute left-0 top-full mt-2 flex max-h-[60vh] w-64 flex-col rounded-xl border bg-card/85 p-2 shadow-lg backdrop-blur">
-					<div className="mb-1 flex items-center justify-between gap-2 px-2">
+					className="lh-popover absolute left-0 top-full mt-2 flex max-h-[60vh] w-64 flex-col p-1">
+					<div className="mb-1 flex h-7 items-center justify-between gap-2 px-2">
 						<span className="lh-eyebrow text-muted-foreground">Show folders</span>
 						{activeCount > 0 && (
-							<Button type="button" variant="ghost" data-testid="graph-folder-filter-clear" data-folder-filter-control onClick={() => {
+							<Button type="button" variant="ghost" size="xs" data-testid="graph-folder-filter-clear" data-folder-filter-control onClick={() => {
 								// This button disappears once cleared; keep focus inside the popup.
 								(panelRef.current?.querySelector<HTMLElement>("input[data-folder-filter-control]") ?? panelRef.current)?.focus();
 								onChange(new Set());
 							}}
-								className="text-xs text-muted-foreground transition-colors hover:text-foreground">Show all</Button>
+								className="-mr-1 font-normal text-muted-foreground hover:text-foreground">Show all</Button>
 						)}
 					</div>
 					<div className="overflow-y-auto">

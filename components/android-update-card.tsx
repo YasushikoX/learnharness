@@ -42,14 +42,14 @@ export function AndroidUpdateNotice({ onNotNow, onUpdate }: { onNotNow: () => vo
 		>
 			<span className="font-medium">A new version of LearnHarness is ready</span>
 			<p className="mt-1 text-xs text-muted-foreground">
-					It downloads over Wi-Fi, in one go. Android may ask you to confirm installing the app, and the app restarts when it is done.
-				</p>
-			<div className="mt-2.5 flex flex-wrap items-center gap-2">
+				It downloads over Wi-Fi, in one go. Android may ask you to confirm installing the app, and the app restarts when it is done.
+			</p>
+			<div className="mt-3 flex flex-wrap items-center gap-2">
 				<Button
 					type="button"
 					data-testid="android-update-start"
 					onClick={onUpdate}
-					className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent/80"
+					size="sm"
 				>
 					Update
 				</Button>
@@ -57,7 +57,8 @@ export function AndroidUpdateNotice({ onNotNow, onUpdate }: { onNotNow: () => vo
 					type="button"
 					data-testid="android-update-later"
 					onClick={onNotNow}
-					className="rounded-md border border-border px-3 py-1.5 text-sm transition-colors hover:bg-accent/50"
+					variant="secondary"
+					size="sm"
 				>
 					Not now
 				</Button>
