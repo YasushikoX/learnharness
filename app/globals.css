@@ -861,35 +861,36 @@ html.lh-native-ink body > *:not([data-testid="sketch-view"]) {
 	}
 }
 
-/* Settings dialog pop (settings-app wave, 2026-09-20): a short fade +
-   2% settle-scale — understated by design, the app's motion taste
-   (200ms sidebar, 150ms here); honors reduced-motion by appearing. */
-@keyframes settings-pop {
-	from {
-		opacity: 0;
-		scale: 0.98;
+.lh-settings-frame {
+	background: var(--background);
+}
+.lh-settings-list > :not(.lh-settings-row, .lh-settings-row-group, [hidden]) {
+	padding: 0.5rem 1rem;
+}
+.lh-settings-list > :not([hidden]) ~ :not([hidden]),
+.lh-settings-list-dividers > :not([hidden]) ~ :not([hidden]) {
+	border-top: 1px solid var(--border);
+}
+@media (width >= 40rem) {
+	.lh-settings-colors > :nth-child(2) {
+		border-top: 0;
 	}
-	to {
-		opacity: 1;
-		scale: 1;
+	.lh-settings-colors > :nth-child(even) {
+		border-inline-start: 1px solid var(--border);
 	}
 }
-
-.settings-dialog-pop {
-	animation: settings-pop var(--lh-duration-pop) var(--lh-ease);
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.settings-dialog-pop {
-		animation: none;
+@media (width < 64rem) {
+	.lh-settings-frame {
+		border: 0;
+		border-radius: 0;
+		box-shadow: none;
 	}
 }
 
 /* Graph chrome fade-in (empty-graph chrome wave, owner 2026-09-25): the
    search + settings controls appear ONCE, as the first nodes land —
    Import Notes always renders (the empty graph's entry point), the other
-   two mount only when the snapshot has nodes. Same understated register
-   as settings-pop (a plain fade); reduced-motion appears instantly. */
+   two mount only when the snapshot has nodes. Reduced motion appears instantly. */
 @keyframes chrome-fade-in {
 	from {
 		opacity: 0;

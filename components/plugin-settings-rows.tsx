@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { PluginSettingsRow, PluginSettingsSchema } from "@/src/core";
-import { CommitInput, SettingsRow, SettingsSlider, ThinSelect, Toggle } from "@/components/settings/controls";
+import { CommitInput, SettingsList, SettingsRow, SettingsSlider, ThinSelect, Toggle } from "@/components/settings/controls";
 
 function SchemaRow({ row, onError }: { row: PluginSettingsRow; onError?: (error: unknown) => void }) {
 	const [error, setError] = useState<string>();
@@ -47,13 +47,13 @@ function SchemaRow({ row, onError }: { row: PluginSettingsRow; onError?: (error:
 		case "number": control = <CommitInput ariaLabel={row.label} type="number" value={String(row.value)} min={row.min} max={row.max} step={row.step} disabled={disabled} onCommit={(value) => change(value.trim() ? Number(value) : NaN)} />; break;
 		case "text": control = <CommitInput ariaLabel={row.label} value={row.value} disabled={disabled} onCommit={(value) => change(value)} />; break;
 	}
-	return <div data-plugin-setting={row.key}>
+	return <div className="lh-settings-row-group" data-plugin-setting={row.key}>
 		<SettingsRow label={row.label} hint={row.description} dimmed={disabled}>{control}</SettingsRow>
-		{error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+		{error && <p role="alert" className="px-4 pb-2 text-sm text-destructive">{error}</p>}
 	</div>;
 }
 
 /** Shared by imperative ctx.ui mounts and the host's declarative settings pages. */
 export function PluginSettingsRows({ schema, onError }: { schema: PluginSettingsSchema; onError?: (error: unknown) => void }) {
-	return <div className="flex flex-col gap-2">{schema.rows.map((row) => <SchemaRow key={row.key} row={row} onError={onError} />)}</div>;
+	return <SettingsList>{schema.rows.map((row) => <SchemaRow key={row.key} row={row} onError={onError} />)}</SettingsList>;
 }

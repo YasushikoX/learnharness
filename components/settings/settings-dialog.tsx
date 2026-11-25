@@ -9,9 +9,7 @@
  *   appearance edits restyle the chat LIVE behind the dialog). Escape,
  *   backdrop, and ✕ all close. Modal-only — /settings redirects, so
  *   nothing links into a dead surface.
- * - Left section nav in the app's mono chrome, with small decorative
- *   Lucide icons for the built-in sections; active = bg-accent. Icons
- *   inherit the row's color, without a separate palette.
+ * - Left section nav uses the application's chrome and Lucide icons.
  * - The dialog is surface-agnostic by construction: the sections talk to
  *   /api/settings* and localStorage only, so this shell can be re-mounted
  *   as a true OS window in the Electron round with near-zero churn.
@@ -39,7 +37,7 @@ import {
 	type ReactNode,
 	type RefObject,
 } from "react";
-import { BotIcon, FileTextIcon, GraduationCapIcon, KeyIcon, KeyboardIcon, MicIcon, PaletteIcon, PlugIcon, PuzzleIcon, RefreshCwIcon, SettingsIcon, WaypointsIcon, type LucideIcon } from "lucide-react";
+import { BotIcon, ChevronLeft, ChevronRight, FileTextIcon, GraduationCapIcon, KeyIcon, KeyboardIcon, MicIcon, PaletteIcon, PlugIcon, PuzzleIcon, RefreshCwIcon, SettingsIcon, WaypointsIcon, X, type LucideIcon } from "lucide-react";
 import { HostDialog } from "@/components/host-dialog";
 import { useInteractionLayers, type CloseOutcome, type CloseReason } from "@/components/interaction-layers";
 import {
@@ -50,7 +48,9 @@ import {
 	type UserSettings,
 } from "@/src/core";
 import { useAppearance } from "./appearance.tsx";
-import { SettingsSection } from "./controls.tsx";
+import { SettingsGroup, SettingsList, SettingsSection } from "./controls.tsx";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { UpdateSettings } from "./update-settings.tsx";
 import { AgentSection, composePromptSwitch } from "./agent-section.tsx";
 import type { ModelsSettings } from "@/src/core";
@@ -449,29 +449,28 @@ export function SettingsDialogBody({
 			className={
 					// Below 1024px (M5, the sidebar drawer's line) the dialog IS the
 					// screen: edge to edge, padded by the safe-area insets.
-					// It grows with the screen up to 1120x800, keeping a margin (owner, 2026-11-16: 920x620 left a tablet's room unused).
-					"settings-dialog-pop flex h-[min(800px,calc(100vh-4rem))] w-[min(1120px,90vw)] flex-col overflow-hidden lh-dialog " +
-					"max-lg:h-full max-lg:max-h-none max-lg:w-full max-lg:max-w-none max-lg:rounded-none max-lg:border-0 max-lg:shadow-none " +
+					// It grows with the screen up to 1120x800, keeping a margin.
+					"lh-dialog lh-settings-frame flex h-[min(800px,calc(100vh-4rem))] w-[min(1120px,90vw)] flex-col overflow-hidden " +
+					"max-lg:h-full max-lg:w-full " +
 					"max-lg:pb-[var(--lh-safe-bottom)] max-lg:pl-[var(--lh-safe-left)] max-lg:pr-[var(--lh-safe-right)] max-lg:pt-[var(--lh-safe-top)]"
 				}
 			onClick={(e) => e.stopPropagation()}
 		>
-			{/* Header — the app's quiet CMU title language. */}
-			<header className="flex h-15 shrink-0 items-center gap-3 border-b border-border px-5">
+			<header className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4">
 				{view === "page" && (
-					<button
+					<Button
 						type="button"
+						variant="ghost"
+						size="icon"
 						aria-label="Back to settings"
 						data-testid="settings-back"
 						onClick={() => setView("list")}
-						className="lh-touch -ml-3 flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground lg:hidden"
+						className="lh-hit -ml-1 text-muted-foreground hover:text-foreground lg:hidden"
 					>
-						<svg viewBox="0 0 16 16" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-							<path d="M10 3L5 8l5 5" />
-						</svg>
-					</button>
+						<ChevronLeft aria-hidden strokeWidth={1.75} />
+					</Button>
 				)}
-				<h2 className="lh-page-title">
+				<h2 className="lh-section-title min-w-0 truncate">
 					{view === "page" ? (
 						<>
 							<span className="lg:hidden">{navSections.find((s) => s.id === selected)?.label}</span>
@@ -487,53 +486,35 @@ export function SettingsDialogBody({
 						binding="escape"
 						side="left"
 					>
-						<button
-					type="button"
-					aria-label="Close settings"
-					data-testid="settings-close"
-					className="ml-auto size-7 rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground [@media(pointer:coarse)]:size-11"
-					onClick={onClose}
-				>
-					<svg
-						viewBox="0 0 16 16"
-						className="mx-auto size-3.5"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="1.5"
-					>
-						<path d="M4 4l8 8M12 4l-8 8" />
-					</svg>
-				</button>
+						<Button type="button" variant="ghost" size="icon" aria-label="Close settings" data-testid="settings-close"
+							className="lh-hit ml-auto text-muted-foreground hover:text-foreground" onClick={onClose}>
+							<X aria-hidden strokeWidth={1.75} />
+						</Button>
 					</Hint>
 			</header>
 
 			<div className="flex min-h-0 flex-1 max-lg:flex-col">
-				{/* Left nav — mono labels and theme-inherited decorative icons,
-					    active = bg-accent. */}
 				<nav
 					aria-label="Settings sections"
 					data-testid="settings-nav"
 					// Below 1024px the left nav gives way to the category list (settings-list) and one category's page.
-					className="flex min-h-0 w-48 shrink-0 flex-col gap-1 overflow-y-auto border-r border-border p-2 max-lg:hidden"
+					className="flex min-h-0 w-48 shrink-0 flex-col gap-1 overflow-y-auto border-r border-border bg-sidebar-fill p-3 max-lg:hidden"
 				>
 					{navSections.map((s, index) => (
 						<div key={s.id} className="shrink-0">
 							{index === SECTIONS.length && <hr className="my-2 border-border" />}
-							<button
+							<Button
 								type="button"
+								variant="ghost"
 								data-testid={`settings-nav-${s.id}`}
 								aria-current={selected === s.id}
-								className={`flex w-full items-center gap-2 break-words rounded-sm px-3 py-1.5 text-left font-ui text-sm transition-colors [@media(pointer:coarse)]:py-2.5 ${
-									selected === s.id
-										? "bg-accent text-foreground"
-										: "text-muted-foreground hover:bg-accent hover:text-foreground"
-								}`}
+								className={cn("lh-hit w-full justify-start px-2 text-left", selected === s.id ? "bg-raised" : "text-muted-foreground hover:text-foreground", !s.icon && "pl-8")}
 								onClick={() => setActive(s.id)}
 							>
-								{s.icon && <s.icon aria-hidden="true" focusable="false" className="size-3.5 shrink-0" />}
-								<span className="min-w-0">{s.label}</span>
-							</button>
-							{s.id === "plugins" && <hr className="my-2 border-border" />}
+								{s.icon && <s.icon aria-hidden focusable="false" strokeWidth={1.75} className={cn("size-4 shrink-0", selected === s.id && "text-ring")} />}
+								<span className="min-w-0 truncate">{s.label}</span>
+							</Button>
+							{s.id === "plugins" && enabledPlugins.length > 0 && <hr className="my-2 border-border" />}
 						</div>
 					))}
 				</nav>
@@ -542,29 +523,28 @@ export function SettingsDialogBody({
 				    one-line description; a tap opens that category's page, the back arrow returns. */}
 				{view === "list" && (
 					<nav aria-label="Settings categories" data-testid="settings-list" className="min-h-0 flex-1 overflow-y-auto p-3 lg:hidden">
-						<ul className="flex flex-col gap-2">
+						<SettingsList className="mx-auto max-w-[720px]">
 							{navSections.map((s) => (
-								<li key={s.id}>
-									<button
+								<div key={s.id} className="lh-settings-row-group">
+									<Button
 										type="button"
+										variant="ghost"
 										data-testid={`settings-list-${s.id}`}
 										onClick={() => {
 											setActive(s.id);
 											setView("page");
 										}}
-										className="lh-touch lh-press flex min-h-14 w-full items-center gap-3 rounded-lg bg-accent/60 px-4 py-3 text-left transition-colors hover:bg-accent"
+										className="h-auto min-h-12 w-full justify-between gap-3 px-4 py-2 text-left whitespace-normal"
 									>
 										<span className="min-w-0 flex-1">
-											<span className="block font-ui text-sm text-foreground">{s.label}</span>
-											{s.summary && <span className="block text-xs text-muted-foreground">{s.summary}</span>}
+											<span className="block text-body font-medium">{s.label}</span>
+											{s.summary && <span className="block text-sm/5 font-normal text-muted-foreground">{s.summary}</span>}
 										</span>
-										<svg viewBox="0 0 16 16" aria-hidden className="size-4 shrink-0 text-muted-foreground" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-											<path d="M6 3l5 5-5 5" />
-										</svg>
-									</button>
-								</li>
+										<ChevronRight aria-hidden strokeWidth={1.75} className="text-muted-foreground" />
+									</Button>
+								</div>
 							))}
-						</ul>
+						</SettingsList>
 					</nav>
 				)}
 
@@ -606,12 +586,14 @@ export function SettingsDialogBody({
 									title="General"
 									testid="section-general"
 								>
-									<UpdateSettings
-										autoUpdate={record.general?.autoUpdate ?? true}
-										onAutoUpdateChange={(on) =>
-											void write("general", { ...record.general, autoUpdate: on })
-										}
-									/>
+									<SettingsGroup label="Updates">
+										<UpdateSettings
+											autoUpdate={record.general?.autoUpdate ?? true}
+											onAutoUpdateChange={(on) =>
+												void write("general", { ...record.general, autoUpdate: on })
+											}
+										/>
+									</SettingsGroup>
 									<LanguageSection
 										general={record.general}
 										onChange={(next) => void write("general", next)}
@@ -712,12 +694,14 @@ export function SettingsDialogBody({
 									title="Graph"
 									testid="section-graph"
 								>
-									<GraphSection
-										graph={record.graph}
-										onSectionChange={(next: GraphSettings) =>
-											write("graph", next)
-										}
-									/>
+									<SettingsList>
+										<GraphSection
+											graph={record.graph}
+											onSectionChange={(next: GraphSettings) =>
+												write("graph", next)
+											}
+										/>
+									</SettingsList>
 								</SettingsSection>
 							)}
 							{active === "keyboard" && (

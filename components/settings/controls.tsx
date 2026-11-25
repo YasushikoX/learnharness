@@ -12,12 +12,13 @@
 import { useLayoutEffect, useRef, useState, type ComponentPropsWithRef, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { FIELD_CLASS, Input } from "@/components/ui/input";
 
 /** The one select look (UI round 1, SPEC §3): a 32px field, radius 8, a 1px input border, the surface fill, a 14px
  *  lucide chevron 10px from the right edge (the text never runs under it). Shared by SettingsMenuTrigger (the custom
  *  menus' trigger) and ThinSelect (native, appearance:none). */
 export const SELECT_CLASS =
-	"relative flex h-8 touch:h-10 min-w-0 items-center rounded-md border border-input bg-card pl-2.5 pr-8 text-left text-sm text-foreground outline-none transition-[border-color,box-shadow] duration-(--lh-duration-hover) ease-(--lh-ease) focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/20";
+	cn(FIELD_CLASS, "relative flex h-8 min-w-0 max-w-full items-center pl-2.5 pr-8 text-left");
 const SELECT_CHEVRON = "pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground";
 
 /** A section block: the pane's one heading (sentence case in the title font, owner 2026-11-16) + content. */
@@ -34,10 +35,10 @@ export function SettingsSection({
 	testid?: string;
 }) {
 	return (
-		<section data-testid={testid} className="px-6 py-5">
+		<section data-testid={testid} className="mx-auto w-full max-w-[768px] px-6 py-6 max-sm:px-4">
 			<h2 className="lh-page-title text-foreground max-lg:hidden">{title}</h2>
-			{hint && <p className="mt-1 text-sm text-muted-foreground">{hint}</p>}
-			<div className="mt-4 flex flex-col gap-3">{children}</div>
+			{hint && <p className="mt-1 text-sm/5 text-muted-foreground">{hint}</p>}
+			<div className="flex flex-col gap-6 lg:mt-5">{children}</div>
 		</section>
 	);
 }
@@ -49,19 +50,25 @@ export function SettingsGroup({
 	children,
 	testid,
 	hideLabelOnPhone,
+	inset = true,
 }: {
 	label: string;
 	children: React.ReactNode;
 	testid?: string;
 	/** Below 1024px the category's page title already says it (the dialog header), so the group's own label would repeat it. */
 	hideLabelOnPhone?: boolean;
+	inset?: boolean;
 }) {
 	return (
-		<div data-testid={testid} className="mt-5 border-t border-border/60 pt-4 first:mt-0 first:border-t-0 first:pt-0">
-			<p className={cn("mb-2 lh-section-title text-foreground", hideLabelOnPhone && "max-lg:hidden")}>{label}</p>
-			<div className="flex flex-col gap-2">{children}</div>
+		<div data-testid={testid}>
+			<h3 className={cn("mb-2 lh-section-title text-foreground", hideLabelOnPhone && "max-lg:hidden")}>{label}</h3>
+			{inset ? <SettingsList>{children}</SettingsList> : <div className="flex flex-col gap-3">{children}</div>}
 		</div>
 	);
+}
+
+export function SettingsList({ className, children }: { className?: string; children: ReactNode }) {
+	return <div className={cn("lh-settings-list rounded-lg border border-border bg-card", className)}>{children}</div>;
 }
 
 /** One label + one control. Label left (with optional muted hint), control
@@ -72,22 +79,24 @@ export function SettingsRow({
 	children,
 	testid,
 	dimmed,
+	className,
 }: {
 	label: string;
 	hint?: ReactNode;
-	children: React.ReactNode;
+	children?: React.ReactNode;
 	testid?: string;
+	className?: string;
 	/** Dependency graying, graph-view style: the whole row dims when the
 	 *  control is inert (parent off, no file yet, …). */
 	dimmed?: boolean;
 }) {
 	return (
-		<div data-testid={testid} className={cn("flex items-center justify-between gap-4 py-1", dimmed && "opacity-40")}>
-			<span className="min-w-0">
+		<div data-testid={testid} className={cn("lh-settings-row flex min-h-12 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2", dimmed && "opacity-40", className)}>
+			<span className="min-w-0 flex-[1_1_12rem]">
 				<span className="block text-base font-medium">{label}</span>
-				{hint && <span className="block text-sm text-muted-foreground">{hint}</span>}
+				{hint && <span className="block text-sm/5 text-muted-foreground wrap-anywhere">{hint}</span>}
 			</span>
-			{children}
+			{children && <div className="ml-auto flex min-w-0 max-w-full items-center justify-end">{children}</div>}
 		</div>
 	);
 }
@@ -208,17 +217,22 @@ export function ThinSelect({
 	ariaLabel,
 	testid,
 	disabled,
+	id,
+	className,
 }: {
 	value: string;
 	onChange: (next: string) => void;
 	children: React.ReactNode;
-	ariaLabel: string;
+	ariaLabel?: string;
 	testid?: string;
 	disabled?: boolean;
+	id?: string;
+	className?: string;
 }) {
 	return (
-		<span className="relative inline-flex min-w-0">
+		<span className={cn("relative inline-flex min-w-0 max-w-full", className)}>
 			<select
+				id={id}
 				value={value}
 				aria-label={ariaLabel}
 				data-testid={testid}
@@ -250,7 +264,7 @@ export function SettingsSlider({ label, min, max, step, value, display, onChange
 	onChange: (value: number) => void;
 	disabled?: boolean;
 }) {
-	return <label className={`flex flex-col gap-1${disabled ? " opacity-40" : ""}`}>
+	return <label className={`flex min-h-8 w-40 max-w-full flex-col justify-center gap-1${disabled ? " opacity-40" : ""}`}>
 		<span className="flex items-center justify-between text-xs text-muted-foreground">
 			{showLabel && label}<span className="tabular-nums">{display ?? value}</span>
 		</span>
@@ -275,6 +289,7 @@ export function CommitInput({
 	min,
 	max,
 	step,
+	className,
 }: {
 	/** "" = unset (the factory default). Mirrors the STORED record —
 	 *  after a clamped/normalized commit this flows back and the field
@@ -290,6 +305,7 @@ export function CommitInput({
 	min?: number;
 	max?: number;
 	step?: number;
+	className?: string;
 }) {
 	// Keep the native editing buffer: number inputs can display an incomplete
 	// token while exposing value="" and badInput=true. Writing a controlled
@@ -333,7 +349,7 @@ export function CommitInput({
 		}
 	};
 	return (
-		<input
+		<Input
 			ref={input}
 			type={type}
 			defaultValue={initialValue}
@@ -358,9 +374,10 @@ export function CommitInput({
 				}
 			}}
 			className={cn(
-				"h-8 touch:h-10 w-40 rounded-md border border-input bg-card px-2.5 text-sm text-foreground tabular-nums outline-none transition-[border-color,box-shadow] duration-(--lh-duration-hover) ease-(--lh-ease) placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/20 disabled:opacity-45",
+				"w-40 max-w-full tabular-nums",
 				// hex colour fields read in mono (SPEC §1)
 				placeholder?.startsWith("#") && "font-mono",
+				className,
 			)}
 		/>
 	);

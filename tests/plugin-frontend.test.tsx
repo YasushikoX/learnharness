@@ -719,8 +719,7 @@ describe("plugin frontend surface and native importer", () => {
 		assert.equal(download.tagName, "A");
 		assert.equal(download.getAttribute("href"), "/plugin-authoring/learnharness-plugins.zip");
 		assert.equal(download.hasAttribute("download"), true);
-		assert.equal(document.querySelector('[data-testid="plugin-authoring-help"]')?.querySelectorAll("p").length, 1);
-		assert.equal(document.querySelector('[data-testid="plugin-authoring-help"] p')?.textContent, "Download the authoring skill for your coding agent.");
+		assert.ok(document.querySelector('[data-testid="plugin-authoring-help"]')?.textContent?.includes("Download the authoring skill for your coding agent."));
 		const refresh = document.querySelector('[aria-label="Refresh plugins"]')!;
 		assert.equal(refresh.textContent, "");
 		assert.equal(refresh.hasAttribute("disabled"), true, "no provider means disabled");

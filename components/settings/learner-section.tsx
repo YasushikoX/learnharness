@@ -15,7 +15,8 @@ import { SettingsGroup } from "@/components/settings/controls";
  */
 
 /** UI round 1 (SPEC §3): ordinary actions are secondary sm Buttons; the region's one emphasised action is primary. */
-const BTN = buttonVariants({ variant: "secondary", size: "sm" });
+const BTN = buttonVariants({ variant: "secondary" });
+const DESTRUCTIVE = buttonVariants({ variant: "destructive" });
 const FIELD =
 	"lh-prose w-full rounded-lg border border-border bg-background px-3 py-2 text-(length:--lh-prose-size) outline-none placeholder:text-muted-foreground focus:border-muted-foreground/50";
 
@@ -213,7 +214,7 @@ export function LearnerSection({
 									</span>
 									<button
 										type="button"
-										className={BTN}
+										className={DESTRUCTIVE}
 										aria-label={`Delete claim ${i + 1}`}
 										onClick={() => setDraft({ ...draft, claims: draft.claims.filter((_, j) => j !== i) })}
 									>
@@ -239,7 +240,7 @@ export function LearnerSection({
 							</ul>
 						)}
 						<div className="flex justify-end gap-2">
-							<button type="button" className={BTN} onClick={() => setDraft(null)}>
+							<button type="button" className={DESTRUCTIVE} onClick={() => setDraft(null)}>
 								Discard
 							</button>
 							<button type="button" className={BTN} onClick={apply} data-testid="learner-apply">
@@ -263,7 +264,7 @@ export function LearnerSection({
 									<span>
 										{KIND_LABEL[c.kind]} · {evidenceOf(c)}
 									</span>
-									<button type="button" className={BTN} aria-label={`Remove applied claim ${i + 1}`} onClick={() => removeApplied(i)}>
+									<button type="button" className={DESTRUCTIVE} aria-label={`Remove applied claim ${i + 1}`} onClick={() => removeApplied(i)}>
 										Remove
 									</button>
 								</div>

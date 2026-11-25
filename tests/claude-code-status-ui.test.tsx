@@ -64,7 +64,7 @@ test("off by default; enabling persists before probing and reveals the version/a
 	assert.equal(toggle().getAttribute("aria-checked"), "true"); assert.equal(label(), "Not found");
 	assert(calls.indexOf("PUT /api/settings/claudeCode") < calls.indexOf("GET /api/claude-code"));
 	assert.notEqual(toggle().parentElement, button().parentElement);
-	assert.equal(document.querySelector('[role="status"]')?.parentElement, button().parentElement);
+	assert.equal(document.querySelector('[role="status"]')?.closest('[data-testid="claude-code-version-row"]'), button().closest('[data-testid="claude-code-version-row"]'));
 	assert.match(document.body.textContent ?? "", /no background process required/);
 	assert.match(document.body.textContent ?? "", /not authentication, model access, or quota/);
 	assert.match(document.body.textContent ?? "", /Claude Code controls billing/);

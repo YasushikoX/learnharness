@@ -32,7 +32,8 @@ import {
 	isPluginShortcutBinding,
 	resolvePluginShortcuts,
 } from "@/src/core";
-import { SettingsRow } from "./controls.tsx";
+import { Button } from "@/components/ui/button";
+import { SettingsList, SettingsRow } from "./controls.tsx";
 import { isHiddenKeyAction } from "../fork-switches.ts";
 import { coreShortcutBindings, pluginShortcutScopeLabel, useKeymapRevision, usePluginShortcutRows } from "../plugin-shortcuts";
 
@@ -125,8 +126,8 @@ export function KeyboardSection() {
 				if (!actions.length) return null;
 				return (
 					<div key={scope} ref={scope === "global" ? rootRef : undefined} data-testid={`kbd-scope-${scope}`}>
-						<p className="mb-1 text-sm font-medium text-muted-foreground">{label}</p>
-						<div className="flex flex-col gap-2">
+						<h3 className="mb-2 lh-section-title">{label}</h3>
+						<SettingsList>
 							{actions.map((def) => {
 								const effective = overrides[def.id] ?? def.binding;
 								return (
@@ -136,37 +137,37 @@ export function KeyboardSection() {
 										hint={def.displayOnly ? "Fixed — part of this screen" : undefined}
 										testid={`kbd-row-${def.id}`}
 									>
-										<span className="flex items-center gap-2">
-											<kbd className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-ui text-xs">
+										<span className="flex flex-wrap items-center justify-end gap-2">
+											<kbd className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
 												{rebinding === def.id ? "Press keys…" : formatBinding(effective)}
 											</kbd>
 											{def.displayOnly ? null : rebinding === def.id ? (
-												<button
+												<Button
 													type="button"
+													variant="ghost"
 													onClick={() => setRebinding(null)}
-													className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
 												>
 													Cancel
-												</button>
+												</Button>
 											) : (
 												<>
-													<button
+													<Button
 														type="button"
+														variant="outline"
 														onClick={() => beginRebind(def.id)}
 														data-testid={`kbd-rebind-${def.id}`}
-														className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
 													>
 														Rebind
-													</button>
+													</Button>
 													{overridden(def.id) && (
-														<button
+														<Button
 															type="button"
+															variant="ghost"
 															onClick={() => resetOne(def.id)}
 															data-testid={`kbd-reset-${def.id}`}
-															className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
 														>
 															Reset
-														</button>
+														</Button>
 													)}
 												</>
 											)}
@@ -174,35 +175,36 @@ export function KeyboardSection() {
 									</SettingsRow>
 								);
 							})}
-						</div>
+						</SettingsList>
 					</div>
 				);
 			})}
 			{[...new Set(pluginRows.map(row => row.pluginId))].map(pluginId => <div key={pluginId} data-testid={`kbd-plugin-${pluginId}`}>
-				<p className="mb-1 text-sm font-medium text-muted-foreground">{pluginRows.find(row => row.pluginId === pluginId)!.pluginName}</p>
-				<div className="flex flex-col gap-2">{pluginRows.filter(row => row.pluginId === pluginId).map(row => <SettingsRow key={row.id} label={row.name}
+				<h3 className="mb-2 lh-section-title">{pluginRows.find(row => row.pluginId === pluginId)!.pluginName}</h3>
+				<SettingsList>{pluginRows.filter(row => row.pluginId === pluginId).map(row => <SettingsRow key={row.id} label={row.name}
 					hint={`${pluginShortcutScopeLabel(row)}${row.reason ? ` · Inactive: ${row.reason}` : ""}`} testid={`kbd-row-${row.id}`}>
-					<span className="flex items-center gap-2">
-						<kbd className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-ui text-xs">{rebinding === row.id ? "Press keys…" : row.binding ? formatBinding(row.binding) : "Unbound"}</kbd>
-						{rebinding === row.id ? <button type="button" onClick={() => { setRebinding(null); setRebindError(null); }} className="text-xs text-muted-foreground">Cancel</button> : <>
-							<button type="button" data-testid={`kbd-rebind-${row.id}`} onClick={() => beginRebind(row.id)} className="text-xs text-muted-foreground hover:underline">Rebind</button>
-							{row.binding && <button type="button" data-testid={`kbd-clear-${row.id}`} onClick={() => { saveOverrides(nextOverrides(loadOverrides(), row.id, "")); setNonce(n => n + 1); }} className="text-xs text-muted-foreground hover:underline">Clear</button>}
-							{overrides[row.id] !== undefined && <button type="button" data-testid={`kbd-reset-${row.id}`} onClick={() => { saveOverrides(nextOverrides(loadOverrides(), row.id, null)); setNonce(n => n + 1); }} className="text-xs text-muted-foreground hover:underline">Reset</button>}
+					<span className="flex flex-wrap items-center justify-end gap-2">
+						<kbd className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">{rebinding === row.id ? "Press keys…" : row.binding ? formatBinding(row.binding) : "Unbound"}</kbd>
+						{rebinding === row.id ? <Button type="button" variant="ghost" onClick={() => { setRebinding(null); setRebindError(null); }}>Cancel</Button> : <>
+							<Button type="button" variant="outline" data-testid={`kbd-rebind-${row.id}`} onClick={() => beginRebind(row.id)}>Rebind</Button>
+							{row.binding && <Button type="button" variant="destructive" data-testid={`kbd-clear-${row.id}`} onClick={() => { saveOverrides(nextOverrides(loadOverrides(), row.id, "")); setNonce(n => n + 1); }}>Clear</Button>}
+							{overrides[row.id] !== undefined && <Button type="button" variant="ghost" data-testid={`kbd-reset-${row.id}`} onClick={() => { saveOverrides(nextOverrides(loadOverrides(), row.id, null)); setNonce(n => n + 1); }}>Reset</Button>}
 						</>}
 					</span>
-				</SettingsRow>)}</div>
+				</SettingsRow>)}</SettingsList>
 			</div>)}
-			<div className="mt-1 flex items-center justify-between">
-				<span className="text-xs text-muted-foreground">Stored on this device (lh:keymap) — overrides only.</span>
-				<button
-					type="button"
-					onClick={resetAll}
-					data-testid="kbd-reset-all"
-					className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-				>
-					Reset all to defaults
-				</button>
-			</div>
+			<SettingsList>
+				<SettingsRow label="Shortcut overrides" hint="Stored on this device">
+					<Button
+						type="button"
+						variant="destructive"
+						onClick={resetAll}
+						data-testid="kbd-reset-all"
+					>
+						Reset all to defaults
+					</Button>
+				</SettingsRow>
+			</SettingsList>
 		</>
 	);
 }

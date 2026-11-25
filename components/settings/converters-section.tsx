@@ -2,7 +2,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { destinationLine, type ConverterEntry, type ConvertersOverview, type ConverterValidationReport } from "@/src/core";
 import { Button } from "@/components/ui/button";
-import { SettingsRow, ThinSelect, Toggle } from "./controls";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { ChevronDown } from "lucide-react";
+import { SettingsList, SettingsRow, ThinSelect, Toggle } from "./controls";
 import { importProfile, loadConverters, removeProfile, runConverterTest, saveConverter, type ConverterChange } from "./converters-client.ts";
 import { ConverterWizard } from "./converter-wizard.tsx";
 
@@ -22,11 +25,7 @@ import { ConverterWizard } from "./converter-wizard.tsx";
 /** The client's own limit for a Test: the server's two-minute deadline plus time for its answer to arrive. */
 export const CONVERTER_TEST_CLIENT_TIMEOUT_MS = 2 * 60_000 + 15_000;
 
-const FIELD =
-	"h-8 min-w-0 flex-1 rounded-md border border-input bg-card px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring";
-const LINK = "shrink-0 text-xs text-foreground underline-offset-2 hover:underline disabled:text-muted-foreground/40 disabled:no-underline";
-const QUIET_LINK = "shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-error hover:underline";
-const NOTE = "text-xs leading-relaxed text-muted-foreground";
+const NOTE = "text-sm/5 text-muted-foreground";
 
 const MARK = { pass: "✓", fail: "✗", skipped: "–" } as const;
 
@@ -184,210 +183,215 @@ export function ConvertersSection() {
 	const urlChanged = url.trim() !== (selected.baseUrl ?? "");
 
 	return (
-		<div className="flex flex-col gap-3" data-testid="converters-section">
+		<div className="flex flex-col gap-6" data-testid="converters-section">
 			<p className={NOTE}>
 				How uploaded PDFs become page-marked text for the tutor. The built-in reader needs no setup but cannot read scanned pages; a service with OCR can.
 				Every PDF is converted once, when you add it.
 			</p>
 
-			<SettingsRow label="Converter" testid="converter-row">
-				<ThinSelect value={selected.id} onChange={show} ariaLabel="PDF converter" testid="converter-select" disabled={busy}>
-					{overview.converters.map((c) => (
-						<option key={c.id} value={c.id}>
-							{c.name}
-							{c.unverified ? " (unverified)" : ""}
-							{c.kind === "custom" ? " (your profile)" : ""}
-							{c.id === active?.id ? " — in use" : ""}
-						</option>
-					))}
-				</ThinSelect>
-			</SettingsRow>
-
-			{missing && (
-				<p data-testid="converter-missing" className="text-xs text-error">
-					The selected converter &quot;{missing}&quot; is not available (its profile is missing or not valid), so the built-in reader is used.
-				</p>
-			)}
-			{selected.description && <p className={NOTE}>{selected.description}</p>}
-			<div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-				<p data-testid="converter-destination" className="min-w-0 flex-1 text-xs leading-relaxed text-foreground">
-					{destinationLine(selected, isActive)}
-					{!selected.local && selected.origin && (selected.ready || !isActive) && " The built-in reader keeps PDFs on this computer."}
-				</p>
-				{isActive ? (
-					<span data-testid="converter-active" className="shrink-0 text-xs font-medium text-foreground">
-						In use for new PDFs
-					</span>
-				) : (
-					<Button
-						type="button"
-						size="xs"
-						variant="outline"
-						className="lh-hit shrink-0 cursor-pointer disabled:cursor-not-allowed"
-						disabled={busy || !selected.ready}
-						onClick={() => void change({ id: selected.id, select: true })}
-						data-testid="converter-use"
-					>
-						Use for new PDFs
-					</Button>
-				)}
-			</div>
-			{!selected.ready && selected.setup && !isActive && (
-				<p data-testid="converter-setup" className={NOTE}>
-					Not set up yet: {selected.setup}
-				</p>
-			)}
-			{selected.unverified && (
-				<p data-testid="converter-unverified" className="rounded-sm border border-border p-2 text-xs leading-relaxed text-muted-foreground">
-					Unverified: this preset was written from the service&apos;s documentation and has not been tried against the real service. Run Test before relying on it.
-				</p>
-			)}
-
-			{!selected.local && (
-				<SettingsRow label="Service URL" hint={selected.defaultBaseUrl ? `Default: ${selected.defaultBaseUrl}` : "Where the service answers"} testid="converter-url-row">
-					<span className="flex min-w-0 flex-1 items-center justify-end gap-2">
-						<input
-							type="text"
-							value={url}
-							onChange={(e) => setUrl(e.target.value)}
-							onKeyDown={(e) => {
-								if (e.key === "Enter" && urlChanged) void change({ id: selected.id, baseUrl: url });
-							}}
-							placeholder={selected.defaultBaseUrl ?? "http://host:5001"}
-							aria-label="Service URL"
-							data-testid="converter-url-input"
-							disabled={busy}
-							spellCheck={false}
-							autoCapitalize="off"
-							className={FIELD}
-						/>
-						<button type="button" onClick={() => void change({ id: selected.id, baseUrl: url })} disabled={busy || !urlChanged} data-testid="converter-url-save" className={LINK}>
-							Save
-						</button>
-					</span>
+			<SettingsList>
+				<SettingsRow label="Converter" hint={selected.description} testid="converter-row">
+					<ThinSelect value={selected.id} onChange={show} ariaLabel="PDF converter" testid="converter-select" disabled={busy}>
+						{overview.converters.map((c) => (
+							<option key={c.id} value={c.id}>
+								{c.name}
+								{c.unverified ? " (unverified)" : ""}
+								{c.kind === "custom" ? " (your profile)" : ""}
+								{c.id === active?.id ? " — in use" : ""}
+							</option>
+						))}
+					</ThinSelect>
 				</SettingsRow>
-			)}
-			{!selected.local && urlChanged && selected.credential.stored && (
-				<p data-testid="converter-url-key-note" className={NOTE}>Saving another URL removes the stored key, so it is never sent to the new address. Enter the key again afterwards.</p>
-			)}
 
-			{selected.key !== "none" && (
-				<SettingsRow label="API key" hint={keyHint(selected)} testid="converter-key-row">
-					<span className="flex min-w-0 flex-1 items-center justify-end gap-2">
-						<input
-							type="password"
-							value={key}
-							onChange={(e) => setKey(e.target.value)}
-							onKeyDown={(e) => {
-								if (e.key === "Enter" && key.trim()) void change({ id: selected.id, apiKey: key }, () => setKey(""));
-							}}
-							placeholder={selected.credential.stored ? "Paste a new key to replace it…" : "Paste key…"}
-							aria-label="API key"
-							data-testid="converter-key-input"
-							disabled={busy}
-							autoComplete="off"
-							className={FIELD}
-						/>
-						<button type="button" onClick={() => void change({ id: selected.id, apiKey: key }, () => setKey(""))} disabled={busy || !key.trim()} data-testid="converter-key-save" className={LINK}>
-							Save
-						</button>
-						{selected.credential.stored && (
-							<button type="button" onClick={() => void change({ id: selected.id, removeKey: true })} disabled={busy} data-testid="converter-key-remove" className={QUIET_LINK}>
-								Remove
-							</button>
-						)}
-					</span>
-				</SettingsRow>
-			)}
-
-			{selected.options && (
-				<>
-					<SettingsRow label="OCR" hint="Read text in scanned pages and pictures" testid="converter-ocr-row">
-						<Toggle label="OCR" checked={selected.options.ocr} disabled={busy} onChange={(on) => void change({ id: selected.id, ocr: on })} />
-					</SettingsRow>
-					<SettingsRow label="Formulas" hint="Recognise formulas as LaTeX (slower)" testid="converter-formula-row">
-						<Toggle label="Formulas" checked={selected.options.formulaEnrichment} disabled={busy} onChange={(on) => void change({ id: selected.id, formulaEnrichment: on })} />
-					</SettingsRow>
-				</>
-			)}
-
-			{error && <p role="alert" data-testid="converter-error" className="text-xs text-error">{error}</p>}
-
-			<div className="flex flex-wrap items-center gap-3">
-				<Button type="button" size="xs" variant="outline" className="lh-hit cursor-pointer disabled:cursor-not-allowed" disabled={busy || testing} onClick={() => void test()} data-testid="converter-test">
-					{testing ? "Testing…" : "Test"}
-				</Button>
-				{testing && (
-					<button type="button" onClick={cancelTest} data-testid="converter-test-cancel" className={LINK}>
-						Cancel
-					</button>
-				)}
-				<span className={NOTE}>
-					{selected.local
-						? "Converts two small test PDFs on this computer (two pages, and three pages with a blank one)."
-						: `Sends two small test PDFs (two pages, and three pages with a blank one) to ${selected.origin ?? "the service"} and checks each page.`}
-				</span>
-				{selected.kind === "custom" && (
-					<button type="button" onClick={() => void remove()} disabled={busy} data-testid="converter-profile-remove" className={QUIET_LINK}>
-						Remove this profile
-					</button>
-				)}
-			</div>
-			{report && report.converterId === selected.id && (
-				<div data-testid="converter-report" className="flex flex-col gap-1 rounded-sm border border-border p-2">
-					<p data-testid="converter-report-verdict" className={`text-xs font-medium ${report.ok ? "text-foreground" : "text-error"}`}>
-						{report.ok ? "Passed: every page came back with its own text, and the blank page stayed blank." : "Failed: this converter cannot be trusted with page citations yet."}
+				{missing && (
+					<p data-testid="converter-missing" className="text-xs text-error">
+						The selected converter &quot;{missing}&quot; is not available (its profile is missing or not valid), so the built-in reader is used.
 					</p>
-					<ul className="flex flex-col gap-0.5">
-						{report.checks.map((c) => (
-							<li key={c.id} data-testid={`converter-check-${c.id}`} data-status={c.status} className={`text-xs leading-relaxed ${c.status === "fail" ? "text-error" : "text-muted-foreground"}`}>
-								{MARK[c.status]} {c.message}
-							</li>
-						))}
-					</ul>
-					{report.pages.map((p) => (
-						<p key={p.page} className="truncate font-mono text-xs text-muted-foreground">
-							Page {p.page}: {p.text || "(empty)"}
-						</p>
-					))}
-				</div>
-			)}
-
-			<details className="flex flex-col gap-2" data-testid="converter-import">
-				<summary className="cursor-pointer text-xs text-foreground">Use your own service (import a profile)</summary>
-				<p className={NOTE}>
-					A profile is a JSON file that describes a PDF or OCR service: how to send the PDF and where the text is in its answer. It is data
-					only; the app reads it and makes the requests itself. The service&apos;s address is not part of it: you enter it here after importing.
-					See docs/pdf-converters.md for the format.
-				</p>
-				<textarea
-					value={profileText}
-					onChange={(e) => setProfileText(e.target.value)}
-					placeholder='{ "format": "learnharness.http-converter/1", … }'
-					aria-label="Converter profile JSON"
-					data-testid="converter-import-text"
-					rows={6}
-					spellCheck={false}
-					className="min-h-24 rounded-md border border-input bg-card p-2.5 font-mono text-xs text-foreground outline-none focus:border-ring"
-				/>
-				<div className="flex flex-wrap items-center gap-3">
-					<button type="button" onClick={() => void doImport(profileText)} disabled={busy || !profileText.trim()} data-testid="converter-import-run" className={LINK}>
-						Import
-					</button>
-					<label className="text-xs text-foreground underline-offset-2 hover:underline">
-						Choose a file…
-						<input type="file" accept="application/json,.json" className="sr-only" data-testid="converter-import-file" onChange={(e) => void chooseFile(e.target.files?.[0])} />
-					</label>
-				</div>
-				{importNote && <p data-testid="converter-import-note" className={NOTE}>{importNote}</p>}
-				{importErrors.length > 0 && (
-					<ul role="alert" data-testid="converter-import-errors" className="flex flex-col gap-0.5">
-						{importErrors.map((e) => (
-							<li key={e} className="font-mono text-xs text-error">{e}</li>
-						))}
-					</ul>
 				)}
-			</details>
+				<SettingsRow label="PDF destination" testid="converter-destination-row" hint={
+					<span data-testid="converter-destination">
+						{destinationLine(selected, isActive)}
+						{!selected.local && selected.origin && (selected.ready || !isActive) && " The built-in reader keeps PDFs on this computer."}
+					</span>
+				}>
+					{isActive ? (
+						<span data-testid="converter-active" className="text-sm font-medium">
+							In use for new PDFs
+						</span>
+					) : (
+						<Button
+							type="button"
+							variant="outline"
+							className="lh-hit shrink-0 cursor-pointer disabled:cursor-not-allowed"
+							disabled={busy || !selected.ready}
+							onClick={() => void change({ id: selected.id, select: true })}
+							data-testid="converter-use"
+						>
+							Use for new PDFs
+						</Button>
+					)}
+				</SettingsRow>
+				{!selected.ready && selected.setup && !isActive && (
+					<p data-testid="converter-setup" className={NOTE}>
+						Not set up yet: {selected.setup}
+					</p>
+				)}
+				{selected.unverified && (
+					<p data-testid="converter-unverified" className="rounded-sm border border-border p-2 text-xs leading-relaxed text-muted-foreground">
+						Unverified: this preset was written from the service&apos;s documentation and has not been tried against the real service. Run Test before relying on it.
+					</p>
+				)}
+
+				{!selected.local && (
+					<SettingsRow label="Service URL" hint={selected.defaultBaseUrl ? `Default: ${selected.defaultBaseUrl}` : "Where the service answers"} testid="converter-url-row">
+						<span className="flex w-80 max-w-full flex-wrap items-center justify-end gap-2">
+							<Input
+								type="text"
+								value={url}
+								onChange={(e) => setUrl(e.target.value)}
+								onKeyDown={(e) => {
+									if (e.key === "Enter" && urlChanged) void change({ id: selected.id, baseUrl: url });
+								}}
+								placeholder={selected.defaultBaseUrl ?? "http://host:5001"}
+								aria-label="Service URL"
+								data-testid="converter-url-input"
+								disabled={busy}
+								spellCheck={false}
+								autoCapitalize="off"
+								className="min-w-28 flex-1"
+							/>
+							<Button type="button" variant="outline" onClick={() => void change({ id: selected.id, baseUrl: url })} disabled={busy || !urlChanged} data-testid="converter-url-save">
+								Save
+							</Button>
+						</span>
+					</SettingsRow>
+				)}
+				{!selected.local && urlChanged && selected.credential.stored && (
+					<p data-testid="converter-url-key-note" className={NOTE}>Saving another URL removes the stored key, so it is never sent to the new address. Enter the key again afterwards.</p>
+				)}
+
+				{selected.key !== "none" && (
+					<SettingsRow label="API key" hint={keyHint(selected)} testid="converter-key-row">
+						<span className="flex w-80 max-w-full flex-wrap items-center justify-end gap-2">
+							<Input
+								type="password"
+								value={key}
+								onChange={(e) => setKey(e.target.value)}
+								onKeyDown={(e) => {
+									if (e.key === "Enter" && key.trim()) void change({ id: selected.id, apiKey: key }, () => setKey(""));
+								}}
+								placeholder={selected.credential.stored ? "Paste a new key to replace it…" : "Paste key…"}
+								aria-label="API key"
+								data-testid="converter-key-input"
+								disabled={busy}
+								autoComplete="off"
+								className="min-w-28 flex-1 font-mono"
+							/>
+							<Button type="button" variant="outline" onClick={() => void change({ id: selected.id, apiKey: key }, () => setKey(""))} disabled={busy || !key.trim()} data-testid="converter-key-save">
+								Save
+							</Button>
+							{selected.credential.stored && (
+								<Button type="button" variant="destructive" onClick={() => void change({ id: selected.id, removeKey: true })} disabled={busy} data-testid="converter-key-remove">
+									Remove
+								</Button>
+							)}
+						</span>
+					</SettingsRow>
+				)}
+
+				{selected.options && (
+					<>
+						<SettingsRow label="OCR" hint="Read text in scanned pages and pictures" testid="converter-ocr-row">
+							<Toggle label="OCR" checked={selected.options.ocr} disabled={busy} onChange={(on) => void change({ id: selected.id, ocr: on })} />
+						</SettingsRow>
+						<SettingsRow label="Formulas" hint="Recognise formulas as LaTeX (slower)" testid="converter-formula-row">
+							<Toggle label="Formulas" checked={selected.options.formulaEnrichment} disabled={busy} onChange={(on) => void change({ id: selected.id, formulaEnrichment: on })} />
+						</SettingsRow>
+					</>
+				)}
+
+				{error && <p role="alert" data-testid="converter-error" className="text-xs text-error">{error}</p>}
+
+				<SettingsRow label="Test conversion" hint={selected.local
+							? "Converts two small test PDFs on this computer (two pages, and three pages with a blank one)."
+							: `Sends two small test PDFs (two pages, and three pages with a blank one) to ${selected.origin ?? "the service"} and checks each page.`}>
+					<div className="flex gap-2">
+						<Button type="button" variant="outline" disabled={busy || testing} onClick={() => void test()} data-testid="converter-test">
+							{testing ? "Testing…" : "Test"}
+						</Button>
+						{testing && <Button type="button" variant="ghost" onClick={cancelTest} data-testid="converter-test-cancel">Cancel</Button>}
+					</div>
+				</SettingsRow>
+				{selected.kind === "custom" && <SettingsRow label="Profile">
+						<Button type="button" variant="destructive" onClick={() => void remove()} disabled={busy} data-testid="converter-profile-remove">
+							Remove this profile
+						</Button>
+				</SettingsRow>}
+				{report && report.converterId === selected.id && (
+					<div data-testid="converter-report" className="flex flex-col gap-1">
+						<p data-testid="converter-report-verdict" className={`text-xs font-medium ${report.ok ? "text-foreground" : "text-error"}`}>
+							{report.ok ? "Passed: every page came back with its own text, and the blank page stayed blank." : "Failed: this converter cannot be trusted with page citations yet."}
+						</p>
+						<ul className="flex flex-col gap-0.5">
+							{report.checks.map((c) => (
+								<li key={c.id} data-testid={`converter-check-${c.id}`} data-status={c.status} className={`text-xs leading-relaxed ${c.status === "fail" ? "text-error" : "text-muted-foreground"}`}>
+									{MARK[c.status]} {c.message}
+								</li>
+							))}
+						</ul>
+						{report.pages.map((p) => (
+							<p key={p.page} className="truncate font-mono text-xs text-muted-foreground">
+								Page {p.page}: {p.text || "(empty)"}
+							</p>
+						))}
+					</div>
+				)}
+			</SettingsList>
+
+			<SettingsList>
+				<details className="lh-settings-row-group group" data-testid="converter-import">
+					<summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-2 rounded-lg px-4 py-2 text-base font-medium hover:bg-raised [&::-webkit-details-marker]:hidden">
+						Use your own service (import a profile)
+						<ChevronDown aria-hidden strokeWidth={1.75} className="size-4 shrink-0 text-muted-foreground group-open:rotate-180" />
+					</summary>
+					<div className="flex flex-col gap-3 border-t border-border p-4">
+					<p className={NOTE}>
+						A profile is a JSON file that describes a PDF or OCR service: how to send the PDF and where the text is in its answer. It is data
+						only; the app reads it and makes the requests itself. The service&apos;s address is not part of it: you enter it here after importing.
+						See docs/pdf-converters.md for the format.
+					</p>
+					<Textarea
+						value={profileText}
+						onChange={(e) => setProfileText(e.target.value)}
+						placeholder='{ "format": "learnharness.http-converter/1", … }'
+						aria-label="Converter profile JSON"
+						data-testid="converter-import-text"
+						rows={6}
+						spellCheck={false}
+						className="min-h-24 font-mono"
+					/>
+					<div className="flex flex-wrap items-center gap-3">
+						<Button type="button" variant="outline" onClick={() => void doImport(profileText)} disabled={busy || !profileText.trim()} data-testid="converter-import-run">
+							Import
+						</Button>
+						<Button asChild variant="outline" className="cursor-pointer focus-within:ring-2 focus-within:ring-focus">
+						<label>
+							Choose a file…
+							<input type="file" accept="application/json,.json" className="sr-only" data-testid="converter-import-file" onChange={(e) => void chooseFile(e.target.files?.[0])} />
+						</label>
+						</Button>
+					</div>
+					{importNote && <p data-testid="converter-import-note" className={NOTE}>{importNote}</p>}
+					{importErrors.length > 0 && (
+						<ul role="alert" data-testid="converter-import-errors" className="flex flex-col gap-0.5">
+							{importErrors.map((e) => (
+								<li key={e} className="font-mono text-xs text-error">{e}</li>
+							))}
+						</ul>
+					)}
+					</div>
+				</details>
+			</SettingsList>
 
 			{wizardOpen ? (
 				<ConverterWizard
@@ -403,9 +407,9 @@ export function ConvertersSection() {
 					}}
 				/>
 			) : (
-				<button type="button" onClick={() => setWizardOpen(true)} disabled={busy} data-testid="converter-wizard-open" className={`${LINK} self-start`}>
+				<Button type="button" variant="outline" onClick={() => setWizardOpen(true)} disabled={busy} data-testid="converter-wizard-open" className="h-auto min-h-8 self-start py-1 text-left whitespace-normal">
 					No preset fits? Draft a connector with AI…
-				</button>
+				</Button>
 			)}
 
 			{overview.invalidProfiles.length > 0 && (

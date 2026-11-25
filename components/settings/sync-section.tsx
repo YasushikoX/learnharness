@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { replacePreviewLines, syncNotes, syncStatusLine, type ReplacePreview, type SyncStatus } from "@/src/core";
 import { notifySettingsSaved } from "@/components/settings-signal";
 import { Button } from "@/components/ui/button";
-import { SettingsRow, Toggle } from "./controls";
+import { Input } from "@/components/ui/input";
+import { SettingsList, SettingsRow, Toggle } from "./controls";
 import { loadSyncState, previewReplace, removeSyncToken, replaceFromRepo, runSyncRound, saveSyncRepo, saveSyncSources, saveSyncToken } from "./sync-client.ts";
 
 /**
@@ -14,10 +15,6 @@ import { loadSyncState, previewReplace, removeSyncToken, replaceFromRepo, runSyn
  * the repo, or remove the token, to turn sync off. The server does the work
  * (src/server/sync-service.ts); this screen sets it up and shows how it went.
  */
-
-const FIELD =
-	"h-8 min-w-0 flex-1 rounded-md border border-input bg-card px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring";
-const LINK = "shrink-0 text-xs text-foreground underline-offset-2 hover:underline disabled:text-muted-foreground/40 disabled:no-underline";
 
 export function SyncSection() {
 	const [status, setStatus] = useState<SyncStatus | null>(null);
@@ -120,8 +117,8 @@ export function SyncSection() {
 	const notes = syncNotes(status);
 
 	return (
-		<div className="flex flex-col gap-3" data-testid="sync-section">
-			<p className="text-xs leading-relaxed text-muted-foreground">
+		<div className="flex flex-col gap-6" data-testid="sync-section">
+			<p className="text-sm/5 text-muted-foreground">
 				Keeps your chats, courses, sketches and knowledge graph in step across devices through a <strong className="font-medium">private</strong> GitHub
 				repository you create. Make an empty private repo, then a fine-grained token limited to that repo with Contents set to read and write.{" "}
 				<a
@@ -134,130 +131,134 @@ export function SyncSection() {
 				</a>
 			</p>
 
-			<SettingsRow label="Repository" hint="owner/repo" testid="sync-repo-row">
-				<span className="flex min-w-0 flex-1 items-center justify-end gap-2">
-					<input
-						type="text"
-						value={repo}
-						onChange={(e) => setRepo(e.target.value)}
-						onKeyDown={(e) => {
-							if (e.key === "Enter" && repoChanged) void saveRepo();
-						}}
-						placeholder="you/learnharness-sync"
-						aria-label="Sync repository"
-						data-testid="sync-repo-input"
-						disabled={busy}
-						spellCheck={false}
-						autoCapitalize="off"
-						className={FIELD}
-					/>
-					<button type="button" onClick={() => void saveRepo()} disabled={busy || !repoChanged} data-testid="sync-repo-save" className={LINK}>
-						Save
-					</button>
-				</span>
-			</SettingsRow>
-
-			<SettingsRow label="Token" hint={status?.hasToken ? "A token is saved on this device" : "Not saved yet"} testid="sync-token-row">
-				<span className="flex min-w-0 flex-1 items-center justify-end gap-2">
-					<input
-						type="password"
-						value={token}
-						onChange={(e) => setToken(e.target.value)}
-						onKeyDown={(e) => {
-							if (e.key === "Enter" && token.trim()) void saveToken();
-						}}
-						placeholder={status?.hasToken ? "Paste a new token to replace it…" : "Paste token…"}
-						aria-label="GitHub token"
-						data-testid="sync-token-input"
-						disabled={busy}
-						autoComplete="off"
-						className={FIELD}
-					/>
-					<button type="button" onClick={() => void saveToken()} disabled={busy || !token.trim()} data-testid="sync-token-save" className={LINK}>
-						Save
-					</button>
-					{status?.hasToken && (
-						<button
-							type="button"
-							onClick={() => void removeToken()}
+			<SettingsList>
+				<SettingsRow label="Repository" hint="owner/repo" testid="sync-repo-row">
+					<span className="flex w-80 max-w-full flex-wrap items-center justify-end gap-2">
+						<Input
+							type="text"
+							value={repo}
+							onChange={(e) => setRepo(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === "Enter" && repoChanged) void saveRepo();
+							}}
+							placeholder="you/learnharness-sync"
+							aria-label="Sync repository"
+							data-testid="sync-repo-input"
 							disabled={busy}
-							data-testid="sync-token-remove"
-							className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-error hover:underline"
-						>
-							Remove
-						</button>
-					)}
-				</span>
-			</SettingsRow>
+							spellCheck={false}
+							autoCapitalize="off"
+							className="min-w-28 flex-1"
+						/>
+						<Button type="button" variant="outline" onClick={() => void saveRepo()} disabled={busy || !repoChanged} data-testid="sync-repo-save">
+							Save
+						</Button>
+					</span>
+				</SettingsRow>
 
-			<SettingsRow label="Sync source files" hint="The original slides, PDFs and notes you add as sources" testid="sync-sources-row">
-				<Toggle label="Sync source files" checked={sources} disabled={busy} onChange={(on) => void toggleSources(on)} />
-			</SettingsRow>
-			{sources && (
-				<p data-testid="sync-sources-note" className="text-xs leading-relaxed text-muted-foreground">
-					On: the original files travel to the repo and to the other devices that turn this on (the first round uploads them all, so it can take a while on a big library). Off: only their text summaries travel, and the original stays on the device that added it.
-				</p>
-			)}
+				<SettingsRow label="Token" hint={status?.hasToken ? "A token is saved on this device" : "Not saved yet"} testid="sync-token-row">
+					<span className="flex w-80 max-w-full flex-wrap items-center justify-end gap-2">
+						<Input
+							type="password"
+							value={token}
+							onChange={(e) => setToken(e.target.value)}
+							onKeyDown={(e) => {
+								if (e.key === "Enter" && token.trim()) void saveToken();
+							}}
+							placeholder={status?.hasToken ? "Paste a new token to replace it…" : "Paste token…"}
+							aria-label="GitHub token"
+							data-testid="sync-token-input"
+							disabled={busy}
+							autoComplete="off"
+							className="min-w-28 flex-1 font-mono"
+						/>
+						<Button type="button" variant="outline" onClick={() => void saveToken()} disabled={busy || !token.trim()} data-testid="sync-token-save">
+							Save
+						</Button>
+						{status?.hasToken && (
+							<Button
+								type="button"
+								variant="destructive"
+								onClick={() => void removeToken()}
+								disabled={busy}
+								data-testid="sync-token-remove"
+							>
+								Remove
+							</Button>
+						)}
+					</span>
+				</SettingsRow>
 
+				<SettingsRow label="Sync source files" hint="The original slides, PDFs and notes you add as sources" testid="sync-sources-row">
+					<Toggle label="Sync source files" checked={sources} disabled={busy} onChange={(on) => void toggleSources(on)} />
+				</SettingsRow>
+				{sources && (
+					<p data-testid="sync-sources-note" className="text-xs leading-relaxed text-muted-foreground">
+						On: the original files travel to the repo and to the other devices that turn this on (the first round uploads them all, so it can take a while on a big library). Off: only their text summaries travel, and the original stays on the device that added it.
+					</p>
+				)}
+			</SettingsList>
 			{error && (
 				<p role="alert" data-testid="sync-error" className="text-xs text-error">
 					{error}
 				</p>
 			)}
 
-			<div className="flex flex-wrap items-center gap-3">
-				<Button
-					type="button"
-					size="xs"
-					variant="outline"
-					className="lh-hit cursor-pointer disabled:cursor-not-allowed"
-					disabled={busy || !status?.configured || status.running}
-					onClick={() => void syncNow()}
-					data-testid="sync-run"
-				>
-					Sync now
-				</Button>
-				<button
-					type="button"
-					onClick={() => void openReplace()}
-					disabled={busy || replacing || !status?.configured || status.running || confirm !== null}
-					data-testid="sync-replace-open"
-					className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-error hover:underline disabled:text-muted-foreground/40 disabled:no-underline"
-				>
-					Replace this device with the repo…
-				</button>
-				<span role="status" data-testid="sync-status" className={`text-xs ${status?.error ? "text-error" : "text-muted-foreground"}`}>
-					{syncStatusLine(status)}
-				</span>
-			</div>
+			<SettingsList>
+				<SettingsRow label="Sync status" hint={
+					<span role="status" data-testid="sync-status" className={status?.error ? "text-error" : undefined}>{syncStatusLine(status)}</span>
+				}>
+					<Button
+						type="button"
+						variant="outline"
+						className="lh-hit cursor-pointer disabled:cursor-not-allowed"
+						disabled={busy || !status?.configured || status.running}
+						onClick={() => void syncNow()}
+						data-testid="sync-run"
+					>
+						Sync now
+					</Button>
+				</SettingsRow>
+				<SettingsRow label="Replace local data">
+					<Button
+						type="button"
+						variant="destructive"
+						onClick={() => void openReplace()}
+						disabled={busy || replacing || !status?.configured || status.running || confirm !== null}
+						data-testid="sync-replace-open"
+						className="h-auto min-h-8 py-1.5 text-left whitespace-normal"
+					>
+						Replace this device with the repo…
+					</Button>
+				</SettingsRow>
+			</SettingsList>
 			{confirm && (
-				<div role="alertdialog" aria-label="Replace this device with the repo" data-testid="sync-replace-confirm" className="flex flex-col gap-2 rounded-sm border border-error/40 p-3">
-					<p className="text-xs font-medium text-foreground">Replace this device with the repo?</p>
+				<div role="alertdialog" aria-label="Replace this device with the repo" data-testid="sync-replace-confirm" className="flex flex-col gap-2 rounded-lg border border-error/40 bg-card p-4">
+					<p className="lh-section-title">Replace this device with the repo?</p>
 					<p className="text-xs leading-relaxed text-muted-foreground">This device will end up with exactly what the repo has. Nothing is sent to the repo.</p>
 					<p data-testid="sync-replace-remove" className="text-xs leading-relaxed text-foreground">{replacePreviewLines(confirm).remove}</p>
 					<p data-testid="sync-replace-write" className="text-xs leading-relaxed text-muted-foreground">{replacePreviewLines(confirm).write}</p>
 					<p className="text-xs leading-relaxed text-muted-foreground">
 						A copy of everything replaced or removed is kept first, in the app&apos;s data folder under sync/. Settings that belong to this device and your token are not touched, nor are original source files, unless "Sync source files" is on.
 					</p>
-					<div className="flex items-center gap-3">
-						<button
+					<div className="flex flex-wrap items-center justify-end gap-2">
+						<Button
 							type="button"
+							variant="destructiveSolid"
 							onClick={() => void doReplace()}
 							disabled={replacing}
 							data-testid="sync-replace-confirm-run"
-							className="shrink-0 text-xs text-error underline-offset-2 hover:underline disabled:text-muted-foreground/40 disabled:no-underline"
 						>
 							{replacing ? "Replacing…" : "Replace this device"}
-						</button>
-						<button
+						</Button>
+						<Button
 							type="button"
+							variant="ghost"
 							onClick={() => setConfirm(null)}
 							disabled={replacing}
 							data-testid="sync-replace-cancel"
-							className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
 						>
 							Cancel
-						</button>
+						</Button>
 					</div>
 				</div>
 			)}

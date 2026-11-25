@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { fuzzyScore } from "@/src/core";
+import { Input } from "@/components/ui/input";
 
 /** The model picker's search, arrow-walk, row styling and scrolling machine.
  * Models and dictation languages supply only their catalog and row content.
@@ -54,7 +55,7 @@ export function SearchMenuList<T>({
 		.map(({ item }) => item);
 
 	return <>
-		<input
+		<Input
 			type="text"
 			ref={searchRef}
 			data-testid={searchTestid}
@@ -80,7 +81,7 @@ export function SearchMenuList<T>({
 				}
 			}}
 			placeholder={placeholder}
-			className="lh-input mb-1.5 w-full rounded-lg border bg-background px-2 py-1.5 text-foreground outline-none focus:ring-1 focus:ring-ring"
+			className="mb-1"
 		/>
 		{!items && loading && <div className="px-2 py-3 text-center text-muted-foreground">{loading}</div>}
 		{items && results.length === 0 && <div className="px-2 py-3 text-center text-muted-foreground">{empty}</div>}
@@ -90,12 +91,11 @@ export function SearchMenuList<T>({
 					type="button"
 					data-testid={optionTestid(item)}
 					data-idx={i}
+					data-highlighted={i === menuIdx ? "" : undefined}
 					disabled={disabled}
 					onClick={() => onPick(item)}
-					className={`flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left outline-none transition-colors hover:bg-muted ${
-						i === menuIdx ? "bg-accent/40 ring-1 ring-inset ring-border" : ""
-					}${isSelected(item) && i !== menuIdx ? " bg-muted/60" : ""}`}
-				>{renderItem(item)}</button>
+					className={`lh-menu-item w-full ${isSelected(item) ? "bg-raised" : ""}`}
+				><span className="flex w-full flex-col py-1">{renderItem(item)}</span></button>
 			</li>)}
 		</ul>
 	</>;
