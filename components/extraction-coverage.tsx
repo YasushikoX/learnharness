@@ -47,7 +47,7 @@ export interface SessionCoverage {
  *  nothing rather than a fake zero; the honest-render doctrine). */
 async function fetchCoverage(chatId: string): Promise<SessionCoverage | null> {
 	try {
-		const res = await fetch(`/api/chats/${encodeURIComponent(chatId)}`);
+		const res = await fetch(`/api/chats/${encodeURIComponent(chatId)}?view=coverage`);
 		if (!res.ok) return null;
 		const body = (await res.json()) as { coverage?: SessionCoverage | null };
 		return body.coverage ?? null;
@@ -242,9 +242,19 @@ export function ringFill(uncoveredTokens: number, chunkTokens: number): number {
  * (resets as the fold drains coverage) + the settings signal (the
  * threshold/kill-switch re-read live).
  */
-export function CoverageRing({ chatId, refreshKey = 0 }: { chatId: string; refreshKey?: number }) {
-	const [graph, setGraph] = useState<GraphRead | null>(null);
-	const [coverage, setCoverage] = useState<SessionCoverage | null>(null);
+export function CoverageRing({
+	chatId,
+	refreshKey = 0,
+	initialCoverage,
+	initialGraph,
+}: {
+	chatId: string;
+	refreshKey?: number;
+	initialCoverage?: SessionCoverage | null;
+	initialGraph?: GraphRead | null;
+}) {
+	const [graph, setGraph] = useState<GraphRead | null>(() => initialGraph ?? null);
+	const [coverage, setCoverage] = useState<SessionCoverage | null>(() => initialCoverage ?? null);
 	const [open, setOpen] = useState(false);
 	const [nonce, setNonce] = useState(0);
 	const rootRef = useRef<HTMLDivElement>(null);
