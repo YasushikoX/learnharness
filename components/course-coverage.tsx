@@ -6,6 +6,8 @@ import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { lessonLabels, type CourseCoverageView, type CoverageEdit, type CoverageEntryView, type CoverageTermView } from "@/src/core";
 import { cn } from "@/lib/utils";
 import { SECTION_HEAD } from "@/components/section-heads";
+import { FIELD_CLASS } from "@/components/ui/input";
+import { ThinSelect } from "@/components/settings/controls";
 
 /**
  * The class's vocabulary on the course page (WP5, 2026-11-25; docs/courses.md "Vocabulary coverage"). Minimal and in the
@@ -41,9 +43,11 @@ interface CoverageContextValue {
 
 export const CoverageContext = createContext<CoverageContextValue | null>(null);
 
-/** UI round 1 (SPEC §3): ordinary actions are secondary xs Buttons; the region's one emphasised action is primary. */
-const BTN = buttonVariants({ variant: "secondary", size: "xs" });
-const SELECT = "rounded-md border border-border bg-background px-1.5 py-0.5 text-xs";
+/** UI round 1b (SPEC §3): ordinary actions are secondary sm Buttons; a row with a select or a field uses the 32px size so
+ *  its buttons sit level with the one select style (ThinSelect) and the field. */
+const BTN = buttonVariants({ variant: "secondary", size: "sm" });
+const ROW_BTN = buttonVariants({ variant: "secondary" });
+const FIELD = cn(FIELD_CLASS, "h-8 min-w-0 px-2.5");
 
 const where = (e: CoverageEntryView) => [e.material, e.page !== null ? `p. ${e.page}` : null].filter(Boolean).join(", ");
 
@@ -72,31 +76,32 @@ function AssignExclude({ target, entryKey, skills }: { target: "approved" | "dra
 	if (!ctx?.actions) return null;
 	const L = lessonLabels(ctx.view.language).coverage;
 	return (
-		<span className="mt-1 flex flex-wrap items-center gap-1.5">
-			<select
-				className={SELECT}
-				aria-label={`${L.assignTo} ${entryKey}`}
-				data-testid={`assign-${entryKey}`}
-				disabled={ctx.busy}
-				value=""
-				onChange={(e) => e.target.value && ctx.actions!.edit(target, { action: "assign", key: entryKey, skill: e.target.value })}
-			>
-				<option value="">{L.assignTo}</option>
-				{[...skills].map(([id, name]) => (
-					<option key={id} value={id}>
-						{name}
-					</option>
-				))}
-			</select>
+		<span className="mt-1.5 flex flex-wrap items-center gap-2">
+			<span className="w-56 max-w-full [&>span]:w-full">
+				<ThinSelect
+					ariaLabel={`${L.assignTo} ${entryKey}`}
+					testid={`assign-${entryKey}`}
+					disabled={ctx.busy}
+					value=""
+					onChange={(v) => v && ctx.actions!.edit(target, { action: "assign", key: entryKey, skill: v })}
+				>
+					<option value="">{L.assignTo}</option>
+					{[...skills].map(([id, name]) => (
+						<option key={id} value={id}>
+							{name}
+						</option>
+					))}
+				</ThinSelect>
+			</span>
 			{excluding ? (
 				<>
-					<input className={SELECT} placeholder={L.excludeReason} aria-label={L.excludeReason} value={reason} onChange={(e) => setReason(e.target.value)} data-testid={`exclude-reason-${entryKey}`} />
-					<button type="button" className={BTN} disabled={ctx.busy} data-testid={`exclude-ok-${entryKey}`} onClick={() => ctx.actions!.edit(target, { action: "exclude", key: entryKey, reason: reason.trim() })}>
+					<input className={FIELD} placeholder={L.excludeReason} aria-label={L.excludeReason} value={reason} onChange={(e) => setReason(e.target.value)} data-testid={`exclude-reason-${entryKey}`} />
+					<button type="button" className={ROW_BTN} disabled={ctx.busy} data-testid={`exclude-ok-${entryKey}`} onClick={() => ctx.actions!.edit(target, { action: "exclude", key: entryKey, reason: reason.trim() })}>
 						{L.exclude}
 					</button>
 				</>
 			) : (
-				<button type="button" className={BTN} disabled={ctx.busy} data-testid={`exclude-${entryKey}`} onClick={() => setExcluding(true)}>
+				<button type="button" className={ROW_BTN} disabled={ctx.busy} data-testid={`exclude-${entryKey}`} onClick={() => setExcluding(true)}>
 					{L.exclude}
 				</button>
 			)}
@@ -110,7 +115,7 @@ function Suggestions({ target, suggested }: { target: "approved" | "draft"; sugg
 	if (!ctx || (suggested.excluded.length === 0 && suggested.links.length === 0)) return null;
 	const L = lessonLabels(ctx.view.language).coverage;
 	return (
-		<div className="space-y-1.5 rounded-lg border border-border/60 px-3 py-2" data-testid={`coverage-suggested-${target}`}>
+		<div className="space-y-1.5 rounded-lg border border-border px-3 py-2.5" data-testid={`coverage-suggested-${target}`}>
 			<div className={SECTION_HEAD}>{L.suggestionsHeading}</div>
 			{suggested.excluded.map((x) => (
 				<div key={`x-${x.key}`} className="flex flex-wrap items-center gap-1.5" data-testid={`suggested-exclude-${x.key}`}>
@@ -211,7 +216,7 @@ export function DraftCoverageReview() {
 				</p>
 			)}
 			{draft.unassigned.length > 0 && (
-				<div className="space-y-2 rounded-lg border border-border/60 px-3 py-2" data-testid="draft-unassigned">
+				<div className="space-y-2 rounded-lg border border-border px-3 py-2.5" data-testid="draft-unassigned">
 					<div className={SECTION_HEAD}>{L.unassignedLine(draft.unassigned.length)}</div>
 					{draft.unassigned.map((e) => (
 						<EntryLine key={e.key} entry={e} extra={<AssignExclude target="draft" entryKey={e.key} skills={skills} />} />
@@ -227,7 +232,7 @@ export function DraftCoverageReview() {
 				<div className="space-y-2" data-testid="draft-duplicates">
 					<div className={SECTION_HEAD}>{L.duplicatesHeading}</div>
 					{draft.duplicates.map((d) => (
-						<div key={`${d.a.key}~${d.b.key}`} className="grid gap-2 rounded-lg border border-border/60 px-3 py-2 sm:grid-cols-[1fr_1fr_auto]" data-testid={`duplicate-${d.a.key}~${d.b.key}`}>
+						<div key={`${d.a.key}~${d.b.key}`} className="grid gap-2 rounded-lg border border-border px-3 py-2.5 sm:grid-cols-[1fr_1fr_auto]" data-testid={`duplicate-${d.a.key}~${d.b.key}`}>
 							<EntryLine entry={d.a} />
 							<EntryLine entry={d.b} />
 							<span className="flex items-start gap-1.5">
@@ -311,7 +316,7 @@ export function CoverageSummary() {
 	const pending = !!view.suggested || (view.displaced?.length ?? 0) > 0;
 	if (view.status === "mapped" && unassigned.length === 0 && view.flagged.length === 0 && !view.mapping && !view.error && view.incomplete.length === 0 && !pending) return null;
 	return (
-		<section className="space-y-2 text-xs" data-testid="course-coverage">
+		<section className="space-y-3 text-xs" data-testid="course-coverage">
 			{view.mapping && <p className="text-muted-foreground">{L.mapping}</p>}
 			{view.error && <p className="text-destructive" data-testid="coverage-error">{view.error}</p>}
 			{(view.status === "unmapped" || unassigned.length > 0) && !view.mapping && ctx.actions && (
@@ -323,7 +328,7 @@ export function CoverageSummary() {
 			{view.suggested && <Suggestions target="approved" suggested={view.suggested} />}
 			{view.incomplete.length > 0 && <p className="text-muted-foreground">{L.incompleteLine(view.incomplete.join(", "))}</p>}
 			{(unassigned.length > 0 || view.flagged.length > 0) && (
-				<button type="button" className="flex items-center gap-1 text-muted-foreground hover:text-foreground" aria-expanded={open} data-testid="coverage-toggle" onClick={() => setOpen((o) => !o)}>
+				<button type="button" className="lh-touch -ml-0.5 flex items-center gap-1 rounded-sm text-sm text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-focus" aria-expanded={open} data-testid="coverage-toggle" onClick={() => setOpen((o) => !o)}>
 					{open ? <ChevronDownIcon className="size-3" /> : <ChevronRightIcon className="size-3" />}
 					{[unassigned.length > 0 ? L.unassignedLine(unassigned.length) : null, view.flagged.length > 0 ? L.flaggedLine(view.flagged.length) : null].filter(Boolean).join(" · ")}
 				</button>
@@ -338,19 +343,21 @@ export function CoverageSummary() {
 							<span className="font-medium text-foreground line-through decoration-muted-foreground/60">{f.name}</span>
 							<span className="ml-1 text-muted-foreground">— {L.flaggedLine(1).replace(/^1 /, "")}</span>
 							{ctx.actions && (
-								<span className="mt-1 flex flex-wrap items-center gap-1.5">
-									<button type="button" className={BTN} disabled={ctx.busy} data-testid={`flagged-remove-${f.key}`} onClick={() => ctx.actions!.edit("approved", { action: "remove", key: f.key })}>
+								<span className="mt-1.5 flex flex-wrap items-center gap-2">
+									<button type="button" className={ROW_BTN} disabled={ctx.busy} data-testid={`flagged-remove-${f.key}`} onClick={() => ctx.actions!.edit("approved", { action: "remove", key: f.key })}>
 										{L.remove}
 									</button>
 									{unassigned.length > 0 && (
-										<select className={SELECT} aria-label={L.remapTo} disabled={ctx.busy} value="" onChange={(e) => e.target.value && ctx.actions!.edit("approved", { action: "remap", key: f.key, to: e.target.value })}>
-											<option value="">{L.remapTo}</option>
-											{unassigned.map((u) => (
-												<option key={u.key} value={u.key}>
-													{u.name}
-												</option>
-											))}
-										</select>
+										<span className="w-56 max-w-full [&>span]:w-full">
+											<ThinSelect ariaLabel={L.remapTo} disabled={ctx.busy} value="" onChange={(v) => v && ctx.actions!.edit("approved", { action: "remap", key: f.key, to: v })}>
+												<option value="">{L.remapTo}</option>
+												{unassigned.map((u) => (
+													<option key={u.key} value={u.key}>
+														{u.name}
+													</option>
+												))}
+											</ThinSelect>
+										</span>
 									)}
 								</span>
 							)}

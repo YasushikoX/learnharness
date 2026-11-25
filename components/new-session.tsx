@@ -1,6 +1,7 @@
 "use client";
 
 import { uploadDraftMaterials } from "@/components/materials-client";
+import { buttonVariants } from "@/components/ui/button";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { SurfaceRegion, usePageSurfaceBoundary, useSurfaceChromeStyle } from "./plugin-surfaces";
@@ -454,7 +455,7 @@ overlay={
 								type="button"
 								data-testid="setup-cta"
 								onClick={() => setSetupOpen(true)}
-								className="rounded-sm border border-border bg-card px-3 py-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 hover:bg-accent cursor-pointer"
+								className={buttonVariants({ variant: "outline", size: "sm" })}
 							>
 								Set up your models
 							</button>

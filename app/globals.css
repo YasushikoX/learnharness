@@ -1082,6 +1082,26 @@ html.lh-native-ink body > *:not([data-testid="sketch-view"]) {
 	border-radius: 0.25rem;
 }
 
+/* ─── Course page and Today (UI round 1b, package B) ──────────────────────────────────────────────────────────────── */
+
+/* Inside the course settings panel every control is 32px (SPEC §7 "Settings"): the shared 28px Sources and language
+   pills (control-variant.ts) grow to the select's height there, and only there. */
+.lh-course-controls :is([data-testid="stats-materials"], [data-testid="stats-language"]) {
+	height: 2rem;
+	padding-inline: 0.625rem;
+	font-size: 13px;
+	line-height: 18px;
+}
+
+/* The skill map (components/skill-map.tsx) on the plan diagram: a locked skill keeps a READABLE label in the muted
+   text colour (4.5:1, never extra opacity) and an input-strength outline; the lock badge says why (SPEC §7). */
+.lh-skill-map [data-status="upcoming"] text {
+	fill: var(--muted-foreground);
+}
+.lh-skill-map [data-status="upcoming"] > rect:first-child {
+	stroke: var(--input);
+}
+
 /* Swipe regions (components/use-swipe.ts): the browser reads `touch-action` only up to the nearest scroll container, so a
    sideways swipe over a scrolling list needs the cross-axis pan on the list and its children too, or the browser claims
    the touch and cancels our pointer. Vertical scrolling keeps working; the gesture axis is handed to the page. */

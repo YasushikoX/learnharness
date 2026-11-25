@@ -6,6 +6,7 @@ import { ChevronDownIcon, ChevronRightIcon, GraduationCapIcon, PlusIcon } from "
 import type { CourseSummary } from "@/src/core";
 import { useServerEvent, useServerResync } from "@/components/server-events";
 import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
 import { CourseRenameRow, DeleteCourseDialog } from "@/components/course-row-actions";
 import { CourseMenu, FolderMenu, FolderRenameRow, type CourseMenuView } from "@/components/course-folder-menus";
 import { SwipeRow } from "@/components/swipe-row";
@@ -115,13 +116,14 @@ export function CourseRow({
 			data-drawer-close
 			data-testid="course-row"
 			data-course-id={course.id}
+			// UI round 1b (SPEC §7 "Sidebar"): title 13/500, meta 12 muted in aligned columns, the raised fill when current.
 			className={cn(
-				"relative mb-0.5 flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left transition-colors hover:bg-accent",
-				active && "bg-accent",
+				"relative mb-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised focus-visible:ring-2 focus-visible:ring-focus",
+				active && "bg-raised",
 			)}
 		>
 			<span className="min-w-0 flex-1">
-				<span className="block truncate text-sm">{course.title}</span>
+				<span className="block truncate text-sm font-medium">{course.title}</span>
 				{meta.status !== null ? (
 					<span className="block truncate text-xs text-muted-foreground">{meta.status}</span>
 				) : meta.percent !== null ? (
@@ -370,8 +372,8 @@ export function CoursesSection({ onCourses, query = "" }: { onCourses?: (courses
 						}}
 						{...dropProps(`folder:${folderKey(f.name)}`, f.name)}
 						className={cn(
-							"lh-touch mb-0.5 flex w-full items-center gap-1.5 rounded-lg px-1 py-1 text-left text-xs font-medium text-muted-foreground transition-colors hover:text-foreground",
-							dropTarget === `folder:${folderKey(f.name)}` && "bg-accent text-foreground ring-1 ring-border",
+							"lh-touch mb-0.5 flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-focus",
+							dropTarget === `folder:${folderKey(f.name)}` && "bg-raised text-foreground ring-1 ring-border",
 						)}
 					>
 						{open ? <ChevronDownIcon className="size-3 shrink-0" /> : <ChevronRightIcon className="size-3 shrink-0" />}
@@ -397,14 +399,14 @@ export function CoursesSection({ onCourses, query = "" }: { onCourses?: (courses
 					onClick={toggleSection}
 					{...dropProps("section", null)}
 					className={cn(
-						"lh-touch flex items-center gap-2 rounded-lg px-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground",
-						dropTarget === "section" && "bg-accent text-foreground ring-1 ring-border",
+						"lh-touch flex h-8 items-center gap-2 rounded-md px-2 text-sm font-medium text-muted-foreground outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:text-foreground focus-visible:ring-2 focus-visible:ring-focus",
+						dropTarget === "section" && "bg-raised text-foreground ring-1 ring-border",
 					)}
 				>
-					<GraduationCapIcon className="size-3.5" />
+					<GraduationCapIcon className="size-4" strokeWidth={1.75} />
 					Courses
 					{courses !== null && <span className="font-normal tabular-nums text-muted-foreground">{total}</span>}
-					{bodyOpen ? <ChevronDownIcon className="size-3" /> : <ChevronRightIcon className="size-3" />}
+					{bodyOpen ? <ChevronDownIcon className="size-3.5" strokeWidth={1.75} /> : <ChevronRightIcon className="size-3.5" strokeWidth={1.75} />}
 				</button>
 				{/* a quiet + (owner, 2026-11-16): the gold pill was the loudest thing in the sidebar */}
 				<button
@@ -412,9 +414,9 @@ export function CoursesSection({ onCourses, query = "" }: { onCourses?: (courses
 					data-testid="new-course"
 					title="New course"
 					onClick={() => void newCourse()}
-					className="lh-touch lh-press flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+					className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "lh-touch text-muted-foreground hover:text-foreground")}
 				>
-					<PlusIcon className="size-4" />
+					<PlusIcon strokeWidth={1.75} />
 					<span className="sr-only">New course</span>
 				</button>
 			</div>
