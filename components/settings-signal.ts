@@ -24,9 +24,19 @@ export const SETTINGS_SAVED_EVENT = "lh:settings-saved";
 // so every control reading that record re-reads.
 export type SettingsSection = "general" | "keys" | "agent" | "models" | "appearance" | "graph" | "compaction" | "lesson" | "dictation" | "claudeCode" | "sync" | "learner";
 
+let lessonSaveGeneration = 0;
+
+/** Monotonic generation bumped before broadcasting lesson/models settings saves. */
+export function lessonSettingsGeneration(): number {
+	return lessonSaveGeneration;
+}
+
 /** Writers call this after the PUT resolves ok — never before (a failed
  *  write notifies nothing; the record is unchanged). */
 export function notifySettingsSaved(section: SettingsSection): void {
+	if (section === "lesson" || section === "models") {
+		lessonSaveGeneration++;
+	}
 	window.dispatchEvent(
 		new CustomEvent(SETTINGS_SAVED_EVENT, { detail: { section } }),
 	);

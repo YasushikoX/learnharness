@@ -9,6 +9,8 @@ import {
 	materialsPromptSection,
 	readMaterialIds,
 	type LessonMaterial,
+	type MaterialSectionVariant,
+	type TurnSources,
 } from "../core/materials.ts";
 import { resolveRoleSpec } from "../core/settings-resolution.ts";
 import { piEngineForSpec } from "../agent/models.ts";
@@ -228,15 +230,24 @@ export function sessionMaterials(chatId: string): MaterialStore {
 /** A turn's view of the lesson's material: the prompt section and the
  *  lookup tools; undefined when the lesson has none. A course session
  *  also sees its course's material. */
-export function materialsForTurn(chatId: string): { section: string; tools: AgentTool<any>[] } | undefined {
-	const sources = sourceMaterialsForTurn(chatId);
-	const notes = lectureNotesForTurn(chatId);
-	if (!notes) return sources;
-	if (!sources) return notes;
-	return { section: `${sources.section}\n\n${notes.section}`, tools: [...sources.tools, ...notes.tools] };
+export function materialsForTurn(chatId: string): { section: string; tools: AgentTool<any>[]; sources?: TurnSources } | undefined {
+	// An Ask conversation (2026-11-25) gets the sections written for it: the sources listed, no lesson doctrine. Its
+	// prompt also names which kinds of source it can check (agent/ask-prompt.ts), so they ride along.
+	const variant: MaterialSectionVariant = stores.chatStore.getChat(chatId)?.course?.mode === "ask" ? "ask" : "lesson";
+	const sources = sourceMaterialsForTurn(chatId, variant);
+	const notes = lectureNotesForTurn(chatId, variant);
+	const kinds = (): TurnSources => ({
+		pdf: sources?.materials.some((m) => m.kind === "pdf") ?? false,
+		other: sources?.materials.some((m) => m.kind !== "pdf") ?? false,
+		notes: notes !== undefined,
+	});
+	const extra = variant === "ask" ? { sources: kinds() } : {};
+	if (!notes) return sources ? { section: sources.section, tools: sources.tools, ...extra } : undefined;
+	if (!sources) return { ...notes, ...extra };
+	return { section: `${sources.section}\n\n${notes.section}`, tools: [...sources.tools, ...notes.tools], ...extra };
 }
 
-function sourceMaterialsForTurn(chatId: string): { section: string; tools: AgentTool<any>[] } | undefined {
+function sourceMaterialsForTurn(chatId: string, variant: MaterialSectionVariant): { section: string; tools: AgentTool<any>[]; materials: LessonMaterial[] } | undefined {
 	const store = sessionMaterials(chatId);
 	const materials = store === stores.materialStore ? listMaterials(chatId) : store.list(chatId);
 	// the teacher's last message: material newer than it is announced once
@@ -245,7 +256,7 @@ function sourceMaterialsForTurn(chatId: string): { section: string; tools: Agent
 		| { timestamp?: number }
 		| undefined;
 	// catalog mode pins what this conversation has read (core/materials.ts), from the stored tool calls
-	const section = materialsPromptSection(materials, (m) => store.filePath(chatId, m), lastAssistant?.timestamp, readMaterialIds(messages, materials));
+	const section = materialsPromptSection(materials, (m) => store.filePath(chatId, m), lastAssistant?.timestamp, readMaterialIds(messages, materials), variant);
 	if (!section) return undefined;
-	return { section, tools: Object.values(materialTools({ chatId, store })) };
+	return { section, tools: Object.values(materialTools({ chatId, store })), materials: [...materials] };
 }

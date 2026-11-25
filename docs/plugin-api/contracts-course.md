@@ -68,8 +68,9 @@ learn: a teach session aimed at one skill · practice/review/placement:
 practice sessions whose concluded problems move the skills' boxes ·
 check: the context check (owner) — a SHORT practice session
 on a skill the learner already has from another course, confirming it
-works in this one.
+works in this one. ask: an open conversation about the class (agent/ask-agent.ts) — no skills, no
+questions, no grades; it is never course evidence and never feeds the knowledge graph.
 
 ```ts
-export type CourseMode = "learn" | "practice" | "review" | "placement" | "check";
+export type CourseMode = "learn" | "practice" | "review" | "placement" | "check" | "ask";
 ```

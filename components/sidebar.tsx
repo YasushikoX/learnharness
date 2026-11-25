@@ -1346,8 +1346,13 @@ function SessionsSidebar() {
 						>
 							Delete…
 						</button>
-						<div className="my-0.5 border-t border-border/60" aria-hidden="true" />
-						<CoverageMenuBlock chatId={ctxChatId} />
+						{/* an Ask conversation has no coverage: no block, so no divider above nothing */}
+						{chats?.find((c) => c.id === ctxChatId)?.course?.mode !== "ask" && (
+							<>
+								<div className="my-0.5 border-t border-border/60" aria-hidden="true" />
+								<CoverageMenuBlock chatId={ctxChatId} />
+							</>
+						)}
 					</MenuShell>
 				)}
 

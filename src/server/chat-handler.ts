@@ -7,6 +7,7 @@ import {
 	type AgentBuildOptions,
 	type TeachingAgent,
 } from "../agent/teacher-agent.ts";
+import { createAskAgent } from "../agent/ask-agent.ts";
 import { piEngineForSpec, type PiEngine } from "../agent/models.ts";
 import { connectionBackgroundAllowed as subscriptionBackgroundAllowed, connectionScopeCurrent, isSubscriptionProvider } from "../agent/subscription-connections.ts";
 import { nativeSubscriptionError } from "../agent/subscription-stream.ts";
@@ -61,7 +62,7 @@ import { hasProbeDone, hasUnresolvedQuestion, pendingPluginQuestionOf, pluginQue
 import { samePluginQuestionOccurrence } from "../core/plugin-questions.ts";
 import { composeInstructions } from "../agent/teacher-agent.ts";
 import { ensureCompacted, kickCompaction, effectiveThresholdTokens, projectedContextTokens, compactionInFlight } from "./compaction.ts";
-import { COMPACTION_RESERVE_TOKENS } from "../core/compaction.ts";
+import { COMPACTION_RESERVE_TOKENS, type CompactionKind } from "../core/compaction.ts";
 import { catalogContextLimits, refreshConnectionCatalog } from "./model-catalog.ts";
 import { emit } from "../core/events.ts";
 import { resolveLessonLanguage } from "../core/language.ts";
@@ -69,7 +70,8 @@ import { resolvePace } from "../core/pace.ts";
 import { resolveDifficulty } from "../core/difficulty.ts";
 import { materialsForTurn } from "./materials.ts";
 import { ensureSketchPngs, hintPagesFor, normalizePhotoSketch, persistInputSketch, resolveSketchRef, sketchImagesFor } from "./sketches.ts";
-import { courseForTurn } from "./courses.ts";
+import { courseForTurn, titleAskConversation } from "./courses.ts";
+import { COURSE_MODE_EXTRACTS } from "../core/course-session.ts";
 import { finishLessonTool, finishSessionTool } from "../agent/tools/course.ts";
 import { settledTurnResponse } from "./turn-runs.ts";
 import { asAgentMessages, type LhMessage } from "../core/native-messages.ts";
@@ -86,7 +88,7 @@ import {
 	type TurnInput,
 } from "../core/input-events.ts";
 import { steerDelivered } from "../core/contracts.ts";
-import type {CallUsage, SteerMessage} from "../core/contracts.ts";
+import type {CallUsage, ChatRecord, SteerMessage} from "../core/contracts.ts";
 import { installQuestionVerifier } from "../agent/question-verify.ts";
 import { checkQuizKey } from "./question-check.ts";
 import { installPracticeGrader } from "../agent/practice-grade.ts";
@@ -264,6 +266,21 @@ export async function handleChatRequest(
 	return handleChatInput(chatId, resolved, buildAgent, sideContext);
 }
 
+/** The prompt size a turn's context admission and compaction charge when no measured usage applies: the composed
+ *  instructions of the agent the record runs on. An Ask conversation (2026-11-25, review 1 finding 5) charges its own
+ *  prompt (every Ask fragment, an upper bound), not the teacher's, which is about four times larger. */
+export function systemPromptTokensFor(record: Pick<ChatRecord, "kind" | "course">): number {
+	const kind = record.course?.mode === "ask" ? "ask" : record.kind === "practice" ? "practice" : "teacher";
+	return Math.ceil(composeInstructions(kind).length / 4);
+}
+
+/** Which summary a compaction of this record writes: an Ask conversation gets its own (questions, answers with their
+ *  sources and pages, pending figures), never the tutoring summary's learner assessment and plan. */
+export function compactionKindFor(record: Pick<ChatRecord, "kind" | "course" | "messages">): CompactionKind {
+	if (record.course?.mode === "ask") return "ask";
+	return record.kind === "practice" ? "practice" : hasProbeDone(record.messages) ? "teach" : "probe";
+}
+
 /**
  * The turn composition: one input event → native record appends → one
  * agent turn as a background object. Also the wake pipeline's entry
@@ -423,7 +440,7 @@ export async function handleChatInput(
 	const modelIdForCompaction = `${conversationEngine.model.provider}:${conversationEngine.model.id}`;
 	const contextWindow = catalogContextLimits().get(modelIdForCompaction);
 	const thresholdTokens = effectiveThresholdTokens(effective.compaction?.thresholdTokens, contextWindow);
-	const systemPromptTokens = Math.ceil(composeInstructions(record.kind === "practice" ? "practice" : "teacher").length / 4);
+	const systemPromptTokens = systemPromptTokensFor(record);
 	const estimateModel = effective.compaction.includeReasoning ? conversationEngine.model : undefined;
 	const fitsSideContext = (messages: readonly LhMessage[]) => {
 		const live = messages.filter((message) => (message as { role: string }).role !== "system");
@@ -448,7 +465,7 @@ export async function handleChatInput(
 			engine: compactionEngine,
 			canStart: () => !isTurnRunning(chatId) && connectionBackgroundAllowed(conversation.provider),
 			modelId: modelIdForCompaction,
-			kind: record.kind === "practice" ? "practice" : hasProbeDone(record.messages) ? "teach" : "probe",
+			kind: compactionKindFor(record),
 			includeReasoning: effective.compaction.includeReasoning,
 			thresholdTokens,
 			systemPromptTokens,
@@ -762,6 +779,11 @@ export async function handleChatInput(
 	} catch (err) {
 		console.error(`[chat ${chatId}] input visibility bookkeeping failed:`, err);
 	}
+	// An Ask conversation's first question names it (2026-11-25). Cosmetic: a failure never stops the turn.
+	if (inputSaved && input.type === "text" && record.course?.mode === "ask") {
+		try { titleAskConversation(chatId, record.messages, input.text); }
+		catch (err) { console.error(`[chat ${chatId}] Ask title failed:`, err); }
+	}
 
 	// MONEY CHANNEL (wave 4): one collector per request, fed by the agent's
 	// message_end events. Every model call's usage lands in the chat record's
@@ -900,7 +922,10 @@ export async function handleChatInput(
 			? {
 					course: {
 						section: course.section,
-						...(course.mode === "learn"
+						// an Ask conversation (2026-11-25) has no finish tool, and no course tool at all
+						...(course.mode === "ask"
+							? {}
+							: course.mode === "learn"
 							? teaching
 								? { tools: [finishLessonTool({ chatId, chatStore: stores.chatStore })] }
 								: {}
@@ -936,6 +961,9 @@ export async function handleChatInput(
 	// uniform across kinds).
 	const constructed: TeachingAgent = buildAgent
 		? buildAgent({ ...agentOpts, teaching })
+		// ASK (2026-11-25, agent/ask-agent.ts): the course's open-questions agent, from turn 1, on the session's own model.
+		: course?.mode === "ask"
+			? createAskAgent({ jobs: { chatId, jobStore: stores.jobStore, spawn: (job, input) => void jobRunner.runJob(job.id, input), searchAvailable } }, agentOpts)
 		: course?.mode === "placement" && course.skills
 			? createPlacementAgent({ skills: course.skills, placementSkills: course.placementSkills, sessionModel: conversation }, agentOpts)
 		: record.kind === "practice"
@@ -1103,7 +1131,8 @@ export async function handleChatInput(
 				// is the deliverable).
 				// PLACEMENT (owner, 2026-10-25): the test writes nothing either —
 				// its answers are course evidence, not lesson content.
-				if ((!requestCycle || requestCycle.dispatched) && record.kind !== "practice" && record.course?.mode !== "placement" && extractionEnabled(effective.graph)) {
+				// COURSE MODES (2026-11-25): one table decides per mode (core/course-session.ts) — an Ask conversation never feeds it.
+				if ((!requestCycle || requestCycle.dispatched) && record.kind !== "practice" && (!record.course || COURSE_MODE_EXTRACTS[record.course.mode]) && extractionEnabled(effective.graph)) {
 					// Fresh per-turn read of the graph section's chunk budget
 					// (extraction-UX redesign, 2026-09-24): the trigger compares
 					// against it and the pipeline's batches share it.
@@ -1156,13 +1185,13 @@ export async function handleChatInput(
 							engine: kickEngine,
 							canStart: () => !isTurnRunning(chatId) && connectionBackgroundAllowed(spec.provider),
 							modelId: kickModelId,
-							kind: freshRecord.kind === "practice" ? "practice" : hasProbeDone(freshRecord.messages) ? "teach" : "probe",
+							kind: compactionKindFor(freshRecord),
 							includeReasoning: fresh.compaction.includeReasoning,
 							thresholdTokens: effectiveThresholdTokens(
 								fresh.compaction?.thresholdTokens,
 								catalogContextLimits().get(kickModelId),
 							),
-							systemPromptTokens: Math.ceil(composeInstructions(freshRecord.kind === "practice" ? "practice" : "teacher").length / 4),
+							systemPromptTokens: systemPromptTokensFor(freshRecord),
 						};
 					}, chatId);
 			},

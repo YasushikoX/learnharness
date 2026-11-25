@@ -30,15 +30,17 @@ import {
 	setCourseNote,
 	setCoursePace,
 	setCourseSkillWeights,
+	startServerTiming,
 } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+	const timing = startServerTiming();
 	const { id } = await params;
-	const view = courseView(id);
-	if (!view) return Response.json({ error: "Unknown course" }, { status: 404 });
-	return Response.json({ ...view, drafting: courseDrafting(id), weighing: courseWeighing(id) });
+	const view = timing.measure("course", () => courseView(id));
+	if (!view) return timing.json({ error: "Unknown course" }, { status: 404 });
+	return timing.json({ ...view, drafting: courseDrafting(id), weighing: courseWeighing(id) });
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {

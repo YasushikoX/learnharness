@@ -46,8 +46,10 @@ import {
 	toggleOther,
 	type AnswerRequest,
 	type AskToolInput,
+	type ConfidenceControl,
 	type DockSelection,
 	type ExplainToolInput,
+	type LessonLanguage,
 	type QuestionAnswerData,
 	type QuestionFormDraft,
 	type QuestionData,
@@ -58,8 +60,10 @@ import {
 	type Phase3,
 } from "@/src/core";
 import { ConfidenceButtons } from "@/components/confidence-buttons";
+import { confidenceIndexFor, ConfidenceSlider, initialConfidenceFromDraft, stepConfidenceKey } from "@/components/confidence-slider";
+import { QuestionReadAloud, readAloudStandIn } from "@/components/question-read-aloud";
+import { useAppearance } from "@/components/settings/appearance";
 import type { PrepareBuiltinSubmission } from "./plugin-submission-adapters";
-import { CONFIDENCE_COLORS, confidenceRailStyle } from "@/components/confidence-rail";
 import {
 	ANSWER_COLUMN_FRAME,
 	ANSWER_OPTIONS_PAD,
@@ -78,7 +82,9 @@ const useIsoLayoutEffect = typeof window === "undefined" ? useEffect : useLayout
 // ─── The question card's static geometry ────────────────────────────────────
 // Shared by the card's JSX and by questionCardStandIn below (answered cards
 // measure a stand-in of the question card, so both solve the same layout).
-const QC_LABEL = "mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground";
+// Fork: the label row also holds the read-aloud button (in the row, never over the question; the stand-in reserves its box).
+const QC_LABEL = "mb-1 flex items-center text-xs font-medium uppercase tracking-wide text-muted-foreground";
+const QC_LABEL_TEXT = "min-w-0 [overflow-wrap:anywhere]";
 const QC_QUESTION = "mb-3 font-medium";
 const QC_CONTEXT = "mb-3 text-sm text-muted-foreground";
 const QC_OPTION_LIST = "flex flex-col gap-2 pb-2";
@@ -126,7 +132,7 @@ export function questionCardStandIn(doc: Document, c: QuestionCardContent): { qu
 	};
 	const contents = (live: HTMLElement) => [...live.childNodes].map((n) => (n instanceof HTMLElement ? cloneWithImageSizes(n) : n.cloneNode(true)));
 	const question = el("div", "",
-		el("div", QC_LABEL, c.label + (c.multiSelect ? " · select all that apply" : "")),
+		el("div", QC_LABEL, el("span", QC_LABEL_TEXT, c.label + (c.multiSelect ? " · select all that apply" : "")), readAloudStandIn(doc)),
 		el("div", QC_QUESTION, ...contents(c.question)),
 	);
 	if (c.context) question.append(el("div", QC_CONTEXT, ...contents(c.context)));
@@ -232,6 +238,12 @@ export interface QuestionDockProps {
 	layoutRequest?: QuestionLayoutRequest | null;
 	/** Reports the solved layout (null when off or unmounted). */
 	onLayout?: (layout: QuestionLayout | null) => void;
+	/** Lesson language for read-aloud voice selection. */
+	language?: LessonLanguage;
+	/** The chat the question is in (read-aloud remembers auto-read questions per chat). */
+	chatId?: string;
+	/** Override the confidence control mode (defaults to Appearance setting). */
+	confidenceControl?: ConfidenceControl;
 }
 
 export function QuestionDock({
@@ -258,6 +270,9 @@ export function QuestionDock({
 	workingRef,
 	layoutRequest,
 	onLayout,
+	language,
+	chatId,
+	confidenceControl,
 }: QuestionDockProps) {
 	// The probe-phase names (owner, 2026-10-09) canonicalize onto their
 	// teach twins for every dock concern — parse dispatch, labels, kinds:
@@ -324,6 +339,9 @@ export function QuestionDock({
 					sketchAvailable={sketchAvailable}
 					layoutRequest={layoutRequest}
 					onLayout={onLayout}
+					language={language}
+					chatId={chatId}
+					confidenceControl={confidenceControl}
 				/>
 			</div>
 		</>
@@ -422,8 +440,14 @@ function QuestionDockForm({
 	workingRef,
 	layoutRequest,
 	onLayout,
+	language,
+	chatId,
+	confidenceControl,
 }: Omit<QuestionDockProps, "expanded" | "onExpand" | "reveal">) {
 	const kind = toolQuestionKind(toolName);
+	const { appearance } = useAppearance();
+	const confidenceMode = confidenceControl ?? appearance.confidenceControl;
+	const stopSpeechRef = useRef<(() => void) | null>(null);
 	const controller = useOptionalInteractionLayers();
 	const rootRef = useRef<HTMLDivElement>(null);
 	const questionPartRef = useRef<HTMLDivElement>(null);
@@ -504,7 +528,7 @@ function QuestionDockForm({
 	// answer cannot be sent until the learner chooses a stop. The dock
 	// unmounts between questions, so each question starts unset (a recovered
 	// unconfirmed submission restores what was chosen).
-	const [confIdx, setConfIdx] = useState<number | null>(initialDraft?.confidenceIndex ?? null);
+	const [conf, setConf] = useState<number | null>(() => initialConfidenceFromDraft(initialDraft));
 	const [sketching, setSketching] = useState(false);
 	// A photo of the work (M17): the same read-first sketch answer, as one raster page; sent through the sketch path below
 	const [photo, setPhoto] = useState<PreparedPhoto | null>(null);
@@ -571,7 +595,7 @@ function QuestionDockForm({
 	const steerOffered = phase === "teach" && (kind === "quiz" || kind === "explain");
 	const [steerOpen, setSteerOpen] = useState(false);
 	const [steerText, setSteerText] = useState("");
-	type SubmitOverride = { confIdx?: number; dontKnow?: boolean };
+	type SubmitOverride = { conf?: number; dontKnow?: boolean };
 	const selFor = (ov?: SubmitOverride): DockSelection =>
 		ov?.dontKnow ? { ...sel, selected: new Set(), otherSelected: false, dontKnow: true } : sel;
 	const gateFor = (ov?: SubmitOverride) =>
@@ -581,7 +605,7 @@ function QuestionDockForm({
 			sel: selFor(ov),
 			other,
 			text,
-			confidenceSet: ov?.confIdx !== undefined || confIdx !== null,
+			confidenceSet: ov?.conf !== undefined || conf !== null,
 			hasSketch: photo !== null || inkWaiting,
 			requireConfidence: placementRecall,
 		});
@@ -594,34 +618,39 @@ function QuestionDockForm({
 	const currentQuestion = useRef(qd); currentQuestion.current = qd;
 	const mounted = useRef(true);
 	useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-	const formValues = useRef({ sel, other, confIdx }); formValues.current = { sel, other, confIdx };
+	const formValues = useRef({ sel, other, conf }); formValues.current = { sel, other, conf };
 	useLayoutEffect(() => {
 		if (!viewReader) return;
 		const read = (): NativeQuestionViewState => {
-			const { sel, other, confIdx } = formValues.current;
+			const { sel, other, conf } = formValues.current;
 			return { question: qd, draft: { dontKnow: sel.dontKnow,
 				values: [...sel.selected].flatMap(index => qd.options[index] ? [qd.options[index]!.value] : []),
 				otherSelected: sel.otherSelected, other, text: answerTextRef.current, thinking: thinkingTextRef.current,
-				...(showConfidence && confIdx !== null ? { confidence: CONFIDENCE_STOPS[confIdx] } : {}) } };
+				...(showConfidence && conf !== null ? { confidence: conf } : {}) } };
 		};
 		viewReader.current = read;
 		return () => { if (viewReader.current === read) viewReader.current = null; };
 	}, [viewReader, qd, showConfidence]);
 	const viewPresentationKey = JSON.stringify({ ...toClientQuestion(qd), questionType: qd.questionType });
-	useLayoutEffect(() => { viewReader?.changed?.(); }, [viewReader, sel, other, text, thinking, confIdx, viewPresentationKey]);
+	useLayoutEffect(() => { viewReader?.changed?.(); }, [viewReader, sel, other, text, thinking, conf, viewPresentationKey]);
 
 	// Snapshot before optimistic submission unmounts the form, on BOTH routes: a refused send restores exactly this. Ref values
 	// include the dictation finals that just landed, unlike stale closures.
-	const saveDraft = (override?: SubmitOverride) => onSaveDraft?.({
-		selection: { ...selFor(override), selected: new Set(selFor(override).selected) },
-		thinking: thinkingTextRef.current,
-		other,
-		text: answerTextRef.current,
-		confidenceIndex: override?.confIdx ?? confIdx,
-	});
+	const saveDraft = (override?: SubmitOverride) => {
+		const nextConf = override?.conf ?? conf;
+		onSaveDraft?.({
+			selection: { ...selFor(override), selected: new Set(selFor(override).selected) },
+			thinking: thinkingTextRef.current,
+			other,
+			text: answerTextRef.current,
+			confidence: nextConf,
+			confidenceIndex: confidenceIndexFor(nextConf),
+		});
+	};
 
 	const submitWith = (ov?: SubmitOverride) => {
 		if (!(gateFor(ov).canSubmit || pendingInput) || compactionRunning || preparing) return;
+		stopSpeechRef.current?.();
 		// A photo rides the sketch path and an adapter's images the inline path: one image route per answer.
 		if (pendingInput && photo) {
 			setPhotoError("A photo and attached images can't be sent together — remove one.");
@@ -671,16 +700,18 @@ function QuestionDockForm({
 	const hintError = hintCtl.error;
 
 	const pressLevel = (stopIndex: number) => {
-		setConfIdx(stopIndex);
-		submitWith({ confIdx: stopIndex });
+		const value = CONFIDENCE_STOPS[stopIndex];
+		if (value === undefined) return;
+		setConf(value);
+		submitWith({ conf: value });
 	};
 	const pressDontKnow = () => submitWith({ dontKnow: true });
 	/** The answer exactly as the form holds it now — read from the refs, so dictation finals that landed after an await are
 	 *  included — with a button press's override applied. */
 	const captureRequest = (ov?: SubmitOverride): AnswerRequest => {
-		const { sel, other, confIdx } = formValues.current;
+		const { sel, other, conf } = formValues.current;
 		const dontKnow = ov?.dontKnow ?? sel.dontKnow;
-		const conf = ov?.confIdx ?? confIdx;
+		const c = ov?.conf ?? conf;
 		return {
 			dontKnow,
 			values: dontKnow ? [] : [...sel.selected].map((i) => qd.options[i]!.value),
@@ -689,7 +720,7 @@ function QuestionDockForm({
 			thinking: qd.mode !== "text" ? thinkingTextRef.current.trim() || undefined : undefined,
 			// Always chosen on a picked quiz answer (canSubmit waits for it);
 			// buildAnswer drops it on "I don't know".
-			confidence: showConfidence && conf !== null ? CONFIDENCE_STOPS[conf] : undefined,
+			confidence: showConfidence && c !== null ? c : undefined,
 			...(hintsRef.current.length > 0 ? { hints: hintsRef.current } : {}),
 			// ink left off a free-text answer on purpose: the tutor is told, so "my drawing failed" is not graded as work
 			...(skipInk && qd.kind === "explain" && hasNewInk(inkState) ? { sketchUnsent: true } : {}),
@@ -698,6 +729,7 @@ function QuestionDockForm({
 	const sendSteer = () => {
 		const said = steerText.trim();
 		if (!said || compactionRunning || preparing) return;
+		stopSpeechRef.current?.();
 		setSteerOpen(false);
 		setSteerText("");
 		void onSubmit(steeredAnswer(qd.kind, qd.question, said, hintsRef.current));
@@ -706,7 +738,7 @@ function QuestionDockForm({
 		if (!(gateFor(ov).canSubmit || pendingInput)) return;
 		if (photo) {
 			// a photo answer rides the sketch path (the answer carries its SketchRef); the photo is dropped once it is sent
-			void submitSketch(photo.payload, ov?.confIdx).then((sent) => {
+			void submitSketch(photo.payload, ov?.conf, ov?.dontKnow).then((sent) => {
 				if (sent) setPhoto(null);
 			});
 			return;
@@ -716,7 +748,7 @@ function QuestionDockForm({
 			const state = readInk(toolCallId);
 			try {
 				const payload = pagePayload(readKept(toolCallId), state.strokes, nativeInkBridge() !== null && nativeInkEnabled() ? "android-ink" : "web-canvas", state.thawed !== undefined);
-				void sendPage(toolCallId, payload, state.strokes, (accepted) => submitSketch(payload, ov?.confIdx, ov?.dontKnow, accepted));
+				void sendPage(toolCallId, payload, state.strokes, (accepted) => submitSketch(payload, ov?.conf, ov?.dontKnow, accepted));
 				return;
 			} catch (err) {
 				// ink that cannot be packed is never dropped in silence: nothing is sent, the reason shows on the chip row, and the
@@ -735,14 +767,15 @@ function QuestionDockForm({
 	 * the picked answer (and confidence) is the answer and the sketch rides
 	 * as thinking. Dictation's tail lands first, exactly as for the Submit
 	 * button. */
-	const submitSketch = async (sketch: SketchPayload, pressedIdx?: number, dontKnow?: boolean, onAccepted?: () => void): Promise<boolean> => {
+	const submitSketch = async (sketch: SketchPayload, pressedConf?: number, dontKnow?: boolean, onAccepted?: () => void): Promise<boolean> => {
 		if (compactionRunning) return false;
+		stopSpeechRef.current?.();
 		setSketching(false);
 		if (isDictationActive()) await finishDictation();
 		// The dock's own gate (the view disables Submit with the same one). The sketch page asks for the confidence itself
-		// (its Submit expands into the confidence buttons), so a press there counts like one in the dock.
-		const ov: SubmitOverride | undefined = pressedIdx === undefined && !dontKnow ? undefined : { ...(pressedIdx !== undefined ? { confIdx: pressedIdx } : {}), ...(dontKnow ? { dontKnow: true } : {}) };
-		if (!dockSubmitGate({ kind, mode: qd.mode, sel: selFor(ov), other, text: answerTextRef.current, confidenceSet: pressedIdx !== undefined || confIdx !== null, hasSketch: true, requireConfidence: placementRecall }).canSubmit) return false;
+		// (its Submit expands into the confidence control), so a choice there counts like one in the dock.
+		const ov: SubmitOverride | undefined = pressedConf === undefined && !dontKnow ? undefined : { ...(pressedConf !== undefined ? { conf: pressedConf } : {}), ...(dontKnow ? { dontKnow: true } : {}) };
+		if (!dockSubmitGate({ kind, mode: qd.mode, sel: selFor(ov), other, text: answerTextRef.current, confidenceSet: pressedConf !== undefined || conf !== null, hasSketch: true, requireConfidence: placementRecall }).canSubmit) return false;
 		const req: AnswerRequest = { ...captureRequest(ov), sketch: sketchRefOf(sketch) };
 		return (await onSubmit(buildAnswer(qd, req, toolName), sketch, onAccepted)) ?? true;
 	};
@@ -867,17 +900,11 @@ function QuestionDockForm({
 				// buttons since 2026-10-28): the SAME pattern as ↑/↓ over the
 				// rows — works wherever focus sits. ←/→ move the highlight over
 				// the five levels and Enter presses it. Dead on "I don't know".
-				if (kind !== "quiz" || sel.dontKnow) return;
+				// From unset, either arrow lands on 50 (the middle stop). (Fork: in slider mode ←/→ step the slider by 5.)
+				if (e.defaultPrevented || kind !== "quiz" || sel.dontKnow) return;
 				e.preventDefault();
-				const first = CONFIDENCE_LEVELS[0]!.index;
-				const last = CONFIDENCE_LEVELS[CONFIDENCE_LEVELS.length - 1]!.index;
-				// From unset, either arrow lands on 50 (the middle stop).
-				setConfIdx((i) =>
-					i === null
-						? CONFIDENCE_STOPS.indexOf(50)
-						: Math.min(last, Math.max(first, i + (e.key === "ArrowRight" ? 1 : -1))),
-				);
-			} else if (kind === "quiz" && /^[0-5]$/.test(e.key)) {
+				setConf((c) => stepConfidenceKey(confidenceMode, c, e.key));
+			} else if (kind === "quiz" && (e.key === "0" || (confidenceMode === "buttons" && /^[1-5]$/.test(e.key)))) {
 				// 1-5 press Guess..Certain and submit, 0 presses "I don't know" (owner, 2026-10-28)
 				e.preventDefault();
 				if (e.key === "0") pressDontKnow();
@@ -975,8 +1002,11 @@ function QuestionDockForm({
 	const questionPart = (
 		<div ref={questionPartRef} data-question-part="">
 			<div className={QC_LABEL}>
-				{questionCardLabel(toolName, kind, qd.questionType)}
-				{qd.mode === "multi-select" && " · select all that apply"}
+				<span className={QC_LABEL_TEXT}>
+					{questionCardLabel(toolName, kind, qd.questionType)}
+					{qd.mode === "multi-select" && " · select all that apply"}
+				</span>
+				<QuestionReadAloud questionId={toolCallId} chatId={chatId} qd={qd} kind={kind} wordingOnly={wordingOnly} language={language} active={Boolean(active)} stopRef={stopSpeechRef} />
 			</div>
 			{/* The wording is markable for "Ask about this" (owner, 2026-11-06): the stem and the context, not the options. */}
 			<ClarifyWording messageId={messageId} callId={toolCallId} dock>
@@ -1185,10 +1215,13 @@ function QuestionDockForm({
 			    levels wait for one. Keys: 1-5 press the levels, 0 presses "I don't know", ←/→ move the highlight, Enter presses it. */}
 			{showConfidence && (
 				<div ref={confidenceRef} className={cn("border-t border-border/60 px-4 py-2.5", wordingOnly && "hidden")} data-testid="confidence-row">
+					{confidenceMode === "slider" ? (
+						<ConfidenceSlider value={conf} onChange={setConf} disabled={compactionRunning || preparing} showUnsetHint onDontKnow={pressDontKnow} dontKnowDisabled={compactionRunning || preparing} />
+					) : (
 					<ConfidenceButtons
 						onPick={pressLevel}
 						disabled={!answerPicked || compactionRunning || preparing}
-						highlight={confIdx}
+						highlight={confidenceIndexFor(conf)}
 						leading={
 							<button
 								type="button"
@@ -1201,6 +1234,7 @@ function QuestionDockForm({
 							</button>
 						}
 					/>
+					)}
 				</div>
 			)}
 
@@ -1475,7 +1509,7 @@ function QuestionDockForm({
 						<span aria-hidden className="pl-1.5 text-xs text-muted-foreground">
 							{compactionRunning ? "compacting session…" : <span className="lh-enter-hint [@media(pointer:coarse)]:hidden">↵ submits · ⇧↵ newline</span>}
 						</span>
-						{!showConfidence && (
+						{(!showConfidence || confidenceMode === "slider") && (
 							<Button
 								type="submit"
 								disabled={!canSubmit || compactionRunning || preparing}
@@ -1496,12 +1530,16 @@ function QuestionDockForm({
 					inkKey={toolCallId}
 					hint={hintsOffered ? hintCtl : undefined}
 					onSteer={steerOffered ? () => { setSketching(false); setSteerOpen(true); } : undefined}
-					onSubmit={(sketch, confidenceIndex, onAccepted) => submitSketch(sketch, confidenceIndex, undefined, onAccepted)}
+					onSubmit={(sketch, confidenceIndex, onAccepted, confidenceValue) =>
+						submitSketch(sketch, confidenceValue ?? (confidenceIndex !== undefined ? CONFIDENCE_STOPS[confidenceIndex] : undefined), undefined, onAccepted)
+					}
 					onClose={() => setSketching(false)}
 					onCancelDictation={onEscape}
 					disabled={compactionRunning}
 					blocked={qd.mode === "text" ? undefined : sketchBlocked}
 					confidenceLevels={(placementRecall || (kind === "quiz" && qd.mode !== "text")) && !sel.dontKnow}
+					confidenceMode={confidenceMode}
+					initialConfidence={conf}
 					choices={
 						qd.mode === "text" ? undefined : (
 							<SketchChoices

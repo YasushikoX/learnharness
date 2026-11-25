@@ -4,12 +4,14 @@
  *   GET  → { courses: CourseSummary[] } — the sidebar's rows (% known, due)
  *   POST { title? } → { id, title } — a new course ("Untitled course")
  */
-import { createCourse, listCourseSummaries } from "@/src/server";
+import { createCourse, listCourseSummaries, startServerTiming } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-	return Response.json({ courses: listCourseSummaries() });
+	const timing = startServerTiming();
+	const courses = timing.measure("courses", () => listCourseSummaries());
+	return timing.json({ courses });
 }
 
 export async function POST(req: Request) {

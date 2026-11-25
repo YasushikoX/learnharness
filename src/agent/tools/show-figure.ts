@@ -29,12 +29,18 @@ export interface ShowFigureDetails {
 	caption?: string;
 }
 
+/** The Ask agent's wording (2026-11-25): an answer, not a lesson, and no questions to place it before. */
+export const ASK_SHOW_FIGURE_DESCRIPTION =
+	"Show a finished figure or demo to the learner at this point of the conversation. Finished figures stay hidden until you call this. " +
+	"Call it next to the answer the figure belongs to, with one line on what to look at. " +
+	"figure = the job id from the figure's arrival message.";
+
 /** `messages` reads the run's live history (the agent's state), so a figure delivered earlier in this run is found. */
-export function createShowFigureTool(ctx: { messages: () => readonly unknown[] }): AgentTool<typeof showFigureInput> {
+export function createShowFigureTool(ctx: { messages: () => readonly unknown[]; description?: string }): AgentTool<typeof showFigureInput> {
 	return {
 		name: SHOW_FIGURE_TOOL,
 		label: SHOW_FIGURE_TOOL,
-		description: SHOW_FIGURE_DESCRIPTION,
+		description: ctx.description ?? SHOW_FIGURE_DESCRIPTION,
 		parameters: showFigureInput,
 		execute: serverExecute(SHOW_FIGURE_TOOL, showFigureInput, ({ figure, caption }): ImageFileResult => {
 			const messages = ctx.messages();

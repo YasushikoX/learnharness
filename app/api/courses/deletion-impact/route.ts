@@ -5,15 +5,17 @@
  *   POST { chatIds: string[] } → CourseDeletionImpact { sessions, courses: [{ id, title, sessions }], skills }
  *   400 when chatIds is not an array of strings.
  */
-import { courseDeletionImpact } from "@/src/server";
+import { courseDeletionImpact, startServerTiming } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
+	const timing = startServerTiming();
 	const body = (await req.json().catch(() => null)) as { chatIds?: unknown } | null;
 	const ids = body?.chatIds;
 	if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) {
-		return Response.json({ error: "chatIds must be an array of session ids" }, { status: 400 });
+		return timing.json({ error: "chatIds must be an array of session ids" }, { status: 400 });
 	}
-	return Response.json(courseDeletionImpact(ids));
+	const impact = timing.measure("impact", () => courseDeletionImpact(ids));
+	return timing.json(impact);
 }
