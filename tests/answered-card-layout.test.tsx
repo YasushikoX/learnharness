@@ -120,6 +120,49 @@ test("answered card: a remount reuses its solved layout; adaptation off keeps to
 	} finally { await act(async () => off.root.unmount()); off.host.remove(); }
 });
 
+// Review finding 3: on the landscape tablet (the wide dock) the pending card solved from a 60rem baseline and the
+// answered card from 46rem, so the same two-option question rendered stacked while pending and in columns once answered.
+// Both now take effectiveQuestionGeometry; the stacked measuring width is the baseline each solve starts from.
+test("answered card on the wide dock measures at the pending dock's baseline, capped by the Transcript width", async () => {
+	const { effectiveQuestionGeometry, STACKED_AREA_PAD } = await import("../components/question-layout.ts");
+	const proto = dom.window.HTMLElement.prototype;
+	const rect = Object.getOwnPropertyDescriptor(proto, "getBoundingClientRect")!;
+	const stackedWidths = new Set<string>();
+	Object.defineProperty(proto, "getBoundingClientRect", {
+		configurable: true,
+		value(this: HTMLElement) {
+			const box = this.parentElement;
+			if (box?.className === STACKED_AREA_PAD && box.closest("[data-question-layout-probe]")) stackedWidths.add(box.style.width);
+			return (rect.value as (this: HTMLElement) => DOMRect).call(this);
+		},
+	});
+	const win = dom.window as unknown as { matchMedia?: (q: string) => { matches: boolean } };
+	win.matchMedia = (query: string) => ({ matches: query.includes("pointer: coarse") });
+	try {
+		for (const [transcriptMaxWidth, id] of [[null, "q-wide-full"], [46, "q-wide-46"]] as const) {
+			stackedWidths.clear(); near = [];
+			const host = document.createElement("div"); document.body.append(host);
+			const root = createRoot(host);
+			const answer = buildAnswer(quizQD(), { values: ["Zero"], confidence: 70, thinking: "" });
+			await act(async () => root.render(
+				<AppearanceProvider initialAppearance={{ adaptiveQuestions: true, ...(transcriptMaxWidth === null ? {} : { transcriptMaxWidth }) }} initialTheme={DEFAULT_THEME}>
+					<AnsweredCard answer={answer} input={quizInput} toolCallId={id} />
+				</AppearanceProvider>,
+			));
+			try {
+				await comeNear();
+				// The pending dock's request on the same screen (chat.tsx) uses exactly this base.
+				const pendingBase = effectiveQuestionGeometry(16, true, transcriptMaxWidth).base;
+				assert.equal(pendingBase, transcriptMaxWidth === null ? 926 : 702);
+				assert.deepEqual([...stackedWidths], [`${pendingBase}px`], `answered card baseline at ${transcriptMaxWidth ?? "Full"}`);
+			} finally { await act(async () => root.unmount()); host.remove(); }
+		}
+	} finally {
+		delete win.matchMedia;
+		Object.defineProperty(proto, "getBoundingClientRect", rect);
+	}
+});
+
 // Fork (v0.7.0 merge): the fork's pending quiz card has no "I don't know" option row and no confidence row under the
 // options — both are the full-width confidence BUTTONS row below the measured area — so the stand-in has neither.
 test("the question card stand-in mirrors the pending card: options only (the fork's confidence buttons sit outside the columns)", () => {

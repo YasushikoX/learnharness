@@ -204,6 +204,41 @@ export function questionCardGeometry(rem = 16) {
 	return { container: 46 * rem, chrome, base: 46 * rem - chrome, floor: 23 * rem };
 }
 
+/** A landscape touch screen (the tablet) gets the fork's WIDE dock, 60rem, so a question and its options can sit side by
+ *  side (question-dock.tsx, owner 2026-11-10). The query is repeated in chat.tsx's DOCK class (Tailwind needs it spelled out). */
+export const WIDE_DOCK_QUERY = "(pointer: coarse) and (orientation: landscape) and (min-width: 1100px)";
+export const WIDE_DOCK_REM = 60;
+
+/** Is the dock the wide one now (a landscape touch screen)? */
+export function wideDockScreen(): boolean {
+	try {
+		return typeof window !== "undefined" && window.matchMedia(WIDE_DOCK_QUERY).matches;
+	} catch {
+		return false;
+	}
+}
+
+/** The question card's EFFECTIVE geometry, shared by the pending dock and the answered card so both solve alike (merge
+ *  review finding 3): questionCardGeometry, except that on the wide dock the default container is 60rem — capped at the
+ *  Transcript width setting (rem; null = Full), which is the contract for every question card (settings.ts
+ *  transcriptMaxWidth). `dockDefault` is the DOCK class's own CSS width there, which the dock must override to shrink. */
+export function effectiveQuestionGeometry(rem: number, wide: boolean, transcriptMaxWidth: number | null) {
+	const geometry = questionCardGeometry(rem);
+	if (!wide) return { ...geometry, dockDefault: geometry.container };
+	const cap = transcriptMaxWidth === null ? Infinity : transcriptMaxWidth * rem;
+	const container = Math.max(geometry.container, Math.min(WIDE_DOCK_REM * rem, cap));
+	return { ...geometry, container, base: container - geometry.chrome, dockDefault: WIDE_DOCK_REM * rem };
+}
+
+/** The expanded adaptive dock's container width (px), or null for the DOCK class's own width: a solved card wider than
+ *  the default grows the dock; a default narrower than the CSS one (the wide dock under a smaller Transcript width)
+ *  shrinks it to that configured limit — also while no layout is solved (not yet, or suspended in wording-only mode). */
+export function adaptedDockWidth(layout: QuestionLayout | null, geometry: ReturnType<typeof effectiveQuestionGeometry>): number | null {
+	const solved = layout ? layout.width + geometry.chrome : 0;
+	if (solved > geometry.container) return solved;
+	return geometry.container < geometry.dockDefault ? geometry.container : null;
+}
+
 /** The widest the dock container may grow (px): the Transcript width
  *  setting (rem; null = Full) or, at Full, the bottom block less 1rem — the
  *  transcript's px-6 and the dock's px-4 differ by 0.5rem per side, so the

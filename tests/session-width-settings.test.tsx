@@ -80,6 +80,20 @@ it("the transcript column reads the variable; unset leaves today's full-bleed co
 	assert.match(chat, /const DOCK = "mx-auto w-full max-w-\[46rem\] px-4 \[@media\(pointer:coarse\)_and_\(orientation:landscape\)_and_\(min-width:1100px\)\]:max-w-\[60rem\]";/);
 });
 
+// Review finding 3: the CSS above lets the wide dock reach 60rem whatever the setting; the expanded adaptive dock must
+// override it down to the Transcript width, and pending and answered cards must share one geometry (the numbers are
+// covered in question-layout-dock and answered-card-layout).
+it("the pending dock and the answered card take the setting-capped effective geometry; the adaptive dock may shrink to it", () => {
+	const chat = readFileSync(new URL("../components/chat.tsx", import.meta.url), "utf8");
+	assert.match(chat, /const geometry = effectiveQuestionGeometry\(rem, wide, appearance\.transcriptMaxWidth\);/);
+	assert.match(chat, /const adaptedW = adaptive && expanded && !revealPending \? adaptedDockWidth\(questionLayout, geometry\) : null;/);
+	assert.match(chat, /style=\{adaptedW \? \{ maxWidth: adaptedW \} : undefined\}/, "the adapted width overrides the DOCK class either way");
+	assert.doesNotMatch(chat, /questionCardGeometry\(/, "no second, uncapped geometry in the dock");
+	const answered = readFileSync(new URL("../components/answered-card.tsx", import.meta.url), "utf8");
+	assert.match(answered, /const geometry = effectiveQuestionGeometry\(rem, wide, appearance\.transcriptMaxWidth\);/);
+	assert.match(answered, /setWide\(wideDockScreen\(\)\);/);
+});
+
 it("inline code and inline math never wrap on the session page; a span wider than its column scrolls", () => {
 	const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 	const rule = /\[data-session-surface\] \[data-streamdown="inline-code"\],\s*\[data-session-surface\] :not\(\.katex-display\) > \.katex \{([^}]*)\}/.exec(css)?.[1] ?? "";

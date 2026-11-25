@@ -948,7 +948,7 @@ function QuestionDockForm({
 		},
 	});
 	const columns = layout?.kind === "columns" ? layout : null;
-	// The fork's wide-dock two panes (a landscape touch screen, chat.tsx WIDE_DOCK_QUERY; owner, 2026-11-10) remain the
+	// The fork's wide-dock two panes (a landscape touch screen, question-layout.ts WIDE_DOCK_QUERY; owner, 2026-11-10) remain the
 	// fallback when the adaptive layout is off: question and options side by side, each scrolling on its own.
 	const panes = !layoutRequest && qd.mode !== "text" && !wordingOnly;
 

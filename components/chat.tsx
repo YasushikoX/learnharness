@@ -48,7 +48,7 @@ import { clearOpeningPrompt, readOpeningPromptEntry, stashOpeningPrompt, OPENING
 import { forwardDockWheel, useDockHeight } from "@/components/dock-height";
 import { createDockMorph, createDockWidthMorph } from "@/components/dock-morph";
 import { useAppearance } from "@/components/settings/appearance";
-import { dockContainerMax, layoutFontKey, questionCardGeometry, rootRem, type QuestionLayout } from "@/components/question-layout";
+import { adaptedDockWidth, dockContainerMax, effectiveQuestionGeometry, layoutFontKey, rootRem, wideDockScreen, type QuestionLayout } from "@/components/question-layout";
 import { QueuedSteersBody, type QueuedSteerLine } from "@/components/queued-steers";
 import { DictationBar, finishDictation, joinDictation, useDictation, type Dictation } from "@/components/dictation";
 import { useFieldCycle } from "@/components/field-cycle";
@@ -166,9 +166,8 @@ const COLUMN = "lh-transcript-column mx-auto w-full px-6";
  *  It carries upstream's Transcript width cap (lh-transcript-column) like COLUMN. */
 const TRANSCRIPT_COLUMN = "lh-transcript-column mx-auto w-full pl-6 pr-12";
 // A landscape touch screen (the tablet) gets a WIDE dock, 60rem, so a question and its options can sit side by side
-// (question-dock.tsx, owner 2026-11-10). The query is repeated in the DOCK class (Tailwind needs it spelled out) and in
-// the dock geometry below (wideDock).
-const WIDE_DOCK_QUERY = "(pointer: coarse) and (orientation: landscape) and (min-width: 1100px)";
+// (question-dock.tsx, owner 2026-11-10). The query (question-layout.ts WIDE_DOCK_QUERY) is repeated in the DOCK class
+// (Tailwind needs it spelled out); the dock geometry below reads it through wideDockScreen.
 const DOCK = "mx-auto w-full max-w-[46rem] px-4 [@media(pointer:coarse)_and_(orientation:landscape)_and_(min-width:1100px)]:max-w-[60rem]";
 // The DOCK container's fixed width (46rem — 60rem on the wide dock —, questionCardGeometry at the
 // root font size — with its horizontal chrome, px-4 + the shell's 1px
@@ -181,14 +180,6 @@ const DOCK = "mx-auto w-full max-w-[46rem] px-4 [@media(pointer:coarse)_and_(ori
 // the fade floor (owner, resize round) — below it the marginalia fades
 // out over the normal transition instead of popping away, and it stays
 // mounted while the question owns the band so widening fades it back.
-/** Is the dock the wide one now (a landscape touch screen)? */
-function wideDock(): boolean {
-	try {
-		return typeof window !== "undefined" && window.matchMedia(WIDE_DOCK_QUERY).matches;
-	} catch {
-		return false;
-	}
-}
 const MARGIN_GAP = 16;
 const MARGIN_MIN_W = 220;
 // The dock overlay's gradient band (h-24) — part of the reserved tail.
@@ -3018,7 +3009,7 @@ export function DockOverlay({
 		if (!block) return;
 		const measure = () => {
 			setRem(rootRem(block.ownerDocument));
-			setWide(wideDock());
+			setWide(wideDockScreen());
 			const next = Math.round(block.offsetWidth);
 			if (Math.abs(next - blockWRef.current) > 1) {
 				blockWRef.current = next;
@@ -3044,10 +3035,11 @@ export function DockOverlay({
 	// (dockContainerMax: block - 1rem); a set width caps it there.
 	const containerMax = dockContainerMax(blockW, rem, appearance.transcriptMaxWidth);
 	const fontKey = layoutFontKey(appearance);
-	// Fork: on the wide dock the default container (and so the card's default width) is 60rem instead of 46rem.
-	const baseGeometry = questionCardGeometry(rem);
-	const geometry = wide ? { ...baseGeometry, container: 60 * rem, base: 60 * rem - baseGeometry.chrome } : baseGeometry;
-	const DOCK_W = geometry.container;
+	// Fork: on the wide dock the default container (and so the card's default width) is 60rem instead of 46rem, capped at
+	// the Transcript width setting. The answered card solves with the same effective geometry, so the two always agree.
+	const geometry = effectiveQuestionGeometry(rem, wide, appearance.transcriptMaxWidth);
+	// The DOCK class's own width: what an un-adapted dock (folded, composer, practice) renders at.
+	const DOCK_W = geometry.dockDefault;
 	const layoutRequest = useMemo(
 		() => (adaptive && blockW > 0
 			? { available: Math.max(containerMax - geometry.chrome, 0), base: geometry.base, floor: geometry.floor, key: fontKey }
@@ -3055,9 +3047,8 @@ export function DockOverlay({
 		[adaptive, blockW, containerMax, fontKey, geometry.chrome, geometry.base, geometry.floor],
 	);
 	const [questionLayout, setQuestionLayout] = useState<QuestionLayout | null>(null);
-	const adaptedW = adaptive && expanded && !revealPending && questionLayout && questionLayout.width + geometry.chrome > DOCK_W
-		? questionLayout.width + geometry.chrome
-		: null;
+	// Grows past the default for a wide solve, and shrinks to the configured limit when that is below the DOCK class's width.
+	const adaptedW = adaptive && expanded && !revealPending ? adaptedDockWidth(questionLayout, geometry) : null;
 	const dockW = Math.min(adaptedW ?? DOCK_W, blockW || Infinity);
 	const flankW = Math.round(blockW / 2 - dockW / 2 - 2 * MARGIN_GAP);
 	const dockRef = useRef<HTMLDivElement>(null);

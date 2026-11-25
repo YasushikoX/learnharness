@@ -20,9 +20,10 @@ import { questionCardLabel, questionCardStandIn } from "@/components/question-do
 import {
 	ANSWER_COLUMN_INSET_CSS,
 	COLUMN_GAP_CSS,
+	effectiveQuestionGeometry,
 	layoutFontKey,
-	questionCardGeometry,
 	rootRem,
+	wideDockScreen,
 } from "@/components/question-layout";
 import { useQuestionLayout, type QuestionLayoutRequest } from "@/components/use-question-layout";
 
@@ -69,6 +70,7 @@ export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, mess
 	const [near, setNear] = useState(false);
 	const [cardInner, setCardInner] = useState(0);
 	const [rem, setRem] = useState(16);
+	const [wide, setWide] = useState(false);
 	useEffect(() => {
 		const card = cardRef.current;
 		if (!adaptable || near || !card) return;
@@ -86,6 +88,7 @@ export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, mess
 		const measure = () => {
 			setCardInner(card.clientWidth);
 			setRem(rootRem(card.ownerDocument));
+			setWide(wideDockScreen());
 		};
 		measure();
 		const ro = new ResizeObserver(measure);
@@ -93,7 +96,8 @@ export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, mess
 		return () => ro.disconnect();
 	}, [adaptable, near]);
 	const fontKey = layoutFontKey(appearance);
-	const geometry = questionCardGeometry(rem);
+	// The pending dock's effective geometry (wide dock, Transcript width cap), so the answered card solves as it did.
+	const geometry = effectiveQuestionGeometry(rem, wide, appearance.transcriptMaxWidth);
 	const request: QuestionLayoutRequest | null = adaptable && near && cardInner > 0
 		? { available: cardInner, base: geometry.base, floor: geometry.floor, key: fontKey }
 		: null;

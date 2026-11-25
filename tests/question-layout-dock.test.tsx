@@ -9,8 +9,10 @@ import {
 	CONFIDENCE_ROW_PAD,
 	QUESTION_COLUMN_PAD,
 	STACKED_AREA_PAD,
+	adaptedDockWidth,
 	createQuestionProbe,
 	dockContainerMax,
+	effectiveQuestionGeometry,
 	layoutFontKey,
 	questionCardGeometry,
 	questionContentFingerprint,
@@ -384,6 +386,40 @@ test("fonts that finish loading with nothing new — or fail — still complete 
 			} finally { await act(async () => root.unmount()); host.remove(); }
 		} finally { delete (document as { fonts?: unknown }).fonts; }
 	}
+});
+
+// Review finding 3: at 1440 × 900 with touch (the wide dock) and a 46rem Transcript width, Chrome measured a 960px dock
+// around a 926px question against a 736px configured limit: the pending solver used a 60rem baseline and the dock only
+// applied a solved width that GREW past it. The effective geometry is capped at the setting and the dock may shrink to it.
+test("the landscape tablet dock keeps to the Transcript width setting (the reviewer's 1440px, touch, 46rem case)", async () => {
+	const blockW = 1440;
+	const capped = effectiveQuestionGeometry(16, true, 46);
+	assert.deepEqual(capped, { container: 736, chrome: 34, base: 702, floor: 368, dockDefault: 960 });
+	const containerMax = dockContainerMax(blockW, 16, 46);
+	assert.equal(containerMax, 736);
+	// The request chat.tsx builds from it, solved by the real dock.
+	const req: QuestionLayoutRequest = { available: containerMax - capped.chrome, base: capped.base, floor: capped.floor, key: "font" };
+	const layouts: (QuestionLayout | null)[] = [];
+	const { host, root } = await mount(req, layouts, "q-tablet-46");
+	try {
+		const solved = layouts.at(-1) ?? null;
+		assert.ok(solved, "a layout is solved");
+		assert.ok(solved.width <= 702, `the card fits the configured limit (${solved.width}px)`);
+		const dock = Math.min(adaptedDockWidth(solved, capped) ?? capped.dockDefault, blockW);
+		assert.ok(dock <= 736, `the dock (${dock}px) never exceeds the 736px limit`);
+		assert.equal(adaptedDockWidth(solved, capped), 736, "the expanded adaptive dock shrinks below its 60rem CSS width");
+		assert.equal(adaptedDockWidth(null, capped), 736, "also while no layout is solved (or wording-only suspends it)");
+	} finally { await act(async () => root.unmount()); host.remove(); }
+
+	// Full on the same screen: the wide dock's 60rem default, grown only by a wider solve.
+	const full = effectiveQuestionGeometry(16, true, null);
+	assert.deepEqual(full, { container: 960, chrome: 34, base: 926, floor: 368, dockDefault: 960 });
+	assert.equal(adaptedDockWidth({ kind: "stacked", width: 926, binding: false }, full), null, "the CSS width already fits");
+	assert.equal(adaptedDockWidth({ kind: "stacked", width: 1100, binding: true }, full), 1134);
+	// A setting between 46 and 60rem caps the wide dock there; off the tablet the 46rem default is untouched.
+	assert.equal(effectiveQuestionGeometry(16, true, 52).container, 832);
+	assert.deepEqual(effectiveQuestionGeometry(16, false, 46), { ...questionCardGeometry(16), dockDefault: 736 });
+	assert.equal(adaptedDockWidth(null, effectiveQuestionGeometry(16, false, null)), null);
 });
 
 test("geometry follows the root font size; text-metric styles are part of the layout key", () => {
