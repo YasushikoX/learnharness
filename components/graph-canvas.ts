@@ -488,13 +488,15 @@ export function fitTransform(
 	w: number,
 	h: number,
 	padding: number,
+	bottomInset = 0,
 ): { x: number; y: number; k: number } {
 	const bw = Math.max(bbox.maxX - bbox.minX, 1e-6);
 	const bh = Math.max(bbox.maxY - bbox.minY, 1e-6);
-	const k = Math.min((w - 2 * padding) / bw, (h - 2 * padding) / bh);
+	const availableHeight = Math.max(1, h - 2 * padding - bottomInset);
+	const k = Math.min((w - 2 * padding) / bw, availableHeight / bh);
 	const cx = (bbox.minX + bbox.maxX) / 2;
 	const cy = (bbox.minY + bbox.maxY) / 2;
-	return { x: w / 2 - cx * k, y: h / 2 - cy * k, k };
+	return { x: w / 2 - cx * k, y: padding + availableHeight / 2 - cy * k, k };
 }
 
 /** The arrowhead geometry for a directed edge a→b: shaft endpoints
@@ -663,6 +665,7 @@ export class GraphCanvasRenderer {
 	/** World-space bounds of the current nodes — fit() and the resize-time
 	 *  kFit refresh share it (computed once per setData, not per resize). */
 	private worldBBox: { minX: number; maxX: number; minY: number; maxY: number } | null = null;
+	private bottomInset = 0;
 
 	private data: CanvasData | null = null;
 	/** id -> node for the current data (avoids O(n^2) scans). */
@@ -967,6 +970,14 @@ export class GraphCanvasRenderer {
 		this.markDirty();
 	}
 
+	setBottomInset(inset: number): void {
+		const next = Math.max(0, inset);
+		if (next === this.bottomInset) return;
+		this.bottomInset = next;
+		if (!this.hasFit) this.fit();
+		else this.refreshFitZoom();
+	}
+
 	/** Frame the whole graph (padding included). Keeps the camera on later
 	 *  setData calls — call fit() only for an explicit re-frame (the
 	 *  first-ever open; afterwards the caller-persisted camera wins). */
@@ -975,7 +986,7 @@ export class GraphCanvasRenderer {
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
 		if (w < 10 || h < 10) return; // layout not ready yet; the ResizeObserver retries
-		const t = fitTransform(this.worldBBox, w, h, 40);
+		const t = fitTransform(this.worldBBox, w, h, 40, this.bottomInset);
 		this.kFit = t.k;
 		this.hasFit = true;
 		select(this.canvas).call(
@@ -991,7 +1002,7 @@ export class GraphCanvasRenderer {
 		if (!this.worldBBox) return;
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
-		if (w >= 10 && h >= 10) this.kFit = fitTransform(this.worldBBox, w, h, 40).k;
+		if (w >= 10 && h >= 10) this.kFit = fitTransform(this.worldBBox, w, h, 40, this.bottomInset).k;
 	}
 
 	destroy(): void {
@@ -1876,6 +1887,11 @@ export class GraphCanvasRenderer {
 				const boxH = rm.lines.length * lineH;
 				const box = { x0: rm.cx - boxW / 2, x1: rm.cx + boxW / 2, y0: rm.cy - boxH / 2, y1: rm.cy + boxH / 2 };
 				if (placed.some((p) => labelBoxesOverlap(p, box))) continue;
+				const coversNode = data.nodes.some((node) => isVisible(node.id) && !isImpNodeId(node.id) && labelBoxesOverlap(box, {
+					x0: node.x - world.nodeR, x1: node.x + world.nodeR,
+					y0: node.y - world.nodeR, y1: node.y + world.nodeR,
+				}));
+				if (coversNode) continue;
 				placed.push(box);
 				ctx.fillStyle = `hsla(${rm.hue}, 55%, ${data.colors.clusterLightness.label}%, 0.85)`;
 				const firstOffset = (-(rm.lines.length - 1) / 2) * lineH;

@@ -7,6 +7,7 @@ import type { CallUsage, JobKind, JobRecord } from "@/src/core";
 import { isModelsRefusal, isProviderKeyRefusal, subscriptionLabel, subscriptionLabels } from "@/src/core";
 import { formatTokens, planCostLabel } from "@/components/usage-format";
 import { useServerEvent, useServerResync } from "@/components/server-events";
+import { Button } from "@/components/ui/button";
 
 /**
  * THE BACKGROUND-AGENTS SECTION (owner, sidebar round — the successor of
@@ -377,9 +378,9 @@ export function ActivitySection({ feed: feedProp, trailing }: { feed?: ActivityF
 	// rows match the session rows' hover. Empty means empty: the header sits
 	// alone (the cost span is population, not decoration).
 	return (
-		<section data-testid="activity-section" className="border-t border-border px-3 pb-2 pt-1">
-			<div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-				<ActivityIcon className="size-3" />
+		<section data-testid="activity-section" className="border-t border-border px-1.5 py-1">
+			<div className="flex h-8 items-center gap-2 rounded-lg px-2 text-[13px] font-medium text-muted-foreground">
+				<ActivityIcon className="size-4" />
 				Background agents
 				{blobs.length > 0 && !trailing && (
 					<span className="ml-auto font-normal tabular-nums" data-testid="activity-total-cost" title="Total running cost (inferred)">
@@ -448,11 +449,11 @@ function ActivityBlobRow({
 		<div
 			data-testid={`activity-blob-${blob.process}`}
 			data-activity-id={blob.id}
-			className="rounded-lg px-2 py-1.5 text-xs transition-colors hover:bg-accent"
+			className="rounded-xl border border-border bg-card px-2 py-1.5 text-xs transition-colors hover:bg-raised"
 		>
 			<div className="relative">
-				<button
-					type="button"
+				<Button
+					type="button" variant="ghost"
 					onClick={onToggleDetail}
 					aria-expanded={detailOpen}
 					className="flex w-full items-center gap-2 pr-7 text-left"
@@ -474,12 +475,12 @@ function ActivityBlobRow({
 						<span data-testid="activity-blob-cost">{planCostLabel(blob.cost, subscriptionLabel(blob.model))}</span>
 						<span data-testid="activity-blob-elapsed">{formatElapsed(now - blob.startedAt)}</span>
 					</span>
-				</button>
+				</Button>
 				{/* The explicit END always on the blob's face (SCOPE) — the popover
 				    is for DETAIL, not the control. A failed abort locks the button and
 				    says why; a succeeded one just makes the blob vanish on refresh. */}
-				<button
-					type="button"
+				<Button
+					type="button" variant="ghost"
 					data-testid="activity-abort"
 					onClick={onAbort}
 					disabled={abortState !== undefined}
@@ -488,13 +489,13 @@ function ActivityBlobRow({
 					className="absolute right-1 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
 				>
 					<SquareIcon className="size-3" />
-				</button>
+				</Button>
 			</div>
 
 			{detailOpen && (
 				<div
 					data-testid="activity-blob-detail"
-					className="mt-1 flex flex-col gap-1 rounded-lg bg-accent/40 p-2 text-muted-foreground"
+					className="mt-1 flex flex-col gap-1 rounded-lg bg-raised/60 p-2 text-muted-foreground"
 				>
 					<div className="mb-1.5 flex items-center gap-2">
 						<Icon className="size-3.5 text-muted-foreground" />

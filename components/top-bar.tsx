@@ -10,7 +10,7 @@
  * never a bespoke header.
  *
  * Mechanics baked in (the chat-session bar's proven pattern):
- * - h-15 (60px) — matches the sidebar's wordmark band, one border line.
+ * - h-12 (48px) — matches the sidebar's wordmark band, one border line.
  * - lh-drag — the window-drag band. NATIVE interactive children
  *   (button/input/a/…) carve out AUTOMATICALLY via the globals.css auto
  *   carve-out rule (owner standardization ruling, 2026-09-29 night) —
@@ -85,7 +85,7 @@ export function TopBar({
 		<header
 			ref={header}
 			onMouseDown={onMouseDown}
-			className={`${drag ? "lh-drag " : ""}${sidebarToggle ? "" : "lh-native-window-clearance "}lh-wco-gutter lh-safe-bar relative flex h-15 select-none items-center gap-3 border-b border-border px-3`}
+			className={`${drag ? "lh-drag " : ""}${sidebarToggle ? "" : "lh-native-window-clearance "}lh-wco-gutter lh-safe-bar relative flex h-12 min-w-0 select-none items-center gap-3 border-b border-border bg-background/80 px-3 backdrop-blur-xl`}
 		>
 			{sidebarToggle && <SidebarToggle />}
 			{children}

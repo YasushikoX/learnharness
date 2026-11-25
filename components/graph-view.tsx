@@ -1081,10 +1081,13 @@ export function GraphView({
 	onPracticeSelectionChange,
 	onChainSelectClose,
 	folderFilterSlot,
+	bottomInset = 0,
 }: {
 	/** Where the folder filter control portals: the home header's top-left
 	 *  chrome, after the sidebar toggle. Absent → no folder filter control. */
 	folderFilterSlot?: HTMLElement | null;
+	/** Screen space occupied by the home composer, plus clearance. */
+	bottomInset?: number;
 	/** PRACTICE SELECT (owner vision, 2026-10-04): the LIFTED, persistent
 	 *  pick set — every check/clear in the chain table (however opened)
 	 *  reports the full node list up immediately; the composer-side chip
@@ -1175,6 +1178,8 @@ export function GraphView({
 	// changes (its camera is never reset by either); `posRef` carries the
 	// frozen layout out of the layout effect.
 	const rendererRef = useRef<GraphCanvasRenderer | null>(null);
+	const bottomInsetRef = useRef(bottomInset);
+	bottomInsetRef.current = bottomInset;
 	const posRef = useRef<Map<string, { x: number; y: number }> | null>(null);
 
 	// FOLDER FILTER (approved plan): view only. The shared organization's
@@ -1531,6 +1536,7 @@ export function GraphView({
 			initialCamera,
 		);
 		rendererRef.current = renderer;
+		renderer.setBottomInset(bottomInsetRef.current);
 		return () => {
 			rendererRef.current = null;
 			// Flush a pending camera write so an unmount <250ms after a
@@ -1547,6 +1553,10 @@ export function GraphView({
 			renderer.destroy();
 		};
 	}, [isEmpty]);
+
+	useEffect(() => {
+		rendererRef.current?.setBottomInset(bottomInset);
+	}, [bottomInset, isEmpty]);
 
 	// Feed #1 — data: positions + edges + clusters + resolved colors. Runs
 	// after the layout effect (same commit, declaration order) and after
@@ -1812,7 +1822,7 @@ export function GraphView({
 
 			{/* Course legend (owner, 2026-11-14): the hull colour is the course. */}
 			{!isEmpty && snapshot?.courseClusters && (
-				<div className="pointer-events-none absolute bottom-4 left-4 z-10 flex flex-col gap-1 text-xs text-muted-foreground" data-testid="course-legend">
+				<div className="pointer-events-none absolute left-4 z-10 flex max-w-[calc(100%-2rem)] flex-col gap-1 text-xs text-muted-foreground" style={{ bottom: bottomInset }} data-testid="course-legend">
 					{snapshot.courseClusters
 						.filter((c) => c.label && !snapshot.clusters.some((s) => s.id === c.id))
 						.map((c) => (

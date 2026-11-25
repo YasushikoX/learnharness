@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { MenuShell } from "@/components/menu-shell";
 import { DeleteFolderDialog, DeleteSessionDialog, folderDeleteCopy, type DeleteDialogCopy } from "@/components/delete-session-dialog";
 import type { ChatDeleteMode, ThemeMode } from "@/src/core";
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, DumbbellIcon, FolderPlusIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, DumbbellIcon, FolderPlusIcon, MoreHorizontalIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
 import { ActivitySection } from "@/components/activity-dock";
 import { CoursesSection } from "@/components/courses-section";
 import { TodaySection } from "@/components/today-section";
@@ -384,38 +384,50 @@ export function SessionRow({
 	onContextMenu?: (e: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
 	return (
-		<button
-			type="button"
-			onClick={onOpen}
-			onContextMenu={onContextMenu}
-			data-drawer-close
-			data-testid={kbdSelected ? "session-row-kbd" : "session-row"}
-			data-session-id={chat.id}
-			className={cn(
-				"relative flex w-full items-center gap-2 pr-3 text-left hover:bg-accent",
-				compact ? SIDEBAR_COMPACT_ROW : "py-2 touch:py-2.5",
-				active && "bg-accent",
-				kbdSelected && !active && "bg-accent/60 ring-1 ring-inset ring-border",
-			)}
-			style={{ paddingLeft: sidebarRowBox(depth).paddingLeft }}
-		>
-			<SessionStatus busy={chat.busy || chat.compacting} />
-			<span className="min-w-0 flex-1">
-				<span className={cn("block truncate", sidebarNameFont(compact))}>{chat.title}</span>
-				{!compact && (
-					<span className="block truncate text-xs text-muted-foreground">
-						{courseTitle ? `${courseTitle} · ${sessionMeta(chat)}` : sessionMeta(chat)}
-					</span>
+		<div className="relative">
+			<button
+				type="button"
+				onClick={onOpen}
+				onContextMenu={onContextMenu}
+				data-drawer-close
+				data-testid={kbdSelected ? "session-row-kbd" : "session-row"}
+				data-session-id={chat.id}
+				className={cn(
+					"relative flex w-full items-center gap-2 rounded-lg pr-9 text-left hover:bg-raised",
+					compact ? SIDEBAR_COMPACT_ROW : "py-2 touch:py-2.5",
+					active && "bg-raised",
+					kbdSelected && !active && "bg-raised/60 ring-1 ring-inset ring-border",
 				)}
-			</span>
-			{/* The dumbbell rides the FAR RIGHT (owner round 6, 2026-10-05) —
-			    was left of the name; right-aligned keeps the titles flush with
-			    the teaching rows and reads cleaner. */}
-			{(chat.kind ?? "teach") === "practice" && (
-				<DumbbellIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Practice session" />
+				style={{ paddingLeft: sidebarRowBox(depth).paddingLeft }}
+			>
+				<SessionStatus busy={chat.busy || chat.compacting} />
+				<span className="flex min-w-0 flex-1 flex-col gap-1.5">
+					<span className={cn("block truncate", sidebarNameFont(compact), !compact && "text-[13px] font-medium leading-[18px]")}>{chat.title}</span>
+					{!compact && (
+						<span className="block truncate text-xs leading-4 text-muted-foreground">
+							{courseTitle ? `${courseTitle} · ${sessionMeta(chat)}` : sessionMeta(chat)}
+						</span>
+					)}
+				</span>
+				{(chat.kind ?? "teach") === "practice" && (
+					<DumbbellIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Practice session" />
+				)}
+				{chat.finished && <CheckIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Finished" data-testid="session-finished" />}
+			</button>
+			{onContextMenu && (
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon-xs"
+					aria-label={`Actions for ${chat.title}`}
+					data-testid="session-menu-trigger"
+					onClick={onContextMenu}
+					className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+				>
+					<MoreHorizontalIcon className="size-4" />
+				</Button>
 			)}
-			{chat.finished && <CheckIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Finished" data-testid="session-finished" />}
-		</button>
+		</div>
 	);
 }
 
@@ -1027,10 +1039,10 @@ function SessionsSidebar() {
 				className={cn(
 					overlay
 						? cn(
-								"fixed inset-y-0 left-0 z-[45] w-72 max-w-[85vw] overflow-hidden transition-transform duration-200",
+								"fixed inset-y-0 left-0 z-[45] w-[260px] max-w-[85vw] overflow-hidden transition-transform duration-200",
 								open ? "translate-x-0 shadow-xl" : "-translate-x-full",
 							)
-						: cn("sidebar-motion shrink-0 overflow-hidden duration-200", open ? "w-72" : "w-0"),
+						: cn("sidebar-motion shrink-0 overflow-hidden duration-200", open ? "w-[260px]" : "w-0"),
 				)}
 				aria-hidden={!open}
 				inert={overlay && !open}
@@ -1040,12 +1052,12 @@ function SessionsSidebar() {
 					if (overlay && (e.target as Element).closest("[data-drawer-close], a[href]")) close();
 				}}
 			>
-				<div className="flex h-full w-72 max-w-[85vw] flex-col border-r bg-background pb-[var(--lh-safe-bottom)] pl-[var(--lh-safe-left)] pt-[var(--lh-safe-top)]">
+				<div className="flex h-full w-[260px] max-w-[85vw] flex-col border-r bg-sidebar-fill pb-[var(--lh-safe-bottom)] pl-[var(--lh-safe-left)] pt-[var(--lh-safe-top)]">
 				{/* LH wordmark — the owner's header; close toggle sits at the edge.
 				    Merged chrome (2026-09-17): in Electron this band is the
 				    window's drag surface and starts after the traffic lights
 				    (.lh-lights-gutter); in the browser those classes are inert. */}
-				<div className="lh-drag lh-lights-gutter flex items-center justify-between px-4 py-3">
+				<div className="lh-drag lh-lights-gutter flex h-12 shrink-0 items-center justify-between px-3">
 					{/* The owner's mark (2026-09-17) replaces the "LH" text — still the
 					    home link, still vertically centered by the band's items-center.
 					    The 92px .lh-lights-gutter keeps it clear of the traffic lights
@@ -1084,28 +1096,30 @@ function SessionsSidebar() {
 
 				{/* Core doors always lead explicit plugin sidebar placements. */}
 				<PluginSidebarActions>
-					<button
+					<Button
 						type="button"
+						variant="secondary"
 						data-testid="new-session"
 						data-drawer-close
 						onClick={() => void newSession()}
-						className="lh-touch lh-press flex w-full items-center gap-2 rounded-md bg-accent px-2.5 py-1.5 touch:px-3 touch:py-2.5 text-sm font-medium text-foreground hover:bg-accent/70"
+						className="lh-touch w-full"
 					>
-						<PlusIcon className="size-3.5 touch:size-4" />
+						<PlusIcon className="size-4" />
 						Teaching
 						<span className="sr-only">create a new teaching session</span>
-					</button>
-					<button
+					</Button>
+					<Button
 						type="button"
+						variant="secondary"
 						data-testid="new-session-practice"
 						data-drawer-close
 						onClick={() => router.push("/chat/new?mode=practice")}
-						className="lh-touch lh-press flex w-full items-center gap-2 rounded-md bg-accent px-2.5 py-1.5 touch:px-3 touch:py-2.5 text-sm font-medium text-foreground hover:bg-accent/70"
+						className="lh-touch w-full"
 					>
-						<DumbbellIcon className="size-3.5 touch:size-4" />
+						<DumbbellIcon className="size-4" />
 						Practice
 						<span className="sr-only">create a new practice session</span>
-					</button>
+					</Button>
 				</PluginSidebarActions>
 
 				{/* Today (fork addition, 2026-11-13): the next step, above the courses it comes from. */}
@@ -1115,7 +1129,7 @@ function SessionsSidebar() {
 				    sessions, which they are made of. */}
 				<CoursesSection onCourses={setCourses} query={query} />
 
-				<div className="mx-3 mb-1 flex items-center gap-1.5">
+				<div className="mx-3 mb-2 flex flex-col gap-2">
 					<Hint label="Search sessions" action="sessions-search" side="bottom">
 					<span className="relative min-w-0 flex-1">
 						<Input
@@ -1170,11 +1184,12 @@ function SessionsSidebar() {
 							}}
 							placeholder="Search…"
 							aria-label="Search sessions"
-							className="lh-touch h-6 touch:h-8 rounded-full border-transparent bg-accent/60 pl-6 touch:pl-8 text-xs placeholder:text-muted-foreground"
+							className="lh-touch h-[30px] w-full rounded-md border-input bg-card pl-8 text-[13px] placeholder:text-muted-foreground"
 						/>
-						<SearchIcon className="pointer-events-none absolute left-1.5 touch:left-3 top-1/2 size-3 touch:size-3.5 -translate-y-1/2 text-muted-foreground" />
+						<SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
 					</span>
 					</Hint>
+					<div className="flex items-center gap-2">
 
 				{/* The three-way filter, HEADING THE LIST (owner round 8b,
 				    2026-10-05): it scopes what the list shows. Order: Teaching /
@@ -1183,7 +1198,7 @@ function SessionsSidebar() {
 				    Persisted client-side. Since 2026-11-16 (owner, tablet pass) a
 				    small segmented control on the search's row, the selected
 				    segment a quiet tone instead of the gold pill. */}
-				<div className="flex shrink-0 items-center rounded-lg bg-accent/40 p-0.5" role="group" aria-label="Show sessions" data-testid="session-kind-filter">
+				<div className="flex h-7 min-w-0 flex-1 items-center rounded-lg bg-raised/60 p-0.5" role="group" aria-label="Show sessions" data-testid="session-kind-filter">
 					{(["teach", "practice", "all"] as const).map((f) => (
 						<button
 							key={f}
@@ -1193,7 +1208,7 @@ function SessionsSidebar() {
 							aria-label={f === "teach" ? "Teaching" : f === "all" ? "All" : "Practice"}
 							onClick={() => setFilter(f)}
 							className={cn(
-								"lh-touch lh-press rounded-md px-1.5 py-1 text-xs transition-colors",
+								"lh-touch h-6 min-w-0 flex-1 rounded-md px-1 text-[13px] leading-none transition-colors",
 								kindFilter === f ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
 							)}
 						>
@@ -1203,20 +1218,24 @@ function SessionsSidebar() {
 				</div>
 					{organization && (
 						<Hint label="Add folder" side="bottom">
-							<button
+							<Button
 								type="button"
+								variant="ghost"
+								size="icon-sm"
 								aria-label="Add folder"
 								data-testid="sidebar-add-folder"
 								onClick={() => setCreatingFolder({ parentId: null })}
-								className="lh-touch flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+								className="lh-touch shrink-0 text-muted-foreground hover:text-foreground"
 							>
-								<FolderPlusIcon className="size-3.5" />
-							</button>
+								<FolderPlusIcon className="size-4" />
+							</Button>
 						</Hint>
 					)}
 				</div>
 
-				{folderFailure && (
+				</div>
+
+					{folderFailure && (
 					<div role="alert" data-testid="sidebar-folder-error" className="mx-3 mt-2 flex items-start gap-2 text-xs text-error">
 						<span className="min-w-0 flex-1">{folderFailure}</span>
 						<button type="button" onClick={clearFolderFailure} className="shrink-0 text-muted-foreground hover:text-foreground">Dismiss</button>
