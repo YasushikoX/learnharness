@@ -4,6 +4,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { serverExecute } from "../tool-execute.ts";
 import { capOutput, GREP_MAX_LINE_LENGTH, truncateGrepLine } from "./fs-shared.ts";
 import { pdfExtract, pdfSearch } from "../subagents/pdf-ops.ts";
+import { extractConvertedPages, readConvertedPages, searchConvertedPages } from "./material-content.ts";
 import type { LessonMaterial } from "../../core/materials.ts";
 import type { MaterialStore } from "../../core/ports.ts";
 
@@ -18,7 +19,8 @@ import type { MaterialStore } from "../../core/ports.ts";
  *   material_read    a PDF's pages, or a text's line range
  *
  * Web pages are stored as their extracted Markdown; images are searched
- * and read through their transcription (content.md).
+ * and read through their transcription (content.md). A converted PDF is
+ * read from its content.md; without a usable one, pdfjs reads the original.
  */
 
 export interface MaterialToolContext {
@@ -35,8 +37,12 @@ function textPathOf(ctx: MaterialToolContext, m: LessonMaterial): string {
 	return m.kind === "image" ? ctx.store.auxPath(ctx.chatId, m.id, "content.md") : ctx.store.filePath(ctx.chatId, m);
 }
 
+/** A PDF's converted pages from its content.md, or null to use pdfjs on the original (material-content.ts). */
+const convertedPages = (ctx: MaterialToolContext, m: LessonMaterial) => readConvertedPages(ctx.store.auxPath(ctx.chatId, m.id, "content.md"));
+
 /** The plain answer for a material whose original file is not on this device (it arrived by sync), or null when the file is here. */
 async function originalElsewhere(ctx: MaterialToolContext, m: LessonMaterial): Promise<string | null> {
+	if (m.kind === "pdf" && (await convertedPages(ctx, m))) return null; // a converted PDF's content.md syncs; its original does not
 	try {
 		await fs.access(textPathOf(ctx, m)); // the file the tools actually open
 		return null;
@@ -102,8 +108,9 @@ export function materialTools(ctx: MaterialToolContext): Record<string, AgentToo
 					}
 					try {
 						if (m.kind === "pdf") {
-							const result = await pdfSearch(ctx.store.filePath(ctx.chatId, m), query, { literal, contextLines: 2 });
-							for (const hit of result.hits.slice(0, MAX_HITS - hits)) {
+							const converted = await convertedPages(ctx, m);
+							const found = converted ? searchConvertedPages(converted, pattern, 2) : (await pdfSearch(ctx.store.filePath(ctx.chatId, m), query, { literal, contextLines: 2 })).hits;
+							for (const hit of found.slice(0, MAX_HITS - hits)) {
 								out.push(`[${m.name}, p. ${hit.page}]\n${hit.context}`);
 								hits++;
 							}
@@ -142,7 +149,8 @@ export function materialTools(ctx: MaterialToolContext): Record<string, AgentToo
 				if (elsewhere) return elsewhere;
 				try {
 					if (m.kind === "pdf") {
-						const text = await pdfExtract(ctx.store.filePath(ctx.chatId, m), pages ?? "1");
+						const converted = await convertedPages(ctx, m);
+						const text = converted ? extractConvertedPages(converted, pages ?? "1") : await pdfExtract(ctx.store.filePath(ctx.chatId, m), pages ?? "1");
 						return capOutput(text.split("\n")).content;
 					}
 					const all = (await fs.readFile(textPathOf(ctx, m), "utf8")).split(/\r?\n/);

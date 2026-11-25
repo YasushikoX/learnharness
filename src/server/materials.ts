@@ -9,6 +9,7 @@ import {
 	materialsPromptSection,
 	readMaterialIds,
 	type LessonMaterial,
+	type MaterialIndexingProgress,
 	type MaterialSectionVariant,
 	type TurnSources,
 } from "../core/materials.ts";
@@ -19,6 +20,20 @@ import { fetchLink } from "../agent/tools/web.ts";
 import { materialTools } from "../agent/tools/materials.ts";
 import type { MaterialStore } from "../core/ports.ts";
 import { lectureNotesForTurn } from "./lecture-notes.ts";
+import { convertPdfMaterial } from "./material-conversion.ts";
+import type { MaterialConversionProgress } from "../core/pdf-converter.ts";
+import {
+	canIndexMaterial,
+	dropStaleIndex,
+	indexPdfMaterial,
+	pendingIndexingError,
+	profileFromDigest,
+	retryPdfIndexing,
+	rewritePdfProfile,
+	rewriteRefusal,
+	type IndexMaterialOptions,
+} from "./material-indexing.ts";
+import { hasProfile } from "../agent/subagents/material-digest.ts";
 import { stores } from "./stores.ts";
 
 /**
@@ -41,6 +56,8 @@ type Result<T> = { ok: true; value: T } | { ok: false; status: number; error: st
 interface Run {
 	promise: Promise<void>;
 	controller: AbortController;
+	progress?: MaterialConversionProgress;
+	indexing?: MaterialIndexingProgress;
 }
 const KEY = Symbol.for("lh.materialRuns");
 function runs(): Map<string, Run> {
@@ -49,6 +66,17 @@ function runs(): Map<string, Run> {
 	return g[KEY];
 }
 const runKey = (chatId: string, id: string) => `${chatId}/${id}`;
+/** A conversion's progress onto its live run (listMaterials shows it). */
+const progressTo = (key: string) => (progress: MaterialConversionProgress | undefined) => {
+	const run = runs().get(key);
+	if (run) run.progress = progress;
+};
+
+/** An indexing's progress onto its live run (material-indexing.ts). */
+const indexingTo = (key: string) => (progress: MaterialIndexingProgress | undefined) => {
+	const run = runs().get(key);
+	if (run) run.indexing = progress;
+};
 
 /** How many materials are being read right now (the idle check reads this). */
 export function materialRunCount(): number {
@@ -67,6 +95,75 @@ function lessonStarted(chatId: string): boolean {
 	return (stores.chatStore.getChat(chatId)?.messages ?? []).some((m) => (m as { role?: string }).role === "assistant");
 }
 
+const NO_VISION_MODEL = "no vision model is configured (Settings → Agent: the vision slot reads source material)";
+
+/** The material's record as stored now (the run's copy may be older); undefined once it is removed. */
+const current = (ownerId: string, id: string) => stores.materialStore.list(ownerId).find((m) => m.id === id);
+
+/**
+ * After a PDF's conversion run, whichever way it ended (a first read, a restart, a retry): drop what no longer
+ * describes content.md (material-indexing.ts dropStaleIndex, THE INDEX INVARIANT) and, when no vision model is
+ * configured, say that indexing is pending. Returns the material as stored now, or undefined once it was removed.
+ */
+function settleAfterConversion(ownerId: string, id: string, forced: boolean, hasModel: boolean): { material: LessonMaterial; profileDropped: boolean } | undefined {
+	const material = current(ownerId, id);
+	if (!material) return undefined;
+	const settled = dropStaleIndex(ownerId, material, stores.materialStore, { forced });
+	if (!hasModel && settled.converted && !settled.describes) stores.materialStore.update(ownerId, id, { indexingError: pendingIndexingError(settled.invalidReason) });
+	const now = current(ownerId, id);
+	return now ? { material: now, profileDropped: settled.profileDropped } : undefined;
+}
+
+/**
+ * Index (a PDF) and profile one material on the vision slot: a converted PDF is indexed whole (material-indexing.ts)
+ * and its digest's profile becomes the material's; otherwise the old profiler reads the original, always on a first
+ * read (`fallback` "profiler") and only when the material has no profile left on a retry ("when_missing"). Never
+ * rejects; an abort records nothing.
+ */
+async function indexAndProfile(ownerId: string, material: LessonMaterial, engine: ReturnType<typeof piEngineForSpec>, signal: AbortSignal, key: string, fallback: "profiler" | "when_missing"): Promise<void> {
+	const { materialStore } = stores;
+	const runsProfiler = fallback === "profiler" || !material.profile;
+	try {
+		const indexed =
+			material.kind === "pdf"
+				? await indexPdfMaterial(ownerId, material, { signal, store: materialStore, model: { engine, chatId: ownerId }, onProgress: indexingTo(key), fallback: runsProfiler ? "profiler" : "kept" })
+				: undefined;
+		if (signal.aborted) return;
+		const digest = indexed?.digest;
+		// hasProfile: the one test of "has a profile" (the notes digestNotes wrote use it too)
+		if (digest && hasProfile(digest)) return void materialStore.update(ownerId, material.id, profileFromDigest(digest));
+		if (!runsProfiler) return void materialStore.update(ownerId, material.id, { status: "ready" });
+		// The profiler's model requests pass the process-wide worker-request admission (the one background-LLM pool).
+		const result = await profileMaterial(
+			{
+				kind: material.kind,
+				name: material.name,
+				path: materialStore.filePath(ownerId, material),
+				mimeType: material.mimeType,
+			},
+			{ engine, abortSignal: signal, chatId: ownerId },
+		);
+		if (signal.aborted) return;
+		if (result.transcript !== undefined) {
+			// images only (the profiler returns a transcript for no other kind): never a PDF's content.md
+			fs.writeFileSync(materialStore.auxPath(ownerId, material.id, "content.md"), result.transcript, "utf8");
+		}
+		materialStore.update(ownerId, material.id, {
+			status: "ready",
+			profile: result.profile,
+			profileFromDigest: undefined,
+			...(result.pages !== undefined ? { pages: result.pages } : {}),
+			error: undefined,
+		});
+	} catch (err) {
+		if (signal.aborted) return; // removed while reading
+		materialStore.update(ownerId, material.id, {
+			status: "error",
+			error: err instanceof Error ? err.message : String(err),
+		});
+	}
+}
+
 /** Profile one material in the background (idempotent per material). */
 function startProfile(chatId: string, material: LessonMaterial): Promise<void> {
 	const key = runKey(chatId, material.id);
@@ -75,41 +172,25 @@ function startProfile(chatId: string, material: LessonMaterial): Promise<void> {
 	const controller = new AbortController();
 	const { materialStore } = stores;
 	const promise = (async () => {
-		const spec = resolveRoleSpec("pdfReader", stores.settingsStore.readSettings());
-		if (!spec) {
-			materialStore.update(chatId, material.id, {
-				status: "error",
-				error: "no vision model is configured (Settings → Agent: the vision slot reads source material)",
-			});
-			return;
+		const spec = () => resolveRoleSpec("pdfReader", stores.settingsStore.readSettings());
+		let target: LessonMaterial | undefined = material;
+		// PDF → content.md first (material-conversion.ts); it never fails the material, and the profiler below reads the original.
+		if (material.kind === "pdf") {
+			await convertPdfMaterial(chatId, material, controller.signal, materialStore, stores.settingsStore.readSettings()?.pdfConversion, { onProgress: progressTo(key) });
+			if (controller.signal.aborted) return;
+			target = settleAfterConversion(chatId, material.id, false, !!spec())?.material;
+			if (!target) return;
 		}
+		if (controller.signal.aborted) return;
+		const resolved = spec();
+		if (!resolved) return void materialStore.update(chatId, material.id, { status: "error", error: NO_VISION_MODEL });
+		let engine: ReturnType<typeof piEngineForSpec>;
 		try {
-			// The profiler's model requests pass the process-wide worker-request admission (the one background-LLM pool).
-			const result = await profileMaterial(
-				{
-					kind: material.kind,
-					name: material.name,
-					path: materialStore.filePath(chatId, material),
-					mimeType: material.mimeType,
-				},
-				{ engine: piEngineForSpec(spec), abortSignal: controller.signal, chatId },
-			);
-			if (result.transcript !== undefined) {
-				fs.writeFileSync(materialStore.auxPath(chatId, material.id, "content.md"), result.transcript, "utf8");
-			}
-			materialStore.update(chatId, material.id, {
-				status: "ready",
-				profile: result.profile,
-				...(result.pages !== undefined ? { pages: result.pages } : {}),
-				error: undefined,
-			});
+			engine = piEngineForSpec(resolved);
 		} catch (err) {
-			if (controller.signal.aborted) return; // removed while reading
-			materialStore.update(chatId, material.id, {
-				status: "error",
-				error: err instanceof Error ? err.message : String(err),
-			});
+			return void materialStore.update(chatId, material.id, { status: "error", error: err instanceof Error ? err.message : String(err) });
 		}
+		await indexAndProfile(chatId, target, engine, controller.signal, key, "profiler");
 	})().finally(() => runs().delete(key));
 	runs().set(key, { promise, controller });
 	return promise;
@@ -120,9 +201,105 @@ export function listMaterials(chatId: string): LessonMaterial[] {
 	const materials = stores.materialStore.list(chatId);
 	for (const m of materials) if (m.status === "reading" && !runs().has(runKey(chatId, m.id))) void startProfile(chatId, m);
 	// Source files do not sync (owner decision, 2026-11-02): a material that arrived from another device has no original here.
-	return materials.map((m) =>
-		m.status !== "reading" && !fs.existsSync(stores.materialStore.filePath(chatId, m)) ? { ...m, originalElsewhere: true } : m,
+	return materials.map((stored) => {
+		const run = runs().get(runKey(chatId, stored.id));
+		const m = run?.progress || run?.indexing ? { ...stored, conversionProgress: run.progress, indexingProgress: run.indexing } : stored;
+		return m.status !== "reading" && !fs.existsSync(stores.materialStore.filePath(chatId, m)) ? { ...m, originalElsewhere: true } : m;
+	});
+}
+
+/**
+ * Convert a PDF material again on purpose (after a failure, an interrupted conversion or a fallback): the skip key and
+ * the interrupted marker are ignored; a removal aborts the run like a read. THE INDEX INVARIANT holds whichever way it
+ * ends (settleAfterConversion): converted with a vision model, the new content.md is indexed in the same run (with
+ * progress) and its digest's profile becomes the material's (the old profiler reads the original only when the
+ * material is left without a profile, as at upload); converted without a model, no stale digest or profile from one is
+ * left and the material says indexing is pending; failed, no digest or indexing field is left and the material keeps
+ * working through the original PDF (a profile that came from the removed digest is read the old way, or, without a
+ * model, the material says so).
+ */
+export function retryMaterialConversion(ownerId: string, id: string): Result<LessonMaterial> {
+	const material = current(ownerId, id);
+	if (!material) return { ok: false, status: 404, error: "Unknown material" };
+	if (material.kind !== "pdf") return { ok: false, status: 400, error: "Only a PDF is converted" };
+	// A synced copy has the record and content.md but not the original PDF (review 5, finding 1): a conversion here
+	// could only fail, and its clean-up would take the profile with it and sync that back to the device that has the file.
+	if (!fs.existsSync(stores.materialStore.filePath(ownerId, material))) {
+		return { ok: false, status: 409, error: `The original of ${material.name} is not on this device, so it cannot be converted here` };
+	}
+	const key = runKey(ownerId, id);
+	if (runs().has(key)) return { ok: false, status: 409, error: `${material.name} is still being read` };
+	const controller = new AbortController();
+	const { signal } = controller;
+	const settings = stores.settingsStore.readSettings()?.pdfConversion;
+	const promise = (async () => {
+		const outcome = await convertPdfMaterial(ownerId, material, signal, stores.materialStore, settings, { force: true, onProgress: progressTo(key) });
+		if (!outcome || signal.aborted) return;
+		const spec = resolveRoleSpec("pdfReader", stores.settingsStore.readSettings());
+		const settled = settleAfterConversion(ownerId, id, true, !!spec);
+		if (!settled) return;
+		const { material: now } = settled;
+		const converted = canIndexMaterial(ownerId, now, stores.materialStore);
+		// nothing to index and a profile that is still the material's: the conversion is all this run does
+		if (!converted && now.profile) return;
+		if (!spec) {
+			if (!now.profile) stores.materialStore.update(ownerId, id, { status: "error", error: NO_VISION_MODEL });
+			return;
+		}
+		let engine: ReturnType<typeof piEngineForSpec>;
+		try {
+			engine = piEngineForSpec(spec);
+		} catch (err) {
+			if (!now.profile) stores.materialStore.update(ownerId, id, { status: "error", error: err instanceof Error ? err.message : String(err) });
+			return;
+		}
+		// without a profile the material is being read again (a turn waits for it; a restart resumes it)
+		if (!now.profile) stores.materialStore.update(ownerId, id, { status: "reading" });
+		await indexAndProfile(ownerId, current(ownerId, id) ?? now, engine, signal, key, "when_missing");
+	})()
+		.catch(() => {})
+		.finally(() => runs().delete(key));
+	runs().set(key, { promise, controller });
+	return { ok: true, value: material };
+}
+
+/** Start an indexing run the user asked for (retry or rewrite), on the profiler's slot, aborted by a removal. */
+function startIndexing(ownerId: string, id: string, refusal: (m: LessonMaterial) => string | undefined, work: (m: LessonMaterial, opts: Omit<IndexMaterialOptions, "force">) => Promise<void>): Result<LessonMaterial> {
+	const material = current(ownerId, id);
+	if (!material) return { ok: false, status: 404, error: "Unknown material" };
+	const key = runKey(ownerId, id);
+	// a running read first: during an upload the material has no index yet, and the true reason is that it is still being read
+	if (runs().has(key)) return { ok: false, status: 409, error: `${material.name} is still being read` };
+	const refused = refusal(material);
+	if (refused !== undefined) return { ok: false, status: 409, error: refused };
+	const spec = resolveRoleSpec("pdfReader", stores.settingsStore.readSettings());
+	if (!spec) return { ok: false, status: 409, error: "no vision model is configured (Settings → Agent: the vision slot reads source material)" };
+	let engine: ReturnType<typeof piEngineForSpec>;
+	try {
+		engine = piEngineForSpec(spec);
+	} catch (err) {
+		return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };
+	}
+	const controller = new AbortController();
+	const opts = { signal: controller.signal, store: stores.materialStore, model: { engine, chatId: ownerId }, onProgress: indexingTo(key) };
+	const promise = work(material, opts).then(() => {}, () => {}).finally(() => runs().delete(key));
+	runs().set(key, { promise, controller });
+	return { ok: true, value: material };
+}
+
+/** Index a converted PDF again on purpose (failed parts, no profile, an interrupted run): the whole document. */
+export function retryMaterialIndexing(ownerId: string, id: string): Result<LessonMaterial> {
+	return startIndexing(
+		ownerId,
+		id,
+		(m) => (canIndexMaterial(ownerId, m, stores.materialStore) ? undefined : "Only a converted PDF is indexed: convert it first"),
+		(m, opts) => retryPdfIndexing(ownerId, m, opts),
 	);
+}
+
+/** Write a PDF's profile again from its stored index (the profile step alone, no part re-read). */
+export function rewriteMaterialProfile(ownerId: string, id: string): Result<LessonMaterial> {
+	return startIndexing(ownerId, id, (m) => rewriteRefusal(ownerId, m, stores.materialStore), (m, opts) => rewritePdfProfile(ownerId, m, opts));
 }
 
 /** Add an uploaded file. */

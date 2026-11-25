@@ -97,6 +97,11 @@ export * from "./dictation-pieces.ts";
 export * from "./upstream.ts";
 // Lesson source material (fork addition, 2026-10-24).
 export * from "./materials.ts";
+export * from "./pdf-converter.ts";
+// The digest.json contract and the class glossary's lookups (fork addition, 2026-11-24): pure, browser-safe. The
+// splitter (material-split.ts) is not re-exported: only the server reads content.md.
+export * from "./contracts/material-digest.ts";
+export * from "./glossary.ts";
 export * from "./lecture-notes.ts";
 export * from "./lecture-note-text.ts";
 // Sketch answers (fork addition, 2026-10-26 — the Android plan M1).
