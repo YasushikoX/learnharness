@@ -601,7 +601,8 @@ describe("visual job runner with a PDF page", () => {
 		assert.ok(isRed(crop.at(10, 10)) && isRed(crop.at(crop.width - 10, crop.height - 10)), "the stored crop is the red quarter");
 		assert.ok(Math.max(crop.width, crop.height) <= 1600);
 		assert.equal(steers.length, 1);
-		assert.match(steers[0]!.content as string, /^The annotated image is drawn, verified by inspection/);
+		// Fork (v0.7.0 merge): the fork's figures wait for show_figure, so the delivery says so; the annotated-image branch is the same.
+		assert.match(steers[0]!.content as string, /^Annotated image \S+ is drawn and verified\. It is NOT shown to the learner yet/);
 	});
 
 	it("cancelling a visual job before crop dispatch prevents another request, saving or delivery", async () => {

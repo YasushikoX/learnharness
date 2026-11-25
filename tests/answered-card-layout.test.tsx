@@ -120,7 +120,9 @@ test("answered card: a remount reuses its solved layout; adaptation off keeps to
 	} finally { await act(async () => off.root.unmount()); off.host.remove(); }
 });
 
-test("the question card stand-in mirrors the pending card: options, I don't know, confidence", () => {
+// Fork (v0.7.0 merge): the fork's pending quiz card has no "I don't know" option row and no confidence row under the
+// options — both are the full-width confidence BUTTONS row below the measured area — so the stand-in has neither.
+test("the question card stand-in mirrors the pending card: options only (the fork's confidence buttons sit outside the columns)", () => {
 	const live = (html: string) => { const el = document.createElement("div"); el.innerHTML = html; return el; };
 	const quiz = questionCardStandIn(document as unknown as Document, {
 		label: "Prediction", kind: "quiz", multiSelect: false,
@@ -128,13 +130,12 @@ test("the question card stand-in mirrors the pending card: options, I don't know
 	});
 	assert.equal(quiz.question.textContent, "PredictionQ");
 	const rows = quiz.options.firstElementChild!.children;
-	assert.equal(rows.length, 3, "two options + I don't know");
-	assert.match(rows[2]!.className, /border-dashed/);
+	assert.equal(rows.length, 2, "two options, no I don't know row");
 	for (const row of rows) {
 		assert.match(row.className, /items-center/);
 		assert.doesNotMatch(row.firstElementChild!.className, /mt-0\.5/);
 	}
-	assert.ok(quiz.confidence?.textContent?.includes("Confidence"));
+	assert.equal(quiz.confidence, null, "no confidence row inside the columns");
 
 	const ask = questionCardStandIn(document as unknown as Document, {
 		label: "Question", kind: "ask", multiSelect: true,

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { answeredOptionLetters } from "../src/core/answer-presentation.ts";
 import { newAnswerResult } from "../src/core/native-messages.ts";
+import { ANSWER_NEXT_TEXT } from "../src/core/prose-gate.ts";
 import {
 	buildAnswer, compactAnswerForModel, dismissedAnswer, displayedOptionLetter, normalizeOptions,
 	questionDisplayOptions, resolveCorrect, seededRandom, shuffleOptions, type QuestionData,
@@ -32,9 +33,11 @@ test("letters map back to authored positions without changing the seeded permuta
 	const result = newAnswerResult(q.id, "quiz", answer);
 	assert.deepEqual(result.details, answer);
 	const json = JSON.parse(result.content[0]!.type === "text" ? result.content[0]!.text : "");
+	// Fork (v0.7.0 merge): a gated quiz answer's result also carries the fork's `next` reply rule (prose-gate.ts ANSWER_NEXT_TEXT).
 	assert.deepEqual(json, {
 		kind: "quiz", optionOrder: q.optionOrder, correct: true, thinking: "I ruled out A.",
 		answers: [{ index: q.correctIndices![0], label: "Venus", letter: String.fromCharCode(64 + q.correctIndices![0]!) }],
+		next: ANSWER_NEXT_TEXT,
 	});
 	assert.deepEqual(compactAnswerForModel(buildAnswer(q, { dontKnow: true })), { kind: "quiz", dontKnow: true, optionOrder: q.optionOrder });
 });
