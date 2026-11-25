@@ -30,7 +30,7 @@
  * lands here.
  */
 
-import { isBuiltinThemeId, syncActiveProfile, type AgentSettings, type AppearanceSettings, type ChatSettings, type ModelsSettings } from "@/src/core";
+import { isBuiltinThemeId, syncActiveProfile, type AgentSettings, type AppearanceSettings, type ChatSettings, type ModelsSettings, type PdfConversionSettings } from "@/src/core";
 import {
 	SETTINGS_SECTIONS,
 	allSegmentPaths,
@@ -38,6 +38,7 @@ import {
 	clampModelsLevels,
 	effectiveSettings,
 	fileAccessConfigurationError,
+	pdfConversionUrlChange,
 	promptOverrides,
 	readSettingsRecord,
 	refreshWorkerRequestAdmission,
@@ -87,6 +88,11 @@ export async function PUT(request: Request, ctx: { params: Promise<{ section: st
 		if (!verdict.ok) {
 			return Response.json({ error: verdict.error, supported: verdict.supported }, { status: 400 });
 		}
+	}
+	// Service URLs (and the keys bound to them) change only through PUT /api/converters (fork addition, 2026-11-25).
+	if (section === "pdfConversion") {
+		const refusal = pdfConversionUrlChange(record.pdfConversion, parsed.settings as PdfConversionSettings);
+		if (refusal) return Response.json({ error: refusal }, { status: 400 });
 	}
 	// A newly selected theme must exist. A saved theme whose file vanished
 	// already renders as Default: heal that unchanged reference on write,

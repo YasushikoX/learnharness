@@ -205,7 +205,7 @@ describe("Docling client", () => {
 
 	it("a refused key stops before the upload", async () => {
 		await withServer((_req, res) => json(res, { detail: "Invalid API key" }, 401), async (baseUrl, log) => {
-			await rejectsWith(fast(baseUrl, { apiKey: "wrong" }).convert(threeInput, context()), "auth", /Invalid API key/);
+			await rejectsWith(fast(baseUrl, { apiKey: "wrong-key" }).convert(threeInput, context()), "auth", /Invalid API key/);
 			assert.equal(uploads(log), 0);
 		});
 	});

@@ -13,6 +13,8 @@ export const PDF_MAX_PAGES = 1000;
 export const DOCLING_API_KEY = "DOCLING_API_KEY";
 /** auth.json entry holding the canonical base URL the Docling key is bound to. */
 export const DOCLING_AUTH_BINDING = "__learnharness_docling_base_url";
+/** auth.json entry holding every profile converter's key, each bound to its base URL (a JSON string); kept out of process.env like Docling's. */
+export const CONVERTER_CREDENTIALS = "__learnharness_converter_credentials";
 
 export type ConverterErrorKind =
 	/** The service could not be reached (connection refused, DNS, 5xx). Falls back to pdfjs. */
@@ -73,6 +75,8 @@ export type ConverterOptions = Readonly<Record<string, string | number | boolean
 
 export interface PdfConverter {
 	id: string;
+	/** The name messages use (a profile's display name); the id when absent. */
+	label?: string;
 	/** The client implementation's version (the converter version itself for a local converter). */
 	version: string;
 	/** Runs in-process and uploads nothing (an interrupted run may simply run again). */
