@@ -17,7 +17,9 @@ import { cn } from "@/lib/utils";
  * starts under its parent's folder icon — Chains' alignment rule without its
  * checkbox column. */
 export const SIDEBAR_TREE_INDENT = 18;
-export const sidebarRowPadding = (depth: number) => 12 + depth * SIDEBAR_TREE_INDENT;
+/** Rows sit inset in the list (UI round 1b: the list has 12px side padding, rows radius 8), so a top-level title
+ * starts 8px into its row: the Today/Courses rows' x. */
+export const sidebarRowPadding = (depth: number) => 8 + depth * SIDEBAR_TREE_INDENT;
 /** The chevron glyph sits ~4.7px inside its 14px box; folder rows start that
  * much earlier so the visible arrow lines up with session titles. */
 const CHEVRON_INSET = 4;
@@ -117,7 +119,7 @@ export function SidebarFolderRow({ folder, depth, open, dropActive, renaming, on
 			data-testid={`sidebar-folder-row-${folder.id}`} data-drop-active={dropActive}
 			style={{ marginLeft: sidebarRowBox(depth).marginLeft }} className={cn("relative transition-colors", dropActive && "bg-accent/50")}>
 			{renaming ? (
-				<div className={cn("flex w-full items-center gap-1 pr-3", compact ? SIDEBAR_COMPACT_ROW : "py-1.5")} style={{ paddingLeft: sidebarFolderBox(depth).paddingLeft }}>
+				<div className={cn("flex w-full items-center gap-1 pr-2", compact ? SIDEBAR_COMPACT_ROW : "py-1.5")} style={{ paddingLeft: sidebarFolderBox(depth).paddingLeft }}>
 					<ChevronRightIcon aria-hidden="true" className={cn("size-3.5 shrink-0 text-muted-foreground", open && "rotate-90")} />
 					<Icon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
 					<EditableSourceName name={folder.name} initiallyEditing inputClassName={sidebarNameFont(compact)} onCancel={onRenameDone}
@@ -127,7 +129,7 @@ export function SidebarFolderRow({ folder, depth, open, dropActive, renaming, on
 				<button type="button" data-testid={`sidebar-folder-${folder.id}`} aria-expanded={open}
 					aria-label={`${open ? "Collapse" : "Expand"} folder ${folder.name}`}
 					onClick={onToggle} onContextMenu={onContextMenu}
-					className={cn("flex w-full items-center gap-1 pr-3 text-left hover:bg-accent", compact ? SIDEBAR_COMPACT_ROW : "py-1.5")}
+					className={cn("flex w-full items-center gap-1 rounded-md pr-2 text-left outline-none hover:bg-raised focus-visible:ring-2 focus-visible:ring-focus", compact ? SIDEBAR_COMPACT_ROW : "py-1.5")}
 					style={{ paddingLeft: sidebarFolderBox(depth).paddingLeft }}>
 					<ChevronRightIcon aria-hidden="true" className={cn("size-3.5 shrink-0 text-muted-foreground", open && "rotate-90")} />
 					<Icon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
@@ -141,7 +143,7 @@ export function SidebarFolderRow({ folder, depth, open, dropActive, renaming, on
 /** The inline new-folder row (Add folder / New subfolder). */
 export function NewFolderRow({ depth, onCreate, onDone, compact = false }: { depth: number; onCreate: (name: string) => Promise<unknown>; onDone: () => void; compact?: boolean }) {
 	return (
-		<div data-testid="sidebar-new-folder-row" className={cn("relative flex w-full items-center gap-1 pr-3", compact ? SIDEBAR_COMPACT_ROW : "py-1.5")} style={sidebarFolderBox(depth)}>
+		<div data-testid="sidebar-new-folder-row" className={cn("relative flex w-full items-center gap-1 pr-2", compact ? SIDEBAR_COMPACT_ROW : "py-1.5")} style={sidebarFolderBox(depth)}>
 			<span aria-hidden="true" className="size-3.5 shrink-0" />
 			<FolderIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
 			<EditableSourceName name="" initiallyEditing inputClassName={sidebarNameFont(compact)} onCancel={onDone} onSave={async (name) => { await onCreate(name); onDone(); }} />

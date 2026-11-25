@@ -51,7 +51,7 @@ describe("SessionRow", () => {
 		const html = renderToStaticMarkup(<SessionRow chat={chat} active={false} compact onOpen={() => {}} />);
 		assert.match(html, /\bh-8\b/);
 		assert.match(html, /\bfont-ui\b[^>]*>Test session/);
-		assert.match(html, /hover:bg-accent/);
+		assert.match(html, /hover:bg-raised/);
 		assert.doesNotMatch(html, /transition-colors|duration-\d/);
 		assert.doesNotMatch(html, /Waiting for input|2026-01-02|session-dot/);
 		assert.match(html, /braille-spinner/);
@@ -130,7 +130,7 @@ describe("SessionRow", () => {
 
 	it("active row is visually marked by the background alone (owner, round 5: no weight change)", () => {
 		const html = render(item({}), true);
-		assert.ok(html.includes("bg-accent"), "active background");
+		assert.match(html, / bg-raised\b/, "active background");
 		assert.ok(!html.includes("font-medium"), "weight is not a second channel doing the same job");
 	});
 });

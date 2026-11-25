@@ -366,10 +366,13 @@ export function SessionRow({
 	courseTitle,
 	depth = 0,
 	compact = false,
+	menuOpen = false,
 }: {
 	chat: ChatListItem;
 	compact?: boolean;
 	active: boolean;
+	/** This row's menu is open: the row keeps its fill and its "…" trigger. */
+	menuOpen?: boolean;
 	onOpen: () => void;
 	/** The session's course (fork addition — docs/courses.md §6): its
 	 *  title leads the meta line. Absent for other sessions, or when the
@@ -384,7 +387,11 @@ export function SessionRow({
 	onContextMenu?: (e: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
 	return (
-		<div className="relative">
+		// UI round 1b (SPEC §7 "Sidebar"): an inset row (radius 8, the raised fill when hovered or current, instant as
+		// before), title 13px (400: weight is not a second "active" channel, owner round 5) over 12px muted meta, 6px
+		// apart. The "…" trigger sits at the row's right end, shown on hover, on keyboard focus and while its menu is
+		// open; the menu anchors to it (right-click too), never mid-row.
+		<div className="group/session relative" data-menu-open={menuOpen || undefined}>
 			<button
 				type="button"
 				onClick={onOpen}
@@ -393,26 +400,28 @@ export function SessionRow({
 				data-testid={kbdSelected ? "session-row-kbd" : "session-row"}
 				data-session-id={chat.id}
 				className={cn(
-					"relative flex w-full items-center gap-2 rounded-lg pr-9 text-left hover:bg-raised",
+					"relative flex w-full items-center gap-2 rounded-md pr-2 text-left outline-none hover:bg-raised focus-visible:ring-2 focus-visible:ring-focus",
+					onContextMenu && "group-hover/session:pr-9 group-data-[menu-open]/session:pr-9",
 					compact ? SIDEBAR_COMPACT_ROW : "py-2 touch:py-2.5",
-					active && "bg-raised",
+					(active || menuOpen) && "bg-raised",
 					kbdSelected && !active && "bg-raised/60 ring-1 ring-inset ring-border",
 				)}
 				style={{ paddingLeft: sidebarRowBox(depth).paddingLeft }}
 			>
 				<SessionStatus busy={chat.busy || chat.compacting} />
 				<span className="flex min-w-0 flex-1 flex-col gap-1.5">
-					<span className={cn("block truncate", sidebarNameFont(compact), !compact && "text-[13px] font-medium leading-[18px]")}>{chat.title}</span>
+					<span className={cn("block truncate", sidebarNameFont(compact), !compact && "text-[13px] leading-[18px]")}>{chat.title}</span>
 					{!compact && (
 						<span className="block truncate text-xs leading-4 text-muted-foreground">
 							{courseTitle ? `${courseTitle} · ${sessionMeta(chat)}` : sessionMeta(chat)}
 						</span>
 					)}
 				</span>
+				{/* The dumbbell rides the FAR RIGHT (owner round 6, 2026-10-05); the "…" trigger takes its place on hover. */}
 				{(chat.kind ?? "teach") === "practice" && (
-					<DumbbellIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Practice session" />
+					<DumbbellIcon className={cn("size-3.5 shrink-0 text-muted-foreground", onContextMenu && "group-hover/session:hidden group-data-[menu-open]/session:hidden")} aria-label="Practice session" />
 				)}
-				{chat.finished && <CheckIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Finished" data-testid="session-finished" />}
+				{chat.finished && <CheckIcon className={cn("size-3.5 shrink-0 text-muted-foreground", onContextMenu && "group-hover/session:hidden group-data-[menu-open]/session:hidden")} aria-label="Finished" data-testid="session-finished" />}
 			</button>
 			{onContextMenu && (
 				<Button
@@ -420,11 +429,13 @@ export function SessionRow({
 					variant="ghost"
 					size="icon-xs"
 					aria-label={`Actions for ${chat.title}`}
+					aria-haspopup="menu"
+					aria-expanded={menuOpen}
 					data-testid="session-menu-trigger"
 					onClick={onContextMenu}
-					className="absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+					className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground opacity-0 hover:bg-raised-strong hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/session:pointer-events-auto group-hover/session:opacity-100 group-data-[menu-open]/session:pointer-events-auto group-data-[menu-open]/session:opacity-100"
 				>
-					<MoreHorizontalIcon className="size-4" />
+					<MoreHorizontalIcon className="size-4" strokeWidth={1.75} />
 				</Button>
 			)}
 		</div>
@@ -449,7 +460,7 @@ export function RenameRow({ chat, onCommit, onCancel, depth = 0, compact = false
 	return (
 		<div
 			data-testid="session-rename-row"
-			className={cn("relative flex w-full items-center bg-accent pr-3", compact ? SIDEBAR_COMPACT_ROW : "py-2")}
+			className={cn("relative flex w-full items-center rounded-md bg-raised pr-2", compact ? SIDEBAR_COMPACT_ROW : "py-2")}
 			style={{ paddingLeft: sidebarRowBox(depth).paddingLeft }}
 		>
 			{/* NOTHING MOVES (owner, polish round): an idle row renders no
@@ -613,7 +624,7 @@ function SessionsSidebar() {
 					toggleFinished();
 				}
 			}}
-			className="lh-touch mb-0.5 mt-1 flex w-full cursor-pointer items-center gap-1.5 rounded-lg px-1 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+			className="lh-touch mt-1 flex h-8 w-full cursor-pointer items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-focus"
 		>
 			<CheckIcon className="size-3" />
 			Finished
@@ -749,8 +760,16 @@ function SessionsSidebar() {
 	const ctxOpenedAtRef = useRef(0);
 	const openContext = (e: React.MouseEvent<HTMLButtonElement>, chat: ChatListItem) => {
 		e.preventDefault(); // suppress the native menu
+		// The row's "…" trigger toggles its own menu.
+		if (e.type === "click" && ctxChatId === chat.id) {
+			setCtxChatId(null);
+			return;
+		}
 		ctxOpenedAtRef.current = performance.now();
-		ctxAnchorRef.current = e.currentTarget;
+		// Anchor to the row's "…" trigger (UI round 1b, SPEC §8 "session menu anchored mid-row"), the row itself as
+		// the fallback; the anchor is assigned before the state flip so the shell measures it on its first pass.
+		const trigger = e.currentTarget.parentElement?.querySelector<HTMLElement>('[data-testid="session-menu-trigger"]');
+		ctxAnchorRef.current = trigger ?? e.currentTarget;
 		setCtxFolderId(null);
 		setCtxChatId(chat.id);
 	};
@@ -974,6 +993,7 @@ function SessionsSidebar() {
 								router.push(`/chat/${c.id}`);
 							}}
 							onContextMenu={(e) => openContext(e, c)}
+							menuOpen={ctxChatId === c.id}
 							courseTitle={c.course ? courses.find((k) => k.id === c.course!.courseId)?.title : undefined}
 						/>
 					</SwipeRow>
@@ -1198,7 +1218,9 @@ function SessionsSidebar() {
 				    Persisted client-side. Since 2026-11-16 (owner, tablet pass) a
 				    small segmented control on the search's row, the selected
 				    segment a quiet tone instead of the gold pill. */}
-				<div className="flex h-7 min-w-0 flex-1 items-center rounded-lg bg-raised/60 p-0.5" role="group" aria-label="Show sessions" data-testid="session-kind-filter">
+				{/* UI round 1b: the app's one segmented grammar (Settings' SettingsSegmentedControl): a 28px raised track,
+				    6px-radius segments, the selected one on the surface fill with a hairline. */}
+				<div className="flex h-7 min-w-0 flex-1 items-center rounded-md bg-raised p-0.5" role="group" aria-label="Show sessions" data-testid="session-kind-filter">
 					{(["teach", "practice", "all"] as const).map((f) => (
 						<button
 							key={f}
@@ -1208,8 +1230,8 @@ function SessionsSidebar() {
 							aria-label={f === "teach" ? "Teaching" : f === "all" ? "All" : "Practice"}
 							onClick={() => setFilter(f)}
 							className={cn(
-								"lh-touch h-6 min-w-0 flex-1 rounded-md px-1 text-[13px] leading-none transition-colors",
-								kindFilter === f ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+								"lh-touch h-6 min-w-0 flex-1 rounded-sm px-1 text-[13px] font-medium leading-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease)",
+								kindFilter === f ? "bg-card text-foreground shadow-[0_0_0_1px_var(--border),0_1px_2px_rgb(0_0_0/0.08)]" : "text-muted-foreground hover:text-foreground",
 							)}
 						>
 							{f === "teach" ? "Teach" : f === "all" ? "All" : "Practice"}
@@ -1246,7 +1268,7 @@ function SessionsSidebar() {
 				    highlights run to the edge; it shows while scrolling/hovering. */}
 				<OverlayScrollArea scrollRef={listRef} data-testid="session-list" className="flex flex-col" {...folderDrop.containerProps}>
 					{(creatingFolder?.parentId === null || (rows !== null && rows.length > 0)) && (
-						<div data-testid="session-rows">
+						<div data-testid="session-rows" className="px-3">
 							{creatingFolder?.parentId === null && (
 								<NewFolderRow depth={0} compact={compactSessionList} onDone={() => setCreatingFolder(null)}
 									onCreate={(name) => changeFolders({ action: "create-folder", name, parentId: null })} />
@@ -1256,15 +1278,15 @@ function SessionsSidebar() {
 					)}
 					{/* The finished group (fork): unfiled finished sessions, collapsed at the bottom of the list. */}
 					{rows !== null && finishedCount > 0 && (
-						<div data-testid="finished-group">
-							<div className="px-2">{finishedHeader}</div>
+						<div data-testid="finished-group" className="px-3">
+							{finishedHeader}
 							{finishedExpanded && finishedMatched?.map((c) => renderSessionRow(c, 0))}
 						</div>
 					)}
 					{rows === null ? (
-						<div className="px-4 py-4 text-xs text-muted-foreground">Loading…</div>
+						<div className="px-5 py-4 text-xs text-muted-foreground">Loading…</div>
 					) : rows.length === 0 && finishedCount === 0 && (
-						<div className="px-4 py-4 text-xs text-muted-foreground">
+						<div className="px-5 py-4 text-xs text-muted-foreground">
 							{query.trim() ? "No sessions match." : "No sessions yet."}
 						</div>
 					)}
@@ -1288,16 +1310,20 @@ function SessionsSidebar() {
 					<ActivitySection
 						trailing={
 							<Hint label="Settings" action="open-settings" side="right">
-								<button
+								{/* A 32px ghost icon button (UI round 1b): at 260px the row cannot hold both labels without cutting
+								    "Background agents"; the tooltip and the accessible name still say Settings. */}
+								<Button
 									type="button"
+									variant="ghost"
+									size="icon"
 									onClick={() => openSettings()}
 									data-testid="settings-entry"
 									data-drawer-close
-									className="lh-touch flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+									className="lh-touch text-muted-foreground hover:text-foreground"
 								>
-									<SettingsIcon className="size-3.5" />
-									Settings
-								</button>
+									<SettingsIcon className="size-4" strokeWidth={1.75} />
+									<span className="sr-only">Settings</span>
+								</Button>
 							</Hint>
 						}
 					/>
