@@ -23,6 +23,7 @@ import {
 	probeExplainTool,
 	quizExampleBody,
 	quizExampleLead,
+	quizExampleQuality,
 	teachExplainToolFor,
 	teachQuizToolFor,
 	type TeacherToolContext,
@@ -63,6 +64,8 @@ const validQuiz = {
 	explanation: "Arithmetic.",
 	type: "check",
 	nodeId: "arith",
+	level: "apply",
+	conceptIds: [],
 	lead: "Right. Next, a small case.",
 };
 
@@ -224,7 +227,7 @@ describe("quiz tool descriptions carry the complete, phase-correct example", () 
 	it("the canonical body is schema-valid and authoring-clean (never ship a broken exemplar)", () => {
 		assert.deepEqual(quizInputProblems(quizExampleBody), []);
 		assert.equal(Value.Check(probeQuizInputSchema, quizExampleBody), true);
-		const teachExample = { type: "check", nodeId: "chain-rule", lead: quizExampleLead, ...quizExampleBody };
+		const teachExample = { type: "check", nodeId: "chain-rule", ...quizExampleQuality, lead: quizExampleLead, ...quizExampleBody };
 		assert.equal(Value.Check(quizInputObject, teachExample), true);
 	});
 
@@ -245,7 +248,7 @@ describe("quiz tool descriptions carry the complete, phase-correct example", () 
 	it("quiz: the required pair leads the example, with the plan-id caveat", () => {
 		const chatId = newChat("Teacher: description example");
 		const desc = teachQuizToolFor({ chatId, chatStore }).description;
-		const teachExample = { type: "check", nodeId: "chain-rule", lead: quizExampleLead, ...quizExampleBody };
+		const teachExample = { type: "check", nodeId: "chain-rule", ...quizExampleQuality, lead: quizExampleLead, ...quizExampleBody };
 		assert.ok(desc.includes("```json\n" + JSON.stringify(teachExample, null, 2) + "\n```"));
 		// The 2026-10-09 drop-order ruling: type+nodeId LEAD the object —
 		// fields generated first get dropped least.
@@ -370,7 +373,10 @@ describe("teachExplainToolFor: the explain variant validates nodeId like the qui
 	const validExplain = {
 		question: "Explain why the null result matters.",
 		correctAnswer: "It ruled out the aether — a stationary aether predicts a fringe shift, and none was seen.",
+		keyPoints: ["it ruled out the aether", "a stationary aether predicts a fringe shift, and none was seen"],
 		nodeId: "arith",
+		level: "apply",
+		conceptIds: [],
 		type: "check",
 		lead: "Right. Next, a small case.",
 	};

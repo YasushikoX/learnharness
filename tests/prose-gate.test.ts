@@ -15,6 +15,8 @@ import { bareQuestionTools, createPracticeAgent, createTeacherAgent } from "../s
 const quizArgs = {
 	type: "check",
 	nodeId: "n1",
+	level: "apply",
+	conceptIds: [],
 	previous: "wrong", // the verdict gate (2026-11-14): same node, check, a declared grade
 	question: "What is $2+2$?",
 	explanation: "$2+2=4$.",

@@ -738,6 +738,35 @@ describe("QuestionDock read-aloud privacy, layout parity, and submit cancellatio
 		assert.ok(mock.cancels > cancelsBeforeSubmit, "submitting cancels active speech");
 	});
 
+	it("never speaks a written question's key points or committed answer before the answer (WP6)", async () => {
+		const mock = createMockSynthesis(VOICES);
+		Object.defineProperty(window, "speechSynthesis", { configurable: true, value: mock.synthesis });
+		Object.defineProperty(window, "SpeechSynthesisUtterance", { configurable: true, value: mock.Utterance });
+		const explainInput = {
+			type: "check", nodeId: "n1", level: "apply", conceptIds: ["SECRET_CONCEPT_ID"], lead: "SECRET_TUTOR_LEAD",
+			question: "What is the spring constant? Give the number with its unit.",
+			correctAnswer: "SECRET_COMMITTED_ANSWER",
+			keyPoints: ["SECRET_KEY_POINT_ONE", "SECRET_KEY_POINT_TWO"],
+		};
+		await act(async () =>
+			root.render(
+				<QuestionDock toolName="explain" toolCallId="privacy-e1" input={explainInput as never} language="en" expanded dictationClaim={false} onExpand={() => {}} onSubmit={() => {}} />,
+			),
+		);
+		assert.ok(!host.innerHTML.includes("SECRET_KEY_POINT"), "the pending card never shows them");
+		const readBtn = host.querySelector<HTMLButtonElement>('[data-testid="question-read-aloud"]')!;
+		await act(async () => readBtn.click());
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, DEFAULT_CANCEL_GAP_MS + 25));
+		});
+		for (let i = 0; i < 10 && mock.spoken.length > i; i++) {
+			await act(async () => mock.finishLast());
+		}
+		const allSpoken = mock.spoken.map((u) => u.text).join(" ");
+		assert.match(allSpoken, /What is the spring constant\?/);
+		assert.ok(!/SECRET_/.test(allSpoken), allSpoken);
+	});
+
 	it("keeps the pending question part's label row identical to questionCardStandIn, on mouse and touch (Item 8, review 2 finding 5)", async () => {
 		const mock = createMockSynthesis(VOICES);
 		Object.defineProperty(window, "speechSynthesis", { configurable: true, value: mock.synthesis });

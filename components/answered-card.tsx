@@ -13,6 +13,7 @@ import { ToolContentResponse } from "@/components/ai-elements/message";
 import { FigureScope } from "@/components/figures/figure-scope";
 import { SketchReadingBody } from "@/components/artifacts/read-sketch-card";
 import { SketchThumbnail } from "@/components/sketch/sketch-thumbnail";
+import { AnsweredKeyPoints } from "@/components/answered-key-points";
 import type { ArtifactPartProps, QuestionAnswerData } from "@/src/core";
 import { answeredOptionLetters, answerForPresentation, parseAskInput, parseQuizInput } from "@/src/core";
 import { useAppearance } from "@/components/settings/appearance";
@@ -45,7 +46,7 @@ function scrollParent(el: HTMLElement): HTMLElement | null {
  * client — the card reveals his answer, the committed correct answer, and
  * the explanation, with NO verdict chips (owner ruling 2026-09-27).
  */
-export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, messageId, callId, toolCallId: givenToolCallId }: { answer: QuestionAnswerData; input?: unknown; chatId?: string; reading?: ArtifactPartProps["part"]; messageId?: string; callId?: string; toolCallId?: string }) {
+export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, messageId, callId, toolCallId: givenToolCallId, keyPointsMet }: { answer: QuestionAnswerData; input?: unknown; chatId?: string; reading?: ArtifactPartProps["part"]; messageId?: string; callId?: string; toolCallId?: string; /** The tutor's verdict per key point (WP6, core/question-quality.ts keyPointMarksOf). */ keyPointsMet?: ReadonlySet<number> }) {
 	// The question's call id: upstream names it `toolCallId` (the layout cache), the fork `callId` (the wording's threads).
 	const toolCallId = givenToolCallId ?? callId;
 	const answer = answerForPresentation(savedAnswer, input);
@@ -360,6 +361,7 @@ export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, mess
 					<ToolContentResponse className="inline [&>p:first-child]:inline [&>p:first-child]:m-0">{answer.committed}</ToolContentResponse>
 				</div>
 			)}
+			{isExplain && <AnsweredKeyPoints points={answer.keyPoints} met={keyPointsMet} />}
 		</div>
 		</FigureScope>
 	);

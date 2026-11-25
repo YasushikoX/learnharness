@@ -57,6 +57,8 @@ function whiteheadQuiz(type: unknown, correctAnswer: unknown) {
 		correctAnswer,
 		type,
 		nodeId: "experience-first",
+		level: "apply",
+		conceptIds: [],
 		lead: "Right. Next, the Parmenides claim.",
 	};
 }
@@ -339,6 +341,8 @@ describe("a leaked tail that duplicates fields the call already carries (Matte 1
 		const parsed = parseQuizInput({
 			type: "check",
 			nodeId: "n1",
+			level: "apply",
+			conceptIds: [],
 			lead: "Forste avsnitt." + '", "question": "Q?"',
 			question: "Q?",
 			explanation: "E.",

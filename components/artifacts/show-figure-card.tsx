@@ -1,8 +1,9 @@
 "use client";
 
-import type { ArtifactPartProps, FigureEntry } from "@/src/core";
+import { figureNotesOf, type ArtifactPartProps, type FigureEntry } from "@/src/core";
 import { DemoOutputCard } from "@/components/artifacts/demo-card";
 import { VisualOutputCard } from "@/components/artifacts/visual-card";
+import { FigureNotes } from "@/components/artifacts/figure-notes";
 
 /**
  * The show_figure card (owner, 2026-11-12 — src/core/figure-show.ts): a
@@ -19,8 +20,15 @@ export function ShowFigureCard({ part }: ArtifactPartProps) {
 	const rawCaption = (part.input as { caption?: unknown } | null | undefined)?.caption;
 	const caption = typeof rawCaption === "string" && rawCaption.trim() ? rawCaption.trim() : undefined;
 	const inverted = figure.ui?.inverted ?? false;
+	// What to look at, and on a demo what to try (WP6): absent on calls from before it, which render as they did.
+	const notes = figureNotesOf(part.input, figure.kind);
 	if (figure.kind === "visual") {
-		return <VisualOutputCard output={figure.result} messageId={figure.steerId} initialInverted={inverted} caption={caption} />;
+		return (
+			<>
+				<VisualOutputCard output={figure.result} messageId={figure.steerId} initialInverted={inverted} caption={caption} />
+				<FigureNotes lookAt={notes.lookAt} />
+			</>
+		);
 	}
 	return (
 		<div data-testid="show-figure-demo">
@@ -30,6 +38,7 @@ export function ShowFigureCard({ part }: ArtifactPartProps) {
 					{caption}
 				</p>
 			)}
+			<FigureNotes lookAt={notes.lookAt} tryThis={notes.tryThis} />
 		</div>
 	);
 }

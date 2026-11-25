@@ -285,7 +285,7 @@ it("replays held checker and grader status on the existing line and writes a con
 	const lines: TurnTimelineLine[] = [];
 	let now = 0;
 	const timeline = new TurnTimeline(identity, line => lines.push(line), () => now);
-	const refused = makeGateRefusals(1, gate => timeline.refuse(gate));
+	const refused = makeGateRefusals(1, gate => timeline.refuse(gate), 3, gate => timeline.passOverBudget(gate));
 	const message = fauxAssistantMessage([fauxThinking("private thought"), fauxText("visible words")], { stopReason: "length" });
 	const handle = runPiTurn({
 		timeline, agent: controlledAgent(async emit => {
@@ -344,6 +344,8 @@ it("replays held checker and grader status on the existing line and writes a con
 		thinkingSpans: [{ startMs: 23, durationMs: 6, source: "reported" }], textSpans: [{ startMs: 29, durationMs: 5 }],
 		tools: [{ name: "quiz", startMs: 4, durationMs: 19 }], checkerSpans: [{ startMs: 4, durationMs: 9 }],
 		graderSpans: [{ startMs: 13, durationMs: 8 }], processingSpans: [], gateRefusals: { "answer-key": 1, prose: 1 },
+		// WP6: the second prose refusal is over its budget, so the call passed and the pass is counted
+		refusalBudgetPasses: { prose: 1 },
 		// A view leaving never ends a turn: it settled cleanly, and the departure is counted.
 		stopReason: "length", streamEnd: "completed", errorKind: null, clientDrops: 1, visibleTextChars: 13, thinkingChars: 15,
 	});

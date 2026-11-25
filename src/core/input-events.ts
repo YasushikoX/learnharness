@@ -34,6 +34,7 @@ import { validatePluginSubmissionImageArray, validatePluginSubmissionImages, typ
 import type { LhMessage } from "./native-messages.ts";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { unshownFiguresNote } from "./figure-show.ts";
+import { keyPointsOfCall } from "./question-quality.ts";
 import {
 	activeProblemOf,
 	activeProblemOccurrenceOf,
@@ -411,7 +412,8 @@ export function inputAppends(
 				throw new ChatInputError("answer input targets no pending question call");
 			}
 			// The soft figure reminder (owner, 2026-11-12) is computed from the FULL record, so compaction never drops it.
-			return [newAnswerResult(input.toolCallId, pending.tool, input.answer, unshownFiguresNote(record.messages))];
+			// The key points come from the call the server holds, never from the client's answer (WP6).
+			return [newAnswerResult(input.toolCallId, pending.tool, input.answer, unshownFiguresNote(record.messages), keyPointsOfCall(pending.tool, pending.input))];
 		}
 		case "continue":
 			return dismissalConclusion(record);

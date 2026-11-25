@@ -20,6 +20,8 @@ import type { LhMessage } from "../src/core/native-messages.ts";
 const quizBase = {
 	type: "check",
 	nodeId: "n1",
+	level: "recall",
+	conceptIds: ["spring force"],
 	question: "Which spring force is zero at rest?",
 	explanation: "Zero displacement, zero force.",
 	options: [
@@ -68,7 +70,7 @@ describe("the teach schemas require a lead; the display parse does not", () => {
 		assert.equal(Value.Check(quizInputObject, ok), true);
 		assert.equal(Value.Check(quizInputObject, quizBase), false, "no lead");
 		assert.equal(Value.Check(quizInputObject, { ...quizBase, lead: "" }), false, "empty lead");
-		const explain = { type: "check", nodeId: "n1", lead: "Right: …", question: "Why?", correctAnswer: "Because." };
+		const explain = { type: "check", nodeId: "n1", level: "apply", conceptIds: [], lead: "Right: …", question: "Why?", correctAnswer: "Because.", keyPoints: ["the reason", "the consequence"] };
 		assert.equal(Value.Check(explainInputObject, explain), true);
 		const { lead: _lead, ...bare } = explain;
 		assert.equal(Value.Check(explainInputObject, bare), false);

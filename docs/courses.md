@@ -221,7 +221,7 @@ ends with ONE unaided problem (`core/final-problem.ts`):
   "I don't know" button. It arrives open, never behind the reveal.
 - **The finish gate.** `finish_lesson` is refused until a final problem has been answered since
   the last finish attempt, and when the answer was "I don't know" (`finishGateProblem`, chained
-  with the teacher's other gates and under the same refusal cap).
+  with the teacher's other gates and under the same refusal budget).
 - **The grade.** When `finish_lesson` goes through, the teacher's `afterToolCall` hook
   (`agent/lesson-grade.ts`) has the practice grader, with its fallback, rate the final problem
   for the lesson's skill from the final problem to the finish call. The grade rides the finish
@@ -343,7 +343,7 @@ searched the course's sources once, and only after the learner asked for the ful
 Learn session whose tutor has `material_search`, `plan_init` is now refused until a lookup
 (`material_search` or `material_read`) has succeeded, and the FIRST plan must carry a `sources` field
 saying what the lookup showed and what the plan uses (a later rewrite of the map does not need it again).
-Same refusal cap as the other teacher gates (3 per run), and the planning prompt says the same.
+Under the same refusal budget as the other teacher gates (since 2026-11-25: 2 per gate and 3 in all per learner turn, `agent/refusal-budget.ts`), and the planning prompt says the same.
 
 **The recall opener and a mixed Practice all (owner, 2026-11-13).** A Learn session whose skill has learned
 prerequisites opens its teaching (after the plan, before the first step) with one or two short free-form

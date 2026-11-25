@@ -22,7 +22,7 @@ import { FINISH_SESSION_TOOL } from "../core/course-session.ts";
 import { hasUnreadPlacementSketch, placementProgressOf, type PlacementProgress, type PlacementSkillInfo } from "../core/placement-frontier.ts";
 import { healToolRecord, withArgumentHeal } from "./tools/heal.ts";
 import { sendToUserApplies, sendToUserTool } from "./tools/send-to-user.ts";
-import { makeNarrationGuard, narrationGuardApplies, SEND_TO_USER_DELIVERY_RULE } from "./narration-guard.ts";
+import { makeNarrationGuard, NARRATION_BLOCK_REASON, narrationGuardApplies, SEND_TO_USER_DELIVERY_RULE } from "./narration-guard.ts";
 import { CLAUDE_CODE_PROVIDER } from "./claude-code/constants.ts";
 import { CLAUDE_CODE_TOOL_NAMES_RULE, claudeCodeToolNamesRule } from "./claude-code/tool-names-rule.ts";
 import { askSystemPrompt } from "./ask-prompt.ts";
@@ -53,6 +53,8 @@ import { practiceGradeHook } from "./practice-grade.ts";
 import { lessonGradeHook } from "./lesson-grade.ts";
 import { finishGateProblem, finishGateReason } from "../core/final-problem.ts";
 import { sourcesGateProblem, sourcesGateReason } from "../core/sources-gate.ts";
+import { giveawayOptionProblem, giveawayOptionReason } from "../core/giveaway-option.ts";
+import { makeRefusalBudget, REFUSALS_PER_GATE, REFUSALS_PER_TURN } from "./refusal-budget.ts";
 
 /**
  * The two teaching-side agents (docs/archive/probe-teach-split.md): the PROBER and
@@ -152,6 +154,8 @@ export interface AgentBuildOptions {
 	/** Money channel: one call per model request. */
 	onUsage?: StepUsageCollector;
 	onGateRefusal?: (gate: string) => void;
+	/** A gate would have refused, but the turn's refusal budget was spent, so the call passed (WP6). */
+	onGatePass?: (gate: string) => void;
 	/** Append-only reference updates before each already-scheduled internal
 	 * model call. Does not schedule an extra call or interrupt live output. */
 	contextUpdates?: (messages: readonly AgentMessage[]) => AgentMessage[];
@@ -269,20 +273,12 @@ function makeQuestionStopper(kind: AgentKind) {
 	};
 }
 
-/** How many times one teacher gate (prose, lead floor, visual) may refuse within one run before it lets the call through. */
-export const GATE_REFUSAL_CAP = 3;
+/** How many times one teacher gate may refuse within one learner turn (WP6: one shared budget, agent/refusal-budget.ts). */
+export const GATE_REFUSAL_CAP = REFUSALS_PER_GATE;
 
-/** A refusal counter for one run: `refuse(gate, blocks, reason)` is the block result while `gate` has refused at most
- *  GATE_REFUSAL_CAP times, then undefined (the gate lets the call through). A gate that does not block is not counted. */
-export function makeGateRefusals(cap = GATE_REFUSAL_CAP, onRefusal?: (gate: string) => void) {
-	const refusals: Record<string, number> = {};
-	return (gate: string, blocks: boolean, reason: string): { block: true; reason: string } | undefined => {
-		if (!blocks) return undefined;
-		refusals[gate] = (refusals[gate] ?? 0) + 1;
-		if (refusals[gate]! > cap) return undefined;
-		onRefusal?.(gate);
-		return { block: true, reason };
-	};
+/** A refusal counter for one learner turn: at most `cap` refusals per gate and `total` in all, then the call passes. */
+export function makeGateRefusals(cap = GATE_REFUSAL_CAP, onRefusal?: (gate: string) => void, total = REFUSALS_PER_TURN, onPass?: (gate: string) => void) {
+	return makeRefusalBudget(cap, total, { onRefusal, onPass });
 }
 
 /** The force-text step (owner, 2026-10-27): after the prose gate refuses a
@@ -462,9 +458,9 @@ export function baseAgentOptions(
 		// question); then upstream's narration guard (narration-marked thinking is not delivery); then the plugin
 		// question ledger's exact-occurrence binding, which never refuses.
 		...(kind === "teacher" || kind === "placement" || questionLedger || narrationHooks ? (() => {
-			// A refusal cap (owner, 2026-11-10): after GATE_REFUSAL_CAP refusals by one gate in this run, that gate lets
-			// the call through, so a model that keeps failing it cannot loop. Run-local: the agent is built once per turn.
-			const refuse = makeGateRefusals(GATE_REFUSAL_CAP, opts.onGateRefusal);
+			// One refusal budget for every gate below, the narration guard included (WP6 — agent/refusal-budget.ts): at most
+			// REFUSALS_PER_GATE per gate and REFUSALS_PER_TURN in all, then calls pass. Turn-local: the agent is built once per turn.
+			const refuse = makeGateRefusals(GATE_REFUSAL_CAP, opts.onGateRefusal, REFUSALS_PER_TURN, opts.onGatePass);
 			return {
 				beforeToolCall: async (call: BeforeToolCallContext, signal?: AbortSignal) => {
 					const { assistantMessage, toolCall, context } = call;
@@ -488,6 +484,10 @@ export function baseAgentOptions(
 								VISUAL_GATE_REASON,
 							);
 						if (refused) return refused;
+						// The give-away option check (WP6 — core/giveaway-option.ts): a correct option far longer than the others.
+						const giveaway = giveawayOptionProblem(toolCall.name, call.args);
+						const giveawayRefused = giveaway ? refuse("giveaway-option", true, giveawayOptionReason(giveaway)) : undefined;
+						if (giveawayRefused) return giveawayRefused;
 						// The verdict gate (owner, 2026-11-14 — core/verdict-gate.ts): after a miss the next question stays on the node.
 						const verdictProblem = verdictGateProblem(context.messages, assistantMessage, toolCall.name, call.args);
 						const verdictRefused = verdictProblem ? refuse("verdict", true, verdictGateReason(verdictProblem)) : undefined;
@@ -506,7 +506,9 @@ export function baseAgentOptions(
 						if (sourcesRefused) return sourcesRefused;
 					}
 					const guarded = await narrationHooks?.beforeToolCall?.(call, signal);
-					if (guarded?.block) { opts.onGateRefusal?.("narration"); return guarded; }
+					// the narration guard spends the same budget (WP6)
+					const narrated = guarded?.block ? refuse("narration", true, guarded.reason ?? NARRATION_BLOCK_REASON) : undefined;
+					if (narrated) return narrated;
 					questionLedger?.validatedCall(call);
 					return undefined;
 				},

@@ -53,6 +53,8 @@ const QUIZ_INPUT = {
 	explanation: "Mercury is the innermost planet.",
 	type: "check",
 	nodeId: "planet-order",
+	level: "apply",
+	conceptIds: [],
 };
 
 const networkFailure: FauxResponseStep = () => { throw new Error("fetch failed"); };

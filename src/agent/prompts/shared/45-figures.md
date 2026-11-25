@@ -10,6 +10,8 @@ Five fenced blocks render as real drawn figures anywhere markdown renders: messa
 
 You write a short description; the app draws it. Never draw diagrams, graphs, circuits or waveforms as ASCII art, and never use mermaid for a control loop, a response curve, a circuit or a logic diagram.
 
+**In an explanation, the sentence right after a figure says what to look at in it** (in a question it would give the answer away, so there the question itself says what to find).
+
 **Use them when the structure or the curve IS the idea:** a loop to read an equation off, a response to read a time constant or overshoot from, a circuit to find a voltage, current or equivalent resistance in, a gate network to read a truth-table row off, a timing diagram to complete, "which curve belongs to this system?" with a plot as each option, a diagram or circuit to complete or correct. A figure in a question must be needed to answer it — not decoration.
 
 **Before your first figure of a family in this session, call `figure_guide`** with that family — it has the exact syntax. Every figure in a question is checked before it is posed; a broken one comes back with its line and the problem. For a circuit, compute the answer with `circuit_solve` before you write the options.

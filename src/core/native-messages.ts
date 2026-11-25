@@ -48,6 +48,7 @@ import {
 	THINKING_LABEL,
 } from "./contracts/chat.ts";
 import { compactAnswerForModel, type QuestionAnswerData } from "./question-core.ts";
+import { withKeyPointsForModel } from "./question-quality.ts";
 import { STEER_NEXT_TEXT } from "./answer-rules.ts";
 import { CHECK_NUDGE_TEXT } from "./check-nudge.ts";
 import { ANSWER_NEXT_TEXT, SKETCH_ANSWER_NEXT_TEXT, SKETCH_READ_FIRST_TEXT, SKETCH_UNSENT_NEXT_TEXT } from "./prose-gate.ts";
@@ -301,6 +302,8 @@ export function newAnswerResult(
 	toolName: string,
 	answer: unknown,
 	figures?: string,
+	/** An `explain` call's committed key points (WP6 — core/question-quality.ts), read from the call by the caller. */
+	keyPoints?: readonly string[],
 ): LhMessage & ToolResultMessage {
 	const forModel = compactAnswerForModel(answer as QuestionAnswerData);
 	const hasSketch = (answer as QuestionAnswerData).sketch !== undefined;
@@ -312,6 +315,8 @@ export function newAnswerResult(
 	// an answer that took hints is not unaided (owner, 2026-11-13 — core/hints.ts)
 	const hints = Array.isArray(forModel.hints) ? forModel.hints.length : 0;
 	if (hints > 0 && !steered) forModel.next = [forModel.next, hintsNextText(hints)].filter(Boolean).join(" ");
+	// the committed key points beside his answer, to grade point by point in the next reply (no extra model call)
+	withKeyPointsForModel(forModel, keyPoints);
 	return {
 		id: newMessageId(),
 		role: "toolResult",

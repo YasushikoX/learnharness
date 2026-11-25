@@ -16,7 +16,7 @@ import { verdictGateProblem } from "../src/core/verdict-gate.ts";
 import { bareQuestionTools, createTeacherAgent } from "../src/agent/teacher-agent.ts";
 
 const quizArgs = {
-	type: "check", nodeId: "n1", previous: "right", question: "What is $2+2$?", explanation: "$2+2=4$.",
+	type: "check", nodeId: "n1", level: "recall", conceptIds: [], previous: "right", question: "What is $2+2$?", explanation: "$2+2=4$.",
 	options: [{ label: "$4$", value: "a" }, { label: "$5$", value: "b" }], correctAnswer: "a",
 };
 const assistant = (content: AssistantMessage["content"], stopReason: AssistantMessage["stopReason"] = "toolUse"): AssistantMessage => ({
