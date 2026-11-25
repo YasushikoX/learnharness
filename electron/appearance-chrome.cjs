@@ -6,6 +6,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const PRESET_APPEARANCE = {
+	dark: { mode: "dark", background: "#0e0e10" },
+	light: { mode: "light", background: "#fcfcfc" },
 	default: { mode: "dark", background: "#151210" },
 	"catppuccin-latte": { mode: "light", background: "#eff1f5" },
 	"catppuccin-frappe": { mode: "dark", background: "#303446" },
@@ -46,11 +48,11 @@ function readAppearance(dataDir) {
 	try { a = JSON.parse(fs.readFileSync(path.join(dataDir, "settings.json"), "utf8"))?.appearance; }
 	catch { /* absent/corrupt record = factory */ }
 	const id = typeof a?.theme === "string" ? a.theme : undefined;
-	let theme = Object.hasOwn(PRESET_APPEARANCE, id) ? PRESET_APPEARANCE[id] : PRESET_APPEARANCE.default;
+	let theme = Object.hasOwn(PRESET_APPEARANCE, id) ? PRESET_APPEARANCE[id] : PRESET_APPEARANCE.dark; // the default theme id (core DEFAULT_THEME_ID)
 	if (typeof id === "string" && id.length <= 64 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) && !Object.hasOwn(PRESET_APPEARANCE, id)) {
 		try {
 			const custom = JSON.parse(fs.readFileSync(path.join(dataDir, "themes", `${id}.json`), "utf8"));
-			// Match the data-only core parser: malformed files render Default,
+			// Match the data-only core parser: malformed files render the default (Dark),
 			// including files with a valid background but an invalid other ink.
 			if (typeof custom?.name === "string" && custom.name.trim() && /[a-z0-9]/i.test(custom.name.normalize("NFD")) &&
 				(custom.mode === "dark" || custom.mode === "light") && custom.colors && !Array.isArray(custom.colors) &&
@@ -73,7 +75,7 @@ function luminance(hex) {
 /** Title-bar glyph contrast follows the actual final background, including
  * overrides that do not match the selected theme's dark/light label. */
 function chromeColors(appearance) {
-	const color = appearance.background ?? (appearance.mode === "light" ? "#f5f5f3" : "#151210");
+	const color = appearance.background ?? (appearance.mode === "light" ? "#fcfcfc" : "#0e0e10");
 	const bg = luminance(color);
 	const contrast = ink => (Math.max(bg, luminance(ink)) + 0.05) / (Math.min(bg, luminance(ink)) + 0.05);
 	return { color, symbolColor: contrast("#e5e5e5") > contrast("#1a1a1a") ? "#e5e5e5" : "#1a1a1a" };
