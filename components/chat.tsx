@@ -2223,13 +2223,13 @@ export function Chat({
 										data-testid="user-message"
 										data-older-transcript-row={mi < newestTurnFrom ? "" : undefined}
 										/* THE DOCUMENT, ALL-IN (owner rounds two+three, 2026-10-07):
-										    no chat side — the user message is a full-width card-color
-										    BAND, the IDENTICAL geometry as the thinking rows: 5px band
-										    padding, the left gap matches it, the rail fills the 3ch
-										    inset (the band is the authorship mark against the agent's
+										    no chat side — the user message is a full-width card, the
+										    IDENTICAL geometry as the thinking rows (UI round 1b: the
+										    transcript's one card style — radius 12, hairline, 16/12px
+										    padding; the card is the authorship mark against the agent's
 										    transparent prose). The "You" label stays — one register
 										    with the thinking labels. */
-										className="my-2 w-full border-l-[calc(3ch-14px)] border-muted-foreground/30 bg-card py-1 pl-[14px] pr-4 font-ui text-xs"
+										className="my-2 w-full rounded-xl border border-border bg-card px-4 py-3 text-chrome"
 									>
 												{/* The rail GROUPS (owner round 4, 2026-10-05): the YOU heading
 												    sits INSIDE the rail, same mono-xs register and same 1ch
@@ -2245,6 +2245,9 @@ export function Chat({
 									<MessageContent className="w-full">
 											{m.parts.map((part, pi) => {
 												const pk = partKeyLists[mi]![pi]!;
+												// The problem the dock holds is not repeated above it (UI round 1b, SPEC §7): its record
+												// card returns once the problem is concluded.
+												if ((part.pluginProblem || part.type === "tool-problem") && activeProblem && part.toolCallId === activeProblem.toolCallId) return null;
 												if (part.pluginProblem) return <ProblemCard key={pk} part={{ ...part, state: part.state ?? "input-available", toolCallId: part.toolCallId ?? "" }} />;
 												if (part.pluginQuestion) return <PluginQuestionPart key={pk} part={part} chatId={chatId} />;
 												const isLastPart = mi === messages.length - 1 && pi === m.parts.length - 1;

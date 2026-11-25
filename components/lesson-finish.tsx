@@ -10,6 +10,8 @@
 import { CheckIcon, FlagIcon } from "lucide-react";
 import type { CourseContextDetails, LhViewMessage } from "@/src/core";
 import { Hint } from "@/components/ui/hint";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 /** The session's course details — the graph-context card's `course`
  *  block (message[0] of a course session); undefined otherwise. */
@@ -87,9 +89,9 @@ export function FinishLessonButton({
 				data-testid="finish-lesson"
 				disabled={blocked !== null}
 				onClick={onFinish}
-				className="lh-no-drag flex shrink-0 items-center gap-1.5 rounded-full border border-border/80 px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:border-border hover:text-foreground disabled:opacity-50 disabled:hover:border-border/80 disabled:hover:text-muted-foreground"
+				className={cn(buttonVariants({ variant: "outline", size: "sm" }), "lh-no-drag text-muted-foreground hover:text-foreground")}
 			>
-				<FlagIcon className="size-3" aria-hidden />
+				<FlagIcon aria-hidden />
 				{lesson ? "Finish lesson" : "Finish session"}
 			</button>
 		</Hint>

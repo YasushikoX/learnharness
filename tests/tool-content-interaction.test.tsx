@@ -72,8 +72,9 @@ test("committed-answer reveals keep the first paragraph inline without flattenin
 		await act(async () => root.render(<AnsweredCard answer={answer} input={input} />));
 		const paragraphs = host.querySelectorAll("p");
 		assert.equal(paragraphs.length, 3, "question plus two committed-answer paragraphs");
-		assert.ok(paragraphs[1]!.parentElement!.classList.contains("[&>p:first-child]:inline"));
+		// UI round 1b: the reveal sits under its own "The answer" eyebrow, so every paragraph keeps its block structure.
 		assert.ok(!paragraphs[1]!.parentElement!.classList.contains("[&_p]:inline"));
+		assert.ok(host.querySelector('[data-testid="answered-committed"]')!.contains(paragraphs[2]!), "both paragraphs stay in the reveal");
 		assert.equal(host.querySelectorAll(".katex-error").length, 0);
 		assert.deepEqual(answer, before);
 	} finally { await act(async () => root.unmount()); host.remove(); }

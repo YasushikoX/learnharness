@@ -3,7 +3,7 @@ import type { Phase3 } from "@/src/core";
 /**
  * The in-session phase presentation (owner, minimal-color round —
  * monochrome now): the header chip next to the session title, and the
- * dotted boundary rule the transcript draws where the session moves into a
+ * hairline boundary rule the transcript draws where the session moves into a
  * new phase. Phase COLOR is retired app-wide (phases only advance, so
  * color-as-signal was decoration); the label text carries the phase, and
  * the chip's old dot slot is repurposed for the braille spinner while a
@@ -52,7 +52,7 @@ export function PhaseChip({ phase }: { phase: Phase3 }) {
 }
 
 /**
- * The transcript boundary: a monochrome dotted rule at the message where
+ * The transcript boundary: a monochrome hairline rule at the message where
  * the session enters `phase` (owner, minimal-color round — the label
  * carries the transition; the phase color never did). The plan seam
  * carries its node count ("Plan · 4 nodes"); teaching is just the label.
@@ -66,12 +66,12 @@ export function PhaseDivider({ phase, nodeCount }: { phase: Phase3; nodeCount?: 
 			? `Plan · ${nodeCount} node${nodeCount === 1 ? "" : "s"}`
 			: CHIP_LABEL[phase];
 	return (
-		<div className="my-4 flex w-full items-center gap-3" data-testid={`phase-divider-${phase}`}>
-			<span className="h-0 flex-1 border-t-2 border-dotted border-border/50" aria-hidden />
-			<span className="rounded-full border border-border/80 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+		<div className="my-6 flex w-full items-center gap-3" data-testid={`phase-divider-${phase}`}>
+			<span className="h-0 flex-1 border-t border-border" aria-hidden />
+			<span className="whitespace-nowrap text-xs font-medium text-muted-foreground">
 				{label}
 			</span>
-			<span className="h-0 flex-1 border-t-2 border-dotted border-border/50" aria-hidden />
+			<span className="h-0 flex-1 border-t border-border" aria-hidden />
 		</div>
 	);
 }

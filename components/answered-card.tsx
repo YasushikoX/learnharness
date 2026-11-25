@@ -9,6 +9,7 @@ import { SubmittedImages } from "./submitted-images";
 import { ThinkingBlock } from "@/components/thinking-block";
 import { PathText } from "@/components/file-path-chip";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { ToolContentResponse } from "@/components/ai-elements/message";
 import { FigureScope } from "@/components/figures/figure-scope";
 import { SketchReadingBody } from "@/components/artifacts/read-sketch-card";
@@ -140,7 +141,7 @@ export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, mess
 		return (
 			<div className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">
 				<span className="font-medium">{content.questionText}</span> — {content.steer ? "set aside" : "skipped"}
-				{content.steer && <p data-testid="answered-steer" className="mt-1.5 whitespace-pre-wrap text-foreground/80">You told the tutor: {content.steer}</p>}
+				{content.steer && <p data-testid="answered-steer" className="mt-1.5 whitespace-pre-wrap text-foreground">You told the tutor: {content.steer}</p>}
 			</div>
 		);
 	}
@@ -229,10 +230,10 @@ export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, mess
 							<div
 								key={opt.index}
 								className={cn(
-									"flex items-center gap-2 rounded-lg border px-3 py-1.5",
+									"flex items-center gap-2 rounded-md border border-border px-3 py-1.5",
 									sel && key && "border-success/60 bg-success/10",
 									sel && !key && isQuiz && "border-error/60 bg-error/10",
-									sel && !isQuiz && "border-primary bg-accent",
+									sel && !isQuiz && "border-primary bg-primary/[0.07]",
 									!sel && key && "border-success/40",
 								)}
 							>
@@ -275,7 +276,7 @@ export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, mess
 					{answer.other && (
 						<div
 							data-testid="answered-other"
-							className="flex items-center gap-2 rounded-lg border border-primary bg-accent px-3 py-1.5"
+							className="flex items-center gap-2 rounded-md border border-primary bg-primary/[0.07] px-3 py-1.5"
 						>
 							<span>“<PathText text={answer.other} />”</span>
 						</div>
@@ -335,16 +336,18 @@ export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, mess
 				   toggle — viewable, never center stage. Identical to the
 				   prediction pattern it generalizes (owner, 2026-10-03). */
 				<div className="mt-2" data-testid="tucked-explanation">
-					<button
+					<Button
 						type="button"
+						variant="ghost"
+						size="xs"
 						onClick={() => setWhyOpen((v) => !v)}
-						className="lh-touch text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+						className="lh-touch -ml-2 text-muted-foreground hover:text-foreground"
 					>
 						{whyOpen ? "Hide why" : "Why"}
-					</button>
+					</Button>
 					{whyOpen && (
-						<div className="mt-1.5 rounded-lg bg-muted py-2 text-sm text-foreground/50">
-							<span className="font-medium text-muted-foreground">Why: </span>
+						<div className="mt-1.5 text-sm text-foreground">
+							<span className="font-semibold">Why: </span>
 							{/* Keep the first paragraph beside the label, not every paragraph:
 							   later paragraphs must retain their recovered document structure. */}
 							<ToolContentResponse className="inline [&>p:first-child]:inline [&>p:first-child]:m-0">{content.tuckedExplanation}</ToolContentResponse>
@@ -357,9 +360,10 @@ export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, mess
 			    — one field, reasoning included — shown on submit; no verdict,
 			    the model's next reply IS the grading. */}
 			{isExplain && content.committed && (
-				<div className="mt-3 rounded-lg bg-muted py-2 text-sm text-muted-foreground">
-					<span className="font-medium text-foreground">The answer: </span>
-					<ToolContentResponse className="inline [&>p:first-child]:inline [&>p:first-child]:m-0">{content.committed}</ToolContentResponse>
+				// UI round 1b (SPEC §7 "Feedback text"): an eyebrow label over the explanation, in the TEXT colour.
+				<div className="mt-4 border-t border-border pt-3 text-foreground" data-testid="answered-committed">
+					<div className="mb-1 lh-eyebrow text-muted-foreground">The answer</div>
+					<ToolContentResponse>{content.committed}</ToolContentResponse>
 				</div>
 			)}
 			{isExplain && <AnsweredKeyPoints points={content.keyPoints} met={keyPointsMet} />}

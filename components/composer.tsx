@@ -196,7 +196,7 @@ export function Composer({
 				e.preventDefault();
 				onPlanContinue?.();
 			}}
-			className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-md bg-success px-4 text-xs font-medium text-background transition-colors hover:bg-success/85"
+			className="lh-touch flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md bg-success px-3.5 text-sm font-medium text-background transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-success/85"
 		>
 			Continue
 			<ArrowRightIcon className="size-4" />
@@ -206,7 +206,7 @@ export function Composer({
 			type="submit"
 			data-testid="next-problem-button"
 			aria-label="Next problem"
-			className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-md bg-success px-4 text-xs font-medium text-background transition-colors hover:bg-success/85"
+			className="lh-touch flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md bg-success px-3.5 text-sm font-medium text-background transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-success/85"
 		>
 			Next problem
 			<ArrowRightIcon className="size-4" />
@@ -221,10 +221,10 @@ export function Composer({
 					// composer: 48 dp on touch screens (corners stay concentric with the shell: 25% of the side) that morphs
 					// squarer under the finger. With nothing to send it
 					// stays a visible quiet gold tone (gold glyph on 25% gold, about 5:1), not a faded copy of itself.
-					"lh-press flex size-10 touch:size-12 shrink-0 items-center justify-center rounded-md",
+					"lh-press flex size-9 touch:size-12 shrink-0 items-center justify-center rounded-md transition-colors duration-(--lh-duration-hover) ease-(--lh-ease)",
 				busy && !canSend
 					? "bg-secondary text-foreground hover:bg-accent"
-					: "bg-primary text-primary-foreground hover:opacity-90 disabled:bg-primary/25 disabled:text-primary",
+					: "bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary/25 disabled:text-primary",
 			)}
 		>
 			{busy && !canSend ? <SquareIcon className="size-4" /> : <CornerDownLeftIcon className="size-5" />}

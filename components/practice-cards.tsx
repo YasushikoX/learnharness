@@ -81,7 +81,7 @@ export function ProblemCard({ part }: ArtifactPartProps) {
 	return (
 		<div data-testid="problem-card" className="lh-card-enter my-1 rounded-xl border bg-card p-4">
 			<div className="mb-1 lh-eyebrow text-muted-foreground">Problem</div>
-			<div className="lh-prose text-[15px]">
+			<div className="lh-prose">
 				<ToolContentResponse>{statement}</ToolContentResponse>
 			</div>
 		</div>
@@ -153,9 +153,9 @@ export function ConcludeCard({ part }: ArtifactPartProps) {
 				)}
 			</div>
 			{/* The verdict — plain prose under the heading, no 'Verdict:' label
-			    (owner round 3): the same quiet 50% register as quiz explanations. */}
+			    (owner round 3): feedback text in the TEXT colour (UI round 1b, SPEC §7). */}
 			{verdict.length > 0 && (
-				<div className="text-sm text-foreground/50">
+				<div className="text-sm text-foreground">
 					<ToolContentResponse>{verdict}</ToolContentResponse>
 				</div>
 			)}
@@ -163,7 +163,7 @@ export function ConcludeCard({ part }: ArtifactPartProps) {
 			    hero is the pose's commitment, verbatim). */}
 			{reveal.length > 0 && (
 				<>
-					<div className="my-3 border-t" />
+					<div className="my-3 border-t border-border" />
 					<div>
 						<div className="mb-0.5 lh-eyebrow text-muted-foreground">Model solution</div>
 						<div className="lh-prose text-[15px]">
