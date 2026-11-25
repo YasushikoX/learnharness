@@ -299,7 +299,8 @@ function courseEvidence(): { byCourse: Map<string, SkillEvent[]>; notes: Map<str
 	const problems = new Map<string, ConcludedProblem[]>();
 	const notes = new Map<string, LessonNote>();
 	const presentFiles = new Set<string>();
-	const courseChats = stores.chatStore.listChats().filter((summary) => Boolean(summary.course));
+	// an Ask conversation is never evidence: it is not opened, cached or counted
+	const courseChats = stores.chatStore.listChats().filter((summary) => Boolean(summary.course) && summary.course?.mode !== "ask");
 	const state = evidenceCacheState();
 	// Size the LRU cap from the number of course chats in this scan (bounded by [floor, ceiling])
 	// so scanning more chats than the floor never thrashes the cache.
@@ -1153,8 +1154,11 @@ export function titleAskConversation(chatId: string, priorMessages: readonly { r
 	const record = stores.chatStore.getChat(chatId);
 	if (record?.course?.mode !== "ask") return;
 	if (priorMessages.some((m) => m.role === "user")) return;
-	// the default is courseSessionTitle("ask", …): "Questions: <course>" (the course may have been renamed since)
-	if (!record.title.startsWith(courseSessionTitle("ask", "", []))) return;
+	// Only the untouched default, "Questions: <course>", is replaced. An exact match, not a prefix: the learner may have
+	// named it "Questions: Week 3" themselves. (A course renamed since leaves the old default standing; that is the
+	// safe side.)
+	const course = stores.courseStore.getCourse(record.course.courseId);
+	if (!course || record.title !== courseSessionTitle("ask", course.title, [])) return;
 	const title = titleFromPrompt(text);
 	if (title) stores.chatStore.renameChat(chatId, title);
 }

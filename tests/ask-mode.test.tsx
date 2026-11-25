@@ -624,6 +624,36 @@ describe("review 1 finding 1: builds without Ask refuse an Ask chat", () => {
 		assert.equal(chatVersionFor({ course: { mode: "learn" } }), CURRENT_CHAT_VERSION);
 		assert.equal(chatVersionFor({}), CURRENT_CHAT_VERSION);
 	});
+
+	it("re-check finding 1: a chat that is not Ask and is stamped with the Ask version is refused, never stamped back down", () => {
+		const course = courseStore.createCourse("Ceilings");
+		const plain = chatStore.createChat("plain");
+		const learn = chatStore.createChat("learn", undefined, { courseId: course.id, mode: "learn", skillIds: [] });
+		const ask = courses.createCourseSession(course.id, "ask");
+		assert.ok(ask.ok);
+		const restamp = (id: string, version: number) => fs.writeFileSync(chatFileOf(id), JSON.stringify({ ...JSON.parse(fs.readFileSync(chatFileOf(id), "utf8")), version }));
+		const errors = console.error;
+		console.error = () => {};
+		try {
+			for (const id of [plain.id, learn.id]) {
+				restamp(id, ASK_CHAT_VERSION);
+				assert.equal(chatStore.getChat(id), null, "refused on read");
+				assert.throws(() => chatStore.renameChat(id, "rewritten"), /Chat not found/);
+				assert.equal(onDisk(id).version, ASK_CHAT_VERSION, "a write through the store leaves the file as it was");
+				assert.notEqual((onDisk(id) as { title?: string }).title, "rewritten");
+				assert.ok(!chatStore.listChats().some((c) => c.id === id), "not listed");
+			}
+			// an Ask chat: the legacy stamp (written before the Ask version existed) reads and is raised on the next write
+			restamp(ask.value.id, CURRENT_CHAT_VERSION);
+			assert.equal(chatStore.getChat(ask.value.id)?.course?.mode, "ask");
+			chatStore.renameChat(ask.value.id, "Raised");
+			assert.equal(onDisk(ask.value.id).version, ASK_CHAT_VERSION);
+			restamp(ask.value.id, ASK_CHAT_VERSION + 1);
+			assert.equal(chatStore.getChat(ask.value.id), null, "an Ask chat above the Ask version is from a newer app");
+		} finally {
+			console.error = errors;
+		}
+	});
 });
 
 describe("review 1 finding 2: no entry point feeds an Ask transcript to the graph", () => {
@@ -841,7 +871,7 @@ describe("review 1 item 7: the composed Ask prompt", () => {
 		for (const heading of ["# Ask — questions about the class", "## The shape of an answer", "## Grounded in the class material", "## Looking things up in the class material", "## Figures the app draws", "## Circuit values", "## A figure made in the background: `visual`", "## An interactive figure: `demo`"]) {
 			assert.ok(prompt.includes(heading), heading);
 		}
-		for (const absent of ["## No class material yet", "## No lookups in this reply", "## The learner's lecture notes"]) assert.ok(!prompt.includes(absent), absent);
+		for (const absent of ["## No class material yet", "## No lookups in this reply", "## Using the learner's lecture notes"]) assert.ok(!prompt.includes(absent), absent);
 		for (const phrase of LESSON_PHRASES) assert.ok(!prompt.includes(phrase), `no lesson phrase: ${phrase}`);
 		assert.ok(!prompt.includes(MATERIAL_RULES.slice(0, 60)), "not the lesson material rules");
 		assert.match(prompt, /<material id="[^"]+" name="Lecture 3\.pdf" kind="PDF, 12 pages" path="[^"]+">/, "the material, with its path for visual");
@@ -869,7 +899,8 @@ describe("review 1 item 7: the composed Ask prompt", () => {
 	it("names lecture notes when the course has them, and lets the notes tools in only then", () => {
 		const caps = (tools: string[], notes: boolean) => askSystemPrompt({ caps: { tools, sources: { pdf: false, other: false, notes } } });
 		const withNotes = caps(["lecture_note_search", "lecture_note_read"], true);
-		assert.match(withNotes, /## The learner's lecture notes/);
+		assert.match(withNotes, /## Using the learner's lecture notes/);
+		assert.doesNotMatch(withNotes, /## The learner's lecture notes/, "the generated notes index owns that heading (no duplicate)");
 		assert.match(withNotes, /Sources in this conversation: the learner's lecture notes, listed above\./);
 		assert.doesNotMatch(withNotes, /## No class material yet/);
 		assert.doesNotMatch(caps([], false), /lecture_note_search/);
@@ -902,6 +933,16 @@ describe("review 1 item 7: the composed Ask prompt", () => {
 		assert.match(prompt, /You cannot look anything up in this reply\./);
 		assert.doesNotMatch(prompt, /material_search|material_read|figure_guide|circuit_solve|show_figure|`visual`|`demo`/);
 		assert.doesNotMatch(prompt, /Use material_search/, "the material blocks name no tool either");
+	});
+
+	it("re-check finding 3: a clarification on a class with no sources is not told to send the learner to get material checked", () => {
+		const none = askSystemPrompt({ caps: { tools: [], sources: { pdf: false, other: false, notes: false } } });
+		assert.match(none, /## No class material yet/);
+		assert.doesNotMatch(none, /## No lookups in this reply|gets the material checked/);
+		const some = askSystemPrompt({ caps: { tools: [], sources: { pdf: false, other: true, notes: false } } });
+		assert.match(some, /## No lookups in this reply/);
+		// a class whose only material is an image or a web page is not called "text material"
+		assert.match(some, /Sources in this conversation: the class's material, listed above\. You cannot look anything up in this reply\./);
 	});
 
 	it("the general-knowledge label and the fixed lines are written in the course's language, for every supported language", () => {
@@ -982,7 +1023,14 @@ describe("review 1 item 9: draft card copy and conversation titles", () => {
 		pinModel(second.value.id);
 		await runTurn(second.value.id, { type: "text", text: "What is a pole?" }, answer);
 		assert.equal(chatStore.getChat(second.value.id)!.title, "My own name", "a title the learner chose is kept");
+		// re-check finding 2: a chosen title that merely begins like the default is kept too
+		const third = courses.createCourseSession(course.id, "ask");
+		assert.ok(third.ok);
+		chatStore.renameChat(third.value.id, "Questions: Week 3");
+		pinModel(third.value.id);
+		await runTurn(third.value.id, { type: "text", text: "What is a zero?" }, answer);
+		assert.equal(chatStore.getChat(third.value.id)!.title, "Questions: Week 3", "only the exact default is replaced");
 		const titles = courses.courseView(course.id)!.sessions.filter((s) => s.mode === "ask").map((s) => s.title).sort();
-		assert.deepEqual(titles, ["My own name", "What does the region of convergence mean?"], "distinguishable");
+		assert.deepEqual(titles, ["My own name", "Questions: Week 3", "What does the region of convergence mean?"], "distinguishable");
 	});
 });

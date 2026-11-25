@@ -22,7 +22,8 @@ export const ASK_FRAGMENT_CONDITIONS: Readonly<Record<string, (c: AskPromptCapab
 	"ask/21-class-material.md": (c) => c.tools.includes("material_search"),
 	"ask/22-lecture-notes.md": (c) => c.tools.includes("lecture_note_search"),
 	"ask/23-no-sources.md": (c) => !c.sources.pdf && !c.sources.other && !c.sources.notes,
-	"ask/24-no-tools.md": (c) => c.tools.length === 0,
+	// with no sources 23-no-sources already says there is nothing to check; 24 would send the learner to get it checked
+	"ask/24-no-tools.md": (c) => c.tools.length === 0 && (c.sources.pdf || c.sources.other || c.sources.notes),
 	"ask/30-figure-blocks.md": (c) => c.tools.includes("figure_guide"),
 	"ask/31-circuits.md": (c) => c.tools.includes("circuit_solve"),
 	"ask/32-visual.md": (c) => c.tools.includes("visual"),
@@ -55,7 +56,7 @@ export function askInstructions(caps: AskPromptCapabilities, switches: Record<st
 /** The line naming the sources this conversation can check. Pure. */
 export function askSourcesLine(caps: AskPromptCapabilities): string {
 	const { pdf, other, notes } = caps.sources;
-	const material = pdf && other ? "the class's PDF and other material" : pdf ? "the class's PDF material" : other ? "the class's text material" : null;
+	const material = pdf && other ? "the class's PDF and other material" : pdf ? "the class's PDF material" : other ? "the class's material" : null;
 	const parts = [material, notes ? "the learner's lecture notes" : null].filter((p): p is string => p !== null);
 	const what = parts.length === 0 ? "none: the class has no material or lecture notes yet." : `${parts.join(" and ")}, listed above.`;
 	const reach = caps.tools.length === 0 && parts.length > 0 ? " You cannot look anything up in this reply." : "";

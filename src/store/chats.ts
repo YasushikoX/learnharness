@@ -14,7 +14,7 @@ import { PATHS } from "../../config.ts";
 import { emit } from "../core/events.ts";
 import type { ChatStore } from "../core/ports.ts";
 import type { ChatCourseLink, ChatRecord, ClarifyEntry, ClarifyThread, ChatSettings, ChatSummary, ExtractionRunUsage, ImageSnapshot, PlanTree, SideChatThread, TurnUsage } from "../core/contracts.ts";
-import { NEWEST_CHAT_VERSION, chatVersionFor } from "../core/contracts.ts";
+import { chatVersionFor } from "../core/contracts.ts";
 import type { LhMessage } from "../core/native-messages.ts";
 import { activeProblemOf, danglingQuestionOf } from "../core/native-messages.ts";
 import { phaseAt3Lh } from "../core/phases.ts";
@@ -75,9 +75,13 @@ function getChat(id: string): ChatRecord | null {
 	// Honest refusal (owner ruling 2026-10-10): a record stamped NEWER than
 	// this build (the downgrade scenario) reads as absent, never misparsed —
 	// the next read-modify-write must not rewrite what it doesn't understand.
+	// The bound is the record's OWN ceiling (re-check finding 1, 2026-11-25): an Ask chat may carry the Ask stamp, an
+	// ordinary chat may not. A flat bound of the Ask stamp would accept an ordinary chat stamped 3 by some newer build
+	// and the next write would stamp it back to 2.
 	const v = (parsed as { version?: unknown }).version;
-	if (typeof v === "number" && v > NEWEST_CHAT_VERSION) {
-		console.error(`[chat ${id}] record stamped with schema version ${v} > ${NEWEST_CHAT_VERSION} — this app build is older; refusing to read it`);
+	const max = chatVersionFor((parsed ?? {}) as { course?: unknown });
+	if (typeof v === "number" && v > max) {
+		console.error(`[chat ${id}] record stamped with schema version ${v} > ${max} — this app build is older; refusing to read it`);
 		return null;
 	}
 	return parsed as ChatRecord;
