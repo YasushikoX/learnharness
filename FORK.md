@@ -12,8 +12,8 @@ Status as of 2026-11-24. "Landed" means merged to `main` with tests passing; "In
 
 | Change | What it does | Status |
 |---|---|---|
-| Merge upstream v0.7.0 | Brings in upstream's session folders, faster transcript opening, editable agent prompts and provider fixes, keeping all of Tobias's features | In progress (`merge/upstream-v0.7.0`) |
-| Whole-document indexing | Splits a converted document into bounded batches and indexes all of it (summary, vocabulary with definitions and pages, concepts, figures) instead of skimming; builds a class glossary | In review (`wp/3b-material-digest`) |
+| Merge upstream v0.7.0 | Brings in upstream's session folders, faster transcript opening, editable agent prompts and provider fixes, keeping all of Tobias's features. Deleting a session or folder now warns when it would take course progress with it | Landed 2026-11-24 |
+| Whole-document indexing | Splits a converted document into bounded batches and indexes all of it (summary, vocabulary with definitions and pages, concepts, figures) instead of skimming; builds a class glossary | In review, third round (`wp/3b-material-digest`) |
 | PDF converter options | A converter interface with built-in choices: the built-in reader (no setup, also the fallback), a self-hosted Docling service, and Mistral OCR. Every converter yields the same page-marked Markdown, with page numbering owned by the app | Planned |
 | Bring your own PDF service | A service that is not built in is described by a small JSON profile (request, optional polling, where the text is in the reply) that the app interprets; no downloaded or generated code runs, and keys stay in the local credential store | Planned |
 | AI-drafted connector | "Draft with AI" writes that profile from the service's documentation in one model call, tests it on a bundled two-page PDF and shows the result for approval before it can be enabled | Planned |

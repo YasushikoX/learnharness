@@ -1,3 +1,5 @@
+> **This is YasushikoX's fork**, aimed at studying school classes from class material. [FORK.md](FORK.md) lists what it changes and the status of each change. Everything below is the README of [Tobias Samsonsen's fork](https://github.com/TobiasSamsonsen/learnharness), which this one builds on, and which in turn builds on [LearnHarness](https://github.com/amosblomqvist/learnharness) by Amos Blomqvist.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/lh_banner_dark.png">
