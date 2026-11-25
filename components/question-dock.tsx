@@ -60,7 +60,8 @@ import {
 	type SketchPayload,
 	type Phase3,
 } from "@/src/core";
-import { ConfidenceButtons } from "@/components/confidence-buttons";
+import { ConfidenceButtons, DONT_KNOW_LEADING } from "@/components/confidence-buttons";
+import { DockActions, DockToolLabel, DONT_KNOW_ACTION } from "@/components/question-actions";
 import { confidenceIndexFor, ConfidenceSlider, initialConfidenceFromDraft, stepConfidenceKey } from "@/components/confidence-slider";
 import { QuestionReadAloud, readAloudStandIn } from "@/components/question-read-aloud";
 import { useAppearance } from "@/components/settings/appearance";
@@ -89,9 +90,12 @@ const QC_LABEL_TEXT = "min-w-0 [overflow-wrap:anywhere]";
 const QC_QUESTION = "mb-3 font-medium";
 const QC_CONTEXT = "mb-3 text-sm text-muted-foreground";
 const QC_OPTION_LIST = "flex flex-col gap-2 pb-2";
-const QC_OPTION_ROW = "flex items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm outline-none transition-colors";
-const QC_OPTION_MARK = "flex size-4 shrink-0 items-center justify-center border";
-const QC_OPTION_LETTER = "text-[0.625rem] font-medium leading-none";
+// Options (UI round 1b, SPEC §7): radius 8, 8px apart, a hairline at rest; the selected one carries a 2px accent
+// indicator (the border plus an inset 1px, so nothing shifts) on a light accent fill.
+const QC_OPTION_ROW = "flex items-center gap-3 rounded-md border border-border px-3 py-2 text-left text-sm outline-none transition-[background-color,border-color,box-shadow] duration-(--lh-duration-hover) ease-(--lh-ease) focus-visible:ring-2 focus-visible:ring-focus";
+const QC_OPTION_SELECTED = "border-primary bg-primary/[0.07] shadow-[inset_0_0_0_1px_var(--primary)]";
+const QC_OPTION_MARK = "flex size-[1.125rem] shrink-0 items-center justify-center border";
+const QC_OPTION_LETTER = "text-eyebrow font-semibold leading-none";
 const QC_OTHER_INPUT = "lh-input w-full min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground";
 const OTHER_PLACEHOLDER = "Type your own answer…";
 
@@ -150,7 +154,7 @@ export function questionCardStandIn(doc: Document, c: QuestionCardContent): { qu
 		const input = el("div", cn(pathInputClassName(true), QC_OTHER_INPUT));
 		input.dataset.empty = "true";
 		input.dataset.placeholder = OTHER_PLACEHOLDER;
-		list.append(el("div", cn(QC_OPTION_ROW, "border-dashed"), mark(!c.multiSelect), input));
+		list.append(el("div", QC_OPTION_ROW, mark(!c.multiSelect), input));
 	}
 	const options = el("div", "", list);
 	// Fork: the confidence buttons are a full-width row below the question area, outside the measured columns.
@@ -379,13 +383,13 @@ export function QuestionDockBar({
 				type="button"
 				data-testid="teach-check-reveal"
 				onClick={onExpand}
-				className="dock-variant flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/40"
+				className="dock-variant flex w-full items-center gap-3 px-4 py-3 text-left transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised"
 			>
 				<span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
 					<PlayIcon className="size-3.5" />
 				</span>
 				<span className="min-w-0 flex-1">
-					<span className="block text-sm font-medium">Check your understanding</span>
+					<span className="block text-chrome font-medium">Check your understanding</span>
 					<span className="block text-xs text-muted-foreground">
 						<QuestionPreview>{question}</QuestionPreview>
 					</span>
@@ -401,7 +405,7 @@ export function QuestionDockBar({
 			type="button"
 			data-testid="question-dock-bar"
 			onClick={onExpand}
-			className="dock-variant flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm transition-colors hover:bg-accent/40"
+			className="dock-variant flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised"
 		>
 			<span className="shrink-0 lh-eyebrow text-muted-foreground">
 				{label ??
@@ -1001,6 +1005,11 @@ function QuestionDockForm({
 		}, { onStop: () => { holdingPosition.current = false; } });
 	}, [arrangement, qd.id]);
 
+	// A lesson's written question may be given up ("I don't know" in the actions row); a final problem or a recall says
+	// what it is in one quiet line above the answer.
+	const explainGiveUp = kind === "explain" && toolName === "explain";
+	const finalNote = qd.questionType === "final" ? "No hints. Sets your first rating." : qd.questionType === "recall" ? "No hints. A quick look back at an earlier skill." : "";
+
 	// The question part (label, question, context) and the answer list are
 	// shared by both arrangements; the refs feed the layout probe.
 	const questionPart = (
@@ -1042,8 +1051,8 @@ function QuestionDockForm({
 							onClick={() => toggle(i)}
 							className={cn(
 								QC_OPTION_ROW,
-								isSel ? "border-primary bg-accent" : "hover:bg-accent/50",
-								i === kbdIdx && !isSel && "ring-1 ring-border bg-accent/40",
+								isSel ? QC_OPTION_SELECTED : "hover:bg-raised",
+								i === kbdIdx && !isSel && "bg-raised",
 							)}
 						>
 							<span
@@ -1091,8 +1100,8 @@ function QuestionDockForm({
 						onClick={selectOther}
 						className={cn(
 							QC_OPTION_ROW,
-							sel.otherSelected ? "border-primary bg-accent" : "border-dashed hover:bg-accent/50",
-							kbdIdx === optionCount && !sel.otherSelected && "ring-1 ring-border bg-accent/40",
+							sel.otherSelected ? QC_OPTION_SELECTED : "hover:bg-raised",
+							kbdIdx === optionCount && !sel.otherSelected && "bg-raised",
 						)}
 					>
 						<span
@@ -1218,7 +1227,7 @@ function QuestionDockForm({
 			    then press how sure you are — the press submits. "I don't know" is the leading button and needs no pick; the five
 			    levels wait for one. Keys: 1-5 press the levels, 0 presses "I don't know", ←/→ move the highlight, Enter presses it. */}
 			{showConfidence && (
-				<div ref={confidenceRef} className={cn("border-t border-border/60 px-4 py-2.5", wordingOnly && "hidden")} data-testid="confidence-row">
+				<div ref={confidenceRef} className={cn("border-t border-border px-4 py-3", wordingOnly && "hidden")} data-testid="confidence-row">
 					{confidenceMode === "slider" ? (
 						<ConfidenceSlider value={conf} onChange={setConf} disabled={compactionRunning || preparing} showUnsetHint onDontKnow={pressDontKnow} dontKnowDisabled={compactionRunning || preparing} />
 					) : (
@@ -1232,7 +1241,7 @@ function QuestionDockForm({
 								disabled={compactionRunning || preparing}
 								onClick={pressDontKnow}
 								data-testid="dont-know-button"
-								className="lh-touch h-10 min-w-0 flex-[1.8] truncate rounded-md border border-dashed border-border/70 bg-transparent px-0 text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+								className={DONT_KNOW_LEADING}
 							>
 								I don't know
 							</button>
@@ -1243,9 +1252,9 @@ function QuestionDockForm({
 			)}
 
 			{hintsOffered && (hints.length > 0 || hintError) && (
-				<div className={cn("space-y-1.5 border-t border-border/60 px-4 py-2.5 text-sm", wordingOnly && "hidden")} data-testid="hint-list">
+				<div className={cn("space-y-1.5 border-t border-border px-4 py-3 text-sm", wordingOnly && "hidden")} data-testid="hint-list">
 					{hints.map((hint, i) => (
-						<div key={i} className="flex gap-2 text-foreground/80">
+						<div key={i} className="flex gap-2 text-foreground">
 							<span className="shrink-0 pt-0.5 lh-eyebrow text-muted-foreground">Hint {i + 1}</span>
 							<div className="min-w-0 flex-1">
 								<ToolContentResponse>{hint}</ToolContentResponse>
@@ -1262,38 +1271,24 @@ function QuestionDockForm({
 
 			{/* A lesson's free-form question may be given up like a multiple-choice one (owner, 2026-11-13: with Tutor decides,
 			    calculations are free-form). A course lesson's FINAL PROBLEM also says what it is. */}
-			{kind === "explain" && toolName === "explain" && (
-				<div
-					className={cn("flex items-center justify-between gap-3 border-t border-border/60 px-4 py-2 text-xs text-muted-foreground", wordingOnly && "hidden")}
-					data-testid="final-problem-row"
-				>
-					<span>{qd.questionType === "final" ? "No hints. Sets your first rating." : qd.questionType === "recall" ? "No hints. A quick look back at an earlier skill." : ""}</span>
-					<button
-						type="button"
-						disabled={compactionRunning || preparing}
-						onClick={pressDontKnow}
-						data-testid="dont-know-button"
-						className="lh-touch h-9 shrink-0 rounded-md border border-dashed border-border/70 bg-transparent px-3 text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-					>
-						I don't know
-					</button>
-				</div>
-			)}
-
 			<form
-				className={cn("border-t border-border/60 p-1.5", wordingOnly && "hidden")}
+				className={cn("border-t border-border", wordingOnly && "hidden")}
 				onSubmit={(e) => {
 					e.preventDefault();
 					submit();
 				}}
 			>
-				<div
-					data-testid={qd.mode === "text" ? "answer-field" : "thinking-field"}
-					className="rounded-md border border-border/70 bg-background/60 transition-colors focus-within:border-primary/50"
-				>
-					<div className="px-2.5 pt-2 lh-eyebrow text-muted-foreground">
-						{qd.mode === "text" ? "Your answer" : "YOUR THINKING"}
+				{/* UI round 1b (SPEC §7): the answer area is a section of the ONE card — a hairline above, no inner box; the
+				    shell's own focus ring shows focus. The actions row closes it: secondary sm tools left, one primary
+				    Submit right. */}
+				<div data-testid={qd.mode === "text" ? "answer-field" : "thinking-field"}>
+					<div className="px-4 pt-3 lh-eyebrow text-muted-foreground">
+						{qd.mode === "text" ? "Your answer" : "Your thinking"}
 					</div>
+					{/* A course lesson's FINAL PROBLEM (or a recall) says what it is: one quiet line. */}
+					{explainGiveUp && finalNote && (
+						<div data-testid="final-problem-row" className="px-4 pt-1 text-xs text-muted-foreground">{finalNote}</div>
+					)}
 					{qd.mode === "text" ? (
 						<PathInput
 							value={text}
@@ -1321,7 +1316,7 @@ function QuestionDockForm({
 								}
 							}}
 							placeholder="Type your answer…"
-							className="field-sizing-content lh-input max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground"
+							className="field-sizing-content lh-input max-h-48 min-h-10 w-full resize-none bg-transparent px-4 py-1.5 outline-none placeholder:text-muted-foreground"
 						/>
 					) : (
 						<PathInput
@@ -1353,7 +1348,7 @@ function QuestionDockForm({
 							}}
 							placeholder="Why this answer? Whatever comes to mind."
 							className={cn(
-								"field-sizing-content lh-input max-h-48 w-full resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground",
+								"field-sizing-content lh-input max-h-48 w-full resize-none bg-transparent px-4 py-1.5 outline-none placeholder:text-muted-foreground",
 								// Phase-scaled prominence: teaching invites depth,
 								// probing stays quick.
 								// One line until focused (owner, 2026-11-10): the empty field took ~130px of a tablet's height; it opens up
@@ -1363,7 +1358,7 @@ function QuestionDockForm({
 						/>
 					)}
 					{inkWaiting && !photo && (
-						<div className="px-2.5 pb-1.5">
+						<div className="px-4 pb-2">
 							<span data-testid="question-ink-chip" className="inline-flex items-center gap-1.5 rounded-full border bg-muted/50 py-0.5 pr-1 pl-2 text-xs text-muted-foreground">
 								<PenLineIcon className="size-3" />
 								Sketch attached
@@ -1394,7 +1389,7 @@ function QuestionDockForm({
 						</div>
 					)}
 					{(photo || photoError) && (
-						<div className="px-2.5 pb-1.5">
+						<div className="px-4 pb-2">
 							{photo && (
 								<span data-testid="question-photo-chip" className="inline-flex items-center gap-1.5 rounded-full border bg-muted/50 py-0.5 pr-1 pl-1 text-xs text-muted-foreground">
 									{/* eslint-disable-next-line @next/next/no-img-element -- a blob: URL of the photo just taken */}
@@ -1420,7 +1415,7 @@ function QuestionDockForm({
 						</div>
 					)}
 					{steerOffered && steerOpen && (
-						<div data-testid="question-steer-box" className="mx-1 mb-1.5 flex flex-col gap-1.5 rounded-lg border bg-muted/30 p-2">
+						<div data-testid="question-steer-box" className="mx-4 mb-2 flex flex-col gap-2 rounded-lg bg-raised p-3">
 							<p className="text-xs text-muted-foreground">Tell the tutor something instead of answering. This question is set aside, not graded, and comes back unless you change the plan.</p>
 							<textarea
 								autoFocus
@@ -1441,88 +1436,107 @@ function QuestionDockForm({
 									}
 								}}
 								placeholder="What should the tutor do differently?"
-								className="field-sizing-content lh-input max-h-40 min-h-[4.5rem] w-full resize-none rounded-md bg-background px-2.5 py-2 outline-none placeholder:text-muted-foreground"
+								className="field-sizing-content lh-input max-h-40 min-h-[4.5rem] w-full resize-none rounded-md border border-input bg-card px-2.5 py-2 outline-none placeholder:text-muted-foreground focus:border-ring"
 							/>
 							<div className="flex justify-end gap-2">
-								<Button type="button" variant="ghost" data-testid="question-steer-cancel" onClick={() => setSteerOpen(false)} className="h-9 rounded-md px-4 text-sm">
+								<Button type="button" variant="ghost" data-testid="question-steer-cancel" onClick={() => setSteerOpen(false)}>
 									Cancel
 								</Button>
-								<Button type="button" data-testid="question-steer-send" disabled={!steerText.trim() || compactionRunning || preparing} onClick={sendSteer} className="h-9 rounded-md px-4 text-sm">
+								<Button type="button" data-testid="question-steer-send" disabled={!steerText.trim() || compactionRunning || preparing} onClick={sendSteer}>
 									Send to tutor
 								</Button>
 							</div>
 						</div>
 					)}
-					<div className="flex items-center gap-2 p-1">
-						{sketchAvailable && camera.available && (
-							<Button
-								type="button"
-								variant="secondary"
-								data-testid="question-add-photo"
-								onClick={camera.open}
-								className="lh-press h-9 gap-1.5 rounded-md px-4 text-sm"
-							>
-								<CameraIcon className="size-4" />
-								Camera
-							</Button>
-						)}
-						{sketchAvailable && (
-							<Button
-								type="button"
-								variant="secondary"
-								data-testid="question-open-sketch"
-								onClick={() => setSketching(true)}
-								className="lh-press h-9 gap-1.5 rounded-md px-4 text-sm"
-							>
-								<PenLineIcon className="size-4" />
-								Open in sketch
-							</Button>
-						)}
-						{hintsOffered && (
-							<Button
-								type="button"
-								variant="secondary"
-								data-testid="question-hint"
-								data-nudge={hintCtl.nudge && hints.length === 0 ? "true" : undefined}
-								disabled={hintCtl.disabled}
-								onClick={hintCtl.ask}
-								className={cn(
-									"lh-press h-9 gap-1.5 rounded-md px-4 text-sm",
-									hintCtl.nudge && hints.length === 0 && "ring-2 ring-primary/50",
-								)}
-							>
-								<LightbulbIcon className="size-4" />
-								{hintLabel(hintCtl)}
-							</Button>
-						)}
-						{steerOffered && (
-							<Button
-								type="button"
-								variant="secondary"
-								data-testid="question-steer"
-								aria-label="Tell the tutor"
-								aria-expanded={steerOpen}
-								title="Set this question aside and write to the tutor instead"
-								onClick={() => setSteerOpen((open) => !open)}
-								className="lh-press h-9 gap-1.5 rounded-md px-4 text-sm"
-							>
-								<MessageSquareIcon className="size-4" />
-								<span className="hidden @xl/dock:inline">Tell the tutor</span>
-							</Button>
-						)}
-						<span aria-hidden className="pl-1.5 text-xs text-muted-foreground">
-							{compactionRunning ? "compacting session…" : <span className="lh-enter-hint [@media(pointer:coarse)]:hidden">↵ submits · ⇧↵ newline</span>}
-						</span>
-						{(!showConfidence || confidenceMode === "slider") && (
-							<Button
-								type="submit"
-								disabled={!canSubmit || compactionRunning || preparing}
-								className="ml-auto h-9 rounded-md px-3.5 text-sm font-medium"
-							>
-								Submit answer
-							</Button>
-						)}
-					</div>
+					<DockActions
+						tools={(sketchAvailable || hintsOffered || steerOffered) && <>
+							{sketchAvailable && camera.available && (
+								<Button
+									type="button"
+									variant="secondary"
+									size="sm"
+									data-testid="question-add-photo"
+									aria-label="Camera"
+									onClick={camera.open}
+									className="lh-press"
+								>
+									<CameraIcon />
+									<DockToolLabel>Camera</DockToolLabel>
+								</Button>
+							)}
+							{sketchAvailable && (
+								<Button
+									type="button"
+									variant="secondary"
+									size="sm"
+									data-testid="question-open-sketch"
+									aria-label="Open in sketch"
+									onClick={() => setSketching(true)}
+									className="lh-press"
+								>
+									<PenLineIcon />
+									<DockToolLabel>Open in sketch</DockToolLabel>
+								</Button>
+							)}
+							{hintsOffered && (
+								<Button
+									type="button"
+									variant="secondary"
+									size="sm"
+									data-testid="question-hint"
+									data-nudge={hintCtl.nudge && hints.length === 0 ? "true" : undefined}
+									aria-label={hintLabel(hintCtl)}
+									disabled={hintCtl.disabled}
+									onClick={hintCtl.ask}
+									className={cn("lh-press", hintCtl.nudge && hints.length === 0 && "ring-2 ring-primary/50")}
+								>
+									<LightbulbIcon />
+									<DockToolLabel>{hintLabel(hintCtl)}</DockToolLabel>
+								</Button>
+							)}
+							{steerOffered && (
+								<Button
+									type="button"
+									variant="secondary"
+									size="sm"
+									data-testid="question-steer"
+									aria-label="Tell the tutor"
+									aria-expanded={steerOpen}
+									title="Set this question aside and write to the tutor instead"
+									onClick={() => setSteerOpen((open) => !open)}
+									className="lh-press"
+								>
+									<MessageSquareIcon />
+									<DockToolLabel>Tell the tutor</DockToolLabel>
+								</Button>
+							)}
+						</>}
+						hint={compactionRunning ? "compacting session…" : <span className="lh-enter-hint [@media(pointer:coarse)]:hidden">↵ submits · ⇧↵ newline</span>}
+						trailing={(explainGiveUp || !showConfidence || confidenceMode === "slider") && <>
+							{/* A lesson's free-form question may be given up like a multiple-choice one (owner, 2026-11-13:
+							    with Tutor decides, calculations are free-form). */}
+							{explainGiveUp && (
+								<button
+									type="button"
+									disabled={compactionRunning || preparing}
+									onClick={pressDontKnow}
+									data-testid="dont-know-button"
+									className={DONT_KNOW_ACTION}
+								>
+									I don't know
+								</button>
+							)}
+							{(!showConfidence || confidenceMode === "slider") && (
+								<Button
+									type="submit"
+									size="lg"
+									disabled={!canSubmit || compactionRunning || preparing}
+								>
+									Submit answer
+								</Button>
+							)}
+						</>}
+					/>
 				</div>
 			</form>
 			{camera.node}

@@ -156,19 +156,20 @@ import { ComposerEdge } from "@/components/composer-edge";
 import { currentUserThinkingOpen, setAllUserThinkingOpen } from "@/components/thinking-block";
 
 /**
- * Width tokens (wave-5 reskin, owner decision): the teaching PROSE spans the
- * full session width with a thin px-6 margin; the composer/question DOCK is
- * deliberately narrower (~46rem centered) per the reference. Same ELEMENT,
- * same place — width polish only.
+ * Width tokens (UI round 1b, SPEC §2): ONE reading column. The teaching prose,
+ * the question dock and the composer share one centred axis; unset, the
+ * column is the dock's own width (globals.css --lh-reading-dock, 46rem), so
+ * prose and question card line up edge to edge.
  *
- * Transcript width (Appearance, session-appearance-layout): an optional cap
- * on the whole transcript, centered (globals.css .lh-transcript-column).
- * Full (unset) is exactly the full-bleed column above.
+ * Transcript width (Appearance, session-appearance-layout): sets the column
+ * (globals.css .lh-transcript-column).
  */
 const COLUMN = "lh-transcript-column mx-auto w-full px-6";
-/** The transcript's column: the right side is wider (48px) for the margin bubbles of the learner's questions (clarify-layer.tsx).
- *  It carries upstream's Transcript width cap (lh-transcript-column) like COLUMN. */
-const TRANSCRIPT_COLUMN = "lh-transcript-column mx-auto w-full pl-6 pr-12";
+/** The transcript's column: the right side is wider (48px) for the margin bubbles of the learner's questions (clarify-layer.tsx);
+ *  from 640px the left mirrors it (lh-transcript-gutter) so the text stays on the dock's axis. Same width cap as COLUMN. */
+const TRANSCRIPT_COLUMN = "lh-transcript-column lh-transcript-gutter mx-auto w-full pl-6 pr-12 sm:pl-12";
+/** The reading column's default dock width in rem (globals.css --lh-reading-dock). */
+const READING_DOCK_REM = 46;
 // A landscape touch screen (the tablet) gets a WIDE dock, 60rem, so a question and its options can sit side by side
 // (question-dock.tsx, owner 2026-11-10). The query (question-layout.ts WIDE_DOCK_QUERY) is repeated in the DOCK class
 // (Tailwind needs it spelled out); the dock geometry below reads it through wideDockScreen.
@@ -3110,7 +3111,9 @@ export function DockOverlay({
 	const adaptive = appearance.adaptiveQuestions && !!pending && !pluginQuestion && !unreadablePlugin;
 	// Full: the card's shell may line up with the transcript's text column
 	// (dockContainerMax: block - 1rem); a set width caps it there.
-	const containerMax = dockContainerMax(blockW, rem, appearance.transcriptMaxWidth);
+	// Unset, the transcript is the reading column (globals.css --lh-reading-dock, 46rem), so the adaptive dock keeps to it
+	// too (one column, UI round 1b); the landscape tablet's wide dock keeps its old uncapped default.
+	const containerMax = dockContainerMax(blockW, rem, appearance.transcriptMaxWidth ?? (wide ? null : READING_DOCK_REM));
 	const fontKey = layoutFontKey(appearance);
 	// Fork: on the wide dock the default container (and so the card's default width) is 60rem instead of 46rem, capped at
 	// the Transcript width setting. The answered card solves with the same effective geometry, so the two always agree.
@@ -3378,10 +3381,15 @@ export function DockOverlay({
 					    rounding starts, truncated, no background, no container. A
 					    line dies when its card lands (visibleQueuedSteers). */}
 					<QueuedSteersBody steers={queuedSteers} />
+					<div ref={shellRef} data-attachment-composer="" className="pointer-events-auto overflow-hidden rounded-2xl border border-input bg-card shadow-lg transition-[border-color,box-shadow] duration-(--lh-duration-hover) ease-(--lh-ease) focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20">
+						{(pending || practice) && <DockHandle expanded={expanded} onCollapse={collapseByUser} onExpand={pending ? expandAndReveal : expandPractice} />}
+						{preparationStatus}
 					{/* The reading-thinking field (owner 2026-10-03): mounted while a
 					    teach-phase check waits — the same cue that collapses it. It
 					    claims dictated speech until the learner reveals the check
-					    (the dock reclaims then). Rides the check answer on submit. */}
+					    (the dock reclaims then). Rides the check answer on submit.
+					    UI round 1b: the shell's top edge (a compact one-line row over a
+					    hairline that opens up in place), not a second stacked box. */}
 					{(pending || pluginQuestion) && requiresReveal && (
 						<ReadingThinkingField
 							inputRef={readingInputRef}
@@ -3401,9 +3409,6 @@ export function DockOverlay({
 							claim={revealPending}
 						/>
 					)}
-					<div ref={shellRef} data-attachment-composer="" className="pointer-events-auto overflow-hidden rounded-2xl border border-input bg-card shadow-lg transition-[border-color,box-shadow] duration-(--lh-duration-hover) ease-(--lh-ease) focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20">
-						{(pending || practice) && <DockHandle expanded={expanded} onCollapse={collapseByUser} onExpand={pending ? expandAndReveal : expandPractice} />}
-						{preparationStatus}
 						{/* Include descendant margins (notably practice thinking's
 						    bottom margin) in the natural content measurement. */}
 						<div

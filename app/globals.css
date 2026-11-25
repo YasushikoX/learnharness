@@ -476,14 +476,24 @@ html.lh-native-ink body > *:not([data-testid="sketch-view"]) {
 	line-height: var(--lh-prose-leading);
 }
 
-/* Transcript width (Appearance → Transcript width; session pages). The
-   setting X (rem, on <html> as --lh-transcript-max) is a DOCK-container
-   width: at X the transcript's text column lines up with the edges of a
-   bottom-region card X wide (its px-4 + borders), so the column box is
-   X - 2rem of content plus its own px-6 (3rem). Unset = Full: the calc is
-   invalid at computed-value time and max-width falls back to none. */
+/* ── LESSON: the reading column (UI round 1b, SPEC §2/§7) ──────────────────────────────────────────────────────────
+   Transcript, figures, question dock and composer share ONE centred column. The setting X (Appearance → Transcript
+   width, rem, on <html> as --lh-transcript-max) is a DOCK-container width: at X the transcript's text column lines up
+   with the edges of a bottom-region card X wide (its px-4), so the column box is X - 2rem of content plus its own
+   px-6 (3rem). Unset = the reading default, --lh-reading-dock (46rem: the dock's own width, so the prose and the
+   question card are 704px wide on one axis — about 68 characters of 17px prose). The transcript itself keeps a 48px
+   right gutter for the margin bubbles (clarify-layer.tsx); from 640px it mirrors that gutter on the left
+   (.lh-transcript-gutter + px-12) so the text stays centred on the dock's axis. */
+:root {
+	--lh-reading-dock: 46rem;
+}
 .lh-transcript-column {
-	max-width: calc(var(--lh-transcript-max) + 1rem);
+	max-width: calc(var(--lh-transcript-max, var(--lh-reading-dock)) + 1rem);
+}
+@media (min-width: 40rem) {
+	.lh-transcript-column.lh-transcript-gutter {
+		max-width: calc(var(--lh-transcript-max, var(--lh-reading-dock)) + 4rem);
+	}
 }
 
 /* Session-name / title weight (UI round 1, 2026-11-25): 600, no Black cut. --font-title is the system sans unless the

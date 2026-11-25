@@ -4,6 +4,7 @@ import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "
 import { joinDictation, useDictationTarget } from "@/components/dictation";
 import { enterSends } from "@/components/enter-submits";
 import { composingQuestionKey, pluginQuestionKeySuppressed } from "./plugin-question-keys";
+import { NotebookPenIcon } from "lucide-react";
 import { PathInput } from "@/components/path-input";
 import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
@@ -65,8 +66,12 @@ export function ReadingThinkingField({
 	return (
 		<div
 			data-testid="reading-thinking-field"
-			className="group/reading pointer-events-auto mb-2 rounded-2xl border bg-card/60 px-3 py-2 transition-colors focus-within:border-primary/50"
+			// UI round 1b: the dock shell's top edge — one compact line over a hairline, in the chrome size until it holds
+			// text or is focused, then it opens up in place at the reading size (no second stacked box above the dock).
+			className={`group/reading pointer-events-auto flex items-start gap-2.5 border-b border-border px-4 py-2 ${draft.trim() === "" ? "[--lh-prose-size:var(--text-body)] focus-within:[--lh-prose-size:inherit]" : ""}`}
 		>
+			<NotebookPenIcon aria-hidden className="mt-[3px] size-3.5 shrink-0 text-muted-foreground" />
+			<div className="min-w-0 flex-1">
 			{/* One line until focused (owner, 2026-11-10): the label shows once the field is tapped or holds text; the
 			    placeholder names the field meanwhile. */}
 			<div className={`pb-1 lh-eyebrow text-muted-foreground ${draft.trim() === "" ? "hidden group-focus-within/reading:block" : ""}`}>
@@ -119,6 +124,7 @@ export function ReadingThinkingField({
 				placeholder="Thinking while reading: whatever comes to mind."
 				className="field-sizing-content lh-input max-h-40 w-full resize-none bg-transparent py-0.5 outline-none placeholder:text-muted-foreground"
 			/>
+			</div>
 		</div>
 	);
 }
