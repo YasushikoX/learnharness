@@ -54,7 +54,11 @@ afterEach(async () => {
 for (const kind of ["source", "session", "node"] as const) it(`${kind} deletion blocks and consumes Escape/return-to while accepted deletion is busy`, async () => {
 	const f = fixture(), deletion = deferred<void>();
 	let childClosed = 0, parentClosed = 0;
-	globalThis.fetch = async () => { await deletion.promise; return Response.json({ ok: true, graphRevision: 1 }); };
+	globalThis.fetch = async (input) => {
+		// The session dialog first asks what the deletion takes from the courses (merge review finding 1): none here.
+		if (String(input) === "/api/courses/deletion-impact") return Response.json({ sessions: 0, courses: [], skills: 0 });
+		await deletion.promise; return Response.json({ ok: true, graphRevision: 1 });
+	};
 	function Harness() {
 		const [open, setOpen] = React.useState(true);
 		const close = () => { childClosed++; setOpen(false); };

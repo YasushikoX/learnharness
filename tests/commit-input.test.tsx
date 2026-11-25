@@ -45,7 +45,7 @@ async function fixture(run: (f: {
 	let fetcher: typeof fetch = async (url) => {
 		const path = String(url);
 		if (path === "/api/settings") return Response.json({ settings: { version: 1 } });
-		if (path === "/api/settings/prompts") return Response.json({ prober: [], teacher: [], practice: [] });
+		if (path === "/api/settings/prompts") return Response.json({ prober: [], teacher: [], practice: [], placement: [] });
 		if (path === "/api/models") return Response.json({ models: [], slots: {}, providers: [] });
 		if (path === "/api/search") return Response.json({ available: false });
 		if (path === "/api/keys") return Response.json({ keys: [] });
