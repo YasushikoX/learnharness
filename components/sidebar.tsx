@@ -1231,7 +1231,7 @@ function SessionsSidebar() {
 							onClick={() => setFilter(f)}
 							className={cn(
 								"lh-touch h-6 min-w-0 flex-1 rounded-sm px-1 text-[13px] font-medium leading-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease)",
-								kindFilter === f ? "bg-card text-foreground shadow-[0_0_0_1px_var(--border),0_1px_2px_rgb(0_0_0/0.08)]" : "text-muted-foreground hover:text-foreground",
+								kindFilter === f ? "bg-card text-foreground shadow-[0_0_0_1px_var(--border),0_1px_2px_rgb(0_0_0/0.08)] dark:bg-raised-strong" : "text-muted-foreground hover:text-foreground",
 							)}
 						>
 							{f === "teach" ? "Teach" : f === "all" ? "All" : "Practice"}

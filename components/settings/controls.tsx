@@ -133,12 +133,14 @@ export function SettingsSegmentedControl<T extends string>({ label, options, val
 	testidPrefix?: string;
 	onChange: (value: T) => void;
 }) {
+	// The selected segment always lifts off its raised track: the surface (white) in light, one step lighter than the
+	// track in dark (UI round 2: the dark surface is darker than the track, so it read as pressed in).
 	return <div role="radiogroup" aria-label={label} className="flex h-7 rounded-md bg-raised p-0.5">
 		{options.map(option => <button key={option.value} type="button" role="radio" aria-checked={option.value === value}
 			data-testid={testidPrefix ? `${testidPrefix}-${option.value}` : undefined}
 			disabled={disabled} onClick={() => onChange(option.value)}
 			className={cn("h-6 rounded-sm px-2.5 text-sm font-medium transition-colors duration-(--lh-duration-hover) ease-(--lh-ease)",
-				option.value === value ? "bg-card text-foreground shadow-[0_0_0_1px_var(--border),0_1px_2px_rgb(0_0_0/0.08)]" : "text-muted-foreground hover:text-foreground")}>
+				option.value === value ? "bg-card text-foreground shadow-[0_0_0_1px_var(--border),0_1px_2px_rgb(0_0_0/0.08)] dark:bg-raised-strong" : "text-muted-foreground hover:text-foreground")}>
 			{option.label}
 		</button>)}
 	</div>;

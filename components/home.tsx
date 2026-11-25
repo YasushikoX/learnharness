@@ -345,7 +345,7 @@ export function Home({
 											// sentence case 13px, the selected segment on the surface fill with a hairline; was a gold eyebrow pill.
 											"lh-touch flex h-6 items-center gap-1.5 rounded-sm px-2.5 text-[13px] font-medium transition-colors duration-(--lh-duration-hover) ease-(--lh-ease)",
 											mode === m
-												? "bg-card text-foreground shadow-[0_0_0_1px_var(--border),0_1px_2px_rgb(0_0_0/0.08)]"
+												? "bg-card text-foreground shadow-[0_0_0_1px_var(--border),0_1px_2px_rgb(0_0_0/0.08)] dark:bg-raised-strong"
 												: "text-muted-foreground hover:text-foreground",
 										)}
 									>

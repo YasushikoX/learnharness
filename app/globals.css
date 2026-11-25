@@ -32,6 +32,11 @@
 		outline: 2px solid var(--lh-focus-ring);
 		outline-offset: 1px;
 	}
+	/* Programmatic focus targets (a dialog's heading or frame, focused on open so screen readers start there) are not
+	   controls: no ring, even when the browser calls that focus "visible" (UI round 2: the phone Settings heading). */
+	:is(h1, h2, h3, [role="dialog"], [data-programmatic-focus])[tabindex="-1"]:focus-visible {
+		outline: none;
+	}
 }
 
 /* Palette (UI round 1, 2026-11-25): the default is the neutral Dark preset (T3 Code style: near-black page, one blue
@@ -866,6 +871,19 @@ html.lh-native-ink body > *:not([data-testid="sketch-view"]) {
 }
 .lh-settings-list > :not(.lh-settings-row, .lh-settings-row-group, [hidden]) {
 	padding: 0.5rem 1rem;
+}
+/* A full-row button in a grouped list (the phone's category list) is flat between hairlines: no rounded-corner notches
+   above the dividers; only the group's outer corners round, following the card (UI round 2). */
+.lh-settings-list > .lh-settings-row-group > button {
+	border-radius: 0;
+}
+.lh-settings-list > .lh-settings-row-group:first-child > button {
+	border-top-left-radius: calc(var(--radius-lg) - 1px);
+	border-top-right-radius: calc(var(--radius-lg) - 1px);
+}
+.lh-settings-list > .lh-settings-row-group:last-child > button {
+	border-bottom-left-radius: calc(var(--radius-lg) - 1px);
+	border-bottom-right-radius: calc(var(--radius-lg) - 1px);
 }
 .lh-settings-list > :not([hidden]) ~ :not([hidden]),
 .lh-settings-list-dividers > :not([hidden]) ~ :not([hidden]) {
