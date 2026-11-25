@@ -56,22 +56,22 @@ import { CommitInput, SettingsGroup, SettingsList, SettingsMenuTrigger, Settings
 import { Button } from "@/components/ui/button";
 import { NativeInkRow } from "./native-ink-row.tsx";
 
-/** The slider position past the last width step: Full (no cap). */
-const TRANSCRIPT_FULL_POSITION = TRANSCRIPT_WIDTH_MAX_REM + TRANSCRIPT_WIDTH_STEP_REM;
-
-/** The transcript width's label: px at the root's 16px rem, or Full.
+/** The transcript width's label: px at the root's 16px rem. Unset (null)
+ *  is the reading column, which is the narrowest step (UI round 1: the
+ *  default is a centred reading measure, no longer full width).
  *  Exported for tests. */
 export function transcriptWidthLabel(rem: number | null): string {
-	return rem === null ? "Full" : `${rem * 16}px`;
+	return `${(rem ?? TRANSCRIPT_WIDTH_MIN_REM) * 16}px`;
 }
 
 /**
- * Transcript width: a slider whose last position is Full. The thumb moves
- * a local draft while dragging; the section PUT happens once, on the
- * native `change` (release / keyboard step) — not one write per tick.
+ * Transcript width: a slider from the reading column (unset) up to the
+ * widest cap. The thumb moves a local draft while dragging; the section
+ * PUT happens once, on the native `change` (release / keyboard step) —
+ * not one write per tick. Releasing on the first step clears the setting.
  */
 function TranscriptWidthSlider({ value, onCommit }: { value: number | null; onCommit: (rem: number | null) => void }) {
-	const position = value ?? TRANSCRIPT_FULL_POSITION;
+	const position = value ?? TRANSCRIPT_WIDTH_MIN_REM;
 	const [draft, setDraft] = useState(position);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const commitRef = useRef(onCommit);
@@ -82,12 +82,12 @@ function TranscriptWidthSlider({ value, onCommit }: { value: number | null; onCo
 		if (!input) return;
 		const onChange = () => {
 			const next = Number(input.value);
-			commitRef.current(next >= TRANSCRIPT_FULL_POSITION ? null : next);
+			commitRef.current(next <= TRANSCRIPT_WIDTH_MIN_REM ? null : next);
 		};
 		input.addEventListener("change", onChange);
 		return () => input.removeEventListener("change", onChange);
 	}, []);
-	const draftRem = draft >= TRANSCRIPT_FULL_POSITION ? null : draft;
+	const draftRem = draft <= TRANSCRIPT_WIDTH_MIN_REM ? null : draft;
 	return (
 		<span className="flex min-h-8 w-56 max-w-full items-center gap-2">
 			<input
@@ -97,7 +97,7 @@ function TranscriptWidthSlider({ value, onCommit }: { value: number | null; onCo
 				aria-valuetext={transcriptWidthLabel(draftRem)}
 				data-testid="input-transcript-width"
 				min={TRANSCRIPT_WIDTH_MIN_REM}
-				max={TRANSCRIPT_FULL_POSITION}
+				max={TRANSCRIPT_WIDTH_MAX_REM}
 				step={TRANSCRIPT_WIDTH_STEP_REM}
 				value={draft}
 				onChange={(e) => setDraft(Number(e.target.value))}
