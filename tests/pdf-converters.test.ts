@@ -1,13 +1,23 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
-import { assignDoclingPages, createDoclingConverter, type DoclingConverterOptions } from "../src/server/converters/docling.ts";
-import { convertWithFallback, isRegisteredPdfConverter, resolvePdfConverter } from "../src/server/converters/registry.ts";
-import { pdfjsConverter } from "../src/server/converters/pdfjs.ts";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { after, describe, it } from "node:test";
 import { ConverterError, type ConvertInput, type PageResult } from "../src/core/pdf-converter.ts";
 import { sanitizeUserSettings } from "../src/core/settings.ts";
-import { parsePdfConversionSettingsBody } from "../src/server/settings-body.ts";
 import { tinyPdf } from "./helpers/tiny-pdf.ts";
 import { closedBaseUrl, fakeDocling, formFields, json, recordedPdf, recordedResponse, withServer } from "./helpers/docling-server.ts";
+import type { DoclingConverterOptions } from "../src/server/converters/docling.ts";
+
+// The registry reads the Docling key from the credential store: a private one, never the repo's auth.json.
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "lh-pdf-converters-"));
+process.env.LH_AUTH_FILE = path.join(TMP, "auth.json");
+process.env.LH_DATA_DIR = TMP;
+after(() => fs.rmSync(TMP, { recursive: true, force: true }));
+const { assignDoclingPages, createDoclingConverter } = await import("../src/server/converters/docling.ts");
+const { convertWithFallback, isRegisteredPdfConverter, resolvePdfConverter } = await import("../src/server/converters/registry.ts");
+const { pdfjsConverter } = await import("../src/server/converters/pdfjs.ts");
+const { parsePdfConversionSettingsBody } = await import("../src/server/settings-body.ts");
 
 const tiny = tinyPdf([{ runs: [{ text: "First page text", x: 72, y: 700 }] }, { image: true }]);
 const tinyInput: ConvertInput = { bytes: tiny, filename: "tiny.pdf", pageCount: 2 };
