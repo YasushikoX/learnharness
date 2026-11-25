@@ -285,6 +285,8 @@ export async function captureScreens({ page, origin, theme, stage, signal, withL
 		await page.setViewport(narrow);
 		await click('button[aria-label="Open sidebar"]');
 		await page.setViewport(desktop);
+		// Opening the sidebar refetches its lists; a navigation that cancels those reads leaves them pending forever.
+		await settle();
 
 		await visit("/chat/new", composer);
 		await capture(26, "empty-session", "Empty new-session screen.");
