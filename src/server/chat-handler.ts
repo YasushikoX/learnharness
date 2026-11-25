@@ -7,6 +7,7 @@ import {
 	type AgentBuildOptions,
 	type TeachingAgent,
 } from "../agent/teacher-agent.ts";
+import { createAskAgent } from "../agent/ask-agent.ts";
 import { piEngineForSpec, type PiEngine } from "../agent/models.ts";
 import { connectionBackgroundAllowed as subscriptionBackgroundAllowed, connectionScopeCurrent, isSubscriptionProvider } from "../agent/subscription-connections.ts";
 import { nativeSubscriptionError } from "../agent/subscription-stream.ts";
@@ -69,6 +70,7 @@ import { resolveDifficulty } from "../core/difficulty.ts";
 import { materialsForTurn } from "./materials.ts";
 import { ensureSketchPngs, hintPagesFor, normalizePhotoSketch, persistInputSketch, resolveSketchRef, sketchImagesFor } from "./sketches.ts";
 import { courseForTurn } from "./courses.ts";
+import { COURSE_MODE_EXTRACTS } from "../core/course-session.ts";
 import { finishLessonTool, finishSessionTool } from "../agent/tools/course.ts";
 import { settledTurnResponse } from "./turn-runs.ts";
 import { asAgentMessages, type LhMessage } from "../core/native-messages.ts";
@@ -866,7 +868,10 @@ export async function handleChatInput(
 			? {
 					course: {
 						section: course.section,
-						...(course.mode === "learn"
+						// an Ask conversation (2026-11-25) has no finish tool, and no course tool at all
+						...(course.mode === "ask"
+							? {}
+							: course.mode === "learn"
 							? teaching
 								? { tools: [finishLessonTool({ chatId, chatStore: stores.chatStore })] }
 								: {}
@@ -902,6 +907,9 @@ export async function handleChatInput(
 	// uniform across kinds).
 	const constructed: TeachingAgent = buildAgent
 		? buildAgent({ ...agentOpts, teaching })
+		// ASK (2026-11-25, agent/ask-agent.ts): the course's open-questions agent, from turn 1, on the session's own model.
+		: course?.mode === "ask"
+			? createAskAgent({ jobs: { chatId, jobStore: stores.jobStore, spawn: (job, input) => void jobRunner.runJob(job.id, input), searchAvailable } }, agentOpts)
 		: course?.mode === "placement" && course.skills
 			? createPlacementAgent({ skills: course.skills, placementSkills: course.placementSkills, sessionModel: conversation }, agentOpts)
 		: record.kind === "practice"
@@ -1067,7 +1075,8 @@ export async function handleChatInput(
 				// is the deliverable).
 				// PLACEMENT (owner, 2026-10-25): the test writes nothing either —
 				// its answers are course evidence, not lesson content.
-				if ((!requestCycle || requestCycle.dispatched) && record.kind !== "practice" && record.course?.mode !== "placement" && extractionEnabled(effective.graph)) {
+				// COURSE MODES (2026-11-25): one table decides per mode (core/course-session.ts) — an Ask conversation never feeds it.
+				if ((!requestCycle || requestCycle.dispatched) && record.kind !== "practice" && (!record.course || COURSE_MODE_EXTRACTS[record.course.mode]) && extractionEnabled(effective.graph)) {
 					// Fresh per-turn read of the graph section's chunk budget
 					// (extraction-UX redesign, 2026-09-24): the trigger compares
 					// against it and the pipeline's batches share it.

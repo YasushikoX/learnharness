@@ -635,6 +635,18 @@ The learner takes notes during a lecture with the sketch feature, saved in the c
 
 **Not verified on a device:** native ink on the Tab with thousands of strokes (open, pan at 0.1x, lasso, save timing), the shell's pen and two-finger gestures through the lasso layer, and the prompt wording of the lecture-notes rules, which is the author's draft awaiting the owner.
 
+## Ask about this class (2026-11-25)
+
+The student wanted to "just be able to ask general questions" inside a class. **Ask** is a course mode (`mode: "ask"`) with its own agent (`src/agent/ask-agent.ts`, prompts in `src/agent/prompts/ask/`): an open conversation that answers briefly, grounded in the class material with page citations. Decided by the design council; the mode keeps the course as the container.
+
+- **Birth.** `POST /api/courses/[id]/sessions { mode: "ask" }` works before a skill map is approved (right after an upload). The chat is an ordinary (teach-kind) chat with the course link `{ mode: "ask", skillIds: [] }` and **no messages**: no context marker and no generated first message, so it opens on an empty composer. Skills, a skill set or `retest` are refused (400). Title "Questions: <course>"; the course's language is stamped; no learner profile.
+- **The agent.** Built through the shared conversation-agent constructor on the session's own model (the teacher's slot); one turn is one conversation turn, with no extra model call. Tools: `material_search`, `material_read`, `lecture_note_search` / `lecture_note_read` when the course has notes, `figure_guide`, `circuit_solve`, `show_figure`, and the background `visual` and `demo` jobs (behind the learner's job-tool toggles). No question, plan, finish, grader or gate, no `read_sketch` (Ask takes no sketch input), no learner-file tools, no plugin tools. A glossary tool has a marked slot in `ask-agent.ts`, not built. Its prompt is `ask/` plus the shared voice, accuracy, side-conversations, formatting and figures fragments, all editable in Settings → Agent → prompts ("Ask"); the course section only names the class.
+- **Nothing leaks.** `skillEventsOf` returns nothing for an Ask chat whatever its transcript holds, so the fold, readiness, Today, review, lesson notes, misses and the deletion-impact count never see it; `ratingChanges` is null; the learner profile and fold skip it; the finish input is refused; the chat handler attaches no course tool and does not extract (`COURSE_MODE_EXTRACTS`, one entry per mode), and the manual extract route refuses it (409).
+- **The course page.** Three cards at the top, **Learn**, **Ask about this class**, **Practice** (`components/course-modes.tsx`). Learn starts the Next up box's first lesson (through the pace dialog); Practice is Practice all; Ask reopens the newest Ask conversation, with **New** for a fresh one. Before a skill map exists only Ask starts, and Learn and Practice say what is needed first (drafting, a draft to approve, a failed draft, or sources to add). Ask sessions are listed under Sessions as "Questions" (not "Ask": the selection pill in a transcript is already called Ask). An Ask session does not hide the placement offer.
+- **The chat.** The top bar shows a "Questions" chip, no coverage ring and no Finish button; the empty transcript says what the mode is.
+
+**Not verified with a real model:** no real model has answered through the Ask prompt yet.
+
 ## Not in v1
 
 Skills on the home canvas · editing individual skills by hand after approval ·

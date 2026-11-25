@@ -146,6 +146,20 @@ export const COURSE_MODE_LABEL: Record<CourseMode, string> = {
 	review: "Review",
 	placement: "Placement test",
 	check: "Context check",
+	// "Questions", not "Ask": the selection pill in a transcript is already called Ask (server/clarify.ts).
+	ask: "Questions",
+};
+
+/** Does a course session of this mode feed the knowledge graph after its turns (the chat handler's extraction gate)?
+ *  One entry per mode, so a new mode has to decide. Only a Learn session's teaching is lesson content: practice-kind
+ *  sessions write nothing, the placement test's answers are evidence, and an Ask conversation (2026-11-25) is neither. */
+export const COURSE_MODE_EXTRACTS: Record<CourseMode, boolean> = {
+	learn: true,
+	practice: false,
+	review: false,
+	placement: false,
+	check: false,
+	ask: false,
 };
 
 /** The course block of the graph-context marker's details (the card). */
@@ -214,6 +228,7 @@ const TITLE_SKILLS = 3;
 /** The session's title. */
 export function courseSessionTitle(mode: CourseMode, courseTitle: string, skills: readonly { name: string }[], retest = false): string {
 	if (mode === "review") return `Review: ${courseTitle}`;
+	if (mode === "ask") return `Questions: ${courseTitle}`;
 	if (mode === "placement") return `${retest ? "Retest" : "Placement"}: ${courseTitle}`;
 	// a long set (a chosen practice session) keeps the title readable: three names, then how many more
 	const shown = skills.slice(0, TITLE_SKILLS).map((s) => s.name).join(", ");
@@ -242,6 +257,8 @@ export function courseFirstMessage(
 				return `Nivåtest for ${courseTitle}`;
 			case "check":
 				return `Jeg kan dette fra et annet kurs. Sjekk at jeg kan bruke det i ${courseTitle}: ${skills[0]?.statement ?? courseTitle}`;
+			case "ask":
+				return "";
 		}
 	}
 	switch (mode) {
@@ -255,6 +272,9 @@ export function courseFirstMessage(
 			return `Placement test for ${courseTitle}`;
 		case "check":
 			return `I already know this from another course — check that I can use it in ${courseTitle}: ${skills[0]?.statement ?? courseTitle}`;
+		// an Ask session opens on an empty composer: the learner's own question is the first message
+		case "ask":
+			return "";
 	}
 }
 
@@ -300,7 +320,10 @@ function recentSolvedBlock(recentSolved: readonly RecentSolvedForPrompt[]): stri
 
 export function coursePromptSection(mode: CourseMode, courseTitle: string, skills: readonly SessionSkill[], retest = false, missed: readonly MissedForPrompt[] = [], recentSolved: readonly RecentSolvedForPrompt[] = []): string {
 	const body: string[] = [];
-	if (mode === "learn") {
+	if (mode === "ask") {
+		// Ask (2026-11-25): its doctrine is the editable prompts/ask/ fragments; the section only names the class.
+		body.push(`This conversation belongs to the course "${courseTitle}". It is an Ask conversation: the learner's own questions about the class. Nothing in it is graded or tracked.`);
+	} else if (mode === "learn") {
 		const skill = skills[0];
 		body.push(
 			`This lesson belongs to the course "${courseTitle}". Its goal is ONE skill from the course's skill map — the learner is done when they can do what its statement says:`,

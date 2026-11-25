@@ -73,6 +73,7 @@ export function clarifyPrompt(input: {
  *  chat-handler's agent construction branches on). */
 function kindOf(record: NonNullable<ReturnType<typeof stores.chatStore.getChat>>): AgentKind {
 	if (record.course?.mode === "placement") return "placement";
+	if (record.course?.mode === "ask") return "ask";
 	if (record.kind === "practice") return "practice";
 	return hasProbeDone(record.messages) ? "teacher" : "prober";
 }

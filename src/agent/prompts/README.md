@@ -9,6 +9,8 @@ The runtime composes prompts for **prober**, **teacher** and **practice** agents
 | Prober | [`system-prompt.md`](../system-prompt.md) → sorted `prober/` fragments → sorted `shared/` fragments |
 | Teacher | `system-prompt.md` → sorted `teacher/` fragments → sorted `shared/` fragments |
 | Practice | sorted `practice/` fragments → the curated shared appendix below; **no teaching base** |
+| Placement | sorted `placement/` fragments → its allowlisted shared subset (`PLACEMENT_SHARED_FRAGMENTS`); **no teaching base** |
+| Ask (course questions) | sorted `ask/` fragments → shared `10-voice.md`, `15-accuracy.md`, `35-side-conversations.md`, `40-formatting.md`, `45-figures.md` (`ASK_SHARED_FRAGMENTS`); **no teaching base**; composed by [`src/agent/ask-agent.ts`](../ask-agent.ts) through the segment loader |
 | Side questions | [`side-chat/00-base.md`](side-chat/00-base.md) → shared `10-voice.md`, `15-accuracy.md`, `40-formatting.md` → final side-only [`90-style.md`](side-chat/90-style.md); composed by [`src/agent/side-chat.ts`](../side-chat.ts), not by the segment loader |
 
 Directory discovery accepts only filenames matching `^\d+-[\w.-]+\.md$` and sorts them lexicographically by filename. Keep numeric prefixes consistently padded when order matters. The teaching base supplies the agent's purpose/philosophy; voice, accuracy, mental-model, question, confidence, file and formatting guidance are separate shared fragments. The teacher's method and planning/teaching doctrine live in its own directory; probing doctrine lives in `prober/`.
@@ -26,6 +28,8 @@ system-prompt.md
 prober/<fragment>.md
 teacher/<fragment>.md
 practice/<fragment>.md
+placement/<fragment>.md
+ask/<fragment>.md
 shared/<fragment>.md
 ```
 

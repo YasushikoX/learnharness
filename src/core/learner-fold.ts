@@ -110,7 +110,7 @@ const isRung = (v: unknown): v is Rung => RUNGS.some((r) => r === v);
 export function learnerEventsOf(chat: LearnerChatInput): LearnerEvents {
 	const out: LearnerEvents = { concluded: [], answers: [] };
 	const mode = chat.course?.mode;
-	if (mode === "placement") return out;
+	if (mode === "placement" || mode === "ask") return out;
 	const practice = chat.kind === "practice";
 
 	const clean = new Set<string>();

@@ -78,7 +78,8 @@ import { sourcesGateProblem, sourcesGateReason } from "../core/sources-gate.ts";
 
 /** Which agent's prompt directory to compose. Practice (2026-10-04)
  *  composes ONLY its own directory — see prompt-segments.ts. */
-export type AgentKind = "prober" | "teacher" | "practice" | "placement";
+/** ask (2026-11-25): the course Ask agent (agent/ask-agent.ts), built through baseAgentOptions. */
+export type AgentKind = "prober" | "teacher" | "practice" | "placement" | "ask";
 
 /** Reserve conversation builtins even when role/mechanics/settings gates hide them.
  * New builtin names must join this catalog; actual turn tools are reserved too. */
@@ -130,6 +131,7 @@ const composedInstructions: Record<AgentKind, string> = {
 	teacher: composeInstructions("teacher"),
 	practice: composeInstructions("practice"),
 	placement: composeInstructions("placement"),
+	ask: composeInstructions("ask"),
 };
 
 // Money channel (wave 4): the chat-handler passes a per-turn collector;
@@ -319,7 +321,9 @@ export function agentSystemPrompt(
 	);
 }
 
-function baseAgentOptions(
+/** The shared conversation-agent construction. Exported for the Ask agent (agent/ask-agent.ts), which composes its own
+ *  registry and passes it in, like the factories below. */
+export function baseAgentOptions(
 	kind: AgentKind,
 	opts: AgentBuildOptions,
 	tools: AgentTool<any, any>[],
@@ -358,7 +362,8 @@ function baseAgentOptions(
 	// The fork's own builtins join the registry BEFORE it is bound and reserved below, so plugins can neither shadow
 	// them nor lose them. read_sketch (Android plan M2) rides EVERY agent, always — practice builds its own (it shares
 	// the conclude gate). A caller-owned registry (opts.tools — the tests') is never touched.
-	if (!opts.tools && !tools.some((t) => t.name === READ_SKETCH_TOOL)) {
+	// Ask (2026-11-25) takes no sketch input, so it has nothing to read.
+	if (!opts.tools && kind !== "ask" && !tools.some((t) => t.name === READ_SKETCH_TOOL)) {
 		tools = [
 			...tools,
 			...Object.values(
@@ -388,7 +393,7 @@ function baseAgentOptions(
 			? [withArgumentHeal(sendToUserTool)]
 			: []),
 	];
-	const contributions = kind !== "placement" && opts.tools === undefined && opts.chatId && opts.pluginContributions
+	const contributions = kind !== "placement" && kind !== "ask" && opts.tools === undefined && opts.chatId && opts.pluginContributions
 		? opts.pluginContributions({ chatId: opts.chatId, agent: kind }, [...CONVERSATION_TOOL_NAMES, ...builtinTools.map(tool => tool.name)])
 		: undefined;
 	const questionLedger = contributions?.questionTypes?.length && opts.chatId
