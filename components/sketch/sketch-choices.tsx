@@ -2,7 +2,7 @@
 
 import { MessageResponse } from "@/components/ai-elements/message";
 import { cn } from "@/lib/utils";
-import type { DockSelection } from "@/src/core";
+import { displayedOptionLetter, type DockSelection, type OptionOrder } from "@/src/core";
 
 /**
  * A multiple-choice question's answer controls inside the sketch view's
@@ -18,6 +18,8 @@ export interface SketchChoicesProps {
 	kind: "quiz" | "ask" | "explain";
 	multi: boolean;
 	options: readonly { value: string; label: string; description?: string }[];
+	/** The dock's displayed-letter mapping: the same A, B… the dock shows and the submitted answer carries. */
+	optionOrder?: OptionOrder;
 	sel: DockSelection;
 	onToggle: (index: number) => void;
 	onDontKnow: () => void;
@@ -30,6 +32,7 @@ export function SketchChoices({
 	kind,
 	multi,
 	options,
+	optionOrder,
 	sel,
 	onToggle,
 	onDontKnow,
@@ -42,6 +45,7 @@ export function SketchChoices({
 			<div role={multi ? "group" : "radiogroup"} className="flex flex-col gap-1.5">
 				{options.map((opt, i) => {
 					const isSel = sel.selected.has(i);
+					const letter = displayedOptionLetter(optionOrder, i + 1);
 					return (
 						<button
 							key={opt.value}
@@ -62,7 +66,11 @@ export function SketchChoices({
 									isSel ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40",
 								)}
 							>
-								{isSel && (multi ? "✓" : <span className="size-1.5 rounded-full bg-current" />)}
+								{letter ? (
+									<span data-option-letter={letter} className={cn("text-[0.625rem] font-medium", !isSel && "text-muted-foreground/70")}>
+										{letter}
+									</span>
+								) : isSel && (multi ? "✓" : <span className="size-1.5 rounded-full bg-current" />)}
 							</span>
 							<span className="min-w-0">
 								<MessageResponse>{opt.label}</MessageResponse>

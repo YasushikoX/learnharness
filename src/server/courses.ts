@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type {
 	ChatCourseLink,
+	CourseDeletionImpact,
 	LessonResult,
 	RatingChange,
 	CourseDraft,
@@ -968,6 +969,32 @@ export function createCourseSession(
 	// a course's activity order follows its sessions
 	stores.courseStore.updateCourse(courseId, {});
 	return { ok: true, value: { id: chat.id, title: chat.title, prompt: courseFirstMessage(mode, course.title, skills, courseLanguage(course), retest) } };
+}
+
+/** What deleting these sessions takes from the courses (merge review finding 1): skill progress is derived from the
+ *  course sessions' transcripts through the same three channels as courseEvidence (skill events, a learn session's
+ *  lesson note, concluded practice/review/check problems), so a session that recorded any of them takes that progress
+ *  with it in either delete mode. Unknown ids and sessions without a course are ignored. */
+export function courseDeletionImpact(chatIds: readonly string[]): CourseDeletionImpact {
+	const byCourse = new Map<string, number>();
+	const skills = new Set<string>();
+	let sessions = 0;
+	for (const id of new Set(chatIds)) {
+		const chat = stores.chatStore.getChat(id);
+		const link = chat?.course;
+		if (!chat || !link) continue;
+		const events = skillEventsOf(chat.messages, link);
+		const note = link.mode === "learn" ? finishSummaryOf(chat.messages) : null;
+		const problems = link.mode === "practice" || link.mode === "review" || link.mode === "check" ? concludedProblemsOf(chat.messages, chat.id) : [];
+		if (events.length === 0 && !note && problems.length === 0) continue;
+		sessions++;
+		byCourse.set(link.courseId, (byCourse.get(link.courseId) ?? 0) + 1);
+		for (const e of events) skills.add(e.skillId);
+		if (note) for (const s of link.skillIds) skills.add(s);
+		for (const p of problems) for (const s of p.skills) skills.add(s);
+	}
+	const courses = [...byCourse].map(([courseId, count]) => ({ id: courseId, title: stores.courseStore.getCourse(courseId)?.title ?? null, sessions: count }));
+	return { sessions, courses, skills: skills.size };
 }
 
 /** A review or practice course session's course and skills (id + name), for

@@ -257,6 +257,49 @@ describe("MC answer controls in the box (Android plan M3)", () => {
 		await click("sketch-choice-dontknow");
 		assert.deepEqual(calls, ["toggle0", "idk"]);
 	});
+
+	// Review finding 6: the box drew only a selection mark, though the answer it submits names the displayed letter.
+	it("show the displayed option letters when the dock passes its option order, and none without one", async () => {
+		const { SketchChoices } = await import("../components/sketch/sketch-choices.tsx");
+		const render = (optionOrder?: Record<string, number>) => act(async () =>
+			root!.render(
+				<SketchChoices kind="quiz" multi={false} options={[{ value: "b", label: "Beta" }, { value: "a", label: "Alpha" }]} optionOrder={optionOrder}
+					sel={{ selected: new Set([0]), otherSelected: false, dontKnow: false }}
+					onToggle={() => {}} onDontKnow={() => {}} onOther={() => {}} other="" onOtherText={() => {}} />,
+			),
+		);
+		host = document.createElement("div");
+		document.body.append(host);
+		root = createRoot(host);
+		await render({ A: 2, B: 1 });
+		const letters = () => [...host!.querySelectorAll("[data-option-letter]")].map((n) => n.textContent);
+		assert.deepEqual(letters(), ["A", "B"]);
+		assert.equal(host.querySelector('[data-testid="sketch-choice-0"] [data-option-letter]')?.textContent, "A", "the selected row keeps its letter");
+		await render(undefined);
+		assert.deepEqual(letters(), [], "unlettered questions keep the plain mark");
+	});
+
+	it("the dock's sketch view shows the same letters as the dock", async () => {
+		const { QuestionDock } = await import("../components/question-dock.tsx");
+		const input = { question: "Which planet is closest to the sun?", options: [{ label: "Venus" }, { label: "Mercury" }, { label: "Mars" }], correctAnswer: "Mercury", explanation: "Mercury is innermost." };
+		host = document.createElement("div");
+		document.body.append(host);
+		root = createRoot(host);
+		await act(async () => root!.render(
+			<InteractionLayersProvider><LayersProbe />
+				<QuestionDock toolName="quiz" toolCallId="sketch-letters" input={input} expanded sketchAvailable dictationClaim={false} onExpand={() => {}} onSubmit={() => {}} />
+			</InteractionLayersProvider>,
+		));
+		const dockLetters = [...host.querySelectorAll("[data-question-options] [data-option-letter]")].map((n) => n.textContent);
+		const dockLabels = [...host.querySelectorAll("[data-question-options] [data-option-letter]")].map((n) => n.closest("button")?.textContent?.replace(n.textContent ?? "", ""));
+		assert.deepEqual(dockLetters, ["A", "B", "C"]);
+		await act(async () => (host!.querySelector('[data-testid="question-open-sketch"]') as HTMLElement).click());
+		const box = document.querySelector('[data-testid="sketch-choices"]');
+		assert.ok(box, "the sketch view shows the answer controls");
+		const boxRows = [...box.querySelectorAll("[data-option-letter]")];
+		assert.deepEqual(boxRows.map((n) => n.textContent), dockLetters);
+		assert.deepEqual(boxRows.map((n) => n.closest("button")?.textContent?.replace(n.textContent ?? "", "")), dockLabels, "same letter on the same option");
+	});
 });
 
 describe("the floating problem box", () => {

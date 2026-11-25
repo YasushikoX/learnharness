@@ -3,7 +3,8 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ExpandIcon, MaximizeIcon, MinusIcon, PlusIcon, ShrinkIcon } from "lucide-react";
 import type { PlanNodeStatus } from "@/src/core";
-import { blockLayout, GRAPH_PAD, NODE_H, NODE_W_MIN, PlanDiagram, type LayoutNode } from "@/components/plan-block";
+import { GRAPH_PAD, PlanDiagram, PlanLayoutProbe, usePlanLayout } from "@/components/plan-block";
+import { NODE_W_MIN, type LayoutNode } from "@/components/plan-layout";
 import { FIT_PAD, fitGraphView, fitZoomFor, zoomedGraphView, type Viewport } from "@/components/pan-zoom";
 import { usePanZoomGestures } from "@/components/use-pan-zoom-gestures";
 import { cn } from "@/lib/utils";
@@ -81,7 +82,9 @@ export function SkillMap({
 	fitted?: boolean;
 }) {
 	const markerId = useId().replace(/[^a-zA-Z0-9-]/g, "");
-	const layout = useMemo(() => blockLayout(nodes, edges), [nodes, edges]);
+	// Upstream v0.7.0 sizes plan boxes from labels measured in the real font (usePlanLayout + its probe).
+	const plan = usePlanLayout({ nodes, edges });
+	const { layout } = plan;
 	const box = useMemo(() => ({ w: layout.width + 2 * PAD, h: layout.height + 2 * PAD }), [layout]);
 	// The focus nodes' bounding-box center, in the padded map's coordinates.
 	const focus = useMemo(() => {
@@ -96,7 +99,7 @@ export function SkillMap({
 			x0 = Math.min(x0, x);
 			y0 = Math.min(y0, y);
 			x1 = Math.max(x1, x + (layout.nodeW.get(id) ?? NODE_W_MIN));
-			y1 = Math.max(y1, y + (layout.nodeH.get(id) ?? NODE_H));
+			y1 = Math.max(y1, y + (layout.nodeH.get(id) ?? 0));
 		}
 		return { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
 	}, [focusIds, layout]);
@@ -205,7 +208,8 @@ export function SkillMap({
 						transition: panning || !settled ? "none" : "transform 180ms ease-out, opacity 160ms ease-out",
 					}}
 				>
-					<PlanDiagram nodes={nodes} edges={edges} statusOf={statusOf} markerId={markerId} pad={PAD} naturalSize />
+					<PlanLayoutProbe probe={plan.probe} />
+					<PlanDiagram layout={layout} nodes={nodes} edges={edges} statusOf={statusOf} markerId={markerId} pad={PAD} naturalSize />
 				</div>
 				<div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 p-2">
 					<span className="truncate text-[11px] text-muted-foreground/60">

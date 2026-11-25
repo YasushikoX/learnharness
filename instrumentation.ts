@@ -8,6 +8,7 @@
  *   until a repo and a token are set in Settings. It starts FIRST: plugin
  *   initialization may take a while, and sync must not wait for it.
  * - Lecture notes written on this device and not read to text yet are read in the background (src/server/lecture-note-reading.ts).
+ * - The remote model catalog (upstream 0.7) refreshes in the background.
  * - Plugins use the documented per-server initialization hook. A plugin failure
  *   must not prevent access to existing learning data or teaching/practice.
  */
@@ -22,6 +23,8 @@ export async function register(): Promise<void> {
 	} catch (error) {
 		console.error("[lecture-notes] Catch-up failed:", error);
 	}
+	const { initializeModelCatalog } = await import("./src/server/remote-model-catalog.ts");
+	initializeModelCatalog();
 	const { initializePlugins } = await import("./src/server/plugins.ts");
 	try { await initializePlugins(); }
 	catch (error) { console.error("[plugins] Initialization failed; plugin management will report the error:", error); }

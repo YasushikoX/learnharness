@@ -429,6 +429,17 @@ describe("Practice settings API and effective prompt loading", () => {
 		assert.ok(!view.practice.some((s: { path: string }) => s.path === "system-prompt.md"));
 	});
 
+	// Review finding 5: the route listed only prober, teacher and practice although the runtime composes Placement.
+	it("GET also exposes Placement's own base and its shared subset, as composed at runtime", async () => {
+		const view = await (await getPromptSegments()).json();
+		assert.deepEqual(Object.keys(view).sort(), ["placement", "practice", "prober", "teacher"]);
+		assert.deepEqual(view.placement, effectivePromptSegments("placement", readSettingsRecord()?.agent?.prompts ?? {}));
+		const paths = view.placement.map((s: { path: string }) => s.path);
+		assert.equal(paths[0], "placement/00-base.md");
+		assert.ok(paths.includes("shared/20-question-tools.md"));
+		assert.ok(!paths.includes("system-prompt.md"));
+	});
+
 	for (const segment of ["practice/00-base.md", "practice/10-doctrine.md"]) {
 		it(`${segment}: save, enable, disable, re-enable and delete recover defaults without changing other agents`, async () => {
 			const defaults = Object.fromEntries((["teacher", "prober", "practice"] as const).map((kind) => [kind, teacherAgent.composeInstructions(kind)]));
