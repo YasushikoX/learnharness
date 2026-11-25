@@ -25,8 +25,8 @@ const { piModels, piEngineForSpec } = await import("../src/agent/models.ts");
 const service = await import("../src/server/materials.ts");
 const indexing = await import("../src/server/material-indexing.ts");
 const { PDF_CONTENT_FILE, PDF_CONVERSION_SIDECAR } = await import("../src/server/material-conversion.ts");
-const { MATERIAL_INDEXER_VERSION } = await import("../src/agent/subagents/material-digest.ts");
-const { findTerm } = await import("../src/core/glossary.ts");
+const { MATERIAL_INDEXER_VERSION, failedBatchesOf } = await import("../src/agent/subagents/material-digest.ts");
+const { findTerm, findTermCandidates } = await import("../src/core/glossary.ts");
 const { PROFILE_HEADINGS } = await import("../src/agent/subagents/material-digest.ts");
 const { PROFILE_FORMAT_SECTIONS } = await import("../src/agent/subagents/material-profiler.ts");
 const { materialStatusLine } = await import("../components/materials-control.tsx");
@@ -63,6 +63,10 @@ interface Script {
 	gate?: Promise<void>;
 	/** Called as each indexing call starts. */
 	onIndexCall?: () => void;
+	/** The reduce call's reply (default DIGEST_PROFILE). */
+	reduceReply?: string;
+	/** Extraction calls get an empty reply. */
+	emptyExtraction?: boolean;
 }
 const DEFAULT_SCRIPT: Script = { terms: () => ["Eigenvalue"], singleProfile: true, failBatch: () => false };
 let script: Script = DEFAULT_SCRIPT;
@@ -90,7 +94,7 @@ function extractionReply(user: string): string {
 	if (script.failBatch(index ? Number(index[1]) - 1 : 0)) return "not json at all";
 	const page = requestPages(user)[0]!;
 	const name = /The material: "([^"]+)"/.exec(user)?.[1] ?? "";
-	const terms = script.terms(name).map((term) => ({ term, aliases: [], page, tier: "core", definition: `${term} as ${name} defines it.`, definitionPage: page }));
+	const terms = script.terms(name).map((term) => ({ term, aliases: [], symbols: [], page, tier: "core", definition: `${term} as ${name} defines it.`, definitionPage: page }));
 	const single = user.includes('also add a "profile" field');
 	return JSON.stringify({ summaryBullets: [`page ${page} of ${name}`], terms, concepts: [], figures: [], ...(single && script.singleProfile ? { profile: DIGEST_PROFILE } : {}) });
 }
@@ -103,7 +107,8 @@ const stream: StreamFunction = (model, context, options) => {
 			if (isExtraction(call) || isReduce(call)) {
 				script.onIndexCall?.();
 				await script.gate;
-				return fauxAssistantMessage(isReduce(call) ? DIGEST_PROFILE : extractionReply(call.user));
+				if (isReduce(call)) return fauxAssistantMessage(script.reduceReply ?? DIGEST_PROFILE);
+				return fauxAssistantMessage(script.emptyExtraction ? "" : extractionReply(call.user));
 			}
 			return fauxAssistantMessage(OLD_PROFILE);
 		},
@@ -220,6 +225,33 @@ describe("indexing at upload", () => {
 		assert.equal(find(owner, m.id).indexingProgress, undefined, "no progress once the run ended");
 	});
 
+	// The reviewer of the wiring package: progress was parsed out of the indexer's activity text.
+	it("progress reaches the upload hook as structured values, not parsed text", async () => {
+		const owner = lesson("Progress");
+		const m = await upload(owner, "progress.pdf", longPdf(18));
+		const seen: unknown[] = [];
+		const outcome = await indexing.indexMaterialContent(owner, m, {
+			signal: new AbortController().signal,
+			store: materialStore,
+			model: { engine: engine(), chatId: owner },
+			force: true,
+			onProgress: (p) => seen.push(p),
+		});
+		const n = outcome.digest!.batches.length;
+		assert.ok(n >= 2);
+		assert.deepEqual(seen, [...Array.from({ length: n }, (_, i) => ({ stage: "part", part: i + 1, parts: n })), { stage: "profile" }, undefined]);
+	});
+
+	it("an empty extraction reply is recorded in the indexer's own words", async () => {
+		const owner = lesson("Empty reply");
+		script = { ...DEFAULT_SCRIPT, emptyExtraction: true };
+		const m = await upload(owner, "empty.pdf", SINGLE);
+		const failed = failedBatchesOf(storedDigest(owner, m));
+		assert.equal(failed.length, 1);
+		assert.match(failed[0]!.error, /the model returned an empty reply instead of the part's notes/);
+		assert.doesNotMatch(failed[0]!.error, /no profile/);
+	});
+
 	it("digest.json is written atomically and is exactly the returned digest", async () => {
 		const owner = lesson("Atomic");
 		const m = await upload(owner, "atomic.pdf", SINGLE);
@@ -279,6 +311,21 @@ describe("indexing at upload", () => {
 		assert.equal(indexer.index, 1);
 		assert.equal(storedDigest(owner, m).indexerVersion, MATERIAL_INDEXER_VERSION);
 
+		// the stored-digest skip rule goes through the validated loader: an older digest version, a truncated file and a
+		// hand-edited one are indexed again
+		const current = fs.readFileSync(digestPath, "utf8");
+		for (const [what, text] of [
+			["version 3", JSON.stringify({ ...storedDigest(owner, m), version: 3 })],
+			["truncated", current.slice(0, current.length - 30)],
+			["hand-edited", JSON.stringify({ ...storedDigest(owner, m), batches: storedDigest(owner, m).batches.map((b) => ({ ...b, charStart: b.charStart + 0.5 })) })],
+		] as const) {
+			fs.writeFileSync(digestPath, text);
+			assert.equal(indexing.readDigest(digestPath), undefined, what);
+			const again = await counted(() => direct(owner, m));
+			assert.equal(again.value.status, "indexed", what);
+			assert.equal(again.index, 1, what);
+		}
+
 		fs.writeFileSync(aux(owner, m, PDF_CONTENT_FILE), `${fs.readFileSync(aux(owner, m, PDF_CONTENT_FILE), "utf8")}\nchanged text\n`);
 		const content = await counted(() => direct(owner, m));
 		assert.equal(content.value.status, "indexed", "a changed content.md (new source hash) re-indexes too");
@@ -330,7 +377,8 @@ describe("fallbacks", () => {
 		const digest = storedDigest(owner, m);
 		const n = digest.batches.length;
 		assert.equal(index, n + 2, "every batch, the failing one's retry, and the profile");
-		assert.deepEqual(digest.failedBatches.map((b) => b.index), [1]);
+		assert.deepEqual(failedBatchesOf(digest).map((b) => b.index), [1]);
+		assert.ok(!("failedBatches" in digest), "derived on read, never stored");
 		assert.equal(m.profile, DIGEST_PROFILE, "the profile is written from the parts that were indexed");
 		assert.equal(m.indexingWarnings?.length, 1);
 		assert.match(m.indexingWarnings![0]!, new RegExp(`^1 of ${n} parts of this PDF could not be indexed \\(pages \\d+-\\d+\\)`));
@@ -379,7 +427,7 @@ describe("retry and rewrite", () => {
 			return find(owner, m.id);
 		});
 		assert.equal(index, n + 1);
-		assert.equal(storedDigest(owner, m).failedBatches.length, 0);
+		assert.equal(failedBatchesOf(storedDigest(owner, m)).length, 0);
 		assert.equal(after.indexingWarnings, undefined);
 		assert.equal(after.indexingCalls, n + 1);
 		assert.equal(after.profile, DIGEST_PROFILE);
@@ -404,6 +452,26 @@ describe("retry and rewrite", () => {
 		assert.equal(after.indexingCalls, 3);
 		assert.equal(storedDigest(owner, m).profile, DIGEST_PROFILE);
 		assert.deepEqual(storedDigest(owner, m).terms, termsBefore);
+	});
+
+	// Review 3, concern: a failed rewrite of a valid profile returned profile: null, so a caller persisting it lost the profile.
+	it("a failed rewrite keeps the previous profile, in digest.json and on the material, and says so", async () => {
+		const owner = lesson("Rewrite fails");
+		const m = await upload(owner, "keep.pdf", longPdf(18));
+		assert.equal(m.profile, DIGEST_PROFILE);
+		const before = fs.readFileSync(aux(owner, m, indexing.MATERIAL_DIGEST_FILE), "utf8");
+		script = { ...DEFAULT_SCRIPT, reduceReply: "no headings at all" };
+		const { value: after, index } = await counted(async () => {
+			assert.ok(service.rewriteMaterialProfile(owner, m.id).ok);
+			await idle();
+			return find(owner, m.id);
+		});
+		assert.equal(index, 2, "the reduce call and its one retry");
+		assert.equal(after.profile, DIGEST_PROFILE);
+		assert.equal(after.indexingError, undefined);
+		assert.match(after.indexingWarnings?.join(" ") ?? "", /Writing the profile again failed .*the previous profile is kept/);
+		assert.equal(storedDigest(owner, m).profile, DIGEST_PROFILE);
+		assert.deepEqual(JSON.parse(fs.readFileSync(aux(owner, m, indexing.MATERIAL_DIGEST_FILE), "utf8")), JSON.parse(before));
 	});
 
 	it("the retry and rewrite functions refuse what they cannot do", async () => {
@@ -507,41 +575,49 @@ describe("abort, deletion and restart", () => {
 });
 
 describe("the class glossary", () => {
-	it("merges a course's digests, resolves citations to materials and lists what is missing", async () => {
+	it("merges a course's digests by exact id, suggests duplicates, resolves citations to materials and lists what is missing", async () => {
 		const course = courseStore.createCourse("Linear algebra");
-		script = { ...DEFAULT_SCRIPT, terms: (name) => (name === "a.pdf" ? ["Eigenvalue", "Matrix"] : ["Eigenvalue", "Vector"]) };
+		script = { ...DEFAULT_SCRIPT, terms: (name) => (name === "a.pdf" ? ["Eigenvalue", "Matrix"] : name === "b.pdf" ? ["Eigenvalue", "matrix", "Vector"] : ["Eigenvalue"]) };
 		const a = await upload(course.id, "a.pdf", pdfOf(["Eigenvalues of a matrix"], ["Diagonal matrices"]));
 		const b = await upload(course.id, "b.pdf", pdfOf(["Eigenvalues and vectors"], ["Vector spaces"]));
 		const notes = await upload(course.id, "notes.md", new TextEncoder().encode("# Notes"));
 
 		const glossary = indexing.courseGlossary(course.id)!;
+		assert.deepEqual(Object.keys(glossary.terms), ["t_Eigenvalue", "t_Matrix", "t_Vector", "t_matrix"]);
 		const eigen = findTerm(glossary, "eigenvalue")!;
-		assert.ok(eigen);
+		assert.equal(eigen.id, "t_Eigenvalue");
 		assert.equal(eigen.citations.length, 2);
-		const cited = glossary.terms[eigen.id]!.citations.flatMap((c) => c.materials.map((x) => x.id)).sort();
-		assert.deepEqual(cited, [a.id, b.id].sort());
-		assert.deepEqual(glossary.terms[findTerm(glossary, "matrix")!.id]!.citations.map((c) => c.materials), [[{ id: a.id, name: "a.pdf" }]]);
-		assert.deepEqual(glossary.terms[findTerm(glossary, "vector")!.id]!.citations.map((c) => c.materials), [[{ id: b.id, name: "b.pdf" }]]);
+		assert.equal(eigen.occurrenceCount, 2);
+		assert.deepEqual(eigen.citations.flatMap((c) => c.materials.map((x) => x.id)).sort(), [a.id, b.id].sort());
+		// Matrix (a.pdf) and matrix (b.pdf) stay two entries, side by side for the planner; lookup does not pick one
+		assert.equal(findTerm(glossary, "matrix"), undefined);
+		assert.deepEqual(findTermCandidates(glossary, "matrix").map((c) => c.entry.citations.map((x) => x.materials)), [[[{ id: a.id, name: "a.pdf" }]], [[{ id: b.id, name: "b.pdf" }]]]);
+		assert.deepEqual(glossary.suggestedDuplicates, [{ ids: ["t_Matrix", "t_matrix"], reasons: ["similar_name"] }]);
+		assert.deepEqual(glossary.conflicts, []);
 		assert.deepEqual(glossary.indexed.map((x) => x.id).sort(), [a.id, b.id].sort());
 		assert.deepEqual(glossary.incomplete, [{ id: notes.id, name: "notes.md", kind: "text", reason: "no_digest" }]);
 
-		// an outdated digest is left out and listed; failed parts are merged and listed
+		// a part that failed is merged and listed with its pages; an outdated digest and an invalid file are left out
+		script = { ...DEFAULT_SCRIPT, terms: () => ["Eigenvalue"], failBatch: (i) => i === 1 };
+		const c = await upload(course.id, "c.pdf", longPdf(18));
+		const failed = failedBatchesOf(storedDigest(course.id, c));
+		assert.equal(failed.length, 1);
 		fs.writeFileSync(aux(course.id, b, indexing.MATERIAL_DIGEST_FILE), JSON.stringify({ ...storedDigest(course.id, b), indexerVersion: 0 }));
-		const digestA = storedDigest(course.id, a);
-		const failed = { ...digestA.batches[0]!, status: "failed" as const, error: "test" };
-		fs.writeFileSync(aux(course.id, a, indexing.MATERIAL_DIGEST_FILE), JSON.stringify({ ...digestA, failedBatches: [failed] }));
+		fs.writeFileSync(aux(course.id, a, indexing.MATERIAL_DIGEST_FILE), fs.readFileSync(aux(course.id, a, indexing.MATERIAL_DIGEST_FILE), "utf8").slice(0, 200));
 		const partial = indexing.courseGlossary(course.id)!;
 		assert.equal(findTerm(partial, "vector"), undefined);
-		assert.equal(findTerm(partial, "eigenvalue")!.citations.length, 1);
+		assert.deepEqual(findTerm(partial, "eigenvalue")!.citations.map((x) => x.materials), [[{ id: c.id, name: "c.pdf" }]]);
 		assert.deepEqual(
-			partial.incomplete.map((g) => [g.id, g.reason]),
+			partial.incomplete.map((g) => [g.id, g.reason]).sort(),
 			[
-				[a.id, "failed_batches"],
+				[a.id, "invalid"],
 				[b.id, "outdated"],
+				[c.id, "failed_batches"],
 				[notes.id, "no_digest"],
-			],
+			].sort(),
 		);
-		assert.deepEqual(partial.incomplete[0]!.failedPages, [{ pageStart: failed.pageStart, pageEnd: failed.pageEnd }]);
+		assert.match(partial.incomplete.find((g) => g.id === a.id)!.detail!, /not JSON/);
+		assert.deepEqual(partial.incomplete.find((g) => g.id === c.id)!.failedPages, [{ pageStart: failed[0]!.pageStart, pageEnd: failed[0]!.pageEnd, pages: failed[0]!.pages }]);
 		assert.equal(indexing.courseGlossary("course_unknown"), null);
 	});
 });

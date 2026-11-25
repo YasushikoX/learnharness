@@ -1,10 +1,19 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import { MATERIAL_DIGEST_VERSION, type MaterialDigest } from "../core/contracts/material-digest.ts";
+import type { MaterialDigest } from "../core/contracts/material-digest.ts";
 import { mergeGlossary, type Glossary, type GlossaryCitation, type GlossaryEntry } from "../core/glossary.ts";
 import type { LessonMaterial, MaterialIndexingError, MaterialIndexingProgress } from "../core/materials.ts";
 import type { MaterialStore } from "../core/ports.ts";
-import { digestMaterial, MATERIAL_INDEXER_VERSION, rewriteProfile, type DigestModelCall } from "../agent/subagents/material-digest.ts";
+import {
+	digestMaterial,
+	failedBatchesOf,
+	MATERIAL_INDEXER_VERSION,
+	parseStoredDigest,
+	rewriteProfile,
+	type DigestModelCall,
+	type DigestProgress,
+	type StoredDigestProblem,
+} from "../agent/subagents/material-digest.ts";
 import { completeOnce, type MaterialProfilerOptions } from "../agent/subagents/material-profiler.ts";
 import { openPdfBytes } from "../agent/subagents/pdf-ops.ts";
 import { writeFileAtomicSync } from "../store/atomic-write.ts";
@@ -25,9 +34,13 @@ import { stores } from "./stores.ts";
  *   digest.json             the MaterialDigest (contracts/material-digest.ts), written atomically
  *   indexing-started.json   exists while an indexing run is in flight: the attempt number and the content hash
  *
- * SKIP-IF-UNCHANGED. A run is skipped (no model call) when digest.json has the current digest version, the content
- * hash of content.md, the converter and converter version of conversion.json and the current indexer version. A
- * stored digest with failed batches or a null profile counts as unchanged: it is re-run only on purpose
+ * READING digest.json goes only through the indexer's validated loader (`parseStoredDigest`, via `readDigest` here):
+ * a file of another version, or one that is truncated or hand-edited into an invalid digest, is not used (and is
+ * indexed again); the failed parts are derived from the parts on read.
+ *
+ * SKIP-IF-UNCHANGED. A run is skipped (no model call) when digest.json is a valid digest of the current version, with
+ * the content hash of content.md, the converter and converter version of conversion.json and the current indexer
+ * version. A stored digest with failed parts or a null profile counts as unchanged: it is re-run only on purpose
  * (`retryPdfIndexing`, or `rewritePdfProfile` for the profile step alone).
  *
  * RESTART. A run that finds indexing-started.json (the app stopped mid-indexing) RESUMES by indexing again from the
@@ -64,11 +77,17 @@ export interface IndexMaterialOptions {
 	onProgress?: (progress: MaterialIndexingProgress | undefined) => void;
 }
 
+/** What an empty reply means, per indexing step. */
+const EMPTY_REPLY = {
+	extraction: "the model returned an empty reply instead of the part's notes",
+	profile: "the model returned no profile",
+} as const;
+
 /** The indexer's injected model call: completeOnce with the system prompt and one user text, counted. */
 export function digestModelCall(model: MaterialProfilerOptions, onCall: () => void): DigestModelCall {
 	return async (request, signal) => {
 		onCall();
-		return completeOnce({ ...model, abortSignal: signal ?? model.abortSignal }, request.system, [{ type: "text", text: request.user }]);
+		return completeOnce({ ...model, abortSignal: signal ?? model.abortSignal }, request.system, [{ type: "text", text: request.user }], EMPTY_REPLY[request.kind]);
 	};
 }
 
@@ -93,21 +112,30 @@ export function readConvertedContent(ownerId: string, materialId: string, store:
 	return { contentMd, key: { sourceHash, converter: sidecar.converterId, converterVersion: sidecar.converterVersion ?? "unknown" } };
 }
 
-/** A stored digest.json, of any version; undefined when missing or not a digest. */
-export function readDigest(file: string): MaterialDigest | undefined {
+/** A stored digest.json read through the validated loader: the digest, or why there is none usable. */
+export type StoredDigest = { digest: MaterialDigest } | { problem: StoredDigestProblem | { kind: "missing"; reason: string } };
+
+/** Read digest.json through the indexer's validated loader (parseStoredDigest). Never throws. */
+export function readStoredDigest(file: string): StoredDigest {
+	let text: string;
 	try {
-		const value = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<MaterialDigest> | null;
-		if (!value || typeof value.version !== "number" || typeof value.sourceHash !== "string" || !Array.isArray(value.terms) || !Array.isArray(value.batches)) return undefined;
-		return value as MaterialDigest;
+		text = fs.readFileSync(file, "utf8");
 	} catch {
-		return undefined;
+		return { problem: { kind: "missing", reason: "no digest.json" } };
 	}
+	const parsed = parseStoredDigest(text);
+	return parsed.ok ? { digest: parsed.digest } : { problem: parsed.problem };
 }
 
-/** The digest was built from exactly this content, converter and indexer. Pure. */
+/** A valid stored digest of the current version; undefined when missing, of another version or invalid. */
+export function readDigest(file: string): MaterialDigest | undefined {
+	const stored = readStoredDigest(file);
+	return "digest" in stored ? stored.digest : undefined;
+}
+
+/** The digest was built from exactly this content, converter and indexer (its version is checked on read). Pure. */
 export function digestIsCurrent(digest: MaterialDigest, key: DigestKey): boolean {
 	return (
-		digest.version === MATERIAL_DIGEST_VERSION &&
 		digest.indexerVersion === MATERIAL_INDEXER_VERSION &&
 		digest.sourceHash === key.sourceHash &&
 		digest.converter === key.converter &&
@@ -130,10 +158,9 @@ function readStarted(file: string): StartedMarker | undefined {
 	}
 }
 
-/** The indexer's progress line as the material shows it. Pure. */
-export function indexingProgressOf(line: string): MaterialIndexingProgress {
-	const part = /: part (\d+) of (\d+) \(p\. \d+-\d+\)$/.exec(line);
-	return part ? { stage: "part", part: Number(part[1]), parts: Number(part[2]) } : { stage: "profile" };
+/** The indexer's structured progress as the material shows it. Pure. */
+export function indexingProgressOf(progress: DigestProgress): MaterialIndexingProgress {
+	return progress.stage === "part" ? { stage: "part", part: progress.part, parts: progress.parts } : { stage: "profile" };
 }
 
 function pageRanges(batches: readonly { pageStart: number; pageEnd: number }[]): string {
@@ -144,7 +171,7 @@ function pageRanges(batches: readonly { pageStart: number; pageEnd: number }[]):
 /** What the material shows about a digest: a missing profile (error) and parts that could not be indexed (warning). Pure. */
 export function digestNotes(digest: MaterialDigest): { error?: MaterialIndexingError; warnings: string[] } {
 	const warnings: string[] = [];
-	const failed = digest.failedBatches;
+	const failed = failedBatchesOf(digest);
 	if (failed.length > 0) {
 		const n = digest.batches.length;
 		warnings.push(
@@ -211,7 +238,7 @@ export async function indexMaterialContent(ownerId: string, material: LessonMate
 			...(sourcePageCount !== undefined ? { sourcePageCount } : {}),
 			name: material.name,
 			signal,
-			onActivity: (line) => opts.onProgress?.(indexingProgressOf(line)),
+			onProgress: (progress) => opts.onProgress?.(indexingProgressOf(progress)),
 		});
 		signal.throwIfAborted();
 		writeFileAtomicSync(digestPath, `${JSON.stringify(digest, null, "\t")}\n`);
@@ -277,9 +304,10 @@ export async function retryPdfIndexing(ownerId: string, material: LessonMaterial
 }
 
 /**
- * Run only the profile step again from the stored digest (one call and its one retry; no batch is re-read), then
- * store the digest and, with a profile, the material's profile. A digest that is missing or out of date is left alone
- * (canRewriteProfile). Never rejects.
+ * Run only the profile step again from the stored digest (one call and its one retry; no part is re-read), then
+ * store the digest and, with a profile, the material's profile. A rewrite that fails on a digest that already had a
+ * profile keeps that profile (in digest.json and on the material) and says so in a warning. A digest that is missing,
+ * invalid or out of date is left alone (canRewriteProfile). Never rejects.
  */
 export async function rewritePdfProfile(ownerId: string, material: LessonMaterial, opts: Omit<IndexMaterialOptions, "force">): Promise<void> {
 	const { signal, store } = opts;
@@ -287,14 +315,16 @@ export async function rewritePdfProfile(ownerId: string, material: LessonMateria
 	const digestPath = store.auxPath(ownerId, material.id, MATERIAL_DIGEST_FILE);
 	let calls = 0;
 	let digest: MaterialDigest;
+	let rewriteError: string | null;
 	try {
-		digest = await rewriteProfile(readDigest(digestPath)!, {
+		const result = await rewriteProfile(readDigest(digestPath)!, {
 			complete: digestModelCall(opts.model, () => calls++),
-			name: material.name,
 			signal,
-			onActivity: (line) => opts.onProgress?.(indexingProgressOf(line)),
+			onProgress: (progress) => opts.onProgress?.(indexingProgressOf(progress)),
 		});
 		signal.throwIfAborted();
+		digest = result.digest;
+		rewriteError = result.error;
 		writeFileAtomicSync(digestPath, `${JSON.stringify(digest, null, "\t")}\n`);
 	} catch (error) {
 		if (!signal.aborted) store.update(ownerId, material.id, { indexingError: failedError(error) });
@@ -304,9 +334,11 @@ export async function rewritePdfProfile(ownerId: string, material: LessonMateria
 	}
 	const before = store.list(ownerId).find((m) => m.id === material.id)?.indexingCalls ?? 0;
 	const notes = digestNotes(digest);
+	const warnings = [...notes.warnings];
+	if (rewriteError !== null && digest.profile !== null) warnings.push(`Writing the profile again failed (${rewriteError}); the previous profile is kept.`);
 	store.update(ownerId, material.id, {
 		indexingError: notes.error,
-		indexingWarnings: notes.warnings.length > 0 ? notes.warnings : undefined,
+		indexingWarnings: warnings.length > 0 ? warnings : undefined,
 		indexingCalls: before + calls,
 		...(digest.profile !== null ? profileFromDigest({ ...digest, profile: digest.profile }) : {}),
 	});
@@ -334,15 +366,21 @@ export interface CourseGlossaryGap extends GlossaryMaterialRef {
 	kind: LessonMaterial["kind"];
 	/**
 	 * no_digest: never indexed (not a PDF, its conversion failed, still being read, or indexing failed); outdated: its
-	 * digest no longer matches content.md, the converter or the indexer (left out until it is indexed again);
-	 * failed_batches: merged, but parts of it could not be indexed.
+	 * digest is of another version or no longer matches content.md, the converter or the indexer (left out until it is
+	 * indexed again); invalid: its digest.json is not a valid digest (truncated or edited; left out, indexed again on the
+	 * next read); failed_batches: merged, but parts of it could not be indexed.
 	 */
-	reason: "no_digest" | "outdated" | "failed_batches";
-	/** failed_batches: the page ranges that are missing. */
-	failedPages?: { pageStart: number; pageEnd: number }[];
+	reason: "no_digest" | "outdated" | "invalid" | "failed_batches";
+	/** invalid: what the loader found. */
+	detail?: string;
+	/** failed_batches: the pages that are missing, per failed part. */
+	failedPages?: { pageStart: number; pageEnd: number; pages: number[] }[];
 }
 
-/** A course's glossary: mergeGlossary of its materials' current digests, with citations resolved to materials. */
+/**
+ * A course's glossary: mergeGlossary of its materials' current digests (entries by exact id, every occurrence kept,
+ * likely duplicates only suggested, same-source conflicts reported), with citations resolved to materials.
+ */
 export interface CourseGlossary extends Glossary {
 	terms: Record<string, CourseGlossaryEntry>;
 	/** The materials whose digests were merged. */
@@ -363,19 +401,26 @@ export function courseGlossary(courseId: string, store: MaterialStore = stores.m
 	for (const m of store.list(courseId)) {
 		const ref = { id: m.id, name: m.name };
 		const content = m.kind === "pdf" ? readConvertedContent(courseId, m.id, store) : undefined;
-		const digest = content && readDigest(store.auxPath(courseId, m.id, MATERIAL_DIGEST_FILE));
-		if (!content || !digest) {
+		const stored = content ? readStoredDigest(store.auxPath(courseId, m.id, MATERIAL_DIGEST_FILE)) : undefined;
+		if (!content || !stored || ("problem" in stored && stored.problem.kind === "missing")) {
 			incomplete.push({ ...ref, kind: m.kind, reason: "no_digest" });
 			continue;
 		}
+		if ("problem" in stored) {
+			const invalid = stored.problem.kind === "invalid";
+			incomplete.push({ ...ref, kind: m.kind, reason: invalid ? "invalid" : "outdated", ...(invalid ? { detail: stored.problem.reason } : {}) });
+			continue;
+		}
+		const digest = stored.digest;
 		if (!digestIsCurrent(digest, content.key)) {
 			incomplete.push({ ...ref, kind: m.kind, reason: "outdated" });
 			continue;
 		}
 		digests.push(digest);
 		indexed.push({ ...ref, sourceHash: digest.sourceHash });
-		if (digest.failedBatches.length > 0) {
-			incomplete.push({ ...ref, kind: m.kind, reason: "failed_batches", failedPages: digest.failedBatches.map((b) => ({ pageStart: b.pageStart, pageEnd: b.pageEnd })) });
+		const failed = failedBatchesOf(digest);
+		if (failed.length > 0) {
+			incomplete.push({ ...ref, kind: m.kind, reason: "failed_batches", failedPages: failed.map((b) => ({ pageStart: b.pageStart, pageEnd: b.pageEnd, pages: [...b.pages] })) });
 		}
 	}
 	const glossary = mergeGlossary(digests);

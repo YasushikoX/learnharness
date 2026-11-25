@@ -13,6 +13,7 @@ import {
 	formatPageMarker,
 	PAGE_MARKER_PATTERN,
 	pageCountOf,
+	rangePages,
 	splitMaterial,
 	unescapePageMarkerLines,
 	type MaterialBatch,
@@ -120,10 +121,13 @@ describe("splitMaterial", () => {
 		for (const b of batches) assert.doesNotMatch(b.text, /--- Page \d+ ---[ \t]*\n?\s*$/);
 		// the line-split page 6 starts inside a batch with its marker and first line together
 		assert.ok(batches.some((b) => /--- Page 6 ---\nLinje en/.test(b.text)));
-		// the hard-cut line (9,000 chars on one line, page 7): full-budget pieces, its rest packed with what follows
+		// the cut line (9,000 chars on one line, page 7): nearly full-budget pieces cut after a space (review 3, finding 5:
+		// a word boundary, no longer exactly 4,000 characters), each later one saying it continues the line
 		const page7 = batches.filter((b) => b.pageStart === 7);
 		assert.ok(page7.length >= 3);
-		assert.ok(page7.slice(0, -1).every((b) => b.pageEnd === 7 && b.text.length === 4_000));
+		assert.ok(page7.slice(0, -1).every((b) => b.pageEnd === 7 && b.text.length > 3_900 && b.text.length <= 4_000 && b.text.endsWith(" ")));
+		assert.ok(page7.slice(1).every((b) => b.continuesLine));
+		assert.ok(batches.filter((b) => !page7.slice(1).includes(b)).every((b) => !b.continuesLine));
 
 		// the small sections after it (2.2, chapter 3) are whole and packed into the last batch
 		const last = batches.at(-1)!;
@@ -343,6 +347,75 @@ describe("splitMaterial", () => {
 		assert.ok(ms < 3_000, `took ${Math.round(ms)} ms`);
 	});
 
+	// Review 3, finding 5, case 1: "z ".repeat(15998) + "electroencephalography is defined here." gave one request ending
+	// "elec" and the next beginning "troencephalography".
+	it("review 3, finding 5: a long prose line is cut at a word boundary, and the next part says it continues the line", () => {
+		const doc = `${"z ".repeat(15_998)}electroencephalography is defined here.`;
+		const batches = splitMaterial(doc);
+		assertTiles(doc, batches);
+		assert.ok(batches.length >= 2);
+		assert.ok(batches.some((b) => b.text.includes("electroencephalography")), "the word is whole in one part");
+		for (const b of batches.slice(0, -1)) assert.ok(b.text.endsWith(" "), `part ${b.index} ends at a space`);
+		assert.deepEqual(batches.map((b) => b.continuesLine), batches.map((_, i) => i > 0));
+		// one word longer than the budget is still cut, at the character offset
+		const word = "w".repeat(40_000);
+		const cut = splitMaterial(word);
+		assertTiles(word, cut);
+		assert.equal(cut[0]!.text.length, 32_000);
+	});
+
+	// Review 3, finding 5, case 2: 32,000 "a" followed on the same line by "--- Page 99 ---\nExample." made the second
+	// request start with an apparent page-99 marker while only page 1 was allowed.
+	it("review 3, finding 5: a cut inside a line never makes the next part begin with something that looks like a page marker", () => {
+		for (const tail of ["--- Page 99 ---\nExample.", "\\--- Page 99 ---\nExample.", "--- Page 99 --- \r\nExample."]) {
+			const doc = `${"a".repeat(32_000)}${tail}`;
+			const batches = splitMaterial(doc);
+			assertTiles(doc, batches);
+			assert.ok(batches.length >= 2);
+			for (const b of batches) {
+				assert.doesNotMatch(b.text, /^\\*--- Page \d+ ---/, `part ${b.index} begins with a false marker`);
+				assert.deepEqual(b.pages, [1], "the text is all page 1");
+			}
+			assert.equal(pageCountOf(doc), 1);
+		}
+		// with spaces before it, the cut moves back a word instead
+		const spaced = `${"ab ".repeat(10_666)}--- Page 99 ---\nExample.`;
+		const parts = splitMaterial(spaced);
+		assertTiles(spaced, parts);
+		for (const b of parts) assert.doesNotMatch(b.text, /^\\*--- Page \d+ ---/);
+	});
+
+	// Review 3, finding 8, case 3 (the splitter half): the validator needs the order the pages come in.
+	it("review 3, finding 8: each part keeps its pages in source order beside the ascending set", () => {
+		const doc = "--- Page 2 ---\nTo\n--- Page 59 ---\nFemtini\n--- Page 2 ---\nTo igjen\n";
+		const [one] = splitMaterial(doc);
+		assert.deepEqual([one!.pages, one!.pageOrder], [[2, 59], [2, 59]]);
+		const [back] = splitMaterial("--- Page 5 ---\nFem\n--- Page 2 ---\nTo\n");
+		assert.deepEqual([back!.pages, back!.pageOrder], [[2, 5], [5, 2]]);
+	});
+
+	// Review 3, finding 10 and concerns: "# C#" gave the heading path ["C"]; 20,000 newlines at a one-token budget took
+	// 307 ms (each part starting on a blank line scanned ahead); a 350-digit marker was read as page Infinity.
+	it("review 3, finding 10: ATX closing hashes need whitespace, the blank-line scan is linear, unsafe page numbers are not markers", () => {
+		const doc = "# C#\n\nText.\n\n## Title ##\n\nMore.\n\n### F# #\n\nEnd.\n";
+		const paths = splitMaterial(doc, { budgetTokens: 3 }).map((b) => b.headingPath.join(" > "));
+		assert.ok(paths.includes("C#"), paths.join(" | "));
+		assert.ok(paths.includes("C# > Title"));
+		assert.ok(paths.includes("C# > Title > F#"));
+
+		const blanks = "\n".repeat(20_000);
+		const started = performance.now();
+		const batches = splitMaterial(`${blanks}x`, { budgetTokens: 1 });
+		const ms = performance.now() - started;
+		assertTiles(`${blanks}x`, batches);
+		assert.ok(ms < 150, `took ${Math.round(ms)} ms`);
+
+		const huge = `--- Page ${"9".repeat(350)} ---\nText.\n--- Page ${2 ** 53} ---\nMore.\n`;
+		assert.equal(pageCountOf(huge), 1);
+		for (const b of splitMaterial(huge, { budgetTokens: 3 })) assert.deepEqual(b.pages, [1]);
+		assert.throws(() => formatPageMarker(2 ** 53), RangeError, "the host never writes one");
+	});
+
 	// Extended after review 2 (it generated only closed fences, which is why finding 4 was missed): unclosed fences,
 	// fences left open across a page marker, escaped marker-like lines (page 0 only in this escaped form) and doubly
 	// escaped ones.
@@ -402,6 +475,10 @@ describe("splitMaterial", () => {
 					seenPages.add(p);
 				}
 				assert.ok(!b.headingPath.some((h) => h.startsWith("FencedFake")), `seed ${seed}: a fenced heading in a path`);
+				// review 3, finding 5: a cut inside a line never leaves a marker-like start
+				if (b.continuesLine) assert.doesNotMatch(b.text, /^\\*--- Page \d+ ---[ \t]*\r?(\n|$)/, `seed ${seed}: batch ${b.index} starts with a false marker`);
+				// the stored range alone gives the same pages, source order and continuation (digest batchFromRef)
+				assert.deepEqual(rangePages(doc, b.charStart, b.charEnd, b.pageStart), { pages: b.pages, pageOrder: b.pageOrder, continuesLine: b.continuesLine }, `seed ${seed}: batch ${b.index}`);
 				checks++;
 			}
 			// no fence, open or closed, hides a real marker: every real page is some batch's page

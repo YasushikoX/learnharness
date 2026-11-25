@@ -94,11 +94,12 @@ export interface MaterialProfilerOptions {
 	chatId?: string;
 }
 
-/** One model call, no tools: the final text. */
+/** One model call, no tools: the final text. An empty reply throws `emptyReply` (the caller's wording for its step). */
 export async function completeOnce(
 	opts: MaterialProfilerOptions,
 	systemPrompt: string,
 	content: (TextContent | ImageContent)[],
+	emptyReply = "the model returned no profile",
 ): Promise<string> {
 	const { engine } = opts;
 	const stream = engine.streamFn(
@@ -120,7 +121,7 @@ export async function completeOnce(
 		.map((b) => b.text)
 		.join("\n")
 		.trim();
-	if (!text) throw new Error("the model returned no profile");
+	if (!text) throw new Error(emptyReply);
 	return text;
 }
 

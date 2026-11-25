@@ -10,14 +10,17 @@
  * line of a page's text looks like a marker. Hence EVERY line matching
  * PAGE_MARKER_PATTERN is a real page boundary, wherever it is (also where a code
  * fence seems to be open). Page numbers may skip (an image-only page left out)
- * or run backwards; a line `--- Page 0 ---` is not a marker. A document without
+ * or run backwards; a line `--- Page 0 ---` is not a marker, and for the
+ * splitter neither is one whose number is beyond the safe integer range
+ * (formatPageMarker never writes one). A document without
  * markers (a text note, a web page) is all page 1. Text before the first marker
  * belongs to the first marker's page. (The pdfjs converters `pdf-ops.ts
  * pdfExtract` and `pdf-markdown.ts joinPages` predate this contract and do not
  * escape yet; the host's conversion step must.)
  *
- * Headings are ATX Markdown headings (`#` to `######` and a space); they may be
- * absent (slide decks).
+ * Headings are ATX Markdown headings (`#` to `######` and a space); a closing
+ * run of `#` counts only after whitespace (`# C#` is the heading "C#"). They
+ * may be absent (slide decks).
  *
  * Fenced code blocks (``` or ~~~, CommonMark rules: a closing fence of the same
  * character, at least as long, with nothing after it) never span a page
@@ -30,7 +33,11 @@
  * that fits the budget whole, and pack consecutive pieces greedily up to the
  * budget. A section over the budget is cut at its page markers, a page still
  * over it at its paragraphs (a blank line), then at line ends, and only a single
- * line over the budget at a character offset. INVARIANT: the batches tile the
+ * line over the budget inside the line: after the last whitespace that fits (a
+ * word boundary), and only a single word longer than the budget at a character
+ * offset. A cut inside a line never leaves the next batch beginning with text
+ * that looks like a page marker (the cut moves back to the previous word, or one
+ * character), and such a batch says so (`continuesLine`). INVARIANT: the batches tile the
  * document exactly (the first starts at 0, each starts where the previous ended,
  * the last ends at its length), so no text is lost or repeated.
  *
@@ -69,6 +76,13 @@ export interface MaterialBatch {
 	 * mid-page) and each page whose marker is inside it. Numbers a converter skipped (an image-only page) are absent.
 	 */
 	pages: number[];
+	/**
+	 * The same pages in source order (each where it first appears: the page the batch starts on, then each marker's
+	 * page in the order the markers come). Differs from `pages` only when the numbering runs backwards.
+	 */
+	pageOrder: number[];
+	/** The batch starts inside a line (a long line was cut): its first line continues the previous batch's last one. */
+	continuesLine: boolean;
 	/** The heading titles in force where the batch starts, outermost first ([] before any heading). */
 	headingPath: string[];
 	/** contentMd.slice(charStart, charEnd). */
@@ -144,11 +158,28 @@ export function contentPages(contentMd: string): ContentPage[] {
 		else pages[pages.length - 1]!.lines.push(line);
 	}
 	if (pages.length === 0) return [{ page: 1, text: unescapePageMarkerLines(contentMd) }];
-	if (before.length > 0) pages[0]!.lines.unshift(...before);
+	if (before.length > 0) pages[0]!.lines = before.concat(pages[0]!.lines); // no argument spread: any number of lines
 	return pages.map((p) => ({ page: p.page, text: unescapePageMarkerLines(p.lines.join("\n")) }));
 }
 
-const HEADING = /^(#{1,6})[ \t]+(.*?)[ \t#]*\r?$/;
+/** The page number of a marker line, or undefined; a number beyond the safe integer range is not a marker here. Pure. */
+function markerPage(line: string): number | undefined {
+	const m = PAGE_MARKER_PATTERN.exec(line);
+	if (!m) return undefined;
+	const page = Number(m[1]);
+	return Number.isSafeInteger(page) ? page : undefined;
+}
+
+/**
+ * An ATX heading's level and title (trimmed; "" for an empty heading), or null. A closing run of "#" is removed only
+ * after whitespace, so "# C#" is the heading "C#" and "## Title ##" is "Title". Pure.
+ */
+function headingOf(line: string): { level: number; title: string } | null {
+	const m = /^(#{1,6})(?:[ \t]+(.*?))?[ \t]*\r?$/.exec(line);
+	if (!m) return null;
+	return { level: m[1]!.length, title: (m[2] ?? "").replace(/(?:^|[ \t]+)#+$/, "").trim() };
+}
+
 const FENCE_OPEN = /^[ \t]{0,3}(`{3,}|~{3,})/;
 const FENCE_CLOSE = /^[ \t]{0,3}(`{3,}|~{3,})[ \t]*\r?$/;
 
@@ -176,6 +207,8 @@ interface Structure {
 	headings: HeadingMark[];
 	/** Starts of lines that follow a blank line (paragraph starts), ascending. */
 	paragraphs: number[];
+	/** nextContent[i]: the index of the first line at or after line i that is not blank (the line count when none). */
+	nextContent: number[];
 }
 
 /** The lines of a document: their starts and texts (without the newline; a trailing \r is kept). */
@@ -233,8 +266,11 @@ function fencedLines(texts: readonly string[], isMarker: readonly boolean[]): bo
 /** The page markers, headings, paragraph starts and content lines of a document (see the module comment). Pure. */
 function structureOf(text: string): Structure {
 	const { starts, texts } = linesOf(text);
-	const isMarker = texts.map((t) => PAGE_MARKER_PATTERN.test(t));
+	const markerPages = texts.map(markerPage);
+	const isMarker = markerPages.map((p) => p !== undefined);
 	const fenced = fencedLines(texts, isMarker);
+	const nextContent = new Array<number>(texts.length + 1).fill(texts.length);
+	for (let i = texts.length - 1; i >= 0; i--) nextContent[i] = texts[i]!.trim() === "" ? nextContent[i + 1]! : i;
 	const pages: PageMark[] = [];
 	const headings: HeadingMark[] = [];
 	const paragraphs: number[] = [];
@@ -254,7 +290,7 @@ function structureOf(text: string): Structure {
 		for (const w of waiting) w.firstContent = start;
 		waiting = [];
 		if (isMarker[i]) {
-			const mark = { start, page: Number(PAGE_MARKER_PATTERN.exec(line)![1]), firstContent: text.length };
+			const mark = { start, page: markerPages[i]!, firstContent: text.length };
 			pages.push(mark);
 			waiting.push(mark);
 			continue;
@@ -263,16 +299,38 @@ function structureOf(text: string): Structure {
 			content++;
 			continue;
 		}
-		const heading = HEADING.exec(line);
+		const heading = headingOf(line);
 		if (heading) {
-			const title = heading[2]!.trim();
-			if (title) headings.push({ start, level: heading[1]!.length, title });
+			if (heading.title) headings.push({ start, level: heading.level, title: heading.title });
 			continue;
 		}
 		content++;
 	}
 	contentBefore.push(content);
-	return { lineStarts: starts, contentBefore, pages, headings, paragraphs };
+	return { lineStarts: starts, contentBefore, pages, headings, paragraphs, nextContent };
+}
+
+/**
+ * The pages of the range [charStart, charEnd) of a document that starts on `pageStart` (the page in force at
+ * charStart): `pageOrder` in source order (pageStart, then each marker line starting inside the range, first
+ * appearances) and `pages` ascending; plus whether the range starts inside a line. Linear in the range. Pure.
+ */
+export function rangePages(contentMd: string, charStart: number, charEnd: number, pageStart: number): { pages: number[]; pageOrder: number[]; continuesLine: boolean } {
+	const continuesLine = charStart > 0 && contentMd.charCodeAt(charStart - 1) !== 0x0a;
+	const order: number[] = [pageStart];
+	const seen = new Set(order);
+	const firstNl = contentMd.indexOf("\n", charStart);
+	let at = !continuesLine ? charStart : firstNl < 0 ? charEnd : firstNl + 1;
+	while (at < charEnd) {
+		const nl = contentMd.indexOf("\n", at);
+		const page = markerPage(contentMd.slice(at, nl < 0 ? contentMd.length : nl));
+		if (page !== undefined && !seen.has(page)) {
+			seen.add(page);
+			order.push(page);
+		}
+		at = nl < 0 ? charEnd : nl + 1;
+	}
+	return { pages: [...order].sort((a, b) => a - b), pageOrder: order, continuesLine };
 }
 
 /** The index of the last element of an ascending array that is <= value (-1 when none). */
@@ -337,9 +395,19 @@ export function splitMaterial(contentMd: string, opts: SplitOptions = {}): Mater
 		structure.lineStarts.filter((p) => p > 0 && !markerOnlyBefore(p)),
 	];
 
+	const isSpace = (code: number) => code === 0x20 || code === 0x09 || code === 0x0d;
+	const markerLikeAt = /\\*--- Page \d+ ---[ \t]*\r?(?:\n|$)/y;
+	/** The text from `offset` to its line's end looks like a page marker (escaped or not). */
+	const looksLikeMarkerAt = (offset: number) => {
+		markerLikeAt.lastIndex = offset;
+		return markerLikeAt.test(contentMd);
+	};
+
 	/**
-	 * The longest prefix of [start, end) that fits, at least one character, never inside a surrogate pair. Gallops from
-	 * the start (1, 2, 4, … characters) before the binary search, so each probe costs about the piece's own length.
+	 * Where to cut [start, end): the longest prefix that fits, at least one character, moved back to just after the
+	 * last whitespace in it when there is one (a word boundary), never leaving the rest beginning with a marker-like
+	 * line remainder, never inside a surrogate pair. Gallops from the start (1, 2, 4, … characters) before the binary
+	 * search, so each probe costs about the piece's own length.
 	 */
 	function hardCut(start: number, end: number): number {
 		let lo = start + 1;
@@ -352,9 +420,37 @@ export function splitMaterial(contentMd: string, opts: SplitOptions = {}): Mater
 			if (fits(start, mid)) lo = mid;
 			else hi = mid - 1;
 		}
-		const code = contentMd.charCodeAt(lo - 1);
-		if (lo < end && code >= 0xd800 && code <= 0xdbff) lo = lo - 1 > start ? lo - 1 : lo + 1;
-		return lo;
+		if (lo >= end) return end;
+		// prefer a word boundary: just after the last whitespace that fits
+		let cut = lo;
+		for (let i = lo; i > start; i--) {
+			if (isSpace(contentMd.charCodeAt(i - 1))) {
+				cut = i;
+				break;
+			}
+		}
+		// never leave the next piece beginning with what looks like a page marker: the previous word, else one character back
+		if (looksLikeMarkerAt(cut)) {
+			let earlier = -1;
+			for (let i = cut - 1; i > start; i--) {
+				if (isSpace(contentMd.charCodeAt(i - 1)) && !looksLikeMarkerAt(i)) {
+					earlier = i;
+					break;
+				}
+			}
+			cut = earlier > start ? earlier : cut - 1 > start ? cut - 1 : cut + 1;
+		}
+		// a page marker line is not cut at its spaces: cut before it, or (when it starts the piece and is over the budget
+		// on its own) at the plain character offset
+		const marker = markerBefore(cut);
+		if (marker && marker.start >= start) {
+			const nl = contentMd.indexOf("\n", marker.start);
+			const lineEnd = nl < 0 ? contentMd.length : nl + 1;
+			if (cut < lineEnd) cut = marker.start > start ? marker.start : lo;
+		}
+		const code = contentMd.charCodeAt(cut - 1);
+		if (cut < end && code >= 0xd800 && code <= 0xdbff) cut = cut - 1 > start ? cut - 1 : cut + 1;
+		return Math.min(cut, end);
 	}
 
 	/** Pieces of [start, end), each within the budget unless it is a single character. */
@@ -409,10 +505,9 @@ export function splitMaterial(contentMd: string, opts: SplitOptions = {}): Mater
 	const contentStart = (start: number, end: number) => {
 		const marker = markerBefore(start + 1);
 		if (marker && marker.start === start) return Math.min(end - 1, marker.firstContent);
-		let line = lineIndex(start);
+		const line = lineIndex(start);
 		if (structure.lineStarts[line] !== start) return start; // a hard cut inside a line
-		while (line < structure.lineStarts.length && contentMd.slice(structure.lineStarts[line]!, structure.lineStarts[line + 1] ?? contentMd.length).trim() === "") line++;
-		return Math.min(end - 1, structure.lineStarts[line] ?? contentMd.length);
+		return Math.min(end - 1, structure.lineStarts[structure.nextContent[line]!] ?? contentMd.length);
 	};
 
 	// Heading paths by one sweep: the batches' content starts ascend.
@@ -430,11 +525,14 @@ export function splitMaterial(contentMd: string, opts: SplitOptions = {}): Mater
 	return ranges.map(([charStart, charEnd], index) => {
 		const pageStart = pageAt(charStart);
 		const within = inside(markerStarts, charStart - 1, charEnd).map((s) => structure.pages[lastAtOrBefore(markerStarts, s)]!.page);
+		const pageOrder = [...new Set([pageStart, ...within])];
 		return {
 			index,
 			pageStart,
 			pageEnd: pageAt(charEnd - 1),
-			pages: [...new Set([pageStart, ...within])].sort((a, b) => a - b),
+			pages: [...pageOrder].sort((a, b) => a - b),
+			pageOrder,
+			continuesLine: charStart > 0 && contentMd.charCodeAt(charStart - 1) !== 0x0a,
 			headingPath: headingPathAt(contentStart(charStart, charEnd)),
 			text: contentMd.slice(charStart, charEnd),
 			charStart,

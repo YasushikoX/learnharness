@@ -1,108 +1,59 @@
 /**
- * The class glossary (fork addition, 2026-11-24): the terms of several
- * documents' digests (contracts/material-digest.ts) merged into one glossary,
- * and the id, alias and lookup rules the indexer shares. Pure.
+ * Term identity, the class glossary and its lookups (fork addition, 2026-11-24; reworked 2026-11-25 by the manager's
+ * ruling "Term identity", PLAN.md). Pure and browser-safe (no node modules).
  *
- * Keys and ids: `t_` (terms) or `c_` (concepts) plus the KEY of the name
- * (`slugOf`). Normalising (`normalizeName`): soft hyphens and zero-width
- * characters removed, Unicode NFC, then only these foldings: the ligatures
- * ﬀ ﬁ ﬂ ﬃ ﬄ ﬅ ﬆ Ĳ ĳ spelled out, full-width ASCII forms (Ａ, ＋) read as ASCII, the
- * apostrophe and prime marks ’ ‘ ʼ ′ read as ' (″ as '', ‴ as '''); then lower
- * case and whitespace collapsed. Superscripts, subscripts and double-struck
- * letters are NOT folded: "x²", "x₂" and "x2", "ℝ" and "R" are different names.
+ * IDENTITY IS THE EXACT SPELLING. `normalizeName` does only three things: removes invisible characters (INVISIBLE:
+ * every default-ignorable code point, which covers the soft hyphen, zero-width characters, directional marks and
+ * isolates, the BOM and variation selectors, and every control character that is not whitespace), applies Unicode
+ * NFC, and trims and collapses whitespace to single spaces. No case folding, no hyphen, punctuation, apostrophe or
+ * prime folding, no compatibility (NFKC) folding. A term's id is `t_`, a concept's `c_`, plus `encodeName` of the
+ * normalised name, which is injective: ASCII letters and digits and every non-ASCII character stay as they are, a
+ * space is written "_", and every other character (ASCII punctuation and symbols, "_" and "~" themselves, a lone
+ * surrogate) is written "~", its hex code point, "~". So distinct normalised names always give distinct ids, the same
+ * name always the same id, in every run and every document, and an id is a safe JSON key (never "__proto__").
+ * An encoding longer than ID_MAX_CHARS code points is cut (between whole characters) to at most ID_PREFIX_CHARS and
+ * given "-" and a 22-character hash of the whole name; "-" appears in no other id, so a long id never equals a short
+ * one, and two long ids are equal only on a 106-bit hash collision.
  *
- * The key is the name's tokens joined by "-". A word is a run of letters,
- * digits and combining marks (any script, diacritics kept: "første" stays
- * "første"). Whitespace separates words. A dash (- – — …) between two letters
- * also only separates words ("Eigen-value" and "eigen value" share a key); any
- * other dash, "_" and every other symbol or punctuation character is a token of
- * its own, written "_" and its hex code point ("+" is "_2b", "-" is "_2d"). So
- * "C", "C++" and "C--", "-1" and "1", "O(n-1)" and "O(n 1)", "x_y" and "x-y",
- * "f(x)" and "f′(x)", "∇" and the word "u2207" all differ (a word never contains
- * "_"). A key longer than SLUG_MAX_CHARS code points is cut to its first
- * SLUG_PREFIX_CHARS code points, then "~" and an 11-character hash of the whole
- * key are appended (names that differ only late still differ; "~" itself is
- * always written "_7e" in a key). A name whose key is empty (nothing but
- * whitespace and invisible characters) has no id: the indexer refuses it. The
- * same name gives the same key across batches, re-indexing and documents.
- *
- * Merging (here across documents, and in the indexer across a document's
- * batches, both through `unifyByAlias`): occurrences with the same key are one
- * term; for different keys see `unifyByAlias`. When in doubt nothing merges: an
- * unmerged duplicate is visible, a wrong merge hides a core term.
- *
- * Each entry keeps one citation per document (keyed by the digest's
- * `sourceHash`, so a repeated digest counts once). Documents are processed in
- * `sourceHash` order, so the whole glossary is the same whatever order the
- * digests come in. The entry's id is the member key that the most distinct
- * documents use as a term's own name, ties to the lexicographically smallest.
- * Every member id stays listed in `ids`.
+ * Nothing merges by rule: occurrences combine only when their ids are equal. Aliases and symbols are lookup data.
+ * The class glossary SUGGESTS likely duplicates (entries sharing a relaxed key, or one naming the other as an alias)
+ * for a planner to confirm, and lookups return every candidate; `findTerm` answers only when exactly one entry is
+ * possible.
  */
 
-import type { DigestTerm, MaterialDigest, TermTier } from "./contracts/material-digest.ts";
-
-/** Soft hyphen, zero-width space / non-joiner / joiner, word joiner, BOM: PDF extraction noise inside words. */
-const INVISIBLE: ReadonlySet<number> = new Set([0xad, 0x200b, 0x200c, 0x200d, 0x2060, 0xfeff]);
-/**
- * The targeted foldings by code point: the Latin ligatures ff fi fl ffi ffl ſt st IJ ij spelled out; the apostrophe and
- * prime marks (left and right single quotation marks, modifier letter apostrophe, prime) read as ', the double and
- * triple prime as '' and '''.
- */
-const FOLDS: ReadonlyMap<number, string> = new Map([
-	[0xfb00, "ff"],
-	[0xfb01, "fi"],
-	[0xfb02, "fl"],
-	[0xfb03, "ffi"],
-	[0xfb04, "ffl"],
-	[0xfb05, "st"],
-	[0xfb06, "st"],
-	[0x0132, "IJ"],
-	[0x0133, "ij"],
-	[0x2018, "'"],
-	[0x2019, "'"],
-	[0x02bc, "'"],
-	[0x2032, "'"],
-	[0x2033, "''"],
-	[0x2034, "'''"],
-]);
+import type { DigestBatch, DigestTerm, MaterialDigest, TermOccurrence, TermTier } from "./contracts/material-digest.ts";
 
 /**
- * A name in the form keys are made from (see the module comment): invisible characters removed, NFC, the targeted
- * foldings, lower case, whitespace collapsed, trimmed. Idempotent. Pure.
+ * The one definition of an invisible character: default-ignorable code points (soft hyphen, zero-width space,
+ * non-joiner and joiner, word joiner, invisible operators, LRM, RLM, ALM, the bidi embeddings, overrides and isolates,
+ * the BOM, variation selectors, Hangul fillers, tags) and control characters other than whitespace.
  */
-export function normalizeName(name: string): string {
-	let stripped = "";
-	for (const ch of name) {
-		const code = ch.codePointAt(0)!;
-		if (!INVISIBLE.has(code)) stripped += ch;
-	}
-	let folded = "";
-	for (const ch of stripped.normalize("NFC")) {
-		const code = ch.codePointAt(0)!;
-		// full-width ASCII forms (U+FF01 to U+FF5E) read as their ASCII character
-		folded += FOLDS.get(code) ?? (code >= 0xff01 && code <= 0xff5e ? String.fromCodePoint(code - 0xfee0) : ch);
-	}
-	return folded
-		.toLowerCase()
-		.normalize("NFC")
-		.replace(/\s+/g, " ")
-		.trim();
+const INVISIBLE = /\p{Default_Ignorable_Code_Point}|(?!\s)\p{Cc}/gu;
+
+/** The text with every invisible character removed. Pure. */
+export function stripInvisible(text: string): string {
+	return text.replace(INVISIBLE, "");
 }
 
-/** The longest key kept as it is, in code points; a longer one is shortened and given a hash suffix. */
-export const SLUG_MAX_CHARS = 96;
-/** How much of a long key's start is kept before "~" and its 11-character hash, in code points. */
-export const SLUG_PREFIX_CHARS = SLUG_MAX_CHARS - 12;
+/** The shared visible-content check: true when the text has a character that is neither whitespace nor invisible. Pure. */
+export function hasVisibleContent(text: string): boolean {
+	return /\S/u.test(stripInvisible(text));
+}
 
-const WORD_CHAR = /[\p{L}\p{N}\p{M}]/u;
-const LETTER = /[\p{L}\p{M}]/u;
-const DASH = /\p{Pd}/u;
-const SPACE = /\s/u;
+/** A name as identity reads it: invisible characters removed, NFC, whitespace trimmed and collapsed. Idempotent. Pure. */
+export function normalizeName(name: string): string {
+	return stripInvisible(name).normalize("NFC").replace(/\s+/gu, " ").trim();
+}
 
-/** A 53-bit string hash (cyrb53), 11 base-36 digits. Deterministic, pure. */
-function hash53(text: string): string {
-	let h1 = 0xdeadbeef;
-	let h2 = 0x41c6ce57;
+/** The longest encoded name kept whole in an id, in code points; a longer one is cut and given a hash. */
+export const ID_MAX_CHARS = 120;
+/** How much of a long name's encoding is kept before "-" and the hash, at most, in code points. */
+export const ID_PREFIX_CHARS = 96;
+
+/** A 53-bit string hash (cyrb53) with a seed, 11 base-36 digits. Deterministic, pure. */
+function hash53(text: string, seed: number): string {
+	let h1 = 0xdeadbeef ^ seed;
+	let h2 = 0x41c6ce57 ^ seed;
 	for (let i = 0; i < text.length; i++) {
 		const ch = text.charCodeAt(i);
 		h1 = Math.imul(h1 ^ ch, 2654435761);
@@ -113,314 +64,376 @@ function hash53(text: string): string {
 	return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36).padStart(11, "0");
 }
 
-/** The id key of a name (see the module comment). "" only for a name of whitespace and invisible characters. Pure. */
-export function slugOf(name: string): string {
-	const chars = [...normalizeName(name)];
-	const tokens: string[] = [];
-	let word = "";
-	const flush = () => {
-		if (word) tokens.push(word);
-		word = "";
-	};
-	chars.forEach((ch, i) => {
-		if (WORD_CHAR.test(ch)) {
-			word += ch;
-			return;
-		}
-		flush();
-		if (SPACE.test(ch)) return;
-		// a dash between two letters only separates words ("eigen-value"); anywhere else it is a symbol ("-1", "n-1", "C--")
-		if (DASH.test(ch) && i > 0 && LETTER.test(chars[i - 1]!) && i + 1 < chars.length && LETTER.test(chars[i + 1]!)) return;
-		tokens.push(`_${ch.codePointAt(0)!.toString(16)}`);
-	});
-	flush();
-	const key = tokens.join("-");
-	const points = [...key];
-	if (points.length <= SLUG_MAX_CHARS) return key;
-	return `${points.slice(0, SLUG_PREFIX_CHARS).join("").replace(/-+$/, "")}~${hash53(key)}`;
-}
-
-/** A term's id. Pure. */
-export function termId(term: string): string {
-	return `t_${slugOf(term)}`;
-}
-
-/** A concept's id. Pure. */
-export function conceptId(name: string): string {
-	return `c_${slugOf(name)}`;
+/** One code point as the id encoding writes it (see the module comment). */
+function encodeChar(ch: string): string {
+	const code = ch.codePointAt(0)!;
+	const asciiWord = (code >= 0x30 && code <= 0x39) || (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a);
+	if (asciiWord) return ch;
+	if (code === 0x20) return "_";
+	if (code >= 0x80 && !(code >= 0xd800 && code <= 0xdfff)) return ch;
+	return `~${code.toString(16)}~`;
 }
 
 /**
- * Which groups of names are one term. Groups have distinct own keys; each declares alias keys. THE RULE: P and Q are
- * LINKED when P declares Q's key as an alias, no other group declares that key, and Q declares no alias that P does not
- * also know (P's own key or one of P's aliases). A set of groups connected by links merges only when every two of its
- * members are linked directly and no group outside it declares any member's key as an alias; otherwise every group in
- * that connected set stays separate. So "ordinary least squares" (alias OLS) and "OLS" merge, while a shared symbol, a
- * flipped alias ("velocity" → v, "v" → voltage), a hub ("v" → velocity, voltage) or a chain merges nothing. The result
- * depends only on the sets of keys, never on input order. Returns a component label per group (the smallest group
- * index in its merged set). Pure.
+ * The injective id encoding of a name that is ALREADY normalised (see the module comment); "" for "". Callers pass
+ * `normalizeName(name)`; termId and conceptId do. Pure.
  */
-export function unifyByAlias(groups: readonly { key: string; aliasKeys: Iterable<string> }[]): number[] {
-	const aliasSets = groups.map((g) => new Set([...g.aliasKeys].filter((a) => a !== "" && a !== g.key)));
-	const ownIndex = new Map<string, number>();
-	groups.forEach((g, i) => ownIndex.set(g.key, i));
-	const claimants = new Map<string, number[]>();
-	aliasSets.forEach((set, i) => {
-		for (const a of set) {
-			const list = claimants.get(a);
-			if (list) list.push(i);
-			else claimants.set(a, [i]);
-		}
-	});
-	const links = groups.map(() => new Set<number>());
-	for (const [alias, by] of claimants) {
-		const q = ownIndex.get(alias);
-		if (q === undefined || by.length !== 1) continue;
-		const p = by[0]!;
-		const known = (a: string) => a === groups[p]!.key || aliasSets[p]!.has(a);
-		if (![...aliasSets[q]!].every(known)) continue;
-		links[p]!.add(q);
-		links[q]!.add(p);
+export function encodeName(normalized: string): string {
+	let out = "";
+	let points = 0;
+	for (const ch of normalized) {
+		const piece = encodeChar(ch);
+		out += piece;
+		points += piece.length === ch.length ? 1 : piece.length;
 	}
-
-	const labels = groups.map((_, i) => i);
-	const seen = new Set<number>();
-	for (let start = 0; start < groups.length; start++) {
-		if (seen.has(start) || links[start]!.size === 0) continue;
-		const members: number[] = [];
-		const queue = [start];
-		seen.add(start);
-		while (queue.length > 0) {
-			const m = queue.pop()!;
-			members.push(m);
-			for (const next of links[m]!) {
-				if (seen.has(next)) continue;
-				seen.add(next);
-				queue.push(next);
-			}
-		}
-		const inSet = new Set(members);
-		// links only join groups of the same connected set, so a full degree means every pair is linked directly
-		const everyPairLinked = members.every((m) => links[m]!.size === members.length - 1);
-		const claimedFromOutside = members.some((m) => (claimants.get(groups[m]!.key) ?? []).some((c) => !inSet.has(c)));
-		if (!everyPairLinked || claimedFromOutside) continue;
-		const label = Math.min(...members);
-		for (const m of members) labels[m] = label;
+	if (points <= ID_MAX_CHARS) return out;
+	let prefix = "";
+	let used = 0;
+	for (const ch of normalized) {
+		const piece = encodeChar(ch);
+		const size = piece.length === ch.length ? 1 : piece.length;
+		if (used + size > ID_PREFIX_CHARS) break;
+		prefix += piece;
+		used += size;
 	}
-	return labels;
+	return `${prefix}-${hash53(normalized, 0)}${hash53(normalized, 0x9e3779b9)}`;
 }
 
-/** Something that may carry an explicit definition. */
-export interface DefinitionSource {
+/** A term's id: `t_` + encodeName(normalizeName(term)). "t_" alone for a name with nothing visible (refused upstream). Pure. */
+export function termId(term: string): string {
+	return `t_${encodeName(normalizeName(term))}`;
+}
+
+/** A concept's id: `c_` + encodeName(normalizeName(name)). Pure. */
+export function conceptId(name: string): string {
+	return `c_${encodeName(normalizeName(name))}`;
+}
+
+const WORD = "[\\p{L}\\p{N}\\p{M}]";
+const RELAXED_JOIN = new RegExp(`(?<=${WORD})[\\s\\p{Pd}]+(?=${WORD})`, "gu");
+
+/**
+ * The relaxed key used ONLY for lookup and duplicate suggestions, never for identity: the normalised name case-folded
+ * (upper then lower case, so "ß" reads as "ss" and "ς" as "σ"), whitespace and dashes between two letters or digits
+ * removed ("COVID-19", "COVID 19" and "covid19" share one), and any remaining whitespace removed. Other symbols stay
+ * ("C", "C++" and "C--" keep different keys). Pure.
+ */
+export function relaxedKey(text: string): string {
+	return normalizeName(text).toUpperCase().toLowerCase().normalize("NFC").replace(RELAXED_JOIN, "").replace(/\s+/gu, "");
+}
+
+/** Code-unit order (the same in every locale). */
+export const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+// ── The class glossary ─────────────────────────────────────────────────────
+
+/** An occurrence with the document it is in. */
+export interface GlossaryOccurrence extends TermOccurrence {
+	/** The document (its digest's sourceHash). */
+	sourceHash: string;
+}
+
+/** How one document has a glossary term: that digest term's summary. */
+export interface GlossaryCitation {
+	sourceHash: string;
+	/** The page of its first occurrence in that document. */
+	page: number;
+	tier: TermTier;
+	/** That document's chosen explicit definition, or null when it uses the term without defining it. */
 	definition: string | null;
 	definitionPage: number | null;
-	tier: TermTier;
+	/** The tier of the occurrence that supplied that definition (null with it). */
+	definitionTier: TermTier | null;
+	/** How many occurrences that document has. */
+	occurrenceCount: number;
 }
 
+export interface GlossaryEntry {
+	/** The term id (equal in every document that spells the name the same). */
+	id: string;
+	/** The normalised name. */
+	term: string;
+	/** Every alias the documents give, sorted, unique (lookup data only). */
+	aliases: string[];
+	/** Every symbol the documents give, sorted, unique (lookup data only). */
+	symbols: string[];
+	/** core when any document has it as core. */
+	tier: TermTier;
+	/**
+	 * The explicit definition: one supplied by a core occurrence first (a supporting gloss never outranks it), then the
+	 * smallest sourceHash; null when no document defines it.
+	 */
+	definition: string | null;
+	definitionPage: number | null;
+	definitionTier: TermTier | null;
+	/** The document that supplied the definition (null with it). */
+	definitionSource: string | null;
+	/** One per document, sorted by sourceHash. */
+	citations: GlossaryCitation[];
+	/** Every occurrence the documents store, by sourceHash and then each document's own order. */
+	occurrences: GlossaryOccurrence[];
+	/** The exact total over the documents (some documents may store a truncated list: DigestTerm.occurrenceCount). */
+	occurrenceCount: number;
+}
+
+/** Entries a planner should look at side by side: maybe one concept under several names. Nothing is merged. */
+export interface SuggestedDuplicateGroup {
+	/** Two or more entry ids, sorted. */
+	ids: string[];
+	/** similar_name: their names share a relaxed key; alias: one names another as an alias. */
+	reasons: ("similar_name" | "alias")[];
+}
+
+/** Two or more different digests of one source (the same sourceHash), and which one the glossary used. */
+export interface SourceConflict {
+	sourceHash: string;
+	/** How many distinct copies there were. */
+	copies: number;
+	/** What decided: fewer failed parts, then the newer indexer version, then the larger digest, then content order. */
+	decidedBy: "fewer_failed_parts" | "newer_indexer" | "larger" | "content_order";
+}
+
+export interface Glossary {
+	/** Keyed by id, sorted by id. */
+	terms: Record<string, GlossaryEntry>;
+	/** Every relaxed key of an entry's name, aliases and symbols to the ids of the entries that have it, sorted. */
+	lookup: Record<string, string[]>;
+	/** Sorted by their ids. */
+	suggestedDuplicates: SuggestedDuplicateGroup[];
+	/** Same-sourceHash conflicts that were resolved, sorted by sourceHash. */
+	conflicts: SourceConflict[];
+}
+
+/** What mergeGlossary reads from a digest. */
+export type GlossarySource = Pick<MaterialDigest, "sourceHash" | "indexerVersion" | "batches" | "terms">;
+
+/** JSON with object keys sorted: equal for equal content whatever order the keys were written in. Pure. */
+function stableJson(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+	if (value !== null && typeof value === "object") {
+		const entries = Object.entries(value as Record<string, unknown>)
+			.filter(([, v]) => v !== undefined)
+			.sort(([a], [b]) => byCodeUnit(a, b));
+		return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`).join(",")}}`;
+	}
+	return JSON.stringify(value) ?? "null";
+}
+
+const failedCount = (batches: readonly DigestBatch[]) => batches.reduce((n, b) => n + (b.status === "failed" ? 1 : 0), 0);
+const occurrenceTotal = (terms: readonly DigestTerm[]) => terms.reduce((n, t) => n + t.occurrenceCount, 0);
+
 /**
- * The explicit definition to keep among several mentions of one term: from a core mention before a supporting one
- * (the material's formal definition over a passing gloss), then the earliest definition page, then the first given.
- * Null when none is explicit. Pure.
+ * One digest per sourceHash, independent of input order: identical copies are one; differing copies are ranked by
+ * fewer failed parts, then the higher indexer version, then more terms and more occurrences, then their content, and
+ * the conflict is reported.
  */
-export function pickDefinition<T extends DefinitionSource>(sources: readonly T[]): T | null {
-	let best: T | null = null;
-	for (const s of sources) {
-		if (s.definition === null || s.definitionPage === null) continue;
-		if (!best) {
-			best = s;
-			continue;
+function resolveSources(digests: readonly GlossarySource[]): { chosen: GlossarySource[]; conflicts: SourceConflict[] } {
+	const bySource = new Map<string, Map<string, GlossarySource>>();
+	for (const d of digests) {
+		const copies = bySource.get(d.sourceHash) ?? new Map<string, GlossarySource>();
+		const content = stableJson({ sourceHash: d.sourceHash, indexerVersion: d.indexerVersion, batches: d.batches, terms: d.terms });
+		if (!copies.has(content)) copies.set(content, d);
+		bySource.set(d.sourceHash, copies);
+	}
+	const chosen: GlossarySource[] = [];
+	const conflicts: SourceConflict[] = [];
+	for (const sourceHash of [...bySource.keys()].sort(byCodeUnit)) {
+		const ranked = [...bySource.get(sourceHash)!.entries()].map(([content, d]) => ({
+			d,
+			key: [failedCount(d.batches), -d.indexerVersion, -d.terms.length, -occurrenceTotal(d.terms)],
+			content,
+		}));
+		ranked.sort((a, b) => {
+			for (let i = 0; i < a.key.length; i++) if (a.key[i] !== b.key[i]) return a.key[i]! - b.key[i]!;
+			return byCodeUnit(a.content, b.content);
+		});
+		chosen.push(ranked[0]!.d);
+		if (ranked.length > 1) {
+			const [first, second] = [ranked[0]!.key, ranked[1]!.key];
+			const at = first.findIndex((v, i) => v !== second[i]);
+			const decidedBy = at === 0 ? "fewer_failed_parts" : at === 1 ? "newer_indexer" : at >= 2 ? "larger" : "content_order";
+			conflicts.push({ sourceHash, copies: ranked.length, decidedBy });
 		}
-		const rank = (x: T) => (x.tier === "core" ? 0 : 1);
-		if (rank(s) < rank(best) || (rank(s) === rank(best) && s.definitionPage < best.definitionPage!)) best = s;
+	}
+	return { chosen, conflicts };
+}
+
+/** The citation to take a definition from: one supplied by a core occurrence first, then the first given. */
+function chooseDefinition(citations: readonly GlossaryCitation[]): GlossaryCitation | null {
+	let best: GlossaryCitation | null = null;
+	for (const c of citations) {
+		if (c.definition === null) continue;
+		if (!best || (c.definitionTier === "core" && best.definitionTier !== "core")) best = c;
 	}
 	return best;
 }
 
-/** Where one document cites a glossary term. */
-export interface GlossaryCitation {
-	/** The document (its digest's sourceHash). */
-	sourceHash: string;
-	/** The earliest page the term is mentioned on in that document. */
-	page: number;
-	/** That document's explicit definition, or null when it uses the term without defining it. */
-	definition: string | null;
-	/** The page of that definition (null with it). */
-	definitionPage: number | null;
-	/** Its tier in that document. */
-	tier: TermTier;
-}
-
-export interface GlossaryEntry {
-	/** The canonical id (see the module comment). */
-	id: string;
-	/** Every term id merged into this entry (the canonical one included), sorted. */
-	ids: string[];
-	/** The display form: the canonical key's term as the document with the smallest sourceHash writes it. */
-	term: string;
-	/** Every other spelling and alias, unique by key, in sourceHash order then document order (ambiguous aliases included). */
-	aliases: string[];
-	/**
-	 * The explicit definition, chosen across documents by `pickDefinition` (a definition from a core mention first, then
-	 * the earliest definition page, ties to the smaller sourceHash); null when no document defines it.
-	 */
-	definition: string | null;
-	tier: TermTier;
-	/** One per document (distinct sourceHash), sorted by sourceHash. */
-	citations: GlossaryCitation[];
-}
-
-export interface Glossary {
-	/** Keyed by canonical id. */
-	terms: Record<string, GlossaryEntry>;
-	/** Every member's own key (an id without its `t_`) to its entry's canonical id: one entry per key by construction. */
-	names: Record<string, string>;
-	/** Every alias key to the canonical ids of all entries that declare it, sorted; more than one means ambiguous. */
-	aliases: Record<string, string[]>;
-}
-
 /**
- * Merge several documents' digests into one class glossary. The result does not depend on the order of `digests`.
- * Throws on a term whose key is empty (a digest the indexer did not write: it refuses such names). Pure.
+ * Merge several documents' digests into one class glossary: entries grouped by exact id, every occurrence kept with
+ * its document, likely duplicates only suggested. The result does not depend on the order of `digests`. Throws on a
+ * term with nothing visible in its name (a digest the indexer did not write). Pure.
  */
-export function mergeGlossary(digests: readonly Pick<MaterialDigest, "sourceHash" | "terms">[]): Glossary {
-	interface Occurrence {
-		order: number;
-		sourceHash: string;
-		term: DigestTerm;
-		key: string;
-		aliasKeys: string[];
+export function mergeGlossary(digests: readonly GlossarySource[]): Glossary {
+	const { chosen, conflicts } = resolveSources(digests);
+	interface Acc {
+		term: string;
+		aliases: Set<string>;
+		symbols: Set<string>;
+		citations: GlossaryCitation[];
+		occurrences: GlossaryOccurrence[];
+		count: number;
 	}
-	// One digest per sourceHash (a repeated document counts once: its first copy), processed in sourceHash order.
-	const bySourceHash = new Map<string, Pick<MaterialDigest, "sourceHash" | "terms">>();
-	for (const digest of digests) if (!bySourceHash.has(digest.sourceHash)) bySourceHash.set(digest.sourceHash, digest);
-	const occurrences: Occurrence[] = [];
-	for (const sourceHash of [...bySourceHash.keys()].sort()) {
-		for (const term of bySourceHash.get(sourceHash)!.terms) {
-			const key = slugOf(term.term);
-			if (key === "") throw new Error(`the digest ${sourceHash} has a term without a name (${JSON.stringify(term.term)})`);
-			occurrences.push({ order: occurrences.length, sourceHash, term, key, aliasKeys: term.aliases.map(slugOf).filter((k) => k !== "" && k !== key) });
-		}
-	}
-
-	// Same key: one group. Then unambiguous alias evidence joins groups.
-	const groupOf = new Map<string, Occurrence[]>();
-	for (const occ of occurrences) {
-		const list = groupOf.get(occ.key);
-		if (list) list.push(occ);
-		else groupOf.set(occ.key, [occ]);
-	}
-	const groups = [...groupOf.entries()].map(([key, members]) => ({ key, members, aliasKeys: new Set(members.flatMap((m) => m.aliasKeys)) }));
-	const labels = unifyByAlias(groups);
-	const components = new Map<number, typeof groups>();
-	groups.forEach((g, i) => {
-		const list = components.get(labels[i]!);
-		if (list) list.push(g);
-		else components.set(labels[i]!, [g]);
-	});
-
-	const terms = new Map<string, GlossaryEntry>();
-	const names = new Map<string, string>();
-	const aliasOwners = new Map<string, Set<string>>();
-	for (const parts of components.values()) {
-		const members = parts.flatMap((p) => p.members).sort((a, b) => a.order - b.order);
-		// The canonical key: the own key the most distinct documents use, ties to the smallest.
-		const docsPerKey = new Map(parts.map((p) => [p.key, new Set(p.members.map((m) => m.sourceHash)).size]));
-		const keys = [...docsPerKey.keys()].sort();
-		const canonicalKey = keys.reduce((best, cur) => (docsPerKey.get(cur)! > docsPerKey.get(best)! ? cur : best), keys[0]!);
-		const id = `t_${canonicalKey}`;
-		const canonical = members.find((m) => m.key === canonicalKey)!;
-
-		const citations: GlossaryCitation[] = [];
-		const definitions: (DefinitionSource & { sourceHash: string })[] = [];
-		const bySource = new Map<string, Occurrence[]>();
-		for (const m of members) {
-			const list = bySource.get(m.sourceHash);
-			if (list) list.push(m);
-			else bySource.set(m.sourceHash, [m]);
-		}
-		for (const [sourceHash, list] of bySource) {
-			const defined = pickDefinition(list.map((m) => m.term));
-			citations.push({
-				sourceHash,
-				page: Math.min(...list.map((m) => m.term.page)),
-				definition: defined?.definition ?? null,
-				definitionPage: defined?.definitionPage ?? null,
-				tier: list.some((m) => m.term.tier === "core") ? "core" : "supporting",
-			});
-			if (defined) definitions.push({ sourceHash, definition: defined.definition, definitionPage: defined.definitionPage, tier: defined.tier });
-		}
-
-		const ownKeys = new Set(parts.map((p) => p.key));
-		const aliases: string[] = [];
-		const shownKeys = new Set<string>([canonicalKey]);
-		for (const m of members) {
-			for (const name of [m.term.term, ...m.term.aliases]) {
-				const key = slugOf(name);
-				if (key === "" || shownKeys.has(key)) continue;
-				shownKeys.add(key);
-				aliases.push(name.trim());
+	const byId = new Map<string, Acc>();
+	for (const digest of chosen) {
+		for (const t of digest.terms) {
+			const name = normalizeName(t.term);
+			if (name === "") throw new Error(`the digest ${digest.sourceHash} has a term without a name (${JSON.stringify(t.term)})`);
+			const id = termId(name);
+			let acc = byId.get(id);
+			if (!acc) {
+				acc = { term: name, aliases: new Set(), symbols: new Set(), citations: [], occurrences: [], count: 0 };
+				byId.set(id, acc);
 			}
-		}
-
-		terms.set(id, {
-			id,
-			ids: [...ownKeys].map((k) => `t_${k}`).sort(),
-			term: canonical.term.term.trim(),
-			aliases,
-			// `definitions` is in sourceHash order, so pickDefinition's "first given" tie-break is the smaller sourceHash
-			definition: pickDefinition(definitions)?.definition ?? null,
-			tier: members.some((m) => m.term.tier === "core") ? "core" : "supporting",
-			citations,
-		});
-		for (const key of ownKeys) names.set(key, id);
-		for (const key of shownKeys) {
-			if (ownKeys.has(key)) continue;
-			const set = aliasOwners.get(key) ?? new Set<string>();
-			set.add(id);
-			aliasOwners.set(key, set);
+			for (const a of t.aliases) {
+				const alias = normalizeName(a);
+				if (alias !== "" && alias !== name) acc.aliases.add(alias);
+			}
+			for (const s of t.symbols) {
+				const symbol = normalizeName(s);
+				if (symbol !== "") acc.symbols.add(symbol);
+			}
+			const previous = acc.citations.at(-1);
+			const citation: GlossaryCitation = {
+				sourceHash: digest.sourceHash,
+				page: t.page,
+				tier: t.tier,
+				definition: t.definition,
+				definitionPage: t.definitionPage,
+				definitionTier: t.definitionTier,
+				occurrenceCount: t.occurrenceCount,
+			};
+			// two terms with one id in one digest (not written by the indexer): one citation
+			if (previous?.sourceHash === digest.sourceHash) {
+				previous.tier = previous.tier === "core" || t.tier === "core" ? "core" : "supporting";
+				previous.occurrenceCount += t.occurrenceCount;
+				if (chooseDefinition([previous, citation]) === citation) Object.assign(previous, { definition: t.definition, definitionPage: t.definitionPage, definitionTier: t.definitionTier });
+			} else acc.citations.push(citation);
+			for (const o of t.occurrences) acc.occurrences.push({ sourceHash: digest.sourceHash, ...o });
+			acc.count += t.occurrenceCount;
 		}
 	}
-	// Object.fromEntries defines own properties, so a key such as "constructor" never reaches a prototype.
+
+	const terms: [string, GlossaryEntry][] = [];
+	const lookup = new Map<string, Set<string>>();
+	const addKey = (key: string, id: string) => {
+		if (key === "") return;
+		const ids = lookup.get(key) ?? new Set<string>();
+		ids.add(id);
+		lookup.set(key, ids);
+	};
+	for (const [id, acc] of byId) {
+		const defined = chooseDefinition(acc.citations);
+		const entry: GlossaryEntry = {
+			id,
+			term: acc.term,
+			aliases: [...acc.aliases].sort(byCodeUnit),
+			symbols: [...acc.symbols].sort(byCodeUnit),
+			tier: acc.citations.some((c) => c.tier === "core") ? "core" : "supporting",
+			definition: defined?.definition ?? null,
+			definitionPage: defined?.definitionPage ?? null,
+			definitionTier: defined?.definitionTier ?? null,
+			definitionSource: defined?.sourceHash ?? null,
+			citations: acc.citations,
+			occurrences: acc.occurrences,
+			occurrenceCount: acc.count,
+		};
+		terms.push([id, entry]);
+		addKey(relaxedKey(entry.term), id);
+		for (const a of entry.aliases) addKey(relaxedKey(a), id);
+		for (const s of entry.symbols) addKey(relaxedKey(s), id);
+	}
+	terms.sort(([a], [b]) => byCodeUnit(a, b));
+
+	// Suggested duplicates: a shared relaxed name, or one entry naming another as an alias. Symbols never suggest.
+	const groups = new Map<string, Set<SuggestedDuplicateGroup["reasons"][number]>>();
+	const suggest = (ids: Iterable<string>, reason: SuggestedDuplicateGroup["reasons"][number]) => {
+		const sorted = [...new Set(ids)].sort(byCodeUnit);
+		if (sorted.length < 2) return;
+		const key = sorted.join("\n");
+		const reasons = groups.get(key) ?? new Set();
+		reasons.add(reason);
+		groups.set(key, reasons);
+	};
+	const byRelaxedName = new Map<string, string[]>();
+	for (const [id, entry] of terms) {
+		const key = relaxedKey(entry.term);
+		const list = byRelaxedName.get(key);
+		if (list) list.push(id);
+		else byRelaxedName.set(key, [id]);
+	}
+	for (const ids of byRelaxedName.values()) suggest(ids, "similar_name");
+	for (const [id, entry] of terms) {
+		for (const alias of entry.aliases) {
+			const named = byRelaxedName.get(relaxedKey(alias))?.filter((other) => other !== id) ?? [];
+			for (const other of named) suggest([id, other], "alias");
+		}
+	}
+	const suggestedDuplicates = [...groups.entries()]
+		.sort(([a], [b]) => byCodeUnit(a, b))
+		.map(([key, reasons]) => ({ ids: key.split("\n"), reasons: [...reasons].sort(byCodeUnit) }));
+
+	// Object.fromEntries defines own properties, so a key such as "__proto__" never reaches a prototype.
 	return {
-		terms: Object.fromEntries([...terms].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
-		names: Object.fromEntries(names),
-		aliases: Object.fromEntries([...aliasOwners].map(([key, ids]) => [key, [...ids].sort()])),
+		terms: Object.fromEntries(terms),
+		lookup: Object.fromEntries([...lookup.entries()].sort(([a], [b]) => byCodeUnit(a, b)).map(([key, ids]) => [key, [...ids].sort(byCodeUnit)])),
+		suggestedDuplicates,
+		conflicts,
 	};
 }
 
-function own<T>(record: Record<string, T>, key: string): T | undefined {
-	return key !== "" && Object.hasOwn(record, key) ? record[key] : undefined;
+/** What a lookup reads: a glossary, or one with richer entries (server/material-indexing.ts CourseGlossary). */
+export interface GlossaryLookup<E extends GlossaryEntry = GlossaryEntry> {
+	terms: Record<string, E>;
+	lookup: Record<string, string[]>;
+}
+
+/** One entry a text may name, and how. */
+export interface TermCandidate<E extends GlossaryEntry = GlossaryEntry> {
+	entry: E;
+	/** Which of the entry's names matched the text's relaxed key. */
+	matchedBy: ("name" | "alias" | "symbol")[];
 }
 
 /**
- * Every entry a term or alias (plain text, normalised as ids are) may name: the entry whose own name it is first, then
- * every entry that declares it as an alias, by id. Plain text is never read as an id (`findTermById`). [] when none.
- * Pure.
+ * Every entry a text (a name, alias or symbol, compared by relaxed key) may name, sorted by id; [] when none. Plain
+ * text is never read as an id (`findTermById`). Pure.
  */
-export function findTermCandidates(glossary: Glossary, text: string): GlossaryEntry[] {
-	const key = slugOf(text);
-	const ids: string[] = [];
-	const add = (id: string | undefined) => {
-		if (id !== undefined && !ids.includes(id) && Object.hasOwn(glossary.terms, id)) ids.push(id);
-	};
-	add(own(glossary.names, key));
-	for (const id of own(glossary.aliases, key) ?? []) add(id);
-	return ids.map((id) => glossary.terms[id]!);
+export function findTermCandidates<E extends GlossaryEntry>(glossary: GlossaryLookup<E>, text: string): TermCandidate<E>[] {
+	const key = relaxedKey(text);
+	if (key === "" || !Object.hasOwn(glossary.lookup, key)) return [];
+	const out: TermCandidate<E>[] = [];
+	for (const id of glossary.lookup[key]!) {
+		if (!Object.hasOwn(glossary.terms, id)) continue;
+		const entry = glossary.terms[id]!;
+		const matchedBy: TermCandidate["matchedBy"] = [];
+		if (relaxedKey(entry.term) === key) matchedBy.push("name");
+		if (entry.aliases.some((a) => relaxedKey(a) === key)) matchedBy.push("alias");
+		if (entry.symbols.some((s) => relaxedKey(s) === key)) matchedBy.push("symbol");
+		out.push({ entry, matchedBy });
+	}
+	return out;
 }
 
 /**
- * The one entry a term or alias (plain text) names: undefined when none, and undefined whenever more than one entry
- * may be meant (an alias several entries declare, or one entry's own name that others declare as an alias): use
- * findTermCandidates then. Plain text is never read as an id. Pure.
+ * The one entry a text names: undefined when no entry or more than one entry may be meant (an exact own-name match
+ * does not suppress another entry's alias or symbol match). Never guesses; use findTermCandidates to see them. Pure.
  */
-export function findTerm(glossary: Glossary, text: string): GlossaryEntry | undefined {
+export function findTerm<E extends GlossaryEntry>(glossary: GlossaryLookup<E>, text: string): E | undefined {
 	const candidates = findTermCandidates(glossary, text);
-	return candidates.length === 1 ? candidates[0] : undefined;
+	return candidates.length === 1 ? candidates[0]!.entry : undefined;
 }
 
-/** The entry a term id names (its canonical id or any id merged into it, exactly as stored); undefined when none. Pure. */
-export function findTermById(glossary: Glossary, id: string): GlossaryEntry | undefined {
-	if (!id.startsWith("t_")) return undefined;
-	const canonical = own(glossary.names, id.slice(2));
-	return canonical !== undefined && Object.hasOwn(glossary.terms, canonical) ? glossary.terms[canonical] : undefined;
+/** The entry with exactly this id; undefined when none. Pure. */
+export function findTermById<E extends GlossaryEntry>(glossary: GlossaryLookup<E>, id: string): E | undefined {
+	return Object.hasOwn(glossary.terms, id) ? glossary.terms[id] : undefined;
 }
