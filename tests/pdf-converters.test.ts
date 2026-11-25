@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { after, describe, it } from "node:test";
 import { ConverterError, type ConvertInput, type PageResult } from "../src/core/pdf-converter.ts";
 import { sanitizeUserSettings } from "../src/core/settings.ts";
@@ -303,20 +304,39 @@ describe("Docling client", () => {
 });
 
 describe("registry", () => {
+	const noKey = () => undefined;
+
+	// Test files import settings-body.ts before they isolate their data folder (cache-retention.test.ts): if it loaded
+	// config.ts, the settings store would stay bound to the repo's data/ folder and the test would write there.
+	it("importing the settings parser (and so the registry) does not load config.ts", () => {
+		const probe = [
+			"await import('./src/server/settings-body.ts');",
+			"process.env.LH_DATA_DIR = '/tmp/lh-late-data-dir';",
+			"const config = await import('./config.ts');",
+			"console.log(config.SETTINGS_FILE);",
+		].join("\n");
+		const tsx = path.join(import.meta.dirname, "..", "node_modules", ".bin", "tsx");
+		const env: NodeJS.ProcessEnv = { ...process.env };
+		delete env.LH_DATA_DIR;
+		const run = spawnSync(tsx, ["--input-type=module", "-e", probe], { cwd: path.join(import.meta.dirname, ".."), env, encoding: "utf8" });
+		assert.equal(run.status, 0, run.stderr);
+		assert.equal(run.stdout.trim(), path.join("/tmp/lh-late-data-dir", "settings.json"));
+	});
+
 	it("Docling without a URL falls back to pdfjs with a warning that says so", () => {
-		const resolved = resolvePdfConverter({ converter: "docling" });
+		const resolved = resolvePdfConverter({ converter: "docling" }, noKey);
 		assert.equal(resolved.converter.id, "pdfjs");
 		assert.match(resolved.warnings[0] ?? "", /no Docling URL is configured; the built-in reader \(pdfjs\) was used instead/);
 	});
 
 	it("an unknown converter id in the settings falls back to pdfjs with a warning", () => {
-		const resolved = resolvePdfConverter({ converter: "gone" });
+		const resolved = resolvePdfConverter({ converter: "gone" }, noKey);
 		assert.equal(resolved.converter.id, "pdfjs");
 		assert.match(resolved.warnings[0] ?? "", /"gone"/);
 	});
 
 	it("Docling with a URL carries its options in the cache key", () => {
-		const resolved = resolvePdfConverter({ converter: "docling", docling: { baseUrl: "http://127.0.0.1:1", ocr: false } });
+		const resolved = resolvePdfConverter({ converter: "docling", docling: { baseUrl: "http://127.0.0.1:1", ocr: false } }, noKey);
 		assert.equal(resolved.converter.id, "docling");
 		assert.deepEqual(resolved.converter.options, { ocr: false, formulaEnrichment: false });
 	});

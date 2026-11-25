@@ -13,6 +13,7 @@ import type { PdfConversionSettings } from "../core/settings.ts";
 import type { MaterialStore } from "../core/ports.ts";
 import { openPdfBytes } from "../agent/subagents/pdf-ops.ts";
 import { writeFileAtomicSync } from "../store/atomic-write.ts";
+import { readDoclingCredential } from "./converters/auth.ts";
 import { normaliseConversion, type FailedPage } from "./converters/normalise.ts";
 import { convertWithFallback, resolvePdfConverter, type RegistryConversion } from "./converters/registry.ts";
 
@@ -150,7 +151,7 @@ export async function convertMaterialPdf(ownerId: string, material: LessonMateri
 		return { status: "interrupted", error, warnings: [] };
 	}
 
-	const resolved = resolvePdfConverter(opts.settings);
+	const resolved = resolvePdfConverter(opts.settings, (id, baseUrl) => (id === "docling" ? readDoclingCredential(baseUrl) : undefined));
 	const converter = resolved.converter;
 	const options = converter.options ?? {};
 	const existing = opts.force ? undefined : readSidecar(sidecarPath);

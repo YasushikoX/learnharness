@@ -1,6 +1,5 @@
 import { ConverterError, type ConvertContext, type ConvertInput, type ConvertResult, type PdfConverter } from "../../core/pdf-converter.ts";
 import type { PdfConversionSettings } from "../../core/settings.ts";
-import { readDoclingCredential } from "./auth.ts";
 import { createDoclingConverter } from "./docling.ts";
 import { pdfjsConverter } from "./pdfjs.ts";
 
@@ -15,12 +14,19 @@ import { pdfjsConverter } from "./pdfjs.ts";
  *   - the selected service is unreachable or timed out (convertWithFallback).
  * Every other failure (auth, rate limit, bad response, the service's own
  * failure) is the material's conversionError, with no fallback.
+ *
+ * No store import here (settings-body.ts imports this module, and test
+ * files import that before isolating their data folder): a converter's key
+ * arrives through the CredentialReader its caller passes in.
  */
+
+/** A converter's key for a base URL, from the credential store (converters/auth.ts), or undefined. */
+export type CredentialReader = (converterId: string, baseUrl: string) => string | undefined;
 
 export interface PdfConverterFactory {
 	id: string;
 	/** Throws ConverterError("not_configured") when the settings lack what it needs. */
-	create(settings: PdfConversionSettings): PdfConverter;
+	create(settings: PdfConversionSettings, readCredential: CredentialReader): PdfConverter;
 }
 
 export interface ResolvedPdfConverter {
@@ -53,12 +59,12 @@ export function isRegisteredPdfConverter(id: string): boolean {
 registerPdfConverter({ id: pdfjsConverter.id, create: () => pdfjsConverter });
 registerPdfConverter({
 	id: "docling",
-	create(settings) {
+	create(settings, readCredential) {
 		const baseUrl = settings.docling?.baseUrl;
 		if (!baseUrl) throw new ConverterError("not_configured", "Docling is selected but no Docling URL is configured", false);
 		return createDoclingConverter({
 			baseUrl,
-			apiKey: readDoclingCredential(baseUrl),
+			apiKey: readCredential("docling", baseUrl),
 			ocr: settings.docling?.ocr,
 			formulaEnrichment: settings.docling?.formulaEnrichment,
 		});
@@ -66,14 +72,14 @@ registerPdfConverter({
 });
 
 /** The converter the settings select, built once. Never throws for configuration: it falls back to pdfjs with a warning. */
-export function resolvePdfConverter(settings: PdfConversionSettings | undefined): ResolvedPdfConverter {
+export function resolvePdfConverter(settings: PdfConversionSettings | undefined, readCredential: CredentialReader): ResolvedPdfConverter {
 	const requestedId = settings?.converter ?? pdfjsConverter.id;
 	const factory = factories.get(requestedId);
 	if (!factory) {
 		return { converter: pdfjsConverter, requestedId, warnings: [`The PDF converter "${requestedId}" in the settings is not available; the built-in reader (pdfjs) was used instead.`] };
 	}
 	try {
-		return { converter: factory.create(settings ?? {}), requestedId, warnings: [] };
+		return { converter: factory.create(settings ?? {}, readCredential), requestedId, warnings: [] };
 	} catch (error) {
 		if (!(error instanceof ConverterError) || error.kind !== "not_configured" || factory.id === pdfjsConverter.id) throw error;
 		return { converter: pdfjsConverter, requestedId, warnings: [`${error.message}; the built-in reader (pdfjs) was used instead.`] };
