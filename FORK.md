@@ -14,7 +14,9 @@ Status as of 2026-11-24. "Landed" means merged to `main` with tests passing; "In
 |---|---|---|
 | Merge upstream v0.7.0 | Brings in upstream's session folders, faster transcript opening, editable agent prompts and provider fixes, keeping all of Tobias's features | In progress (`merge/upstream-v0.7.0`) |
 | Whole-document indexing | Splits a converted document into bounded batches and indexes all of it (summary, vocabulary with definitions and pages, concepts, figures) instead of skimming; builds a class glossary | In review (`wp/3b-material-digest`) |
-| Docling converter | Converts PDFs to page-marked Markdown through a self-hosted Docling service, with the built-in PDF reader as fallback | Planned |
+| PDF converter options | A converter interface with built-in choices: the built-in reader (no setup, also the fallback), a self-hosted Docling service, and Mistral OCR. Every converter yields the same page-marked Markdown, with page numbering owned by the app | Planned |
+| Bring your own PDF service | A service that is not built in is described by a small JSON profile (request, optional polling, where the text is in the reply) that the app interprets; no downloaded or generated code runs, and keys stay in the local credential store | Planned |
+| AI-drafted connector | "Draft with AI" writes that profile from the service's documentation in one model call, tests it on a bundled two-page PDF and shows the result for approval before it can be enabled | Planned |
 | Ask mode | A third entry point on a class next to Learn and Practice: general questions answered from the class material with page citations, with no effect on grades or mastery | Planned |
 | Vocabulary coverage | Every core term must be mapped to a skill or explicitly excluded when a class map is approved; a ledger tracks which terms were introduced and checked and carries gaps into the next session | Planned |
 | Written answers and harder questions | Written answers by default for concept checks, graded against key points committed in advance; multiple choice kept for predictions and placement | Planned |
