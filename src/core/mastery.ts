@@ -222,6 +222,8 @@ export function concludeGradesOf(args: { grades?: unknown } | undefined, details
  *  - practice/review: every cleanly concluded problem that carried
  *    `skills`. */
 export function skillEventsOf(messages: readonly LhMessage[], link: ChatCourseLink): SkillEvent[] {
+	// An Ask session (2026-11-25) is never evidence, whatever its transcript holds.
+	if (link.mode === "ask") return [];
 	if (link.mode === "learn") {
 		const finish = sessionFinishOf(messages);
 		if (!finish) return [];

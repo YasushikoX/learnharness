@@ -27,7 +27,7 @@
  * changes nothing produces no diff.
  */
 
-import { CURRENT_CHAT_VERSION } from "./contracts/chat.ts";
+import { chatVersionFor } from "./contracts/chat.ts";
 
 export type Side = "local" | "remote";
 
@@ -165,7 +165,10 @@ const idOf = (v: unknown): string | null => (isObj(v) ? str(v.id) : null);
 // upstream's bump to 2: every chat both devices had changed was then held back as "written by a newer version", on
 // every round. mergeChat merges fields BY NAME: tests/sync-merge.test.ts pins the schema number it was last reviewed
 // against, so the next bump fails a test until this function has been read again.
-const CHAT_VERSION = CURRENT_CHAT_VERSION;
+// An Ask chat (2026-11-25) is stamped ASK_CHAT_VERSION and keeps it through a merge (chatVersionFor below), so a build
+// without Ask goes on refusing it. The refusal bound is each copy's own ceiling: an ordinary chat stamped above
+// CURRENT_CHAT_VERSION is from a newer app, whatever the Ask stamp happens to be.
+const tooNew = (o: Obj): boolean => typeof o.version === "number" && o.version > chatVersionFor(o);
 
 /** A side thread both devices hold: the longer message list when one continues the other; null when they differ. */
 function mergeSideThread(mine: Obj, theirs: Obj): Obj | null {
@@ -216,7 +219,7 @@ function mergeChat(i: MergeInput & { local: string; remote: string }): MergeResu
 	const r = parseObj(i.remote);
 	if (!l || !r) return pickPreferred(i, "a chat file could not be read; kept the preferred copy");
 	const b = parseObj(i.base);
-	if ((typeof l.version === "number" && l.version > CHAT_VERSION) || (typeof r.version === "number" && r.version > CHAT_VERSION)) {
+	if (tooNew(l) || tooNew(r)) {
 		return result(i.local, { skipped: "this chat was written by a newer version of the app" });
 	}
 	const newer = laterSide(l.updatedAt, r.updatedAt, i.prefer);
@@ -280,7 +283,7 @@ function mergeChat(i: MergeInput & { local: string; remote: string }): MergeResu
 		}
 	}
 	out.updatedAt = maxIso(l.updatedAt, r.updatedAt);
-	out.version = CHAT_VERSION;
+	out.version = chatVersionFor(out);
 	return result(pretty(out), { loser, notes });
 }
 

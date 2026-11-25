@@ -38,11 +38,14 @@ import {
 	activeProblemOf,
 	activeProblemOccurrenceOf,
 	concludedByDismissalPair,
+	cutOffWithoutText,
+	emptyCutOffIds,
 	isSideQuestionMarker,
 	danglingQuestionOf,
 	newAnswerResult,
 	newNextMessage,
 	newProblemDismissedMarker,
+	newReplyRecoveryMarker,
 	newSketchDisputeMarker,
 	newThinkingMessage,
 	newUserMessage,
@@ -73,8 +76,9 @@ export type ChatInput =
 	 *  own ref on the answer. An answer carries a sketch OR inline images (answer.images), never both. */
 	| { type: "answer"; toolCallId: string; answer: QuestionAnswerData; sketch?: SketchPayload; occurrence?: PluginSubmissionOccurrence }
 	| { type: "continue" }
+	| { type: "continue-reply"; messageId: string }
 	/** The failed-turn retry (issue #110): the banner's Retry button. */
-	| { type: "retry" }
+	| { type: "retry"; failedHead?: string | null }
 	/** Explicit replacement of the current malformed question batch. */
 	| { type: "retry-question"; messageId: string; contentIndex: number; toolCallId: string }
 	/** The practice dock's two buttons (owner, 2026-10-04): the learner's
@@ -316,8 +320,13 @@ export function parseChatInput(input: unknown): ChatInput {
 		}
 		case "continue":
 			return { type: "continue" };
+		case "continue-reply":
+			if (typeof i.messageId !== "string" || !i.messageId) throw new ChatInputError("Continue requires the cut-off reply's id");
+			return { type: "continue-reply", messageId: i.messageId };
 		case "retry":
-			return { type: "retry" };
+			if (i.failedHead === undefined) return { type: "retry" };
+			if (i.failedHead !== null && (typeof i.failedHead !== "string" || !i.failedHead)) throw new ChatInputError("Retry requires a saved record head");
+			return { type: "retry", failedHead: i.failedHead };
 		case "retry-question":
 			if (typeof i.messageId !== "string" || !i.messageId || typeof i.toolCallId !== "string" || !i.toolCallId ||
 				typeof i.contentIndex !== "number" || !Number.isSafeInteger(i.contentIndex) || i.contentIndex < 0) {
@@ -406,6 +415,12 @@ export function inputAppends(
 		}
 		case "continue":
 			return dismissalConclusion(record);
+		case "continue-reply": {
+			// Without visible text there is nothing to continue: the turn re-runs from its saved input, like Retry, and
+			// an empty cut-off never reaches the model again (emptyCutOffIds).
+			const cutoff = requireCutOffReply(record.messages, input.messageId);
+			return cutoff.hasText ? [newReplyRecoveryMarker()] : [];
+		}
 		case "retry":
 			// The input already landed write-ahead. retryDrops affects only
 			// the temporary agent history — nothing new appends here.
@@ -452,6 +467,8 @@ export function inputAppends(
 			// over an open question or a live practice problem (answer or
 			// dismiss it first).
 			if (!record.course) throw new ChatInputError("finish input is a course-session affordance");
+			// An Ask conversation (2026-11-25) has no end to log: it is never finished, never evidence.
+			if (record.course.mode === "ask") throw new ChatInputError("an Ask conversation has no finish");
 			// In a Learn session the marker is a REQUEST for the final problem (owner, 2026-11-13): it finishes nothing,
 			// so it may be pressed again after a final problem that was not passed.
 			if (sessionFinishOf(record.messages)) throw new ChatInputError("this session is already finished");
@@ -519,12 +536,82 @@ export function failedResponseAtEnd(messages: readonly LhMessage[]): Extract<LhM
 	return undefined;
 }
 
+/** Learner-facing: why a failure or an empty cut-off has no Retry once a compaction landed after it. */
+export const RETRY_AFTER_COMPACTION_TEXT = "This response cannot be retried after compaction. Send a new message to continue.";
+
+const isCompactionMarker = (m: LhMessage) => m.role === "custom" && m.customType === "compaction";
+
+export interface CutOffReply {
+	messageId: string;
+	hasText: boolean;
+	/** An empty cut-off re-runs from its input, which a later compaction changed: like Retry, it is not offered. */
+	blockedByCompaction?: true;
+	/** The recovery turn's temporary history omits these (pi's continue() rejects an assistant tail). */
+	omittedOnRetry: Set<string>;
+}
+
+/** The reply at the end that the output limit cut off, when Continue (visible text) or Retry (none) owns it. A length
+ * stop can be followed by the SDK's errors for its unexecuted tool calls. An unanswered question call in it belongs to
+ * the malformed-question flow alone (one recovery per situation). */
+export function cutOffReplyAtEnd(messages: readonly LhMessage[]): CutOffReply | undefined {
+	const results: Extract<LhMessage, { role: "toolResult" }>[] = [];
+	let compacted = false;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i]!;
+		if (isCompactionMarker(message)) { compacted = true; continue; }
+		if (message.role === "custom" && (message.customType === "plan-block" || isSideQuestionMarker(message))) continue;
+		if (message.role === "toolResult" && message.isError) { results.push(message); continue; }
+		if (message.role !== "assistant" || message.stopReason !== "length") return;
+		if (results.some(result => !message.content.some(block => block.type === "toolCall" && block.id === result.toolCallId && block.name === result.toolName))) return;
+		if (questionCallsOf(messages).length > 0) return; // the newest assistant is this one: its unanswered question calls
+		if (!cutOffWithoutText(message)) return { messageId: message.id, hasText: true, omittedOnRetry: new Set() };
+		// The cut-off, and earlier empty cut-offs and failed attempts in a row (a Retry that was cut off again), leave
+		// the tail. A cut-off with tool calls ends in pi's error results, which stay: the model re-issues those calls.
+		const { ids: omittedOnRetry } = failedTail(messages);
+		return { messageId: message.id, hasText: false, omittedOnRetry, ...(compacted ? { blockedByCompaction: true as const } : {}) };
+	}
+}
+
+export function requireCutOffReply(messages: readonly LhMessage[], messageId: string): CutOffReply {
+	const cutoff = cutOffReplyAtEnd(messages);
+	if (!cutoff || cutoff.messageId !== messageId) throw new ChatInputError("This cut-off reply is no longer the latest reply. Refresh the session.");
+	if (cutoff.blockedByCompaction) throw new ChatInputError(RETRY_AFTER_COMPACTION_TEXT);
+	return cutoff;
+}
+
+/** A retained loop/save failure may have no saved assistant to omit. */
+export function retryTurnDrops(messages: readonly LhMessage[], failedHead: string | null | undefined, retainedFailure?: string): Set<string> {
+	if (failedHead !== undefined && (messages.at(-1)?.id ?? null) !== failedHead) throw new ChatInputError("The session changed before Retry. Refresh the session.");
+	if (failedHead !== undefined && retainedFailure && !failedResponseAtEnd(messages)) {
+		const { ids, before } = failedTail(messages);
+		// A compaction is a boundary Retry may not cross, retained failure or not.
+		if (before && isCompactionMarker(before)) throw new ChatInputError(`${retainedFailure}\n\n${RETRY_AFTER_COMPACTION_TEXT}`);
+		if (before && before.role !== "assistant") return ids;
+	}
+	return retryDrops(messages);
+}
+
+/** True when the failure the banner shows can no longer be retried because a compaction landed after it, so the
+ * banner says why instead of offering nothing. `retainedFailure`: the failure was retained by the server (a loop or
+ * save failure with no saved failed response). */
+export function failureBlockedByCompaction(messages: readonly LhMessage[], retainedFailure: boolean): boolean {
+	let compacted = false;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i]!;
+		if (isCompactionMarker(m)) { compacted = true; continue; }
+		if (m.role === "custom" && (m.customType === "plan-block" || isSideQuestionMarker(m))) continue;
+		if (m.role === "assistant" && m.stopReason === "error") return compacted;
+		return compacted && retainedFailure;
+	}
+	return false;
+}
+
 /** Does the record end in a failure with input that can be retried?
  * Aborts are deliberate stops; compaction after a failure requires new
  * learner input rather than a retry using a changed context. */
 export function endsInFailedTurn(messages: readonly LhMessage[]): boolean {
-	const { ids, before } = failedTail(messages);
-	return ids.size > 0 && before !== undefined && before.role !== "assistant";
+	const { failed, before } = failedTail(messages);
+	return failed && before !== undefined && before.role !== "assistant";
 }
 
 /** The ids omitted ONLY from the retry's temporary agent history.
@@ -536,11 +623,11 @@ export function endsInFailedTurn(messages: readonly LhMessage[]): boolean {
  * Plan blocks may follow the failure and stay; later compaction blocks
  * Retry without changing compaction itself. */
 export function retryDrops(messages: readonly LhMessage[]): Set<string> {
-	const { ids, before } = failedTail(messages);
-	if (ids.size === 0) {
+	const { ids, failed, before } = failedTail(messages);
+	if (!failed) {
 		const failure = failedResponseAtEnd(messages);
 		if (failure) {
-			throw new ChatInputError(`${failure.errorMessage ?? "An error occurred."}\n\nThis response cannot be retried after compaction. Send a new message to continue.`);
+			throw new ChatInputError(`${failure.errorMessage ?? "An error occurred."}\n\n${RETRY_AFTER_COMPACTION_TEXT}`);
 		}
 		throw new ChatInputError("retry input requires a failed turn to retry");
 	}
@@ -550,16 +637,21 @@ export function retryDrops(messages: readonly LhMessage[]): Set<string> {
 
 /** Walk back over failed assistants and UI-only plan blocks. A compaction
  * is a boundary, not a marker Retry may cross. A failure AFTER a compaction
- * can still retry: that compacted context was already its starting state. */
-function failedTail(messages: readonly LhMessage[]): { ids: Set<string>; before: LhMessage | undefined } {
+ * can still retry: that compacted context was already its starting state.
+ * Empty cut-offs are walked over too: when the recovery turn of one fails,
+ * its Retry continues from the same input. */
+function failedTail(messages: readonly LhMessage[]): { ids: Set<string>; failed: boolean; before: LhMessage | undefined } {
 	const ids = new Set<string>();
+	const empty = emptyCutOffIds(messages);
+	let failed = false;
 	let i = messages.length - 1;
 	for (; i >= 0; i--) {
 		const m = messages[i]!;
-		if (m.role === "assistant" && m.stopReason === "error") ids.add(m.id);
+		if (m.role === "assistant" && m.stopReason === "error") { ids.add(m.id); failed = true; }
+		else if (empty.has(m.id)) ids.add(m.id);
 		else if (!(m.role === "custom" && (m.customType === "plan-block" || isSideQuestionMarker(m)))) break;
 	}
-	return { ids, before: messages[i] };
+	return { ids, failed, before: messages[i] };
 }
 
 /** The deferred conclude synthesis (owner ruling, 2026-10-04): a

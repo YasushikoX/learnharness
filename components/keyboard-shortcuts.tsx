@@ -145,6 +145,10 @@ export function KeyboardShortcuts() {
 					e.preventDefault();
 					window.dispatchEvent(new CustomEvent(kbdEventForAction(action)));
 					break;
+				case "read-question-aloud":
+					e.preventDefault();
+					window.dispatchEvent(new CustomEvent(kbdEventForAction(action)));
+					break;
 				case "find":
 					// The mounted surface owns Find (session text / graph nodes).
 					// Claim Mod+F so Chromium's whole-window finder cannot open too.

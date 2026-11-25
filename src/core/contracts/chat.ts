@@ -111,8 +111,25 @@ export const CLARIFY_QUESTION_MAX = 2_000;
 export const CLARIFY_ANCHOR_MAX = 300;
 export const CLARIFY_CALL_ID_MAX = 200;
 
-/** The chat record format this build writes and understands. */
+/** The chat record format this build writes for an ordinary chat. */
 export const CURRENT_CHAT_VERSION = 2;
+
+/** The stamp of a chat carrying an Ask course link (2026-11-25, review 1 finding 1). A build without Ask reads such a
+ *  record's link as a mode it does not know and would resume it as a prober with question and finish tools, so the
+ *  record is stamped one version above what those builds accept, and they refuse it (store/chats.ts getChat, sync
+ *  mergeChat). Ordinary chats keep CURRENT_CHAT_VERSION, so nothing else changes for older builds. */
+export const ASK_CHAT_VERSION = 3;
+
+/** The newest chat record format this build reads (the refusal bound on read and in sync). */
+export const NEWEST_CHAT_VERSION = ASK_CHAT_VERSION;
+
+/** The version a record is stamped with on every write: derived from the record, so it survives later writes and
+ *  sync merges (the course link is stamped at birth and never changes). */
+export function chatVersionFor(record: { course?: unknown }): number {
+	const course = record.course;
+	const ask = typeof course === "object" && course !== null && (course as { mode?: unknown }).mode === "ask";
+	return ask ? ASK_CHAT_VERSION : CURRENT_CHAT_VERSION;
+}
 
 /** Per-session model and thinking choices for native conversation agents.
  * Each absent field falls back independently to the strong model slot; no

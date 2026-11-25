@@ -200,8 +200,11 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 			language: record?.general?.language ?? FACTORY_SETTINGS.general.language,
 			dictationEngine: record?.general?.dictationEngine ?? FACTORY_SETTINGS.general.dictationEngine,
 			dictationOnline: record?.general?.dictationOnline ?? FACTORY_SETTINGS.general.dictationOnline,
-				pace: record?.general?.pace ?? FACTORY_SETTINGS.general.pace,
+			pace: record?.general?.pace ?? FACTORY_SETTINGS.general.pace,
 			difficulty: record?.general?.difficulty ?? FACTORY_SETTINGS.general.difficulty,
+			readAloudAuto: record?.general?.readAloudAuto ?? FACTORY_SETTINGS.general.readAloudAuto,
+			readAloudRate: record?.general?.readAloudRate ?? FACTORY_SETTINGS.general.readAloudRate,
+			readAloudVoice: record?.general?.readAloudVoice ?? FACTORY_SETTINGS.general.readAloudVoice,
 		},
 		dictation: {
 			language: record?.dictation?.language ?? FACTORY_SETTINGS.dictation.language,
@@ -230,6 +233,7 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 			compactSessionList: appearance.compactSessionList ?? factoryAppearance.compactSessionList,
 			transcriptMaxWidth: appearance.transcriptMaxWidth ?? factoryAppearance.transcriptMaxWidth,
 			adaptiveQuestions: appearance.adaptiveQuestions ?? factoryAppearance.adaptiveQuestions,
+			confidenceControl: appearance.confidenceControl ?? factoryAppearance.confidenceControl,
 			mdRendering: {
 				headingWeight: md.headingWeight ?? factoryMd.headingWeight,
 				boldColor: md.boldColor ?? factoryMd.boldColor,

@@ -35,17 +35,54 @@ export const CONFIDENCE_COLORS: readonly string[] = [
  *  rgba(230,230,230,.35) was the dark foreground's value). */
 const RAIL_TICK = "color-mix(in oklab, var(--foreground) 35%, transparent)";
 
-/** The rail's paint for a stop value (0–100). */
-export function confidenceRailStyle(value: number): CSSProperties {
-	const color = CONFIDENCE_COLORS[CONFIDENCE_STOPS.indexOf(value)] ?? CONFIDENCE_COLORS[2]!;
+function parseHex(hex: string): [number, number, number] {
+	const n = Number.parseInt(hex.slice(1), 16);
+	return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function toHex(r: number, g: number, b: number): string {
+	const part = (c: number) => Math.max(0, Math.min(255, Math.round(c))).toString(16).padStart(2, "0");
+	return `#${part(r)}${part(g)}${part(b)}`;
+}
+
+/** Ramp color for any confidence value (0–100): exact at CONFIDENCE_STOPS, linearly interpolated between them. */
+export function confidenceColor(value: number): string {
+	const v = Math.max(0, Math.min(100, value));
+	const exactIdx = CONFIDENCE_STOPS.indexOf(v);
+	if (exactIdx !== -1) return CONFIDENCE_COLORS[exactIdx] ?? CONFIDENCE_COLORS[2]!;
+	for (let i = 0; i < CONFIDENCE_STOPS.length - 1; i++) {
+		const lo = CONFIDENCE_STOPS[i]!;
+		const hi = CONFIDENCE_STOPS[i + 1]!;
+		if (v > lo && v < hi) {
+			const t = (v - lo) / (hi - lo);
+			const [r1, g1, b1] = parseHex(CONFIDENCE_COLORS[i]!);
+			const [r2, g2, b2] = parseHex(CONFIDENCE_COLORS[i + 1]!);
+			return toHex(r1 + (r2 - r1) * t, g1 + (g2 - g1) * t, b1 + (b2 - b1) * t);
+		}
+	}
+	return CONFIDENCE_COLORS[CONFIDENCE_COLORS.length - 1]!;
+}
+
+/** The rail's paint for a confidence value (0–100), or null while unset (empty track with stop ticks).
+ *  `scaleMin` is the value at the rail's left end (the slider's runs 5–100), so fill and ticks sit where the thumb does. */
+export function confidenceRailStyle(value: number | null, scaleMin = 0): CSSProperties {
+	const clamped = value === null ? null : Math.max(0, Math.min(100, value));
+	const at = (v: number) => Math.max(0, Math.min(100, ((v - scaleMin) / (100 - scaleMin)) * 100));
+	const fill = clamped === null
+		? "linear-gradient(90deg, transparent 0%, transparent 100%)"
+		: (() => {
+			const color = confidenceColor(clamped);
+			const end = at(clamped);
+			return `linear-gradient(90deg, ${color} 0%, ${color} ${end}%, transparent ${end}%, transparent 100%)`;
+		})();
 	return {
 		backgroundColor: "var(--background)",
 		backgroundImage: [
-			`linear-gradient(90deg, ${color} 0%, ${color} ${value}%, transparent ${value}%, transparent 100%)`,
+			fill,
 			...[30, 50, 70, 90].map(() => `linear-gradient(90deg, ${RAIL_TICK}, ${RAIL_TICK})`),
 		].join(", "),
 		backgroundSize: ["100% 100%", "1px 100%", "1px 100%", "1px 100%", "1px 100%"].join(", "),
-		backgroundPosition: ["0 0", ...[30, 50, 70, 90].map((p) => `${p}% 0`)].join(", "),
+		backgroundPosition: ["0 0", ...[30, 50, 70, 90].map((p) => `${at(p)}% 0`)].join(", "),
 		backgroundRepeat: "no-repeat",
 	};
 }

@@ -438,7 +438,9 @@ export function mergeGlossary(digests: readonly GlossarySource[]): Glossary {
 		pairReasons.push([a, reason]);
 	};
 	const byRelaxedName = new Map<string, string[]>();
+	const nameOf = new Map<string, string>();
 	for (const [id, entry] of terms) {
+		nameOf.set(id, entry.term);
 		const key = relaxedKey(entry.term);
 		const list = byRelaxedName.get(key);
 		if (list) list.push(id);
@@ -447,7 +449,11 @@ export function mergeGlossary(digests: readonly GlossarySource[]): Glossary {
 	for (const ids of byRelaxedName.values()) for (const other of ids.slice(1)) suggest(ids[0]!, other, "similar_name");
 	for (const [id, entry] of terms) {
 		for (const alias of entry.aliases) for (const other of byRelaxedName.get(relaxedKey(alias)) ?? []) suggest(id, other, "alias");
-		for (const singular of pluralSingulars(entry.term)) for (const other of byRelaxedName.get(singular) ?? []) suggest(id, other, "plural");
+		// the singular must itself be a word in lower case at its end (review 5, finding 5): relaxed keys ignore case, and
+		// "CAS" is not the singular of "cases"
+		for (const singular of pluralSingulars(entry.term)) {
+			for (const other of byRelaxedName.get(singular) ?? []) if (/\p{Ll}$/u.test(normalizeName(nameOf.get(other)!))) suggest(id, other, "plural");
+		}
 	}
 	const grouped = new Map<string, { ids: string[]; reasons: Set<Reason> }>();
 	for (const id of parent.keys()) {

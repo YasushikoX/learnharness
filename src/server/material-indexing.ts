@@ -101,6 +101,12 @@ export interface DigestKey {
 	converterVersion: string;
 }
 
+/** The converter version as a digest stores it (review 5, finding 3): trimmed, and "unknown" when the service gave
+ *  none or only whitespace, so the digest written with it is one the stored-digest reader accepts. */
+export function storedConverterVersion(version: string | undefined): string {
+	return version?.trim() || "unknown";
+}
+
 /** A material's converted text and its digest key; undefined when it has no successful conversion. */
 export function readConvertedContent(ownerId: string, materialId: string, store: MaterialStore): { contentMd: string; key: DigestKey } | undefined {
 	const sidecar = readSidecar(store.auxPath(ownerId, materialId, PDF_CONVERSION_SIDECAR));
@@ -112,7 +118,7 @@ export function readConvertedContent(ownerId: string, materialId: string, store:
 		return undefined;
 	}
 	const sourceHash = createHash("sha256").update(contentMd, "utf8").digest("hex");
-	return { contentMd, key: { sourceHash, converter: sidecar.converterId, converterVersion: sidecar.converterVersion ?? "unknown" } };
+	return { contentMd, key: { sourceHash, converter: sidecar.converterId, converterVersion: storedConverterVersion(sidecar.converterVersion) } };
 }
 
 /** A stored digest.json read through the validated loader: the digest, or why there is none usable. */

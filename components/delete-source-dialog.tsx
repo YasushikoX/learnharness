@@ -13,7 +13,7 @@ export function DeleteSourceBody({ sources, folders, deleteSessions, onDeleteSes
 	courseLoss?: CourseLoss;
 }) {
 	const chats = sources.filter((s) => s.kind === "chat");
-	const warning = deleteSessions && chats.length > 0 ? courseLossWarning(courseLoss, chats.length) : null;
+	const warning = deleteSessions && chats.length > 0 ? courseLossWarning(courseLoss, chats.length, { eitherMode: false }) : null;
 	const checking = deleteSessions && chats.length > 0 && courseLoss?.status === "checking";
 	const names = [...sources.map((s) => s.label ?? s.id), ...folders.map((f) => f.name)];
 	const frame = <div role="dialog" aria-modal="true" aria-label="Delete sources" data-testid="delete-source-dialog"

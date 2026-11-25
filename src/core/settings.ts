@@ -388,6 +388,17 @@ export const ROLE_SLOT: Readonly<Record<ModelRole, ModelSlotName>> = {
 	sideQuestion: "strong", // the conversation chain, like prober/teacher (resolveSideQuestionSpec)
 };
 
+export const READ_ALOUD_RATE_MIN = 0.5;
+export const READ_ALOUD_RATE_MAX = 2;
+export const DEFAULT_READ_ALOUD_RATE = 1;
+
+export const CONFIDENCE_CONTROLS = ["slider", "buttons"] as const;
+export type ConfidenceControl = (typeof CONFIDENCE_CONTROLS)[number];
+export const DEFAULT_CONFIDENCE_CONTROL: ConfidenceControl = "slider";
+export function isConfidenceControl(value: unknown): value is ConfidenceControl {
+	return value === "slider" || value === "buttons";
+}
+
 /** General settings — app-level behavior. Version DISPLAY and plans login
  *  live outside the record (package.json / auth.json) by owner decision. */
 export interface GeneralSettings {
@@ -405,6 +416,12 @@ export interface GeneralSettings {
 	pace?: Pace;
 	/** The default problem difficulty (fork addition, 2026-11-07 - core/difficulty.ts): stamped onto every new session. */
 	difficulty?: Difficulty;
+	/** Read new pending questions aloud automatically using the system speech synthesizer (default false). Per device. */
+	readAloudAuto?: boolean;
+	/** Speech rate for question read-aloud (0.5–2, default 1). Per device. */
+	readAloudRate?: number;
+	/** Preferred system voice (voiceURI or name) for question read-aloud; null = system default matched to lesson language. Per device. */
+	readAloudVoice?: string | null;
 }
 
 /** One app-wide dictation preference, shared by every composer. */
@@ -494,6 +511,8 @@ export interface AppearanceSettings {
 	/** Native questions adapt the bottom region's width/layout while
 	 *  expanded (wide content; question/answers side by side). Default true. */
 	adaptiveQuestions?: boolean;
+	/** How the learner enters confidence on a pending question: 0–100 slider (default) or five buttons. */
+	confidenceControl?: ConfidenceControl;
 	mdRendering?: MdRenderingSettings;
 }
 
@@ -678,6 +697,7 @@ export interface FactorySettings {
 		/** null = Full (no transcript cap). */
 		transcriptMaxWidth: number | null;
 		adaptiveQuestions: boolean;
+		confidenceControl: ConfidenceControl;
 		mdRendering: {
 			headingWeight: number;
 			boldColor: string | null;
@@ -690,7 +710,17 @@ export interface FactorySettings {
 
 export const FACTORY_SETTINGS: FactorySettings = {
 	version: CURRENT_SETTINGS_VERSION,
-	general: { autoUpdate: true, language: DEFAULT_LESSON_LANGUAGE, dictationEngine: DEFAULT_DICTATION_ENGINE, dictationOnline: false, pace: DEFAULT_PACE, difficulty: DEFAULT_DIFFICULTY },
+	general: {
+		autoUpdate: true,
+		language: DEFAULT_LESSON_LANGUAGE,
+		dictationEngine: DEFAULT_DICTATION_ENGINE,
+		dictationOnline: false,
+		pace: DEFAULT_PACE,
+		difficulty: DEFAULT_DIFFICULTY,
+		readAloudAuto: false,
+		readAloudRate: DEFAULT_READ_ALOUD_RATE,
+		readAloudVoice: null,
+	},
 	agent: { workerRequestConcurrency: 8 },
 	dictation: { language: "en" },
 	appearance: {
@@ -704,6 +734,7 @@ export const FACTORY_SETTINGS: FactorySettings = {
 		compactSessionList: false,
 		transcriptMaxWidth: null, // Full
 		adaptiveQuestions: true,
+		confidenceControl: DEFAULT_CONFIDENCE_CONTROL,
 		mdRendering: { headingWeight: 900, boldColor: null, italicColor: null },
 	},
 	graph: { enabled: true, rendering: true, extractionChunkTokens: 4096 },
@@ -748,6 +779,14 @@ function sanitizeGeneral(raw: Record<string, unknown>): GeneralSettings {
 	if (dictationOnline !== undefined) out.dictationOnline = dictationOnline;
 	if (isPace(raw.pace)) out.pace = raw.pace;
 	if (isDifficulty(raw.difficulty)) out.difficulty = raw.difficulty;
+	const readAloudAuto = boolOrDrop(raw.readAloudAuto);
+	if (readAloudAuto !== undefined) out.readAloudAuto = readAloudAuto;
+	if (typeof raw.readAloudRate === "number" && Number.isFinite(raw.readAloudRate)) {
+		out.readAloudRate = Math.round(clamp(raw.readAloudRate, READ_ALOUD_RATE_MIN, READ_ALOUD_RATE_MAX) * 100) / 100;
+	}
+	if (raw.readAloudVoice !== undefined) {
+		out.readAloudVoice = typeof raw.readAloudVoice === "string" && raw.readAloudVoice.trim() ? raw.readAloudVoice.trim() : null;
+	}
 	return out;
 }
 
@@ -1006,6 +1045,7 @@ function sanitizeAppearance(raw: Record<string, unknown>): AppearanceSettings {
 	if (isTranscriptMaxWidth(raw.transcriptMaxWidth)) out.transcriptMaxWidth = raw.transcriptMaxWidth;
 	const adaptiveQuestions = boolOrDrop(raw.adaptiveQuestions);
 	if (adaptiveQuestions !== undefined) out.adaptiveQuestions = adaptiveQuestions;
+	if (isConfidenceControl(raw.confidenceControl)) out.confidenceControl = raw.confidenceControl;
 	if (raw.mdRendering !== undefined) out.mdRendering = sanitizeMdRendering(raw.mdRendering);
 	return out;
 }
