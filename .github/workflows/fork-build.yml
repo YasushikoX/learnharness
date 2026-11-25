@@ -7,7 +7,7 @@ name: Build installers (fork)
 # Both jobs need a self-hosted runner carrying the label `lh-build`:
 #   - Windows x64: the NSIS installer, built by scripts/dist-win.mjs (the same pipeline as the
 #     upstream release job; never cross-built, the server payload carries native binaries).
-#   - macOS arm64: the DMG and ZIP, unsigned and not notarized (first launch: right-click → Open,
+#   - macOS arm64: the DMG and ZIP, ad-hoc signed and not notarized (first launch: right-click → Open,
 #     or `xattr -dr com.apple.quarantine /Applications/LearnHarness.app`).
 #
 # SELF-HOSTED RUNNERS ON A PUBLIC REPOSITORY run whatever a workflow tells them to, on the owner's
@@ -87,9 +87,7 @@ jobs:
       - run: node scripts/smoke-provider-runtime.mjs
       - run: node scripts/build-server.mjs
       - run: node scripts/smoke-server.mjs --electron
-      - name: Package, unsigned (no publish, no notarization)
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Package, ad-hoc signed (no publish, no notarization)
         run: |
           # The app icon is an Icon Composer document (build/icon.icon), which only Xcode 26's actool
           # compiles. A machine with the command line tools alone uses the classic icon instead.
@@ -98,7 +96,11 @@ jobs:
             echo "::notice::No actool here (Xcode is not installed): packaging with build/icon.icns"
             icon=(-c.mac.icon=build/icon.icns)
           fi
-          npx electron-builder --mac --arm64 --publish never -c.mac.notarize=false "${icon[@]}"
+          # identity "-" is an ad-hoc signature over the whole bundle with its entitlements (the microphone one
+          # among them): no certificate, but a sealed app with its own identifier instead of the linker's stub
+          npx electron-builder --mac --arm64 --publish never -c.mac.notarize=false -c.mac.identity=- "${icon[@]}"
+          codesign --verify --deep --strict dist/mac-arm64/LearnHarness.app
+          codesign -dv dist/mac-arm64/LearnHarness.app 2>&1 | grep -E "Identifier=|Signature="
       - name: Initialize packaged providers offline (host and packaged Electron Node)
         run: |
           app="dist/mac-arm64/LearnHarness.app/Contents"
