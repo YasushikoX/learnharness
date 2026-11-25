@@ -1,29 +1,47 @@
-import { compactionInFlight, deleteChatSession, getChat, isTurnRunning, sessionCoverage, sessionCost, stores, turnFailure, type ChatDeleteMode, pluginQuestionAvailabilityOf, reconcilePluginQuestionCompatibility, type QuestionTypeResolver, getPluginQuestionTypeResolver, getPluginHost, pluginProblemAvailabilityOf, type ProblemTypeResolver } from "@/src/server";
+import { compactionInFlight, deleteChatSession, getChat, isTurnRunning, sessionCoverage, sessionCost, startServerTiming, stores, turnFailure, type ChatDeleteMode, pluginQuestionAvailabilityOf, reconcilePluginQuestionCompatibility, type QuestionTypeResolver, getPluginQuestionTypeResolver, getPluginHost, pluginProblemAvailabilityOf, type ProblemTypeResolver } from "@/src/server";
 import { pendingPluginQuestionOf, activeProblemOf } from "@/src/core";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+	const timing = startServerTiming();
 	const { id } = await params;
-	if (new URL(req.url).searchParams.get("view") === "stats") {
+	const view = new URL(req.url).searchParams.get("view");
+	if (view === "stats") {
 		// Stats refreshes don't adopt history or need plugin availability.
-		const chat = getChat(id);
-		return chat ? Response.json({ turns: chat.turns, pricing: sessionCost(chat) })
-			: Response.json({ error: "Not found" }, { status: 404 });
+		const chat = timing.measure("chat", () => getChat(id));
+		if (!chat) return timing.json({ error: "Not found" }, { status: 404 });
+		const pricing = timing.measure("pricing", () => sessionCost(chat));
+		return timing.json({ turns: chat.turns, pricing });
 	}
-	await reconcilePluginQuestionCompatibility(stores.chatStore, id);
-	let chat = getChat(id);
-	if (!chat) return Response.json({ error: "Not found" }, { status: 404 });
+	if (view === "settings") {
+		// Controls only need the session's settings, kind, and course link — never the transcript.
+		const chat = timing.measure("chat", () => getChat(id));
+		if (!chat) return timing.json({ error: "Not found" }, { status: 404 });
+		return timing.json({ settings: chat.settings, kind: chat.kind, course: chat.course });
+	}
+	if (view === "coverage") {
+		const coverage = timing.measure("coverage", () => sessionCoverage(id));
+		if (!coverage) return timing.json({ error: "Not found" }, { status: 404 });
+		return timing.json({ coverage });
+	}
+	await timing.measureAsync("reconcile", () => reconcilePluginQuestionCompatibility(stores.chatStore, id));
+	let chat = timing.measure("chat", () => getChat(id));
+	if (!chat) return timing.json({ error: "Not found" }, { status: 404 });
 	let questionResolver: QuestionTypeResolver | undefined;
 	if (pendingPluginQuestionOf(chat.messages)) {
-		try { questionResolver = await getPluginQuestionTypeResolver(); } catch { /* unavailable fallback */ }
+		await timing.measureAsync("plugin_q", async () => {
+			try { questionResolver = await getPluginQuestionTypeResolver(); } catch { /* unavailable fallback */ }
+		});
 		// No awaited plugin startup may separate this read from the response projection.
-		chat = getChat(id);
-		if (!chat) return Response.json({ error: "Not found" }, { status: 404 });
+		chat = timing.measure("chat_refetch", () => getChat(id));
+		if (!chat) return timing.json({ error: "Not found" }, { status: 404 });
 	}
 	let problemResolver: ProblemTypeResolver | undefined;
 	if (activeProblemOf(chat.messages)?.pluginProblem) {
-		try { problemResolver = (await getPluginHost()).resolveProblemType; } catch { /* unavailable fallback */ }
-		chat = getChat(id);
-		if (!chat) return Response.json({ error: "Not found" }, { status: 404 });
+		await timing.measureAsync("plugin_p", async () => {
+			try { problemResolver = (await getPluginHost()).resolveProblemType; } catch { /* unavailable fallback */ }
+		});
+		chat = timing.measure("chat_refetch", () => getChat(id));
+		if (!chat) return timing.json({ error: "Not found" }, { status: 404 });
 	}
 	// turnInFlight lets a returning client re-attach to a running turn
 	// (chat-handler write-ahead + registry — see src/server/turn-liveness.ts).
@@ -37,17 +55,19 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 	// re-attach to a running turn; coverage is the chat view's ring meter.
 	// Snapshot bytes have a session-scoped endpoint; do not resend the whole image pool on every poll.
 	const { imageSnapshots: _imageSnapshots, ...record } = chat;
-	return Response.json({
+	const pricing = timing.measure("pricing", () => sessionCost(chat));
+	const coverage = timing.measure("coverage", () => sessionCoverage(id));
+	return timing.json({
 		...record,
 		messages: chat.messages,
 		pluginQuestionAvailability: pluginQuestionAvailabilityOf(chat, questionResolver),
 		pluginProblemAvailability: pluginProblemAvailabilityOf(chat, problemResolver),
-		pricing: sessionCost(chat),
+		pricing,
 		turnInFlight: isTurnRunning(id),
 		// Also reaches idle views that missed the failing turn's stream.
 		turnError: turnFailure(id),
 		compacting: compactionInFlight(id),
-		coverage: sessionCoverage(id),
+		coverage,
 	});
 }
 

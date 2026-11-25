@@ -15,6 +15,7 @@ import { usePopoverDismiss } from "./popover-dismiss.ts";
 import { Hint } from "@/components/ui/hint";
 import { CONTROL_CLASS, type ControlVariant } from "@/components/control-variant";
 import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
+import { chatSettingsGeneration, fetchChatSettings, updateChatSettings, useChatSettingsSeed } from "@/components/chat-settings-client";
 
 /**
  * The lesson-language pill (fork addition, 2026-10-24) — the stats bar's
@@ -36,7 +37,8 @@ import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-sig
  * control and the dictation hook re-read.
  */
 export function LanguageControl({ chatId, courseId, variant = "pill" }: { chatId?: string; courseId?: string; variant?: ControlVariant }) {
-	const [session, setSession] = useState<ChatSettings | undefined>(undefined);
+	const seed = useChatSettingsSeed(chatId);
+	const [session, setSession] = useState<ChatSettings | undefined>(() => (chatId && seed ? (seed.settings ?? {}) : undefined));
 	const [courseLanguage, setCourseLanguage] = useState<LessonLanguage | undefined>(undefined);
 	const [general, setGeneral] = useState<GeneralSettings | undefined>(undefined);
 	const [open, setOpen] = useState(false);
@@ -45,10 +47,14 @@ export function LanguageControl({ chatId, courseId, variant = "pill" }: { chatId
 
 	const read = useCallback(() => {
 		if (chatId) {
-			fetch(`/api/chats/${chatId}`)
-				.then((r) => r.json() as Promise<{ settings?: ChatSettings }>)
-				.then((b) => setSession(b.settings ?? {}))
+			const gen = chatSettingsGeneration(chatId);
+			fetchChatSettings(chatId)
+				.then((b) => {
+					if (chatSettingsGeneration(chatId) !== gen) return;
+					setSession(b.settings ?? {});
+				})
 				.catch(() => {});
+			return;
 		}
 		if (courseId) {
 			fetch(`/api/courses/${courseId}`)
@@ -61,9 +67,11 @@ export function LanguageControl({ chatId, courseId, variant = "pill" }: { chatId
 			.then((b) => setGeneral(b.settings?.general ?? {}))
 			.catch(() => {});
 	}, [chatId, courseId]);
-	useEffect(read, [read]);
+	useEffect(() => {
+		read();
+	}, [read]);
 	useSettingsSaved((section) => {
-		if (section === "general" || section === "lesson" || section === "models") read();
+		if (chatId ? section === "lesson" || section === "models" : section === "general" || section === "lesson" || section === "models") read();
 	});
 
 	const current: LessonLanguage = chatId
@@ -75,18 +83,23 @@ export function LanguageControl({ chatId, courseId, variant = "pill" }: { chatId
 
 	const pick = async (language: LessonLanguage) => {
 		setError(null);
+		if (chatId && !courseId) {
+			const res = await updateChatSettings(chatId, (current) => ({ ...current, language }));
+			if (!res.ok) {
+				setError(res.networkError ? "Could not reach the server — try again." : (res.error ?? `language rejected (${res.status})`));
+				return;
+			}
+			setSession(res.settings);
+			setOpen(false);
+			// updateChatSettings broadcasts "lesson" once its save queue drains.
+			return;
+		}
 		try {
 			const res = courseId
 				? await fetch(`/api/courses/${courseId}`, {
 						method: "PATCH",
 						headers: { "Content-Type": "application/json" },
 						body: JSON.stringify({ language }),
-					})
-				: chatId
-				? await fetch(`/api/chats/${chatId}/settings`, {
-						method: "PUT",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({ ...session, language }),
 					})
 				: await fetch("/api/settings/general", {
 						method: "PUT",
@@ -99,10 +112,9 @@ export function LanguageControl({ chatId, courseId, variant = "pill" }: { chatId
 				return;
 			}
 			if (courseId) setCourseLanguage(language);
-			else if (chatId) setSession({ ...session, language });
 			else setGeneral({ ...general, language });
 			setOpen(false);
-			if (!courseId) notifySettingsSaved(chatId ? "lesson" : "general");
+			if (!courseId) notifySettingsSaved("general");
 		} catch {
 			setError("Could not reach the server — try again.");
 		}
