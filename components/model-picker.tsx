@@ -183,8 +183,8 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// The session write seam (chat mode): PUT the per-chat settings route
 	// — validated + level-clamped server-side; the response is the stored
 	// truth (a pick riding an unsupported level lands CLAMPED — the pill
-	// shows the stored value). No notifySettingsSaved: the write touches
-	// one session's record, not the slots — no other surface reads it.
+	// shows the stored value). updateChatSettings broadcasts "lesson" once
+	// its save queue drains, so the lesson's other controls re-read too.
 	const saveChat = useCallback(
 		async (patch: (current: ChatSettings) => ChatSettings) => {
 			if (!chatId) return;

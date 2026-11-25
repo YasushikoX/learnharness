@@ -11,6 +11,7 @@ import { ActivityProvider } from "../components/activity-dock.tsx";
 import { InteractionLayersProvider } from "../components/interaction-layers.tsx";
 import { PluginsProvider } from "../components/plugins.tsx";
 import { ServerEventsProvider } from "../components/server-events.tsx";
+import * as chatSettingsClient from "../components/chat-settings-client.tsx";
 import { fetchChatSettings, updateChatSettings } from "../components/chat-settings-client.tsx";
 import { notifySettingsSaved } from "../components/settings-signal.ts";
 import { AppearanceProvider } from "../components/settings/appearance.tsx";
@@ -652,5 +653,224 @@ describe("chat mount fetches", () => {
 		const [r4, r5] = await Promise.all([read4, read5]);
 		assert.equal(r4.settings?.language, "en");
 		assert.equal(r5.settings?.language, "nb");
+	});
+});
+
+/**
+ * A fake chat-settings server whose `?view=settings` reads can be held and released in
+ * order. Each held read answers with the server state at the moment it was *issued*
+ * (as a real server would), so overlapping read-then-write saves reproduce lost updates.
+ * Pre-write reads are the ones sent with `cache: "no-store"`; mount/confirm/trailing
+ * reads are sent without it.
+ */
+function installSettingsServer(chatId: string, initial: Record<string, unknown>) {
+	let server: Record<string, unknown> = { ...initial };
+	const held: Array<{ kind: "prewrite" | "confirm"; resolve: () => void }> = [];
+	const log: string[] = [];
+	const puts: Array<Record<string, unknown>> = [];
+	const ctl = {
+		holdPrewrite: false,
+		holdConfirm: false,
+		failNextPrewrite: 0 as number,
+		get server() { return server; },
+		set server(v: Record<string, unknown>) { server = v; },
+		log,
+		puts,
+		heldCount: (kind?: "prewrite" | "confirm") => held.filter((h) => !kind || h.kind === kind).length,
+		/** Release held reads one at a time (oldest first), flushing React between each. */
+		async releaseAll() {
+			for (let guard = 0; held.length > 0 && guard < 100; guard++) {
+				held.shift()!.resolve();
+				await act(async () => {
+					await new Promise((r) => setTimeout(r, 10));
+				});
+			}
+		},
+	};
+	globalThis.fetch = ((input, init) => {
+		const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+		const method = (init?.method ?? "GET").toUpperCase();
+		if (url === `/api/chats/${chatId}?view=settings` && method === "GET") {
+			const kind = init?.cache === "no-store" ? "prewrite" : "confirm";
+			log.push(`GET ${kind}`);
+			if (kind === "prewrite" && ctl.failNextPrewrite > 0) {
+				ctl.failNextPrewrite--;
+				return Promise.resolve(Response.json({ error: "boom" }, { status: 500 }));
+			}
+			const snapshot = { settings: { ...server }, kind: "teach" };
+			if ((kind === "prewrite" && ctl.holdPrewrite) || (kind === "confirm" && ctl.holdConfirm)) {
+				return new Promise<Response>((resolve) => held.push({ kind, resolve: () => resolve(Response.json(snapshot)) }));
+			}
+			return Promise.resolve(Response.json(snapshot));
+		}
+		if (url === `/api/chats/${chatId}/settings` && method === "PUT") {
+			const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+			log.push("PUT");
+			puts.push(body);
+			server = { ...body };
+			return Promise.resolve(Response.json({ settings: { ...server } }));
+		}
+		if (url === "/api/models") return Promise.resolve(Response.json(catalog));
+		if (url === "/api/settings") {
+			return Promise.resolve(Response.json({
+				settings: {
+					graph: { enabled: true, extractionChunkTokens: 4096 },
+					general: { language: "en", pace: "thorough", difficulty: "short" },
+					models: { strong: { model: { provider: "anthropic", id: "claude-sonnet-4-5" }, thinkingLevel: "medium" } },
+				},
+			}));
+		}
+		if (url === `/api/chats/${chatId}?view=stats`) return Promise.resolve(Response.json({ turns: [], pricing: { cost: 0, unpriced: 0, turnCosts: {} } }));
+		if (url === `/api/chats/${chatId}?view=coverage`) {
+			return Promise.resolve(Response.json({
+				coverage: { totalMessages: 4, coveredCount: 2, uncoveredCount: 2, coveredTokens: 500, uncoveredTokens: 1024, running: false, lastFoldedAt: null },
+			}));
+		}
+		if (url.startsWith("/api/jobs")) return Promise.resolve(Response.json({ jobs: [] }));
+		if (url === "/api/activity") return Promise.resolve(Response.json({ extractions: [], audits: [], imports: [], turns: [], courses: [] }));
+		if (url === "/api/plugins") return Promise.resolve(Response.json({ plugins: [] }));
+		if (url === "/api/chats") return Promise.resolve(Response.json({ chats: [] }));
+		if (url === "/api/courses" || url === "/api/today") return Promise.resolve(Response.json({ courses: [] }));
+		if (url === "/api/claude-code/usage") return Promise.resolve(Response.json({ available: false }));
+		if (url === "/api/stt/local") return Promise.resolve(Response.json({ statuses: [] }));
+		if (url.endsWith("/materials")) return Promise.resolve(Response.json({ materials: [] }));
+		return Promise.resolve(Response.json({ threads: [], sideChats: [] }));
+	}) as typeof fetch;
+	return ctl;
+}
+
+const BASE_SETTINGS = { model: { provider: "anthropic", id: "claude-sonnet-4-5" }, thinkingLevel: "medium" };
+
+function seededChat(chatId: string, seedSettings: Record<string, unknown>) {
+	return (
+		<Chat
+			chatId={chatId}
+			title="Queue"
+			kind="teach"
+			initialMessages={[]}
+			initialSession={{ kind: "teach", settings: seedSettings }}
+			initialModels={{ strong: { model: { provider: "anthropic", id: "claude-sonnet-4-5" }, thinkingLevel: "medium" } }}
+			initialGraph={{ enabled: true, chunkTokens: 4096 }}
+			initialCoverage={{ totalMessages: 4, coveredCount: 2, uncoveredCount: 2, coveredTokens: 500, uncoveredTokens: 1024, running: false, lastFoldedAt: null }}
+			initialConfigured={true}
+		/>
+	);
+}
+
+async function clickTestId(testId: string) {
+	const el = document.querySelector(`[data-testid="${testId}"]`) as HTMLElement | null;
+	assert.ok(el, `expected element [data-testid="${testId}"]`);
+	await act(async () => {
+		el.click();
+		await new Promise((r) => setTimeout(r, 10));
+	});
+}
+
+const ariaOf = (testId: string) => document.querySelector(`[data-testid="${testId}"]`)?.getAttribute("aria-label") ?? "";
+const textOf = (testId: string) => document.querySelector(`[data-testid="${testId}"]`)?.textContent ?? "";
+const pendingQueues = () =>
+	(chatSettingsClient as unknown as { pendingChatSettingsSaveQueues?: () => number }).pendingChatSettingsSaveQueues?.();
+
+describe("chat settings save queue and trailing re-read", () => {
+	it("re-check defect 1: two controls saving inside one pre-write read both land (Crash, then Norsk while the first read is held)", async () => {
+		const chatId = "chat_queue_two_controls";
+		const srv = installSettingsServer(chatId, { ...BASE_SETTINGS, pace: "efficient", language: "en" });
+		await mountChat(chatId, seededChat(chatId, { ...BASE_SETTINGS, pace: "efficient", language: "en" }));
+		assert.match(ariaOf("stats-pace"), /Efficient/);
+
+		srv.holdPrewrite = true;
+		await clickTestId("stats-pace");
+		await clickTestId("pace-option-crash");
+		await clickTestId("stats-language");
+		await clickTestId("language-option-nb");
+		// Fixed: only the first save's read is in flight; the language save waits its turn.
+		const overlapping = srv.heldCount("prewrite");
+		const logAtOverlap = JSON.stringify(srv.log);
+		srv.holdPrewrite = false;
+		await srv.releaseAll();
+
+		assert.equal(srv.puts.length, 2);
+		assert.equal(srv.server.pace, "crash", `pace lost: ${JSON.stringify(srv.puts)}`);
+		assert.equal(srv.server.language, "nb", `language lost: ${JSON.stringify(srv.puts)}`);
+		assert.match(ariaOf("stats-pace"), /Crash/);
+		assert.match(ariaOf("stats-language"), /Norsk/);
+		assert.equal(overlapping, 1, `second save must not read before the first save's write: ${logAtOverlap}`);
+		assert.equal(pendingQueues(), 0, "the per-chat queue must be dropped once it drains");
+	});
+
+	it("re-check defect 1: a burst of effort saves (held shortcut) ends on the last level, every write consistent, and a failed save does not block the rest", async () => {
+		const chatId = "chat_queue_burst";
+		const srv = installSettingsServer(chatId, { ...BASE_SETTINGS, pace: "efficient", language: "en" });
+		srv.holdPrewrite = true;
+		srv.failNextPrewrite = 1;
+		const levels = ["high", "low", "off", "medium", "high"] as const;
+		const runs = [
+			updateChatSettings(chatId, (cur) => ({ ...cur, pace: "crash" })), // fails: pre-write read 500
+			...levels.slice(0, 2).map((level) => updateChatSettings(chatId, (cur) => ({ ...cur, thinkingLevel: level }))),
+			updateChatSettings(chatId, (cur) => ({ ...cur, language: "nb" })),
+			...levels.slice(2).map((level) => updateChatSettings(chatId, (cur) => ({ ...cur, thinkingLevel: level }))),
+		];
+		// Strictly one at a time: nothing beyond the first (failed) read can be in flight yet.
+		await new Promise((r) => setTimeout(r, 10));
+		assert.ok(srv.heldCount("prewrite") <= 1, `saves must not overlap: ${JSON.stringify(srv.log)}`);
+		srv.holdPrewrite = false;
+		await srv.releaseAll();
+		const results = await Promise.all(runs);
+
+		const failed = results[0]!;
+		assert.equal(failed.ok, false);
+		assert.ok(!failed.ok && failed.networkError !== true, "a server error on the pre-write read is not a network failure");
+		assert.ok(!failed.ok && failed.status === 500 && /server error 500/.test(failed.error ?? ""), `got ${JSON.stringify(failed)}`);
+		assert.ok(results.slice(1).every((r) => r.ok), "saves queued behind a failed save must still run");
+
+		// Read-then-write strictly alternates.
+		const seq = srv.log.join(",");
+		assert.equal(seq, ["GET prewrite", ...Array(6).fill("GET prewrite,PUT")].join(","));
+		// Every intermediate write carries all earlier fields; the last one wins.
+		assert.equal(srv.puts.length, 6);
+		srv.puts.forEach((put, i) => {
+			assert.equal(put.pace, "efficient", `write ${i} changed pace`);
+			assert.equal(put.language, i >= 2 ? "nb" : "en", `write ${i} lost or invented language: ${JSON.stringify(put)}`);
+		});
+		assert.equal(srv.server.thinkingLevel, "high");
+		assert.equal(srv.server.language, "nb");
+		assert.equal(pendingQueues(), 0);
+	});
+
+	it("re-check defect 2: a model save during the Back confirm read leaves no stale pace pill, with one trailing read per burst", async () => {
+		const chatId = "chat_trailing_reread";
+		// Back reused a stale seed (efficient); the server already holds crash.
+		const srv = installSettingsServer(chatId, { ...BASE_SETTINGS, pace: "crash" });
+		srv.holdConfirm = true;
+		await mountChat(chatId, seededChat(chatId, { ...BASE_SETTINGS, pace: "efficient" }));
+		assert.match(ariaOf("stats-pace"), /Efficient/, "seed paints first");
+		assert.equal(srv.heldCount("confirm"), 1, "one coalesced confirm read is in flight");
+
+		// Model effort save lands while the confirm read is still in flight.
+		await clickTestId("stats-model");
+		await clickTestId("thinking-option-high");
+		assert.equal(srv.server.thinkingLevel, "high");
+		assert.equal(srv.server.pace, "crash");
+		// Release the (now outdated) confirm read and anything that follows it.
+		await srv.releaseAll();
+		assert.match(ariaOf("stats-pace"), /Crash/, `pace pill must end on the server value: ${JSON.stringify(srv.log)}`);
+		assert.match(textOf("stats-model"), /high/);
+
+		// A burst of three model saves: exactly one trailing confirm read after the last write.
+		srv.holdPrewrite = true;
+		const before = srv.log.length;
+		await clickTestId("stats-model");
+		await clickTestId("thinking-option-low");
+		await clickTestId("thinking-option-off");
+		await clickTestId("thinking-option-high");
+		srv.holdPrewrite = false;
+		await srv.releaseAll();
+		const burst = srv.log.slice(before);
+		assert.equal(burst.filter((e) => e === "PUT").length, 3, JSON.stringify(burst));
+		const lastPut = burst.lastIndexOf("PUT");
+		assert.equal(burst.filter((e) => e === "GET confirm").length, 1, `one trailing read per burst, got ${JSON.stringify(burst)}`);
+		assert.ok(burst.indexOf("GET confirm") > lastPut, `the trailing read must follow the last write: ${JSON.stringify(burst)}`);
+		assert.equal(srv.server.thinkingLevel, "high");
+		assert.match(ariaOf("stats-pace"), /Crash/);
 	});
 });

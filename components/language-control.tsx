@@ -91,7 +91,7 @@ export function LanguageControl({ chatId, courseId, variant = "pill" }: { chatId
 			}
 			setSession(res.settings);
 			setOpen(false);
-			notifySettingsSaved("lesson");
+			// updateChatSettings broadcasts "lesson" once its save queue drains.
 			return;
 		}
 		try {

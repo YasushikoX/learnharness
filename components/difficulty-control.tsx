@@ -6,7 +6,7 @@ import { MenuShell } from "@/components/menu-shell";
 import { usePopoverDismiss } from "./popover-dismiss.ts";
 import { Hint } from "@/components/ui/hint";
 import { CONTROL_CLASS, type ControlVariant } from "@/components/control-variant";
-import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
+import { useSettingsSaved } from "@/components/settings-signal";
 import { chatSettingsGeneration, fetchChatSettings, updateChatSettings, useChatSettingsSeed } from "@/components/chat-settings-client";
 
 /**
@@ -61,7 +61,7 @@ export function DifficultyControl({ chatId, variant = "edge" }: { chatId: string
 			return false;
 		}
 		setView((prev) => ({ ...prev, settings: res.settings }));
-		notifySettingsSaved("lesson");
+		// updateChatSettings broadcasts "lesson" once its save queue drains.
 		return true;
 	};
 

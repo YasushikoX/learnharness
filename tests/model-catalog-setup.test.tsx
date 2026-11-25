@@ -222,12 +222,13 @@ test("blocked session recovery opens its ordinary picker, never changes Strong o
 	body.models = [available]; body.providers = [{ id: "other", envVar: "OTHER_KEY", keyPresent: true }];
 	body.slots.strong = { model: { provider: "other", id: b.id }, thinkingLevel: "medium" };
 	const globals: ModelsSettings = { strong: body.slots.strong };
-	const session = { model: { provider: a.provider, id: a.id }, thinkingLevel: "xhigh" };
+	let session: unknown = { model: { provider: a.provider, id: a.id }, thinkingLevel: "xhigh" };
 	const requestsOnly = globalThis.fetch; const sessionWrites: unknown[] = [];
 	globalThis.fetch = async (input, init) => {
 		if (input === "/api/settings") return Response.json({ settings: { models: globals } });
 		if (input === "/api/chats/fixture?view=settings") return Response.json({ settings: session });
-		if (input === "/api/chats/fixture/settings") { const next = JSON.parse(String(init?.body)); sessionWrites.push(next); return Response.json({ settings: next }); }
+		// The stored record follows the write (a session save now broadcasts "lesson", so the picker re-reads it).
+		if (input === "/api/chats/fixture/settings") { const next = JSON.parse(String(init?.body)); sessionWrites.push(next); session = next; return Response.json({ settings: next }); }
 		return requestsOnly(input, init);
 	};
 	await warm(body); let selected: string | undefined;
