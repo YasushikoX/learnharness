@@ -2,14 +2,19 @@
 
 import { useEffect, useState, type ReactElement, type ReactNode } from "react";
 import { HostDialog } from "./host-dialog";
+import { courseLossWarning, useCourseLoss, type CourseLoss } from "@/components/delete-session-dialog";
 import type { SourceEntry, SourceFolder } from "@/src/core";
 
-export function DeleteSourceBody({ sources, folders, deleteSessions, onDeleteSessions, busy, failure, onClose, onRun, renderFrame }: {
+export function DeleteSourceBody({ sources, folders, deleteSessions, onDeleteSessions, busy, failure, onClose, onRun, renderFrame, courseLoss }: {
 	sources: SourceEntry[]; folders: SourceFolder[]; deleteSessions: boolean; onDeleteSessions: (checked: boolean) => void;
 	busy: boolean; failure: string; onClose: () => void; onRun: () => void;
 	renderFrame?: (frame: ReactElement<{ children: ReactNode }>) => ReactNode;
+	/** What deleting the selected sessions takes from the courses (merge review finding 1); shown once the box is checked. */
+	courseLoss?: CourseLoss;
 }) {
 	const chats = sources.filter((s) => s.kind === "chat");
+	const warning = deleteSessions && chats.length > 0 ? courseLossWarning(courseLoss, chats.length) : null;
+	const checking = deleteSessions && chats.length > 0 && courseLoss?.status === "checking";
 	const names = [...sources.map((s) => s.label ?? s.id), ...folders.map((f) => f.name)];
 	const frame = <div role="dialog" aria-modal="true" aria-label="Delete sources" data-testid="delete-source-dialog"
 		onClick={(e) => e.stopPropagation()} className="w-[32rem] max-w-[calc(100vw-2rem)] rounded-xl border bg-card p-5 shadow-xl">
@@ -26,10 +31,11 @@ export function DeleteSourceBody({ sources, folders, deleteSessions, onDeleteSes
 				<span className="mt-1 block text-xs text-muted-foreground">Unchecked, conversations stay in their current folders and can be extracted again. Either way, their graph contributions and extraction coverage are cleared. Checking this also permanently deletes their messages and background jobs.</span>
 			</span>
 		</label>}
+		{warning && <p data-testid="delete-course-loss" role={checking ? "status" : "alert"} className={checking ? "mt-2 text-xs text-muted-foreground" : "mt-2 text-sm text-destructive"}>{warning}</p>}
 		{failure && <p role="alert" data-testid="source-delete-failure" className="mt-3 text-xs text-foreground">{failure}</p>}
 		<div className="mt-4 flex justify-end gap-2">
 			<button type="button" data-testid="source-delete-cancel" disabled={busy} onClick={onClose} className="lh-touch rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40">Cancel</button>
-			<button type="button" data-testid="source-delete-confirm" disabled={busy} onClick={onRun} className="lh-touch rounded-sm border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-40">{busy ? "Deleting…" : failure ? "Try again" : "Delete"}</button>
+			<button type="button" data-testid="source-delete-confirm" disabled={busy || checking} onClick={onRun} className="lh-touch rounded-sm border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-40">{busy ? "Deleting…" : failure ? "Try again" : "Delete"}</button>
 		</div>
 	</div>;
 	return renderFrame ? renderFrame(frame) : frame;
@@ -39,17 +45,19 @@ export function DeleteSourceDialog({ open, sources, folders, onDelete, onClose }
 	open: boolean; sources: SourceEntry[]; folders: SourceFolder[]; onDelete: (deleteSessions: boolean) => Promise<void>; onClose: () => void;
 }) {
 	const [deleteSessions, setDeleteSessions] = useState(false), [busy, setBusy] = useState(false), [failure, setFailure] = useState("");
+	const chatIds = sources.filter((s) => s.kind === "chat").map((s) => s.id);
+	const courseLoss = useCourseLoss(open && chatIds.length > 0 ? chatIds : null);
 	useEffect(() => { if (!open) { setDeleteSessions(false); setBusy(false); setFailure(""); } }, [open]);
 
 	if (!open) return null;
 	const run = async () => {
-		if (busy) return;
+		if (busy || (deleteSessions && courseLoss?.status === "checking")) return;
 		setBusy(true); setFailure("");
 		try { await onDelete(deleteSessions); onClose(); }
 		catch (error) { setFailure(error instanceof Error ? error.message : String(error)); }
 		finally { setBusy(false); }
 	};
-	return <DeleteSourceBody sources={sources} folders={folders} deleteSessions={deleteSessions} onDeleteSessions={setDeleteSessions}
+	return <DeleteSourceBody sources={sources} folders={folders} deleteSessions={deleteSessions} onDeleteSessions={setDeleteSessions} courseLoss={courseLoss}
 		busy={busy} failure={failure} onClose={onClose} onRun={() => { void run(); }}
 		renderFrame={(frame) => <HostDialog open frame={frame} onClose={() => {
 			if (busy) return "blocked";

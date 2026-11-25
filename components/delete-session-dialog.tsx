@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactElement, type ReactNode } from "react";
 import { HostDialog } from "@/components/host-dialog";
-import type { ChatDeleteMode, ChatListItem, FolderDeletionScope } from "@/src/core";
+import type { ChatDeleteMode, ChatListItem, CourseDeletionImpact, FolderDeletionScope } from "@/src/core";
 
 /** The graph-traces checkbox copy (owner, 2026-09-24 flow rework — was
  *  the delete-nodes option's body in the two-button design): the
@@ -20,6 +20,10 @@ export interface DeleteDialogCopy {
 	testid: string;
 	heading: string;
 	body: string;
+	/** The body when the deletion takes (or may take) course progress: the graph promise, qualified. */
+	courseLossBody: string;
+	/** How many sessions the deletion removes (the course-loss wording's numbers). */
+	sessions: number;
 	traces: { title: string; body: string };
 }
 
@@ -28,10 +32,73 @@ export const SESSION_DELETE_COPY: DeleteDialogCopy = {
 	testid: "delete-session-dialog",
 	heading: "Delete session?",
 	body: "This permanently removes the session — its messages, background jobs, and extraction records. Everything it added to the graph stays unless you check below. This cannot be undone.",
+	courseLossBody: "This permanently removes the session — its messages, background jobs, and extraction records. Everything it added to the graph stays unless you check below, except its course progress. This cannot be undone.",
+	sessions: 1,
 	traces: TRACES_COPY,
 };
 
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** What a delete dialog knows about the course progress the deletion takes (POST /api/courses/deletion-impact).
+ *  Merge review finding 1: skill progress is derived from the course sessions' transcripts, so it goes with them in
+ *  either mode — the dialog must say so instead of promising that everything stays. */
+export type CourseLoss = { status: "checking" } | { status: "unknown" } | { status: "known"; impact: CourseDeletionImpact };
+
+/** “A”, “A” and “B”, “A”, “B” and “C”; a course that no longer exists is named as such. */
+function courseNames(impact: CourseDeletionImpact): string {
+	const names = impact.courses.map((c) => (c.title === null ? "a deleted course" : `“${c.title}”`));
+	return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0] ?? "a course";
+}
+
+/** True when the deletion takes, or may take, course progress (the qualified body shows). */
+export function mayLoseCourseProgress(loss: CourseLoss | undefined): boolean {
+	return loss !== undefined && (loss.status !== "known" || loss.impact.sessions > 0);
+}
+
+/** The plain-words course-progress line under the body, or null when nothing is lost. `total` is how many sessions
+ *  the deletion removes, so the line can say how many of them are course sessions. */
+export function courseLossWarning(loss: CourseLoss | undefined, total: number): string | null {
+	if (!loss) return null;
+	const one = total === 1;
+	if (loss.status === "checking") return `Checking whether ${one ? "this session" : "these sessions"} recorded course progress…`;
+	if (loss.status === "unknown") {
+		return one
+			? "Couldn’t check whether this session recorded course progress. If it came from a course, the skills it taught or checked lose that progress."
+			: "Couldn’t check whether these sessions recorded course progress. If any came from a course, the skills they taught or checked lose that progress.";
+	}
+	const { sessions, skills } = loss.impact;
+	if (sessions === 0) return null;
+	const from = courseNames(loss.impact);
+	const who = one
+		? `This is a course session from ${from}.`
+		: sessions === total
+			? `${total === 2 ? "Both" : `All ${total}`} sessions are course sessions, from ${from}.`
+			: `${sessions} of these ${total} sessions ${sessions === 1 ? "is a course session" : "are course sessions"}, from ${from}.`;
+	const it = sessions === 1 ? "it" : "they";
+	const what = skills > 0 ? `the ${count(skills, "skill", "skills")} ${it} taught or checked ${skills === 1 ? "loses" : "lose"}` : `the skills ${it} taught or checked lose`;
+	return `${who} Deleting ${sessions === 1 ? "it" : "them"} also deletes the course progress ${it} recorded: ${what} that progress, whichever you choose below.`;
+}
+
+/** Ask the server what deleting these sessions takes from the courses; null ids = the dialog is closed. A new set of
+ *  ids starts at "checking", so a dialog never shows the previous deletion's answer. */
+export function useCourseLoss(chatIds: readonly string[] | null): CourseLoss | undefined {
+	const key = chatIds === null ? null : JSON.stringify(chatIds);
+	const [answer, setAnswer] = useState<{ key: string; loss: CourseLoss } | null>(null);
+	useEffect(() => {
+		if (key === null) return;
+		let alive = true;
+		void fetch("/api/courses/deletion-impact", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatIds: JSON.parse(key) }) })
+			.then(async (res) => {
+				if (!res.ok) throw new Error(String(res.status));
+				const impact = (await res.json()) as CourseDeletionImpact;
+				if (alive) setAnswer({ key, loss: { status: "known", impact } });
+			})
+			.catch(() => { if (alive) setAnswer({ key, loss: { status: "unknown" } }); });
+		return () => { alive = false; };
+	}, [key]);
+	if (key === null) return undefined;
+	return answer?.key === key ? answer.loss : { status: "checking" };
+}
 
 /** The folder Delete's wording (owner, 2026-11-18): the session dialog's
  *  shape, plural, saying what goes and where notes move. */
@@ -40,11 +107,14 @@ export function folderDeleteCopy(input: { sessions: number; subfolders: number; 
 	const notes = input.notes
 		? ` ${count(input.notes, "imported notes file", "imported notes files")} inside ${input.notes === 1 ? "moves" : "move"} to ${input.parentName === null ? "the top level" : `“${input.parentName}”`}.`
 		: "";
+	const removes = `This permanently removes the folder and the ${what} inside — the sessions’ messages, background jobs, and extraction records.`;
 	return {
 		label: "Delete folder",
 		testid: "delete-folder-dialog",
 		heading: "Delete folder?",
-		body: `This permanently removes the folder and the ${what} inside — the sessions’ messages, background jobs, and extraction records. Everything they added to the graph stays unless you check below.${notes} This cannot be undone.`,
+		body: `${removes} Everything they added to the graph stays unless you check below.${notes} This cannot be undone.`,
+		courseLossBody: `${removes} Everything they added to the graph stays unless you check below, except their course progress.${notes} This cannot be undone.`,
+		sessions: input.sessions,
 		traces: {
 			title: "Also remove their graph traces",
 			body: "These sessions’ topics, links, and events leave the graph too. Topics other sessions or imported notes also cover survive; topics only these sessions created are removed entirely.",
@@ -93,6 +163,7 @@ export function DeleteSessionDialog({
 	// change of intent, honored as such — the checkbox is disabled while
 	// busy, so no mid-flight switches).
 	const [failure, setFailure] = useState<{ code: string; error: string } | null>(null);
+	const courseLoss = useCourseLoss(chat ? [chat.id] : null);
 
 	// Fresh state per session: closing resets, opening a new chat starts clean.
 	useEffect(() => {
@@ -104,7 +175,7 @@ export function DeleteSessionDialog({
 	}, [chat]);
 
 	const run = async () => {
-		if (!chat || busy) return;
+		if (!chat || busy || courseLoss?.status === "checking") return;
 		const mode: ChatDeleteMode = traces ? "delete-nodes" : "preserve-graph";
 		setBusy(true);
 		setFailure(null);
@@ -134,6 +205,7 @@ export function DeleteSessionDialog({
 
 	return <DeleteSessionBody
 				chat={chat}
+				courseLoss={courseLoss}
 				traces={traces}
 				busy={busy}
 				failure={failure}
@@ -159,8 +231,11 @@ export function DeleteSessionBody({
 	onRun,
 	renderFrame,
 	copy = SESSION_DELETE_COPY,
+	courseLoss,
 }: {
 	chat: Pick<ChatListItem, "id" | "title">;
+	/** What the deletion takes from the courses; absent = nothing (the plain copy). Delete waits while it is checked. */
+	courseLoss?: CourseLoss;
 	/** The graph-traces checkbox — unchecked by default (preserve-graph). */
 	traces: boolean;
 	busy: boolean;
@@ -172,6 +247,8 @@ export function DeleteSessionBody({
 	/** The wording; the folder Delete reuses this exact surface. */
 	copy?: DeleteDialogCopy;
 }) {
+	const warning = courseLossWarning(courseLoss, copy.sessions);
+	const checking = courseLoss?.status === "checking";
 	const frame = (
 		<div
 			role="dialog"
@@ -192,7 +269,12 @@ export function DeleteSessionBody({
 					{chat.title}
 				</code>
 			</div>
-			<p className="mt-2 text-sm text-muted-foreground">{copy.body}</p>
+			<p className="mt-2 text-sm text-muted-foreground">{mayLoseCourseProgress(courseLoss) ? copy.courseLossBody : copy.body}</p>
+			{warning && (
+				<p data-testid="delete-course-loss" role={checking ? "status" : "alert"} className={checking ? "mt-2 text-xs text-muted-foreground" : "mt-2 text-sm text-destructive"}>
+					{warning}
+				</p>
+			)}
 			<label
 				data-testid={TRACES_COPY.testid}
 				className="mt-4 flex cursor-pointer items-start gap-2.5 rounded-lg border border-border/60 px-4 py-3"
@@ -245,7 +327,7 @@ export function DeleteSessionBody({
 					type="button"
 					data-testid="delete-confirm"
 					onClick={onRun}
-					disabled={busy}
+					disabled={busy || checking}
 					className="rounded-sm border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-40"
 				>
 					{busy ? "Deleting…" : "Delete"}
@@ -271,6 +353,7 @@ export function DeleteFolderDialog({
 	const [traces, setTraces] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [failure, setFailure] = useState<{ code: string; error: string } | null>(null);
+	const courseLoss = useCourseLoss(folder ? folder.scope.chatIds : null);
 	useEffect(() => {
 		if (!folder) {
 			setTraces(false);
@@ -280,7 +363,7 @@ export function DeleteFolderDialog({
 	}, [folder]);
 
 	const run = async () => {
-		if (!folder || busy) return;
+		if (!folder || busy || courseLoss?.status === "checking") return;
 		const mode: ChatDeleteMode = traces ? "delete-nodes" : "preserve-graph";
 		setBusy(true);
 		setFailure(null);
@@ -311,6 +394,7 @@ export function DeleteFolderDialog({
 	return <DeleteSessionBody
 				chat={{ id: folder.id, title: folder.name }}
 				copy={folder.copy}
+				courseLoss={courseLoss}
 				traces={traces}
 				busy={busy}
 				failure={failure}

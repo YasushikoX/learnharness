@@ -98,6 +98,7 @@ export {
 	createCourse,
 	createCourseSession,
 	courseSessionSkillNames,
+	courseDeletionImpact,
 	deleteCourse,
 	listCourseSummaries,
 	renameCourse,

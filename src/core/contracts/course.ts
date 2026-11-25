@@ -175,6 +175,18 @@ export interface CourseSummary {
 	folder?: string;
 }
 
+/** What deleting some sessions takes from the courses (POST /api/courses/deletion-impact): skill progress is derived
+ *  from the course sessions' transcripts (server/courses.ts courseEvidence), so it goes with them in either delete mode.
+ *  Only sessions that recorded evidence count. */
+export interface CourseDeletionImpact {
+	/** How many of the sessions recorded course progress. */
+	sessions: number;
+	/** The courses they belong to; title null when the course itself is gone (its skills still lose the progress). */
+	courses: Array<{ id: string; title: string | null; sessions: number }>;
+	/** How many distinct skills the lost progress was about. */
+	skills: number;
+}
+
 /** One line of the sidebar's Today list (GET /api/today): a course with something to do. */
 export interface TodayCourse {
 	courseId: string;
