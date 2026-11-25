@@ -57,6 +57,7 @@ import {
 	type GlossarySource,
 } from "../src/core/glossary.ts";
 import { splitMaterial, type MaterialBatch } from "../src/core/material-split.ts";
+import { PROFILE_FORMAT_RULES, PROFILE_FORMAT_SECTIONS } from "../src/agent/subagents/material-profiler.ts";
 import { MATERIAL_DIGEST_VERSION, MAX_TERM_OCCURRENCES, type DigestTerm, type MaterialDigest, type TermTier } from "../src/core/contracts/material-digest.ts";
 
 const META = { sourceHash: "sha256:abc", converter: "pdfjs-markdown", converterVersion: "5.4.0" };
@@ -719,6 +720,34 @@ describe("review 3: page lists, labels and the reduce prompt", () => {
 		assert.match(request.system, /When parts are missing, do not present the notes as the whole document/);
 		assert.match(request.system, /Write the prose in the material's own language/);
 		assert.match(request.user, /read in 2 parts, of which 1 could not be indexed/);
+	});
+});
+
+describe("review 4: prompts", () => {
+	it("the extraction prompt asks for the singular index-entry form and shows notation unescaped, with the JSON escaping stated", async () => {
+		const model = fakeModel((call) => notesFor(call.user, { profile: PROFILE }));
+		await digestMaterial(slideDeck(2, 100), { ...META, complete: model.complete });
+		const system = model.calls[0]!.system;
+		assert.match(system, /Report the singular, uninflected form the material would use as a heading or an index entry \("resistor" even where the text says "resistors", "matrix" where it says "matrices"\), unless the plural is itself the term/);
+		assert.ok(system.includes("(v, λ, C, \\mathbb{R})"), "the example is the notation as written");
+		assert.ok(system.includes('so \\mathbb{R} is written "\\\\mathbb{R}"'), "the JSON escaping is stated once, explicitly");
+		assert.ok(!system.includes('"\\\\mathbb{R}");'), "no doubly escaped example among the plain ones");
+	});
+
+	it("the reduce prompt never asks to cite every claim, and the most reduced notes say their names have no pages", () => {
+		const digest = { name: null, pageCount: 2, batches: [{ index: 0, pageStart: 1, pageEnd: 2, pages: [1, 2], headingPath: [], charStart: 0, charEnd: 5, status: "indexed" as const, summaryBullets: ["a"] }], terms: [], concepts: [], figures: [] };
+		const { system } = buildReduceRequest(digest)!;
+		assert.doesNotMatch(system, /Cite every claim/);
+		assert.match(system, /Cite a claim as \(p\. N\) with a page the notes give for it, and only so/);
+		assert.match(system, /When the notes list terms by name only, without pages \(shortened for length\), name them without a page and say that their pages are not available in the notes; never give them a page/);
+		assert.ok(system.includes(PROFILE_FORMAT_SECTIONS), "the same profile sections");
+		// the profiler's own prompt still cites every claim (it reads the material)
+		assert.match(PROFILE_FORMAT_RULES, /^Cite every claim/);
+		// at the most reduced level the core names come without pages, and the notes say so
+		const core = Array.from({ length: 400 }, (_, i) => reduceTerm(`Kjernebegrep nummer ${i}`, "core", `Definisjon ${i}.`));
+		const text = batchNotesText({ parts: [part(0, 1, 200, ["Oversikt"])], failed: [], terms: core, concepts: [], figures: [] }, 3_000);
+		assert.match(text, /Core terms \(names only, in order of first mention; their pages are not available in these notes\): Kjernebegrep nummer 0/);
+		assert.doesNotMatch(text, /Kjernebegrep nummer 0 \[core, p\./);
 	});
 });
 

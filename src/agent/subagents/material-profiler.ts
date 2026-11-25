@@ -41,8 +41,12 @@ How the material builds the topic: what it assumes, what comes first, how it arg
 ## Exercises
 The kinds of problems it poses and what they test, if any.`;
 
+/** The format's citation rule, for a reader that sees the material itself (see PROFILE_FORMAT_SECTIONS). */
+export const PROFILE_CITATION_RULE = "Cite every claim: (p. N) for a PDF, the section heading otherwise.";
+/** The format's closing rules other than citation (the indexer's reduce, which sees only notes, states its own citation rule). */
+export const PROFILE_STYLE_RULES = `Keep the material's own language for its terms — never translate them. 400-1200 words, dense, no filler. If the material is not teaching material (a single figure, a photo of a board), describe what it shows and what it means for a lesson on it.`;
 /** The format's closing rules (see PROFILE_FORMAT_SECTIONS). */
-export const PROFILE_FORMAT_RULES = `Cite every claim: (p. N) for a PDF, the section heading otherwise. Keep the material's own language for its terms — never translate them. 400-1200 words, dense, no filler. If the material is not teaching material (a single figure, a photo of a board), describe what it shows and what it means for a lesson on it.`;
+export const PROFILE_FORMAT_RULES = `${PROFILE_CITATION_RULE} ${PROFILE_STYLE_RULES}`;
 
 const PROFILE_DELIVERABLE = `Your FINAL message is a SOURCE PROFILE of this material. ${PROFILE_FORMAT_SECTIONS}
 

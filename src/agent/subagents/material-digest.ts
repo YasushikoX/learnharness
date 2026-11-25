@@ -17,7 +17,7 @@ import {
 } from "../../core/contracts/material-digest.ts";
 import { byCodeUnit, conceptId, hasVisibleContent, normalizeName, termId } from "../../core/glossary.ts";
 import { pageCountOf, rangePages, splitMaterial, type MaterialBatch, type SplitOptions } from "../../core/material-split.ts";
-import { PROFILE_FORMAT_RULES, PROFILE_FORMAT_SECTIONS } from "./material-profiler.ts";
+import { PROFILE_FORMAT_RULES, PROFILE_FORMAT_SECTIONS, PROFILE_STYLE_RULES } from "./material-profiler.ts";
 
 /**
  * The material indexer (fork addition, 2026-11-24; identity reworked 2026-11-25): reads the WHOLE of one converted
@@ -139,6 +139,14 @@ const PROFILE_FORMAT = `A SOURCE PROFILE of this material. ${PROFILE_FORMAT_SECT
 
 Write the section headings exactly as above, in English, whatever the material's language; write everything else in the material's own language. ${PROFILE_FORMAT_RULES}`;
 
+/**
+ * The same format for the reduce, which sees notes and not the material: its citation rule asks only for pages the
+ * notes give (REDUCE_RULES says what to do with names the notes list without pages), never "cite every claim".
+ */
+const REDUCE_PROFILE_FORMAT = `A SOURCE PROFILE of this material. ${PROFILE_FORMAT_SECTIONS}
+
+Write the section headings exactly as above, in English, whatever the material's language; write everything else in the material's own language. Cite a claim as (p. N) with a page the notes give for it, and only so. ${PROFILE_STYLE_RULES}`;
+
 const EXTRACTION_RULES = `You are an indexing specialist inside a learning application. You read one part of a student's course material (a slide deck, a textbook chapter, notes) and index it completely, so that nothing a student must learn from it is missed.
 
 The material is Markdown. Every line "--- Page N ---" starts page N, wherever it is; text before the first such line is on the page stated in the request. A line that starts with a backslash ("\\--- Page N ---") is ordinary text, not a page break. A fenced code block (between \`\`\` or ~~~ lines) never continues past a page: a fence that is still open at the next "--- Page N ---" line, or at the end of the part, is not a fence. A "#" line inside a fence that closes on its own page is an example in the text, not a heading. When the request says the first line continues the previous part, the text was cut inside a long line: it may begin mid-word or mid-sentence, and its start is neither a heading nor a page break.
@@ -146,9 +154,9 @@ The material is Markdown. Every line "--- Page N ---" starts page N, wherever it
 Reply with ONE JSON object and nothing else (no prose, no code fence), with these fields:
 - "summaryBullets": short bullets, in order, of what this part covers.
 - "terms": EVERY technical term this part defines, introduces or relies on, not only the prominent ones; include terms it uses without defining them. An empty list is right only for a part with no technical vocabulary at all. Each: {"term", "aliases", "symbols", "page", "tier", "definition", "definitionPage"}.
-  - "term": the term in the form the material uses in running text. Do not capitalise it because it starts a sentence, a heading, a slide title or a bullet ("entropy" when the text writes "entropy" mid-sentence), but keep proper nouns, acronyms, units and notation exactly as written ("Bayes' theorem", "OLS", "mW", "O(n)", "C++"). The same term must be written the same way every time.
+  - "term": the term in the form the material uses in running text. Do not capitalise it because it starts a sentence, a heading, a slide title or a bullet ("entropy" when the text writes "entropy" mid-sentence), but keep proper nouns, acronyms, units and notation exactly as written ("Bayes' theorem", "OLS", "mW", "O(n)", "C++"). Report the singular, uninflected form the material would use as a heading or an index entry ("resistor" even where the text says "resistors", "matrix" where it says "matrices"), unless the plural is itself the term ("Maxwell's equations"). The same term must be written the same way every time.
   - "aliases": other names and abbreviations the material uses for this same concept ("OLS" for "ordinary least squares", a translated name it gives); [] if none. Not symbols.
-  - "symbols": the notation this part uses for it ("v", "λ", "C", "\\\\mathbb{R}"); [] if none.
+  - "symbols": the notation this part uses for it, as written (v, λ, C, \\mathbb{R}); [] if none. Like every string in the reply, it is JSON-escaped, so \\mathbb{R} is written "\\\\mathbb{R}".
   - "page": the page this part first mentions the term on.
   - "tier": "core" if the material treats it as something a student must know (defined, stressed, examined, built on), "supporting" if it appears in passing.
   - "definition": the material's own explicit definition of the term, in its words (quote it when it is short), or null when this part uses the term without defining it. Never write a definition the material does not give. When the part gives both a passing explanation and a formal definition, use the formal one.
@@ -160,11 +168,11 @@ Write everything in the material's own language; never translate its terms. Use 
 
 const REDUCE_RULES = `You are a reading specialist inside a learning application. You receive notes another reader made of one document of a student's course material: each part's pages, section and summary, then the document's terms (with the page each is first mentioned on, and the material's definition and its page when it gives one), its concepts and its figures. Long documents come with shortened notes, and the request says whether every part was read. Write the document's profile from them.
 
-You see notes, not the material itself. Cite only pages the notes give for that item; leave out a claim the notes do not support rather than guess its page. Quote a definition only when the notes give its complete wording; otherwise name the term with its page. When parts are missing, do not present the notes as the whole document: say in "Scope and targets" which pages were not read. Write the prose in the material's own language (the language of the notes' summaries and terms).
+You see notes, not the material itself. Cite only pages the notes give for that item; leave out a claim the notes do not support rather than guess its page. Quote a definition only when the notes give its complete wording; otherwise name the term with its page. When the notes list terms by name only, without pages (shortened for length), name them without a page and say that their pages are not available in the notes; never give them a page. When parts are missing, do not present the notes as the whole document: say in "Scope and targets" which pages were not read. Write the prose in the material's own language (the language of the notes' summaries and terms).
 
 Reply with the profile only (Markdown, starting at its first "## " heading; not JSON):
 
-${PROFILE_FORMAT}`;
+${REDUCE_PROFILE_FORMAT}`;
 
 const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
 
@@ -785,7 +793,7 @@ function failedSummary(failed: readonly ReduceFailedPart[], max: number): string
 	return tiny.length <= max ? tiny : "";
 }
 
-const CORE_LABEL = "Core terms (names only, in order of first mention): ";
+const CORE_LABEL = "Core terms (names only, in order of first mention; their pages are not available in these notes): ";
 
 /** As many core term names as fit in `max` characters, whole, in order, then how many are left out; "" when none. Pure. */
 function coreNamesLine(core: readonly ReduceTerm[], max: number): string {
