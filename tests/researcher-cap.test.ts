@@ -61,6 +61,8 @@ describe("researcher without a request cap (upstream v0.7.0)", () => {
 			return fauxAssistantMessage([fauxText(BRIEF)]);
 		}];
 		await runResearcherAgent("Anything", { engine: engineWith(steps), search: () => provider });
+		// The prompt was really captured (an empty string would pass the negative check below on its own).
+		assert.match(prompt, /You are a research specialist/);
 		assert.doesNotMatch(prompt, /at most 12 model requests|request budget/);
 	});
 });
@@ -108,5 +110,48 @@ describe("runSubagent salvagePrompt is opt-in", () => {
 		});
 		assert.equal(result.text, "Done.");
 		assert.equal(requests, 2);
+	});
+
+	// Review finding 7: a cap that exists but did not end the run must not trigger the salvage.
+	it("a stop rule that ends the run before the cap sends no salvage request and keeps its text", async () => {
+		let requests = 0;
+		const result = await runSubagent([tool], {
+			engine: engineWith([
+				() => { requests++; return fauxAssistantMessage([fauxText("Submitted."), fauxToolCall("again", {}, { id: "a1" })], { stopReason: "toolUse" }); },
+				() => { requests++; return fauxAssistantMessage([fauxText("Salvaged answer.")]); },
+			]),
+			systemPrompt: "Fixture", prompt: "Fixture", maxTurns: 10, salvagePrompt: "Write the answer now.",
+			shouldStop: (_message, toolResults) => toolResults.some((r) => r.toolName === "again" && !r.isError),
+		});
+		assert.equal(requests, 1, "no salvage request after an early stop");
+		assert.equal(result.text, "Submitted.");
+	});
+
+	it("a stop rule firing on the cap's own turn counts as stopped, not cut off", async () => {
+		let requests = 0;
+		const result = await runSubagent([tool], {
+			engine: engineWith([
+				() => { requests++; return fauxAssistantMessage([fauxText("Submitted."), fauxToolCall("again", {}, { id: "a1" })], { stopReason: "toolUse" }); },
+				() => { requests++; return fauxAssistantMessage([fauxText("Salvaged answer.")]); },
+			]),
+			systemPrompt: "Fixture", prompt: "Fixture", maxTurns: 1, salvagePrompt: "Write the answer now.",
+			shouldStop: () => true,
+		});
+		assert.equal(requests, 1);
+		assert.equal(result.text, "Submitted.");
+	});
+
+	it("the same cap reached without a stop rule still salvages", async () => {
+		let requests = 0;
+		const result = await runSubagent([tool], {
+			engine: engineWith([
+				() => { requests++; return fauxAssistantMessage([fauxText("Interim note."), fauxToolCall("again", {}, { id: "a1" })], { stopReason: "toolUse" }); },
+				() => { requests++; return fauxAssistantMessage([fauxText("Salvaged answer.")]); },
+			]),
+			systemPrompt: "Fixture", prompt: "Fixture", maxTurns: 1, salvagePrompt: "Write the answer now.",
+			shouldStop: () => false,
+		});
+		assert.equal(requests, 2);
+		assert.equal(result.text, "Salvaged answer.");
 	});
 });

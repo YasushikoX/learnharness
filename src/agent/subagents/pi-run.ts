@@ -94,6 +94,9 @@ export async function runSubagent(tools: AgentTool<any, any>[], opts: SubagentRu
 	if (opts.abortSignal?.aborted) throw Object.assign(new Error("aborted"), { name: "AbortError" });
 	const engine = subagentEngine(opts.role, opts.engine);
 	let turns = 0;
+	// True only when the maxTurns cap itself ended the run (not a stop rule or natural completion): the salvage and the
+	// cut-off text rule both key on it.
+	let capExhausted = false;
 	// Debug recorder (owner, 2026-10-04): raw provider events per job run.
 	const providerEvents = opts.chatId && opts.role ? providerEventObserver(opts.chatId, `job:${opts.role}`) : undefined;
 	const sessionId = randomUUID();
@@ -123,9 +126,13 @@ export async function runSubagent(tools: AgentTool<any, any>[], opts: SubagentRu
 		// exits before the steering poll, exactly the old boolean-true).
 		finishTurn: (turn) => {
 			turns++;
-			return (opts.maxTurns !== undefined && turns >= opts.maxTurns) || opts.shouldStop?.(turn.message, turn.toolResults) === true
-				? { action: "end" }
-				: undefined;
+			// The stop rule is asked first, so a run it ends on the cap's own turn counts as stopped, not cut off.
+			if (opts.shouldStop?.(turn.message, turn.toolResults) === true) return { action: "end" };
+			if (opts.maxTurns !== undefined && turns >= opts.maxTurns) {
+				capExhausted = true;
+				return { action: "end" };
+			}
+			return undefined;
 		},
 	});
 
@@ -174,7 +181,7 @@ export async function runSubagent(tools: AgentTool<any, any>[], opts: SubagentRu
 		else await agent.continue();
 		// The cap salvage: only for a run the cap cut off (the last assistant message wanted tools), never after an abort or a
 		// provider error. The cap counter is already spent, so finishTurn ends the run right after this one request.
-		if (opts.salvagePrompt !== undefined && opts.maxTurns !== undefined && !aborted && !opts.abortSignal?.aborted && errorMessage === undefined
+		if (opts.salvagePrompt !== undefined && capExhausted && !aborted && !opts.abortSignal?.aborted && errorMessage === undefined
 			&& lastAssistantOf(agent.state.messages)?.stopReason === "toolUse") {
 			await agent.prompt({ role: "user", content: opts.salvagePrompt, timestamp: Date.now() });
 		}
@@ -204,7 +211,7 @@ export async function runSubagent(tools: AgentTool<any, any>[], opts: SubagentRu
 	const assistants = newMessages.filter((m) => (m as { role?: string }).role === "assistant") as AssistantMessage[];
 	const last = assistants[assistants.length - 1];
 	// A salvage that still asked for tools has no deliverable: its text is interim narration.
-	const cutOff = opts.salvagePrompt !== undefined && opts.maxTurns !== undefined && last?.stopReason === "toolUse";
+	const cutOff = opts.salvagePrompt !== undefined && capExhausted && last?.stopReason === "toolUse";
 	const text = last && !cutOff
 		? last.content
 				.filter((c): c is { type: "text"; text: string } => c.type === "text")
