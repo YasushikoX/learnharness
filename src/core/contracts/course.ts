@@ -147,8 +147,16 @@ export interface DraftCoverage {
 	shown: { full: number; names: number; omitted: number };
 	/** A mapping pass's proposals on the draft that would change a decision (see CourseCoverage.suggested). */
 	suggested?: CoverageSuggestions;
-	/** The class's earlier approved decisions were carried into this proposal (core/coverage-items.ts carryForward). */
+	/** The class's earlier approved decisions were carried into this proposal (core/coverage-items.ts carryForward). That
+	 *  carry is advice for the page: approval carries again from the approved map as it is then (review 2, finding 7). */
 	carried?: true;
+	/** The approved map's fingerprint when it was carried in (core/coverage-items.ts mappingFingerprint). */
+	carriedFrom?: string;
+	/** The item keys that came from the approved map when it was carried in. */
+	carriedKeys?: string[];
+	/** The item keys the student changed on this draft (assign, unassign, exclude, remove, remap): they win over the
+	 *  approved map's item when approval carries again. */
+	edited?: string[];
 	/** Earlier decisions the carrying could not keep, with why (moved to CourseCoverage.displaced at approval). */
 	displaced?: CoverageDropped[];
 }

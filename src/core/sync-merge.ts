@@ -282,6 +282,12 @@ function mergeChat(i: MergeInput & { local: string; remote: string }): MergeResu
 			}
 		}
 	}
+	// WP5 review 2: a session's vocabulary listing is fixed when it starts; a side whose course link lacks it (an older
+	// build) must not erase it
+	const loserLink = (newer === "local" ? r : l).course;
+	if (isObj(out.course) && !("vocabulary" in out.course) && isObj(loserLink) && loserLink.courseId === out.course.courseId && Array.isArray(loserLink.vocabulary)) {
+		out.course = { ...out.course, vocabulary: loserLink.vocabulary };
+	}
 	out.updatedAt = maxIso(l.updatedAt, r.updatedAt);
 	out.version = chatVersionFor(out);
 	return result(pretty(out), { loser, notes });

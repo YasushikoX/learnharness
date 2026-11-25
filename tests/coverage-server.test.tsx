@@ -489,7 +489,8 @@ describe("a Learn session on a mapped class", () => {
 		const made = courses.createCourseSession(c.id, "learn", "sk_rings");
 		assert.ok(made.ok, !made.ok ? made.error : "");
 		const learn = made.ok ? made.value.id : "";
-		assert.deepEqual(chatStore.getChat(learn)!.course!.vocabulary, ["t_unit", "t_ideal", "t_ring", "t_bit"], "the listed items are stored with the session when it starts");
+		// review 2: listed before and not introduced (ring, unit; in the material's order), then introduced to check (ideal)
+		assert.deepEqual(chatStore.getChat(learn)!.course!.vocabulary, ["t_ring", "t_unit", "t_ideal", "t_bit"], "the listed items are stored with the session when it starts");
 		const turn = courses.courseForTurn(learn)!;
 		assert.match(turn.section, /VOCABULARY — the class's own terms that this lesson of "Rings" owes/);
 		assert.match(turn.section, /- \[t_ideal\] ideal — introduced in an earlier session, not checked yet \(carried over\)\. The material: "a subring closed under multiplication by ring elements" \(Lecture 3\.pdf, p\. 5\)/);
@@ -516,11 +517,12 @@ describe("a Learn session on a mapped class", () => {
 		assert.match(turn.section, /\(48 more terms of this skill are left for later sessions; not owed by this one\.\)/);
 		assert.equal(turn.vocabulary!.items.length, 12, "the finish gate checks exactly the listed ones");
 		const listed = chatStore.getChat(first)!.course!.vocabulary!;
-		// that lesson defers all twelve; the next lesson lists those carried ones first, again twelve, the rest still later
+		// that lesson defers all twelve; the next lesson lists twelve never listed before (review 2: no term is starved)
 		chatStore.saveMessages(first, [callMsg("f1", "finish_lesson", { summary: "s", deferred: listed.map((id) => ({ id, why: "time" })) }), result("f1", "finish_lesson", { grades: [] })]);
 		const next = session(c.id, "learn", ["sk_big"], []);
-		assert.deepEqual(chatStore.getChat(next)!.course!.vocabulary, listed, "carried-over items first");
-		assert.match(courses.courseForTurn(next)!.section, /new, left for later by an earlier lesson \(carried over\)/);
+		const second = chatStore.getChat(next)!.course!.vocabulary!;
+		assert.equal(second.length, 12);
+		assert.equal(second.filter((k) => listed.includes(k)).length, 0, "never-listed terms first");
 	});
 
 	it("a class without coverage, and an Ask conversation, get no vocabulary", () => {
@@ -639,13 +641,15 @@ describe("the finish refusal through the teacher agent (scripted model)", () => 
 			installPracticeGrader(null);
 		}
 	});
-	it("two finish calls in one message after an answered final: one attempt, refused once for vocabulary, the other goes through", async () => {
+	it("two finish calls in one message after an answered final: one refusal event shown to both; the next message's finish, deferring the terms, passes (review 2, finding 3)", async () => {
 		const both = () =>
 			fauxAssistantMessage([fauxToolCall("finish_lesson", { summary: "s" } as ToolCall["arguments"], { id: "fa" }), fauxToolCall("finish_lesson", { summary: "s" } as ToolCall["arguments"], { id: "fb" })], { stopReason: "toolUse" });
-		const { by } = await runAll(lessonVocabulary(), finalProblem, [both]);
+		const { by } = await runAll(lessonVocabulary(), finalProblem, [both, step("fc", { summary: "s", deferred: [{ id: "t_ring", why: "next lesson" }, { id: "t_unit", why: "next lesson" }] })]);
 		assert.match(by("fa").content[0]!.text, /^Refused \(vocabulary\)/);
-		assert.equal(by("fb").isError, false, "the vocabulary allowance is one; the sibling is not a stale attempt for the final-problem gate");
-		assert.deepEqual(gates, ["vocabulary"]);
+		assert.equal(by("fb").isError, true, "the sibling is not logged as a finish with unintroduced owed terms");
+		assert.equal(by("fb").content[0]!.text, by("fa").content[0]!.text, "the same refusal");
+		assert.deepEqual(gates, ["vocabulary"], "one refusal event; the final-problem gate does not count the sibling as an attempt");
+		assert.equal(by("fc").isError, false, `the next message's finish passes: ${by("fc").content[0]!.text}`);
 	});
 	it("a clean finish records the lesson's coverage line, which later lessons never change", async () => {
 		const c = mappedCourse();

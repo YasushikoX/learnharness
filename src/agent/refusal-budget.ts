@@ -30,7 +30,8 @@ export const OWN_SHARE_GATES: readonly string[] = ["finish", "vocabulary"];
  * Gates whose share in one learner turn is smaller than REFUSALS_PER_GATE. `vocabulary` (WP5, the finish check of a
  * lesson's terms, core/coverage-ledger.ts) refuses at most ONCE per lesson, which the transcript decides (a refusal on
  * record is never repeated); this allowance of one per turn is the in-turn guard for calls that run before that record
- * exists (two finish calls in one message). It is outside the turn's total and has its own count, so it can never
+ * exists. Two finish calls in ONE message are one refusal event: the teacher agent hands the second the first's refusal
+ * without counting it again (review 2, finding 3). It is outside the turn's total and has its own count, so it can never
  * spend a refusal the final-problem requirement (`finish`) needs.
  */
 export const GATE_ALLOWANCES: Readonly<Record<string, number>> = { vocabulary: 1 };

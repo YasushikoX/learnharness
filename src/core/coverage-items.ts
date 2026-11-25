@@ -382,8 +382,8 @@ function boundedList(items: readonly string[], max: number): string {
 	return out.join("; ") + (items.length > out.length ? `${out.length > 0 ? "; " : ""}+${items.length - out.length} more` : "");
 }
 
-/** The core entries in teaching order: the material they first appear in (the course's order), then the page, then id. */
-export function coreEntriesInOrder(glossary: CoverageGlossary): CoverageGlossaryEntry[] {
+/** Every entry in teaching order: the material it first appears in (the course's order), then the page, then id. */
+function entriesInOrder(glossary: CoverageGlossary): CoverageGlossaryEntry[] {
 	const order = new Map((glossary.indexed ?? []).map((m, i) => [m.sourceHash, i]));
 	const rank = (e: CoverageGlossaryEntry) => {
 		let best: [number, number] = [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER];
@@ -394,10 +394,24 @@ export function coreEntriesInOrder(glossary: CoverageGlossary): CoverageGlossary
 		return best;
 	};
 	return Object.values(glossary.terms)
-		.filter((e) => e.tier === "core")
 		.map((e) => ({ e, r: rank(e) }))
 		.sort((a, b) => a.r[0] - b.r[0] || a.r[1] - b.r[1] || byCodeUnit(a.e.id, b.e.id))
 		.map((x) => x.e);
+}
+
+/** The core entries in teaching order (see entriesInOrder). */
+export function coreEntriesInOrder(glossary: CoverageGlossary): CoverageGlossaryEntry[] {
+	return entriesInOrder(glossary).filter((e) => e.tier === "core");
+}
+
+/** Each item key's place in the class's teaching order (smaller first): its entry's place, then a sense's page. Pure. */
+export function teachingOrder(glossary: CoverageGlossary | null | undefined): (key: string) => number {
+	const place = new Map((glossary ? entriesInOrder(glossary) : []).map((e, i) => [e.id, i]));
+	return (key) => {
+		const parsed = parseItemKey(key);
+		const at = parsed ? place.get(parsed.entryId) : undefined;
+		return (at ?? place.size) * 100_000 + Math.min(Math.max(0, parsed?.sense?.page ?? 0), 99_999);
+	};
 }
 
 /** Where an entry is: "p. 3, 7 in Lecture 2.pdf [mat_1]; p. 1 in Notes.pdf [mat_2]", bounded. */
@@ -687,4 +701,112 @@ export function applyCoverageEdit(mapping: CoverageMapping, edit: CoverageEdit, 
 			displaced = undefined;
 			return done();
 	}
+}
+
+// ─── reading stored values defensively (review 2, finding 8) ───────────────
+
+/*
+ * Everything this package reads from a chat or a course record was written by another build, synced from another
+ * device, or hand-edited: it is read through these, which accept only the documented shape and treat anything else as
+ * absent (or drop the one malformed element), so a malformed record can never throw out of a page load, a lesson turn
+ * or a session start.
+ */
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const nonEmpty = (v: unknown): string | undefined => (typeof v === "string" && v.trim() !== "" ? v : undefined);
+
+/** An array of non-empty strings, or undefined for anything else (one malformed element makes it absent). */
+export function readStringList(raw: unknown): string[] | undefined {
+	if (!Array.isArray(raw) || !raw.every((x) => nonEmpty(x) !== undefined)) return undefined;
+	return raw as string[];
+}
+
+/** `ChatCourseLink.vocabulary`: the keys listed to a session, or undefined (the session then owes nothing, as an
+ *  unlisted one). */
+export const readListedVocabulary = (raw: unknown): string[] | undefined => readStringList(raw);
+
+/** A list of strings, keeping only the non-empty ones ([] for anything that is not an array). */
+const someStrings = (raw: unknown): string[] => (Array.isArray(raw) ? raw.filter((x): x is string => nonEmpty(x) !== undefined) : []);
+
+function readItem(raw: unknown): CoverageItem | null {
+	if (!isObj(raw)) return null;
+	const entryId = nonEmpty(raw.entryId);
+	if (!entryId) return null;
+	let sense: CoverageSense | undefined;
+	if (raw.sense !== undefined) {
+		const s = raw.sense;
+		if (!isObj(s) || !nonEmpty(s.materialId) || typeof s.page !== "number" || !Number.isFinite(s.page)) return null; // never read as the plain entry
+		sense = { materialId: s.materialId as string, page: s.page };
+	}
+	const skills = someStrings(raw.skills);
+	return {
+		entryId,
+		...(sense ? { sense } : {}),
+		name: typeof raw.name === "string" ? raw.name : entryId,
+		...(skills.length > 0 ? { skills } : {}),
+		...(typeof raw.excluded === "string" ? { excluded: raw.excluded } : {}),
+		...(raw.leftAtApproval === true ? { leftAtApproval: true as const } : {}),
+	};
+}
+
+const readGroups = (raw: unknown): string[][] => (Array.isArray(raw) ? raw.map(someStrings).filter((g) => g.length >= 2) : []);
+
+function readSuggestions(raw: unknown): CoverageSuggestions | undefined {
+	if (!isObj(raw)) return undefined;
+	const excluded = Array.isArray(raw.excluded)
+		? raw.excluded.filter((x): x is { key: string; reason: string } => isObj(x) && nonEmpty(x.key) !== undefined).map((x) => ({ key: x.key, reason: typeof x.reason === "string" ? x.reason : "" }))
+		: [];
+	const links = readGroups(raw.links);
+	return excluded.length > 0 || links.length > 0 ? { excluded, links } : undefined;
+}
+
+function readDropped(raw: unknown): CoverageDropped[] | undefined {
+	if (!Array.isArray(raw)) return undefined;
+	const out = raw.filter((x): x is Record<string, unknown> => isObj(x) && nonEmpty(x.key) !== undefined).map((x) => ({ key: x.key as string, name: typeof x.name === "string" ? x.name : (x.key as string), reason: typeof x.reason === "string" ? x.reason : "" }));
+	return out.length > 0 ? out : undefined;
+}
+
+function readMapping(raw: Record<string, unknown>): CoverageMapping {
+	const items = (raw.items as unknown[]).map(readItem).filter((i): i is CoverageItem => i !== null);
+	const suggested = readSuggestions(raw.suggested);
+	const displaced = readDropped(raw.displaced);
+	return { items, links: readGroups(raw.links), ...(suggested ? { suggested } : {}), ...(displaced ? { displaced } : {}) };
+}
+
+/** `CourseRecord.coverage`: the approved mapping, or undefined when it is not an object with an `items` array. Pure. */
+export function readCourseCoverage(raw: unknown): CourseCoverage | undefined {
+	if (!isObj(raw) || !Array.isArray(raw.items)) return undefined;
+	return { updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : "", ...readMapping(raw) };
+}
+
+/** `CourseDraft.coverage`: the draft's proposal, or undefined when it is not an object with an `items` array. Pure. */
+export function readDraftCoverage(raw: unknown): DraftCoverage | undefined {
+	if (!isObj(raw) || !Array.isArray(raw.items)) return undefined;
+	const shown = isObj(raw.shown) ? raw.shown : {};
+	const count = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+	const carriedKeys = readStringList(raw.carriedKeys);
+	const edited = readStringList(raw.edited);
+	return {
+		...readMapping(raw),
+		dropped: someStrings(raw.dropped),
+		incomplete: someStrings(raw.incomplete),
+		shown: { full: count(shown.full), names: count(shown.names), omitted: count(shown.omitted) },
+		...(raw.carried === true ? { carried: true as const } : {}),
+		...(typeof raw.carriedFrom === "string" ? { carriedFrom: raw.carriedFrom } : {}),
+		...(carriedKeys ? { carriedKeys } : {}),
+		...(edited ? { edited } : {}),
+	};
+}
+
+/** A fingerprint of a mapping's decisions (items and links): the draft records the approved map's when it carries it,
+ *  so approval can tell whether the approved map changed since. Pure. */
+export function mappingFingerprint(mapping: CoverageMapping | null | undefined): string {
+	if (!mapping) return "none";
+	const text = JSON.stringify([mapping.items.map((i) => [itemKey(i), i.skills ?? [], i.excluded ?? null]), mapping.links]);
+	let h = 0x811c9dc5;
+	for (let i = 0; i < text.length; i++) {
+		h ^= text.charCodeAt(i);
+		h = Math.imul(h, 0x01000193);
+	}
+	return `${text.length}:${(h >>> 0).toString(36)}`;
 }

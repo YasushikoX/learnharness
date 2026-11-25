@@ -83,11 +83,12 @@ import { weighCourse } from "../agent/subagents/exam-weigher.ts";
 import { callUsage } from "../agent/subagents/extraction.ts";
 import { materialTools } from "../agent/tools/materials.ts";
 import { plannerGraphTools } from "../agent/tools/planner-graph.ts";
-import { approveCoverage, carryForward, hasCoreEntries, pruneStaleSkills } from "../core/coverage-items.ts";
+import { approveCoverage, carryForward, hasCoreEntries, pruneStaleSkills, readCourseCoverage } from "../core/coverage-items.ts";
 import type { LessonVocabulary } from "../core/coverage-ledger.ts";
 import {
 	abortCourseTermMapping,
 	approvalProposal,
+	carriedStamp,
 	courseTermMapping,
 	coverageGlossary,
 	coverageView,
@@ -918,7 +919,7 @@ async function runDraft(courseId: string, feedback: string | undefined, controll
 		);
 		// WP5: a re-draft keeps the class's earlier vocabulary decisions (carried into the proposal the student reviews)
 		const glossaryNow = coverageGlossary(courseId);
-		const before = stores.courseStore.getCourse(courseId)?.coverage;
+		const before = readCourseCoverage(stores.courseStore.getCourse(courseId)?.coverage);
 		const coverage =
 			before && (result.coverage || hasCoreEntries(glossaryNow))
 				? {
@@ -926,7 +927,8 @@ async function runDraft(courseId: string, feedback: string | undefined, controll
 						incomplete: result.coverage?.incomplete ?? (glossaryNow?.incomplete ?? []).map((m) => m.name),
 						shown: result.coverage?.shown ?? { full: 0, names: 0, omitted: 0 },
 						...carryForward(before, result.coverage, result.skills, glossaryNow),
-						carried: true as const,
+						// the carry is advice for the page: approval carries again if the approved map changes (review 2, finding 7)
+						...carriedStamp(before),
 					}
 				: result.coverage;
 		const draft: CourseDraft = {
@@ -979,7 +981,7 @@ export function approveCourse(courseId: string, opts: { leaveUnassigned?: boolea
 	const now = new Date().toISOString();
 	const mint = () => `sk_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
 	const { lines, skillIds, idOf } = approveDraft(course.draft, ctx, mint, now);
-	let coverage = course.coverage;
+	let coverage = readCourseCoverage(course.coverage);
 	const glossary = coverageGlossary(courseId);
 	if (hasCoreEntries(glossary)) {
 		const approved = approveCoverage(approvalProposal(course, glossary), (key) => idOf[key], glossary, opts.leaveUnassigned ? leftAtApprovalReason(courseLanguage(course)) : null, now);

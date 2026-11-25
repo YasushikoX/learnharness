@@ -15,6 +15,11 @@
  *     and server/courses.ts stores their keys on the chat's course link (ChatCourseLink.vocabulary); every turn reads them
  *     back (`sessionVocabulary`), so what a lesson owes never drifts with later sessions.
  *   - No model call happens here except the "Map the class's terms" pass the student starts.
+ *   - Nothing in one chat may break the class (review 2): every stored value is read through the defensive readers of
+ *     core/coverage-items.ts (`safeCourse`, readListedVocabulary, readStringList); a chat that cannot be read or folded
+ *     counts nothing and is reported once in the log (its id and the error's name, never its text); and the entry
+ *     points the course page, a lesson turn and a session start call (coverageView, listedVocabularyFor,
+ *     sessionVocabulary, lessonCoverage) return "no coverage" rather than throw.
  */
 
 import * as fs from "node:fs";
@@ -28,8 +33,16 @@ import {
 	carryForward,
 	entryView,
 	hasCoreEntries,
+	itemKey,
+	mappingFingerprint,
 	mergeMappingPass,
+	normalizeLinks,
+	readCourseCoverage,
+	readDraftCoverage,
+	readListedVocabulary,
+	readStringList,
 	resolveCoverage,
+	teachingOrder,
 	type CoverageEdit,
 	type CoverageGlossary,
 	type CoverageMapping,
@@ -84,6 +97,43 @@ export function coverageGlossary(courseId: string): CoverageGlossary | null {
 
 const EMPTY_GLOSSARY: CoverageGlossary = { terms: {}, lookup: {}, suggestedDuplicates: [] };
 
+// ─── nothing in one chat may break the class (review 2) ─────────────────────
+
+/** A course record with what this package reads of it checked (core/coverage-items.ts readers): a malformed mapping or
+ *  draft proposal reads as absent. */
+export function safeCourse(course: CourseRecord): CourseRecord {
+	const coverage = readCourseCoverage(course.coverage);
+	const draft = course.draft ? { ...course.draft, coverage: readDraftCoverage(course.draft.coverage) } : undefined;
+	if (draft && !draft.coverage) delete draft.coverage;
+	const out: CourseRecord = { ...course, skills: readStringList(course.skills) ?? [], ...(draft ? { draft } : {}) };
+	if (coverage) out.coverage = coverage;
+	else delete out.coverage;
+	if (!draft) delete out.draft;
+	return out;
+}
+
+const REPORTED_MAX = 1_000;
+const reported = new Set<string>();
+/** Log a coverage failure once per key (no text of the chat in the line). */
+function reportOnce(key: string, line: string): void {
+	if (reported.has(key)) return;
+	if (reported.size >= REPORTED_MAX) reported.clear();
+	reported.add(key);
+	console.warn(line);
+}
+const errName = (err: unknown) => (err instanceof Error ? err.name : typeof err);
+
+/** Run a coverage entry point; on any failure log once and return `fallback` (the class then has no coverage behaviour
+ *  for this call rather than a broken page, turn or session start). */
+function guarded<T>(what: string, courseId: string, fallback: T, run: () => T): T {
+	try {
+		return run();
+	} catch (err) {
+		reportOnce(`${what}:${courseId}:${errName(err)}`, `[coverage ${courseId}] ${what} failed (${errName(err)}); the class's vocabulary coverage is left out of it`);
+		return fallback;
+	}
+}
+
 // ─── the per-chat vocabulary cache ──────────────────────────────────────────
 
 interface VocabularyCacheEntry {
@@ -95,7 +145,7 @@ interface VocabularyCacheEntry {
 }
 
 /** Bump when chatVocabularyOf or ChatVocabulary changes. */
-export const COURSE_VOCABULARY_CACHE_VERSION = 2;
+export const COURSE_VOCABULARY_CACHE_VERSION = 3;
 const CACHE_KEY = Symbol.for(`lh.courseVocabularyCache.v${COURSE_VOCABULARY_CACHE_VERSION}`);
 /** The most chat files the cache keeps (least recently used first out). */
 export const COURSE_VOCABULARY_CACHE_MAX = 5_000;
@@ -121,7 +171,17 @@ function chatFile(id: string): string | null {
 
 function scan(chatId: string, matcher: VocabularyMatcher): ChatVocabulary {
 	scans++;
-	return chatVocabularyOf(stores.chatStore.getChat(chatId)?.messages ?? [], matcher);
+	let messages: LhMessage[] = [];
+	try {
+		messages = stores.chatStore.getChat(chatId)?.messages ?? [];
+	} catch (err) {
+		reportOnce(`read:${chatId}`, `[coverage] chat ${chatId} could not be read (${errName(err)}); it counts nothing for vocabulary`);
+	}
+	const vocabulary = chatVocabularyOf(messages, matcher);
+	// once per scan, and a scan happens once per change of the chat file (the cache)
+	if (vocabulary.failed) console.warn(`[coverage] chat ${chatId}: its vocabulary could not be read; it counts nothing`);
+	else if (vocabulary.unread) console.warn(`[coverage] chat ${chatId}: ${vocabulary.unread} text(s) too long, too deeply nested or unreadable were not read for vocabulary`);
+	return vocabulary;
 }
 
 /** One chat's vocabulary evidence, through the cache unless `useCache` is false (the result is the same). */
@@ -172,7 +232,8 @@ export interface ClassCoverage {
 
 /** A mapped class's coverage read against the glossary now, with its chats' vocabulary evidence. Null when the class
  *  has no mapping (no coverage behaviour). */
-export function classCoverage(course: CourseRecord, opts: { cache?: boolean; glossary?: CoverageGlossary | null } = {}): ClassCoverage | null {
+export function classCoverage(raw: CourseRecord, opts: { cache?: boolean; glossary?: CoverageGlossary | null } = {}): ClassCoverage | null {
+	const course = safeCourse(raw);
 	if (!course.coverage) return null;
 	const glossary = (opts.glossary !== undefined ? opts.glossary : coverageGlossary(course.id)) ?? EMPTY_GLOSSARY;
 	const resolved = resolveCoverage(course.coverage, glossary, new Set(course.skills));
@@ -180,11 +241,28 @@ export function classCoverage(course: CourseRecord, opts: { cache?: boolean; glo
 	const chats: LedgerChat[] = [];
 	const all = stores.chatStore.listChats();
 	for (const c of all) {
-		if (c.course?.courseId !== course.id || c.course.mode === "ask") continue;
-		chats.push({ chatId: c.id, mode: c.course.mode, skillIds: c.course.skillIds, vocabulary: chatVocabulary(c.id, matcher, opts.cache !== false) });
+		const link = c.course as { courseId?: unknown; mode?: unknown; skillIds?: unknown; vocabulary?: unknown } | undefined;
+		if (!link || link.courseId !== course.id || link.mode === "ask" || typeof link.mode !== "string") continue;
+		const startedAt = Date.parse(c.createdAt);
+		const listed = readListedVocabulary(link.vocabulary);
+		chats.push({
+			chatId: c.id,
+			mode: link.mode as CourseMode,
+			skillIds: readStringList(link.skillIds) ?? [],
+			vocabulary: chatVocabulary(c.id, matcher, opts.cache !== false),
+			...(Number.isFinite(startedAt) ? { startedAt } : {}),
+			...(listed ? { listed } : {}),
+		});
 	}
 	pruneDeleted(all.map((c) => c.id));
 	return { glossary, resolved, matcher, chats };
+}
+
+/** The class's ledger (foldLedger), with a chat whose fold fails reported once. */
+function ledgerOf(cc: ClassCoverage, courseId: string, exclude?: string): Map<string, ItemLedger> {
+	return foldLedger(cc.resolved, cc.glossary, cc.chats, exclude, (chatId, err) =>
+		reportOnce(`fold:${chatId}:${errName(err)}`, `[coverage ${courseId}] chat ${chatId} could not be folded (${errName(err)}); it counts nothing for vocabulary`),
+	);
 }
 
 const termView = (base: CoverageEntryView, l: ItemLedger | undefined, linked: string[]): CoverageTermView => ({
@@ -204,8 +282,13 @@ function suggestedView(s: CoverageSuggestions | undefined, nameOf: (key: string)
 	return { excluded: s.excluded.map((x) => ({ ...x, name: nameOf(x.key) })), links: s.links.map((keys) => ({ keys, names: keys.map(nameOf) })) };
 }
 
-/** The course page's coverage block (CourseView.coverage); undefined when the class has no coverage behaviour at all. */
+/** The course page's coverage block (CourseView.coverage); undefined when the class has no coverage behaviour at all.
+ *  Never throws (a failure leaves the block out and is logged once). */
 export function coverageView(course: CourseRecord, language: LessonLanguage, mapping: boolean, opts: { cache?: boolean } = {}): CourseCoverageView | undefined {
+	return guarded("the course page's coverage", course.id, undefined, () => coverageViewOf(safeCourse(course), language, mapping, opts));
+}
+
+function coverageViewOf(course: CourseRecord, language: LessonLanguage, mapping: boolean, opts: { cache?: boolean }): CourseCoverageView | undefined {
 	const glossary = coverageGlossary(course.id);
 	const status: CourseCoverageView["status"] = course.coverage ? "mapped" : hasCoreEntries(glossary) && course.skills.length > 0 ? "unmapped" : "none";
 	// the draft review shows the proposal approval would check: also when the draft carries none but the class has core terms
@@ -226,7 +309,7 @@ export function coverageView(course: CourseRecord, language: LessonLanguage, map
 	if (status === "unmapped") view.unassigned = Object.values(glossary!.terms).filter((e) => e.tier === "core").map((e) => entryView(e)).sort(coreFirst);
 	const cc = classCoverage(course, { ...opts, glossary });
 	if (!cc) return view;
-	const ledger = foldLedger(cc.resolved, cc.glossary, cc.chats);
+	const ledger = ledgerOf(cc, course.id);
 	const nameOf = (k: string) => cc.resolved.byKey.get(k)?.view.name ?? cc.glossary.terms[k]?.term ?? k;
 	for (const skillId of course.skills) {
 		const terms = cc.resolved.items
@@ -252,18 +335,52 @@ export function coverageView(course: CourseRecord, language: LessonLanguage, map
 	return view;
 }
 
-/** The proposal approval checks for a pending draft: the draft's own (with the class's earlier decisions carried in
- *  when the draft was made), else the earlier decisions carried into the draft's proposal or into an empty one (a draft
- *  made before the class's material was indexed). Null without a draft. */
-export function approvalProposal(course: CourseRecord, glossary: CoverageGlossary | null): (CoverageMapping & Partial<DraftCoverage>) | null {
+/**
+ * The proposal approval checks for a pending draft: the class's earlier decisions carried from the approved map AS IT
+ * IS NOW into the draft's proposal (or into an empty one, a draft made before the class's material was indexed). A
+ * carry stored with the draft (when it was made or edited) is advice for the page, never the source (review 2,
+ * finding 7): it is used as it is only while the approved map is unchanged since (its fingerprint); otherwise the carry
+ * is made again from the approved map now, and the student's own edits on the draft (`edited`) win over it. Null
+ * without a draft.
+ */
+export function approvalProposal(raw: CourseRecord, glossary: CoverageGlossary | null): (CoverageMapping & Partial<DraftCoverage>) | null {
+	const course = safeCourse(raw);
 	if (!course.draft) return null;
 	const own = course.draft.coverage;
-	if (own?.carried) return own;
-	const carried = carryForward(course.coverage, own, course.draft.skills, glossary);
-	return { ...(own ?? {}), ...carried };
+	const earlier = course.coverage;
+	const skills = course.draft.skills;
+	if (!own?.carried) return { ...(own ?? {}), ...carryForward(earlier, own, skills, glossary) };
+	if (own.carriedFrom !== undefined && own.carriedFrom === mappingFingerprint(earlier)) return own;
+	// the approved map changed after the carry: carry again from it; the draft's own proposal and edits stay
+	const carriedKeys = new Set(own.carriedKeys ?? (earlier?.items ?? []).map(itemKey));
+	const edited = new Set(own.edited ?? []);
+	const fromDraft = (k: string) => edited.has(k) || !carriedKeys.has(k);
+	const again = carryForward(
+		earlier,
+		{ items: own.items.filter((i) => fromDraft(itemKey(i))), links: own.links.filter((g) => g.every(fromDraft)), ...(own.suggested ? { suggested: own.suggested } : {}) },
+		skills,
+		glossary,
+	);
+	const editedItems = new Map(own.items.filter((i) => edited.has(itemKey(i))).map((i) => [itemKey(i), i]));
+	// an edited key with no item on the draft was removed there: it stays removed
+	const items = again.items.filter((i) => !edited.has(itemKey(i)) || editedItems.has(itemKey(i))).map((i) => editedItems.get(itemKey(i)) ?? i);
+	for (const [k, i] of editedItems) if (!items.some((x) => itemKey(x) === k)) items.push(i);
+	const { suggested: _stale, ...rest } = own;
+	return { ...rest, ...again, items, links: normalizeLinks(again.links), ...stampOf(course) };
 }
 
-/** The approval screen's view of a draft's proposal. */
+/** What a draft records about the approved map it carried in (see approvalProposal). */
+function stampOf(course: CourseRecord): Pick<DraftCoverage, "carried" | "carriedFrom" | "carriedKeys"> {
+	return { carried: true, carriedFrom: mappingFingerprint(course.coverage), carriedKeys: (course.coverage?.items ?? []).map(itemKey) };
+}
+
+/** The stamp a new draft gets when the class's earlier decisions are carried into it (server/courses.ts re-draft). */
+export function carriedStamp(earlier: CourseCoverage | null | undefined): Pick<DraftCoverage, "carried" | "carriedFrom" | "carriedKeys"> {
+	const mapping = readCourseCoverage(earlier);
+	return { carried: true, carriedFrom: mappingFingerprint(mapping), carriedKeys: (mapping?.items ?? []).map(itemKey) };
+}
+
+/** The approval screen's view of a draft's proposal (what approval would check now). */
 function draftView(course: CourseRecord, glossary: CoverageGlossary | null): NonNullable<CourseCoverageView["draft"]> {
 	const proposal = approvalProposal(course, glossary)!;
 	const resolved = resolveCoverage(proposal, glossary, new Set(course.draft!.skills.map((s) => s.key)));
@@ -296,7 +413,8 @@ function draftView(course: CourseRecord, glossary: CoverageGlossary | null): Non
 
 /** The core entries a pending draft would leave unassigned, read against the glossary NOW, whether or not the draft
  *  carries a proposal ([] when the class glossary has no core term: approval is then exactly as before). */
-export function draftUnassigned(course: CourseRecord): Array<{ id: string; name: string }> {
+export function draftUnassigned(raw: CourseRecord): Array<{ id: string; name: string }> {
+	const course = safeCourse(raw);
 	const glossary = coverageGlossary(course.id);
 	if (!course.draft || !hasCoreEntries(glossary)) return [];
 	return resolveCoverage(approvalProposal(course, glossary)!, glossary, new Set(course.draft.skills.map((s) => s.key))).unassigned.map((e) => ({ id: e.id, name: e.term }));
@@ -306,9 +424,15 @@ export function draftUnassigned(course: CourseRecord): Array<{ id: string; name:
 
 /** Every assigned item of one skill as the prompt shows it, with its state as of the other sessions (this one left
  *  out, so its own progress never changes its prompt mid-session). */
-function promptItemsOf(cc: ClassCoverage, skillId: string, chatId: string | undefined): { items: VocabularyPromptItem[]; others: Map<string, ItemLedger> } {
-	const others = foldLedger(cc.resolved, cc.glossary, cc.chats, chatId);
-	const skillChats = new Set(cc.chats.filter((c) => c.chatId !== chatId && c.skillIds.includes(skillId) && (c.mode === "learn" || c.mode === "practice")).map((c) => c.chatId));
+function promptItemsOf(cc: ClassCoverage, courseId: string, skillId: string, chatId: string | undefined): { items: VocabularyPromptItem[]; others: Map<string, ItemLedger> } {
+	const others = ledgerOf(cc, courseId, chatId);
+	const skillSessions = cc.chats.filter((c) => c.chatId !== chatId && c.skillIds.includes(skillId) && (c.mode === "learn" || c.mode === "practice"));
+	const skillChats = new Set(skillSessions.map((c) => c.chatId));
+	// how many earlier sessions of this skill each key was listed to (their stored listings), for the list order
+	const listings = new Map<string, number>();
+	for (const c of skillSessions) for (const k of new Set(c.listed ?? [])) listings.set(k, (listings.get(k) ?? 0) + 1);
+	const startOf = new Map(cc.chats.map((c) => [c.chatId, c.startedAt ?? Number.MAX_SAFE_INTEGER]));
+	const orderOf = teachingOrder(cc.glossary);
 	const learnChats = new Set(cc.chats.filter((c) => c.chatId !== chatId && c.skillIds.includes(skillId) && c.mode === "learn").map((c) => c.chatId));
 	const nameOf = (k: string) => cc.resolved.byKey.get(k)?.view.name ?? k;
 	const assigned = cc.resolved.items.filter((i) => i.status === "assigned" && i.skills.includes(skillId));
@@ -332,6 +456,9 @@ function promptItemsOf(cc: ClassCoverage, skillId: string, chatId: string | unde
 			...(l?.right !== undefined ? { right: l.right } : {}),
 			...(linked.length > 0 ? { linked } : {}),
 			...(senses > 1 ? { senses } : {}),
+			...(listings.get(i.key) ? { listedBefore: listings.get(i.key)! } : {}),
+			order: orderOf(i.key),
+			...(l && l.introducedIn.size > 0 ? { introducedAt: Math.min(...[...l.introducedIn].map((c) => startOf.get(c) ?? Number.MAX_SAFE_INTEGER)) } : {}),
 		};
 	});
 	return { items, others };
@@ -340,9 +467,11 @@ function promptItemsOf(cc: ClassCoverage, skillId: string, chatId: string | unde
 /** The item keys a new Learn or Practice session on one skill is listed (and, for Learn, owes), to store with the session
  *  when it starts. Undefined when the class has no vocabulary mapping (the session owes none). */
 export function listedVocabularyFor(course: CourseRecord, skillId: string): string[] | undefined {
-	const cc = classCoverage(course);
-	if (!cc) return undefined;
-	return listVocabulary(promptItemsOf(cc, skillId, undefined).items);
+	return guarded("listing a new session's vocabulary", course.id, undefined, () => {
+		const cc = classCoverage(course);
+		if (!cc) return undefined;
+		return listVocabulary(promptItemsOf(cc, course.id, skillId, undefined).items);
+	});
 }
 
 /** How the turn timeline reads a question's tags: known when they resolve to an item of the class (resolveConceptId). */
@@ -357,14 +486,26 @@ export function sessionVocabulary(
 	chatId: string,
 	skill: { id: string; name: string },
 	mode: CourseMode,
-	listed: readonly string[] | undefined,
+	storedListing: unknown,
 ): { section: string; lesson?: LessonVocabulary; known: ConceptIdReader } | undefined {
+	return guarded("a session's vocabulary", course.id, undefined, () => sessionVocabularyOf(course, chatId, skill, mode, readListedVocabulary(storedListing)));
+}
+
+function sessionVocabularyOf(course: CourseRecord, chatId: string, skill: { id: string; name: string }, mode: CourseMode, listed: readonly string[] | undefined) {
 	const cc = classCoverage(course);
 	if (!cc) return undefined;
-	const known: ConceptIdReader = { has: (id) => resolveConceptId(id, cc.glossary, cc.resolved).length > 0 };
-	// a session started before the class had a mapping was listed nothing: it owes nothing
+	const known: ConceptIdReader = {
+		has: (id) => {
+			try {
+				return resolveConceptId(id, cc.glossary, cc.resolved).length > 0;
+			} catch {
+				return false;
+			}
+		},
+	};
+	// a session started before the class had a mapping (or whose stored listing is malformed) was listed nothing: it owes nothing
 	if (!listed) return { section: "", known };
-	const { items, others } = promptItemsOf(cc, skill.id, chatId);
+	const { items, others } = promptItemsOf(cc, course.id, skill.id, chatId);
 	const byKey = new Map(items.map((i) => [i.key, i]));
 	const shown = listed.map((k) => byKey.get(k)).filter((i): i is VocabularyPromptItem => i !== undefined);
 	const shownKeys = new Set(shown.map((i) => i.key));
@@ -389,11 +530,19 @@ export function sessionVocabulary(
  *  later lessons never change it). Undefined when the finish recorded none (no coverage, no listed core term, or a
  *  lesson finished before this was recorded). */
 export function lessonCoverage(messages: readonly LhMessage[], language: LessonLanguage): LessonResult["coverage"] | undefined {
+	try {
+		return lessonCoverageOf(messages, language);
+	} catch {
+		return undefined;
+	}
+}
+
+function lessonCoverageOf(messages: readonly LhMessage[], language: LessonLanguage): LessonResult["coverage"] | undefined {
 	const finish = sessionFinishOf(messages);
 	if (!finish?.callId) return undefined;
 	const result = messages.find((m) => (m as { role?: string }).role === "toolResult" && (m as ToolResultMessage).toolCallId === finish.callId && !(m as ToolResultMessage).isError) as ToolResultMessage | undefined;
 	const c = (result?.details as { coverage?: { total?: unknown; covered?: unknown; left?: unknown } } | null | undefined)?.coverage;
-	if (!c || typeof c.total !== "number" || typeof c.covered !== "number" || !Array.isArray(c.left)) return undefined;
+	if (!c || typeof c !== "object" || typeof c.total !== "number" || typeof c.covered !== "number" || !Array.isArray(c.left)) return undefined;
 	return { total: c.total, covered: c.covered, left: c.left.filter((x): x is string => typeof x === "string"), language };
 }
 
@@ -402,8 +551,9 @@ export function lessonCoverage(messages: readonly LhMessage[], language: LessonL
 /** Edit the approved mapping ("approved"; started empty on a class that has core terms and none) or the draft's
  *  proposal ("draft"; started from the proposal approval would check, so a draft with none gets one). */
 export function editCourseCoverage(courseId: string, target: "approved" | "draft", edit: CoverageEdit): Result<CourseRecord> {
-	const course = stores.courseStore.getCourse(courseId);
-	if (!course) return { ok: false, status: 404, error: "Unknown course" };
+	const stored = stores.courseStore.getCourse(courseId);
+	if (!stored) return { ok: false, status: 404, error: "Unknown course" };
+	const course = safeCourse(stored);
 	const glossary = coverageGlossary(courseId);
 	if (target === "draft") {
 		if (!course.draft) return { ok: false, status: 409, error: "There is no draft" };
@@ -411,12 +561,14 @@ export function editCourseCoverage(courseId: string, target: "approved" | "draft
 		const base = approvalProposal(course, glossary)!;
 		const applied = applyCoverageEdit(base, edit, { glossary, skills: new Set(course.draft.skills.map((s) => s.key)) });
 		if (!applied.ok) return { ok: false, status: 400, error: applied.error };
+		const edited = [...new Set([...(course.draft.coverage?.edited ?? []), ...editedKeys(edit)])];
 		const coverage: DraftCoverage = {
 			dropped: course.draft.coverage?.dropped ?? [],
 			incomplete: course.draft.coverage?.incomplete ?? (glossary?.incomplete ?? []).map((m) => m.name),
 			shown: course.draft.coverage?.shown ?? { full: 0, names: 0, omitted: 0 },
 			...applied.value,
-			carried: true,
+			...stampOf(course),
+			...(edited.length > 0 ? { edited } : {}),
 		};
 		const updated = stores.courseStore.updateCourse(courseId, { draft: { ...course.draft, coverage } })!;
 		return { ok: true, value: updated };
@@ -428,6 +580,21 @@ export function editCourseCoverage(courseId: string, target: "approved" | "draft
 	if (!applied.ok) return { ok: false, status: 400, error: applied.error };
 	const updated = stores.courseStore.updateCourse(courseId, { coverage: { updatedAt: new Date().toISOString(), ...applied.value } })!;
 	return { ok: true, value: updated };
+}
+
+/** The item keys an edit changes the item of (recorded on a draft so they win when approval carries again). */
+function editedKeys(edit: CoverageEdit): string[] {
+	switch (edit.action) {
+		case "assign":
+		case "unassign":
+		case "exclude":
+		case "remove":
+			return [edit.key];
+		case "remap":
+			return [edit.key, edit.to];
+		default:
+			return [];
+	}
 }
 
 // ─── "Map the class's terms" (the only model work) ──────────────────────────
@@ -470,7 +637,8 @@ async function runMapping(courseId: string, language: LessonLanguage, target: "a
 		if (stores.courseStore.getCourse(courseId)) stores.courseStore.updateCourse(courseId, patch);
 	};
 	try {
-		const course = stores.courseStore.getCourse(courseId);
+		const stored = stores.courseStore.getCourse(courseId);
+		const course = stored ? safeCourse(stored) : undefined;
 		const glossary = coverageGlossary(courseId);
 		if (!course || !glossary || controller.signal.aborted) return;
 		const spec = resolveRoleSpec("coursePlanner", stores.settingsStore.readSettings());
@@ -488,7 +656,8 @@ async function runMapping(courseId: string, language: LessonLanguage, target: "a
 		}
 		const tools: Record<string, AgentTool<any>> = { ...materialTools({ chatId: courseId, store: stores.materialStore }) };
 		const proposal = await mapCourseTerms({ title: course.title, skills, glossary, language }, { engine: piEngineForSpec(spec), signal: controller.signal, tools, onStep: () => {}, courseId });
-		const fresh = stores.courseStore.getCourse(courseId);
+		const freshStored = stores.courseStore.getCourse(courseId);
+		const fresh = freshStored ? safeCourse(freshStored) : undefined;
 		if (!fresh || controller.signal.aborted) return;
 		const error = proposal.dropped.length > 0 ? `The planner named ${proposal.dropped.length} term id(s) that are not in the glossary; they were dropped: ${proposal.dropped.slice(0, 8).join(", ")}` : undefined;
 		if (target === "draft") {
@@ -500,7 +669,8 @@ async function runMapping(courseId: string, language: LessonLanguage, target: "a
 				incomplete: proposal.incomplete,
 				shown: proposal.shown,
 				...merged,
-				carried: true,
+				...stampOf(fresh),
+				...(fresh.draft.coverage?.edited?.length ? { edited: fresh.draft.coverage.edited } : {}),
 			};
 			settle({ draft: { ...fresh.draft, coverage }, coverageError: error });
 			return;

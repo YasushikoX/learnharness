@@ -25,7 +25,11 @@
  *     ("C++" is not in "C++foo"). Texts and names are compared after normalizeName's invisible-character, NFC and space
  *     folding and with typographic quotes read as plain ones.
  *   - A hyphen joins a word: a name preceded or followed by a hyphen that touches a letter or digit is part of a longer
- *     word and does not match ("sub-ring" does not introduce "ring"; "R-module" is one word).
+ *     word and does not match ("sub-ring" does not introduce "ring"; "R-module" is one word). So do an en dash, an em
+ *     dash without spaces, a minus sign, a non-breaking hyphen and an underscore (review 2: "sub–ring", "ring_buffer");
+ *     a soft hyphen is removed, and a line-break hyphen joins its halves (core/visible-text.ts).
+ *   - Emphasis markers are removed before words are formed ("**sub**group" is "subgroup"), and inline code counts
+ *     nothing (core/visible-text.ts).
  *   - Longest match wins: where a longer name of the class covers a span, the shorter names inside that span are not
  *     credited by it ("ring homomorphism" does not introduce "ring").
  *   - Case: exact, with one exception: a name stored in lower case at its start (the glossary keeps running-text forms)
@@ -35,15 +39,21 @@
  *   - Inflections are NOT matched unless the inflected form is an alias of the entry, or is itself an entry linked with it.
  *   - Symbols never introduce anything.
  *   - Senses of a homonym: a mention credits a sense only when exactly ONE sense of that entry is eligible in the
- *     session (assigned to one of its skills). With two or more eligible senses a bare mention introduces none of them.
+ *     session (assigned to one of its skills). With two or more eligible senses a bare mention introduces none of them;
+ *     a sense is then introduced when its word was seen in the session AND the learner answered a question of that
+ *     session tagged with that sense's key (review 2: the tag alone still introduces nothing, the name alone neither).
  *   - Ask conversations count for nothing, and nor do chats outside the class.
+ *
+ * NOTHING HERE THROWS (review 2, "nothing in one chat may break the class"): a text that cannot be reduced or matched
+ * counts nothing (core/learner-seen.ts, matchNames); a chat whose record cannot be read counts nothing
+ * (chatVocabularyOf returns `failed`); a chat whose fold fails counts nothing (foldLedger's `onChatError`).
  */
 
 import type { CourseMode, CoverageTermState } from "./contracts/course.ts";
 import type { CoverageGlossary, ResolvedCoverage } from "./coverage-items.ts";
 import { findTermCandidates, normalizeName, plainQuotes, stripInvisible } from "./glossary.ts";
 import { readAnswerVerdict } from "./lead-floor-gate.ts";
-import { seenTextsOfView } from "./learner-seen.ts";
+import { pendingQuestionAt, seenTextsOfView, type SeenReading } from "./learner-seen.ts";
 import type { LhMessage } from "./native-messages.ts";
 import type { QuestionAnswerData } from "./question-core.ts";
 import { normalizeConceptIds, normalizeQuestionLevel, QUESTION_LEVELS, type QuestionLevel } from "./question-quality.ts";
@@ -52,9 +62,10 @@ import { projectView, type LhViewPart } from "./view.ts";
 
 // ─── what the learner saw ───────────────────────────────────────────────────
 
-/** Every text the learner was shown in a transcript, in order, as the screen shows it (core/learner-seen.ts). Pure. */
-export function learnerSeenTexts(messages: readonly LhMessage[]): string[] {
-	return seenTextsOfView(projectView(messages));
+/** Every text the learner was shown in a transcript, in order, as the screen shows it (core/learner-seen.ts): an
+ *  unanswered question only when it is the dock's pending one. Pure. */
+export function learnerSeenTexts(messages: readonly LhMessage[], reading?: SeenReading): string[] {
+	return seenTextsOfView(projectView(messages), pendingQuestionAt(messages), reading);
 }
 
 // ─── the name matcher ───────────────────────────────────────────────────────
@@ -62,7 +73,8 @@ export function learnerSeenTexts(messages: readonly LhMessage[]): string[] {
 const WORD_RUN = /[\p{L}\p{N}\p{M}]+/gu;
 const WORD_CHAR = /^[\p{L}\p{N}\p{M}]$/u;
 const FIRST_WORD = /^[\p{L}\p{N}\p{M}]+/u;
-const HYPHENS = new Set(["-", "‐", "‑"]);
+/** Characters that join the words on either side into one (when they touch a letter or digit on the other side). */
+const JOINERS = new Set(["-", "\u2010", "\u2011", "\u2013", "\u2014", "\u2212", "_"]);
 
 /** A text or a name as matching reads it: invisible characters out, NFC, typographic quotes plain, runs of spaces and
  *  tabs as one space (line breaks kept: they start sentences). */
@@ -90,7 +102,7 @@ function fnv(text: string): string {
 }
 
 /** Bump when the matching rules change: cached chat scans made under older rules are then redone. */
-const MATCH_RULES_VERSION = 2;
+const MATCH_RULES_VERSION = 3;
 
 /** The matcher over every entry's name and aliases (never its symbols). Pure. */
 export function buildMatcher(glossary: Pick<CoverageGlossary, "terms">): VocabularyMatcher {
@@ -130,14 +142,14 @@ const isWord = (ch: string) => ch !== "" && WORD_CHAR.test(ch);
 function startsClean(text: string, i: number): boolean {
 	const prev = before(text, i);
 	if (isWord(prev)) return false;
-	if (HYPHENS.has(prev) && isWord(before(text, i - prev.length))) return false;
+	if (JOINERS.has(prev) && isWord(before(text, i - prev.length))) return false;
 	return true;
 }
 /** Can a name end at `end`? The next character is not a word character, nor a hyphen joined to a word after it. */
 function endsClean(text: string, end: number): boolean {
 	const next = after(text, end);
 	if (isWord(next)) return false;
-	if (HYPHENS.has(next) && isWord(after(text, end + next.length))) return false;
+	if (JOINERS.has(next) && isWord(after(text, end + next.length))) return false;
 	return true;
 }
 
@@ -166,8 +178,17 @@ interface Span {
 	form: string;
 }
 
-/** Every name of the matcher that occurs in the (visible) text under the rules above, longest match winning. Pure. */
+/** Every name of the matcher that occurs in the (visible) text under the rules above, longest match winning. Never
+ *  throws: a text that cannot be matched gives nothing. Pure. */
 export function matchNames(rawText: string, m: VocabularyMatcher): Set<string> {
+	try {
+		return typeof rawText === "string" ? namesIn(rawText, m) : new Set();
+	} catch {
+		return new Set();
+	}
+}
+
+function namesIn(rawText: string, m: VocabularyMatcher): Set<string> {
 	const text = matchText(rawText);
 	const spans: Span[] = [];
 	for (const w of text.matchAll(WORD_RUN)) {
@@ -190,11 +211,20 @@ export function matchNames(rawText: string, m: VocabularyMatcher): Set<string> {
 			if (startsClean(text, i) && endsClean(text, i + form.length)) spans.push({ start: i, end: i + form.length, form });
 		}
 	}
-	// longest match wins: a span inside a longer one credits nothing
+	// longest match wins: a span inside a longer one credits nothing. One sweep (n log n): spans by start, longer first;
+	// a span is covered when an earlier one in that order reaches as far (spans of the same extent are one name read two
+	// ways, the same form, and never cover each other).
+	spans.sort((a, b) => a.start - b.start || b.end - a.end);
 	const found = new Set<string>();
+	let reach = -1;
+	let reachStart = -1;
 	for (const s of spans) {
-		const covered = spans.some((o) => o !== s && o.end - o.start > s.end - s.start && o.start <= s.start && o.end >= s.end);
+		const covered = reach >= s.end && !(reachStart === s.start && reach === s.end);
 		if (!covered) found.add(s.form);
+		if (s.end > reach) {
+			reach = s.end;
+			reachStart = s.start;
+		}
 	}
 	return found;
 }
@@ -243,15 +273,26 @@ export interface ChatVocabulary {
 	checks: VocabularyCheck[];
 	/** The ids the clean `finish_lesson` deferred with a reason. */
 	deferred: string[];
+	/** The chat's record could not be read: it counts nothing (the server reports it once). */
+	failed?: true;
+	/** How many texts the learner saw were not read (too long, too deep, or a record that failed): they count nothing. */
+	unread?: number;
 }
 
 const TEACH_PARTS = new Set(["tool-quiz", "tool-explain"]);
 
-/** A chat's vocabulary evidence: the names seen, the answered tagged questions, and the lesson's deferred ids. Pure. */
+/** A chat's vocabulary evidence: the names seen, the answered tagged questions, and the lesson's deferred ids. Never
+ *  throws: a chat whose record cannot be read is `failed` and counts nothing. Pure. */
 export function chatVocabularyOf(messages: readonly LhMessage[], matcher: VocabularyMatcher): ChatVocabulary {
-	const forms = new Set<string>();
-	for (const text of learnerSeenTexts(messages)) for (const f of matchNames(text, matcher)) forms.add(f);
-	return { forms: [...forms].sort(), checks: checksOf(messages), deferred: deferredOf(messages) };
+	try {
+		const list = Array.isArray(messages) ? messages : [];
+		const reading = { unread: 0 };
+		const forms = new Set<string>();
+		for (const text of learnerSeenTexts(list, reading)) for (const f of matchNames(text, matcher)) forms.add(f);
+		return { forms: [...forms].sort(), checks: checksOf(list), deferred: deferredOf(list), ...(reading.unread > 0 ? { unread: reading.unread } : {}) };
+	} catch {
+		return { forms: [], checks: [], deferred: [], failed: true };
+	}
 }
 
 /** The answered quiz/explain occurrences that carry concept ids, with their level and grade, read through the view so
@@ -262,10 +303,18 @@ export function checksOf(messages: readonly LhMessage[]): VocabularyCheck[] {
 	for (const m of projectView(messages)) if (m.role === "assistant") for (const p of m.parts) if (TEACH_PARTS.has(p.type)) parts.push(p);
 	const checks: VocabularyCheck[] = [];
 	parts.forEach((part, i) => {
+		try {
+			checkOf(part, i);
+		} catch {
+			// a record that cannot be read checks nothing
+		}
+	});
+	return checks;
+	function checkOf(part: LhViewPart, i: number): void {
 		if (part.state !== "output-available") return;
 		const answer = part.output as QuestionAnswerData | null | undefined;
 		if (!answer || typeof answer !== "object" || answer.dismissed === true) return;
-		const args = (part.input ?? {}) as Record<string, unknown>;
+		const args = (part.input && typeof part.input === "object" ? part.input : {}) as Record<string, unknown>;
 		const ids = normalizeConceptIds(args.conceptIds) ?? [];
 		if (ids.length === 0) return;
 		const verdict = readAnswerVerdict({ content: part.result?.content ?? [], details: answer } as never);
@@ -279,8 +328,7 @@ export function checksOf(messages: readonly LhMessage[]): VocabularyCheck[] {
 		}
 		const level = normalizeQuestionLevel(args.level);
 		checks.push({ ids, ...(level ? { level } : {}), right });
-	});
-	return checks;
+	}
 }
 
 /** The ids `finish_lesson` deferred in a lesson that finished (its clean call); [] otherwise. Pure. */
@@ -318,6 +366,10 @@ export interface LedgerChat {
 	mode: CourseMode;
 	skillIds: readonly string[];
 	vocabulary: ChatVocabulary;
+	/** When the session started (ms since the epoch), for "oldest first". */
+	startedAt?: number;
+	/** The item keys listed to it when it started (its stored listing; absent when it has none). */
+	listed?: readonly string[];
 }
 
 export interface ItemLedger {
@@ -329,6 +381,8 @@ export interface ItemLedger {
 	right?: boolean;
 	/** The chats it was introduced or checked in. */
 	seenIn: Set<string>;
+	/** The chats it was introduced in. */
+	introducedIn: Set<string>;
 	/** The chats whose finished lesson deferred it. */
 	deferredIn: Set<string>;
 }
@@ -346,73 +400,122 @@ const levelRank = (l: QuestionLevel | undefined) => (l ? QUESTION_LEVELS.indexOf
 /** Which item keys a name introduces in a chat of these skills (none when the name is ambiguous in the class, and none
  *  for a homonym with two or more senses eligible in the chat). Pure. */
 export function keysForName(form: string, glossary: Pick<CoverageGlossary, "terms" | "lookup">, resolved: ResolvedCoverage, chatSkills: ReadonlySet<string>): string[] {
+	return namedKeys(form, glossary, resolved, chatSkills).keys;
+}
+
+/** What naming a word does in a chat of these skills: the keys it introduces, and the senses it names without
+ *  introducing (a homonym with two or more senses eligible in the chat; each is introduced only with a sense-keyed
+ *  answered check of the same chat). Pure. */
+export function namedKeys(form: string, glossary: Pick<CoverageGlossary, "terms" | "lookup">, resolved: ResolvedCoverage, chatSkills: ReadonlySet<string>): { keys: string[]; senses: string[] } {
 	const entries = findTermCandidates(glossary, form).map((c) => c.entry.id);
-	if (entries.length === 0) return [];
+	if (entries.length === 0) return { keys: [], senses: [] };
 	if (entries.length > 1) {
 		// unambiguous only when every candidate is one linked concept
 		const group = new Set(resolved.group(entries[0]!));
-		if (!entries.every((id) => group.has(id))) return [];
+		if (!entries.every((id) => group.has(id))) return { keys: [], senses: [] };
 	}
-	const out: string[] = [];
+	const keys: string[] = [];
+	const senses: string[] = [];
 	for (const entryId of entries) {
 		const items = resolved.items.filter((i) => i.status !== "flagged" && i.item.entryId === entryId);
-		for (const i of items) if (!i.item.sense) out.push(i.key);
+		for (const i of items) if (!i.item.sense) keys.push(i.key);
 		const eligible = items.filter((i) => i.item.sense && i.skills.some((s) => chatSkills.has(s)));
-		if (eligible.length === 1) out.push(eligible[0]!.key);
+		if (eligible.length === 1) keys.push(eligible[0]!.key);
+		else for (const i of eligible) senses.push(i.key);
 	}
-	return out;
+	return { keys, senses };
 }
 
 /** Every item's ledger from the class's chats (an Ask chat counts for nothing). `exclude`: leave one chat out (the
- *  session a prompt is built for, so its own progress does not change its prompt mid-session). Pure. */
-export function foldLedger(resolved: ResolvedCoverage, glossary: Pick<CoverageGlossary, "terms" | "lookup">, chats: readonly LedgerChat[], exclude?: string): Map<string, ItemLedger> {
+ *  session a prompt is built for, so its own progress does not change its prompt mid-session). Never throws: a chat
+ *  whose fold fails counts nothing and is passed to `onChatError`. Pure. */
+export function foldLedger(
+	resolved: ResolvedCoverage,
+	glossary: Pick<CoverageGlossary, "terms" | "lookup">,
+	chats: readonly LedgerChat[],
+	exclude?: string,
+	onChatError?: (chatId: string, err: unknown) => void,
+): Map<string, ItemLedger> {
 	const ledger = new Map<string, ItemLedger>();
-	for (const item of resolved.items) if (item.status !== "flagged") ledger.set(item.key, { introduced: false, checked: false, seenIn: new Set(), deferredIn: new Set() });
-	const mark = (keys: readonly string[], chatId: string, f: (l: ItemLedger) => void) => {
-		for (const key of keys) {
+	for (const item of resolved.items) if (item.status !== "flagged") ledger.set(item.key, { introduced: false, checked: false, seenIn: new Set(), introducedIn: new Set(), deferredIn: new Set() });
+	const nameCache = new Map<string, { keys: string[]; senses: string[] }>();
+	const idCache = new Map<string, string[]>();
+	const idKeys = (id: string) => {
+		let keys = idCache.get(id);
+		if (!keys) idCache.set(id, (keys = resolveConceptId(id, glossary, resolved)));
+		return keys;
+	};
+	for (const chat of chats) {
+		if (chat.mode === "ask" || chat.chatId === exclude) continue;
+		// one chat's marks are worked out first and applied only when the whole chat was read
+		let marks: { introduced: string[]; checks: Array<{ keys: string[]; check: VocabularyCheck }>; deferred: string[] };
+		try {
+			marks = chatMarks(chat);
+		} catch (err) {
+			onChatError?.(chat.chatId, err);
+			continue;
+		}
+		for (const key of marks.introduced) {
 			for (const k of resolved.group(key)) {
 				const l = ledger.get(k);
 				if (!l) continue;
-				f(l);
-				l.seenIn.add(chatId);
+				l.introduced = true;
+				l.introducedIn.add(chat.chatId);
+				l.seenIn.add(chat.chatId);
 			}
 		}
-	};
-	const nameCache = new Map<string, string[]>();
-	const idCache = new Map<string, string[]>();
-	for (const chat of chats) {
-		if (chat.mode === "ask" || chat.chatId === exclude) continue;
-		const skills = new Set(chat.skillIds);
-		const skillKey = [...skills].sort().join(",");
-		for (const form of chat.vocabulary.forms) {
-			const cacheKey = `${skillKey}\u0000${form}`;
-			let keys = nameCache.get(cacheKey);
-			if (!keys) nameCache.set(cacheKey, (keys = keysForName(form, glossary, resolved, skills)));
-			mark(keys, chat.chatId, (l) => (l.introduced = true));
-		}
-		for (const check of chat.vocabulary.checks) {
-			for (const id of check.ids) {
-				let keys = idCache.get(id);
-				if (!keys) idCache.set(id, (keys = resolveConceptId(id, glossary, resolved)));
-				mark(keys, chat.chatId, (l) => {
+		for (const { keys, check } of marks.checks) {
+			for (const key of keys) {
+				for (const k of resolved.group(key)) {
+					const l = ledger.get(k);
+					if (!l) continue;
 					l.checked = true;
 					if (levelRank(check.level) > levelRank(l.level)) l.level = check.level;
 					if (check.right === true) l.right = true;
 					else if (check.right === false && l.right === undefined) l.right = false;
-				});
+					l.seenIn.add(chat.chatId);
+				}
 			}
 		}
-		for (const id of chat.vocabulary.deferred) for (const k of resolveConceptId(id, glossary, resolved)) ledger.get(k)?.deferredIn.add(chat.chatId);
+		for (const k of marks.deferred) ledger.get(k)?.deferredIn.add(chat.chatId);
 	}
 	return ledger;
+
+	function chatMarks(chat: LedgerChat) {
+		const skills = new Set(Array.isArray(chat.skillIds) ? chat.skillIds : []);
+		const skillKey = [...skills].sort().join(",");
+		const introduced: string[] = [];
+		const namedSenses = new Set<string>();
+		for (const form of chat.vocabulary.forms) {
+			const cacheKey = `${skillKey}\u0000${form}`;
+			let named = nameCache.get(cacheKey);
+			if (!named) nameCache.set(cacheKey, (named = namedKeys(form, glossary, resolved, skills)));
+			introduced.push(...named.keys);
+			for (const k of named.senses) namedSenses.add(k);
+		}
+		const checks: Array<{ keys: string[]; check: VocabularyCheck }> = [];
+		for (const check of chat.vocabulary.checks) {
+			for (const id of check.ids) {
+				const keys = idKeys(id);
+				checks.push({ keys, check });
+				// a sense whose word was named in this chat is introduced by an answered check tagged with it (review 2)
+				for (const k of keys) if (namedSenses.has(k)) introduced.push(k);
+			}
+		}
+		const deferred = chat.vocabulary.deferred.flatMap(idKeys);
+		return { introduced, checks, deferred };
+	}
 }
 
 // ─── the lesson's prompt section ────────────────────────────────────────────
 
-/** The most terms one session is LISTED, and so owes (core first, carried-over first). A lesson teaches one skill in
+/** The most terms one session is LISTED, and so owes (see listVocabulary for the order). A lesson teaches one skill in
  *  roughly half an hour, a new term every two or three minutes is already dense, and a checklist longer than this stops
  *  being one the tutor can keep in view; the rest of the skill's terms go to the next sessions. */
 export const VOCABULARY_PROMPT_MAX = 12;
+/** The most of those places that go to terms introduced but not checked while a term not yet introduced is waiting
+ *  (review 2, finding 2: checks of old terms must never starve the new ones). */
+export const VOCABULARY_TO_CHECK_MAX = 4;
 /** The most already-done terms named (without definition) on one line. */
 export const VOCABULARY_CHECKED_MAX = 20;
 /** The most other names of a linked term shown on its line. */
@@ -437,6 +540,12 @@ export interface VocabularyPromptItem {
 	linked?: string[];
 	/** For a sense of a homonym: how many senses of its word this session has (2 or more: a bare mention introduces none). */
 	senses?: number;
+	/** How many earlier sessions of this skill (Learn or Practice) were listed it (their stored listing). */
+	listedBefore?: number;
+	/** Where the material introduces it (smaller first; the class's teaching order). */
+	order?: number;
+	/** When it was first introduced (the earliest session's start, ms since the epoch), for "oldest first". */
+	introducedAt?: number;
 }
 
 const flat = (t: string, max: number) => {
@@ -445,22 +554,40 @@ const flat = (t: string, max: number) => {
 };
 
 const isOpen = (i: VocabularyPromptItem) => i.state !== "checked";
-const rank = (i: VocabularyPromptItem) =>
-	(i.tier === "core" ? 0 : 10) + (i.carried && i.state !== "introduced" ? 0 : i.carried ? 1 : i.state === "introduced" ? 2 : 3);
+const notIntroduced = (i: VocabularyPromptItem) => i.state === "new" || i.state === "asked";
 
 /**
- * Which of a skill's items a session is listed, in order: the open ones (not yet both introduced and checked), core
- * first, carried-over ones first (those still to be introduced before those only to be checked), at most
- * VOCABULARY_PROMPT_MAX. The session owes exactly these (the core ones not yet introduced); its section counts the rest
- * as left for later sessions. Pure.
+ * Which of a skill's items a session is listed (review 2, finding 2: no term is starved), at most
+ * VOCABULARY_PROMPT_MAX, filled in this order:
+ *   1. core terms never listed to an earlier session of this skill (and not introduced), in the order the material
+ *      introduces them;
+ *   2. core terms listed before but still not introduced (deferred or ignored), fewest earlier listings first;
+ *   3. core terms introduced but not checked, oldest first (first introduced earliest, then fewest listings); at most
+ *      VOCABULARY_TO_CHECK_MAX places go to these while any term of 1 or 2 is waiting;
+ *   4. supporting terms still open, not introduced first, with whatever places are left.
+ * Practice sessions of the skill take part like Learn sessions (they are listed and can introduce and check). The
+ * session owes exactly these (the core ones not yet introduced); its section counts the rest as left for later. Pure.
  */
 export function listVocabulary(items: readonly VocabularyPromptItem[]): string[] {
-	return items
-		.filter(isOpen)
-		.map((item, i) => ({ item, i }))
-		.sort((a, b) => rank(a.item) - rank(b.item) || a.i - b.i)
-		.slice(0, VOCABULARY_PROMPT_MAX)
-		.map((x) => x.item.key);
+	const open = items.map((item, i) => ({ item, i })).filter((x) => isOpen(x.item));
+	type X = (typeof open)[number];
+	const order = (x: X) => x.item.order ?? x.i;
+	const listings = (x: X) => x.item.listedBefore ?? 0;
+	const byOrder = (a: X, b: X) => order(a) - order(b) || a.i - b.i;
+	const core = open.filter((x) => x.item.tier === "core");
+	const fresh = core.filter((x) => notIntroduced(x.item) && listings(x) === 0).sort(byOrder);
+	const again = core.filter((x) => notIntroduced(x.item) && listings(x) > 0).sort((a, b) => listings(a) - listings(b) || byOrder(a, b));
+	const age = (x: X) => x.item.introducedAt ?? Number.MAX_SAFE_INTEGER;
+	const toCheck = core.filter((x) => x.item.state === "introduced").sort((a, b) => age(a) - age(b) || listings(a) - listings(b) || byOrder(a, b));
+	const supporting = open
+		.filter((x) => x.item.tier !== "core")
+		.sort((a, b) => Number(!notIntroduced(a.item)) - Number(!notIntroduced(b.item)) || listings(a) - listings(b) || byOrder(a, b));
+	const waiting = [...fresh, ...again];
+	const share = Math.min(VOCABULARY_TO_CHECK_MAX, toCheck.length);
+	const checkPlaces = waiting.length > VOCABULARY_PROMPT_MAX - share ? share : Math.min(toCheck.length, VOCABULARY_PROMPT_MAX - waiting.length);
+	const picked = [...waiting.slice(0, VOCABULARY_PROMPT_MAX - checkPlaces), ...toCheck.slice(0, checkPlaces)];
+	picked.push(...supporting.slice(0, VOCABULARY_PROMPT_MAX - picked.length));
+	return picked.map((x) => x.item.key);
 }
 
 function stateText(i: VocabularyPromptItem): string {
@@ -496,7 +623,7 @@ export function vocabularySection(skillName: string, listed: readonly Vocabulary
 		const linked = names.length > 0 ? ` Also named: ${shownNames.join(", ")}${names.length > shownNames.length ? ` (+${names.length - shownNames.length} more)` : ""}.` : "";
 		const sense =
 			i.senses && i.senses > 1
-				? ` One of ${i.senses} senses of "${i.name}" in this lesson (this one: ${where || "its own page"}): naming the word introduces none of them, so tag the check of this sense with this exact id, and list it in \`deferred\` if you leave it.`
+				? ` One of ${i.senses} senses of "${i.name}" in this lesson (this one: ${where || "its own page"}): naming the word alone introduces none of them. Name the word, explain this sense, and check it with a question tagged with this exact id: the name seen and that answered check together introduce this sense and check it. List it in \`deferred\` if you leave it.`
 				: "";
 		return `- [${i.key}] ${i.name}${i.tier === "supporting" ? " (supporting)" : ""} — ${stateText(i)}. ${definition}${linked}${sense}`;
 	};

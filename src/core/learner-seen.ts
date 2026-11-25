@@ -13,26 +13,33 @@
  *     was refused, or when the figure is missing or failed; otherwise the caption, the `lookAt` points (an array, as the
  *     production schema has it) and, on a demo only, `tryThis`.
  *   - pendingQuestionContent: a posed question waiting in the dock: its question and details (its options, again, are
- *     not teaching). A question the dock cannot parse renders as "malformed" and shows nothing of itself.
+ *     not teaching). Only THE pending question counts, as the dock computes it (core/native-messages.ts
+ *     pendingQuestionOf, shared, review 2): a question in a generation that ended in error, abort or a length stop, one
+ *     the dock cannot parse ("malformed"), and one a later message superseded show nothing of themselves.
  *   - tutor prose (text parts, which include `send_to_user` and a posed question's `lead`), and a practice problem's
- *     statement.
+ *     statement once the problem went through (its clean result; a pose in a failed generation never did).
  * Never thinking, the learner's own words, plan blocks, context markers, refused calls, or any tool argument a card
  * does not render. Every text goes through core/visible-text.ts (a link's label, not its URL; collapsed details out).
  *
  * At finish time (`messagesSeenAtFinish`) the message that calls `finish_lesson` contributes only its own prose: its
  * sibling calls have not settled when the finish gate runs (pi prepares every call of a message before executing any),
- * so a sibling that will fail, and one that will succeed, both contribute nothing yet.
+ * so a sibling that will fail, and one that will succeed, both contribute nothing yet. (A sibling `send_to_user` that
+ * will succeed is therefore not counted by the gate although the later scan counts it: the gate errs toward "new".)
+ *
+ * Nothing here throws (review 2): a part whose record cannot be read, or a text that is too long or too deep to reduce
+ * (core/visible-text.ts readVisibleMarkdown), counts nothing, and `unread` counts such texts.
  */
 
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { QuestionAnswerData } from "./question-core.ts";
-import type { LhMessage } from "./native-messages.ts";
+import { pendingQuestionOf, type LhMessage } from "./native-messages.ts";
 import type { LhViewMessage, LhViewPart } from "./view.ts";
 import { answerForPresentation } from "./answer-presentation.ts";
 import { figureNotesOf } from "./figure-notes.ts";
 import type { FigureEntry } from "./figure-show.ts";
 import { parseAskInput, parseQuestionInput, parseQuizInput } from "./tool-parts.ts";
-import { visibleMarkdownText } from "./visible-text.ts";
+import type { PendingQuestion } from "./pending.ts";
+import { joinLineBreakHyphens, readVisibleMarkdown, VISIBLE_TEXT_MAX_CHARS } from "./visible-text.ts";
 
 // ─── the cards' decisions ───────────────────────────────────────────────────
 
@@ -101,65 +108,101 @@ export function pendingQuestionContent(tool: string, input: unknown): { question
 
 const QUESTION_PARTS = new Set(["tool-quiz", "tool-explain", "tool-probe", "tool-recall", "tool-ask_user_question"]);
 
-/** A text the learner was shown, as the screen shows it: Markdown reduced to its visible text, plain text as is. */
-const markdown = (out: string[], text: unknown) => {
-	if (typeof text !== "string" || text.trim() === "") return;
-	const visible = visibleMarkdownText(text);
-	if (visible) out.push(visible);
-};
-const plain = (out: string[], text: unknown) => {
-	if (typeof text === "string" && text.trim() !== "") out.push(text.replace(/\s+/g, " ").trim());
-};
+/** Where the dock's pending question is (core/native-messages.ts pendingQuestionOf). */
+export type PendingQuestionAt = Pick<PendingQuestion, "toolCallId" | "messageId" | "contentIndex">;
 
-/** The texts one view part shows the learner (see the module comment). Pure. */
-export function seenTextsOfPart(part: LhViewPart): string[] {
+/** How a reading went: the texts it could not read (too long, too deep, or a record that failed). */
+export interface SeenReading {
+	unread: number;
+}
+
+/** The texts one view part shows the learner (see the module comment). `pending`: the dock's pending question (null or
+ *  absent: none, so no unanswered question counts). Never throws: a part that cannot be read shows nothing. Pure. */
+export function seenTextsOfPart(part: LhViewPart, pending?: PendingQuestionAt | null, reading: SeenReading = { unread: 0 }): string[] {
+	try {
+		return partTexts(part, pending ?? null, reading);
+	} catch {
+		reading.unread++;
+		return [];
+	}
+}
+
+function partTexts(part: LhViewPart, pending: PendingQuestionAt | null, reading: SeenReading): string[] {
 	const out: string[] = [];
+	/** A text the learner was shown, as the screen shows it: Markdown reduced to its visible text. */
+	const markdown = (text: unknown) => {
+		if (typeof text !== "string" || text.trim() === "") return;
+		const visible = readVisibleMarkdown(text);
+		if (visible === null) reading.unread++;
+		else if (visible) out.push(visible);
+	};
+	/** Plain text as is (within the same length bound). */
+	const plain = (text: unknown) => {
+		if (typeof text !== "string" || text.trim() === "") return;
+		if (text.length > VISIBLE_TEXT_MAX_CHARS) reading.unread++;
+		else out.push(joinLineBreakHyphens(text).replace(/\s+/g, " ").trim());
+	};
 	if (part.type === "text") {
-		markdown(out, part.text);
+		markdown(part.text);
 		return out;
 	}
-	if (!part.type.startsWith("tool-") || part.pluginQuestion || part.pluginProblem) return out;
+	if (typeof part.type !== "string" || !part.type.startsWith("tool-") || part.pluginQuestion || part.pluginProblem) return out;
 	if (part.state === "output-error" || part.state === "input-streaming") return out;
 	if (QUESTION_PARTS.has(part.type)) {
 		if (part.state === "output-available") {
 			const content = answeredCardContent(part.output as QuestionAnswerData, part.input);
 			if (content.dismissed) {
-				plain(out, content.questionText);
+				plain(content.questionText);
 				return out;
 			}
-			markdown(out, content.questionText);
-			markdown(out, content.details);
-			markdown(out, content.committed);
-			for (const k of content.keyPoints) markdown(out, k);
+			markdown(content.questionText);
+			markdown(content.details);
+			markdown(content.committed);
+			for (const k of content.keyPoints) markdown(k);
 			return out;
 		}
-		const pending = pendingQuestionContent(part.type.slice("tool-".length), part.input);
-		if (pending) {
-			markdown(out, pending.question);
-			markdown(out, pending.details);
+		// unanswered: only the dock's pending question was ever shown (review 2, finding 5)
+		const isPending = pending !== null && part.toolCallId === pending.toolCallId && part.sourceMessageId === pending.messageId && part.sourceContentIndex === pending.contentIndex;
+		if (!isPending) return out;
+		const posed = pendingQuestionContent(part.type.slice("tool-".length), part.input);
+		if (posed) {
+			markdown(posed.question);
+			markdown(posed.details);
 		}
 		return out;
 	}
 	if (part.type === "tool-show_figure") {
 		const shown = showFigureContent(part);
 		if (!shown) return out;
-		plain(out, shown.caption);
-		for (const p of shown.lookAt) markdown(out, p);
-		markdown(out, shown.tryThis);
+		plain(shown.caption);
+		for (const p of shown.lookAt) markdown(p);
+		markdown(shown.tryThis);
 		return out;
 	}
-	if (part.type === "tool-problem") markdown(out, (part.input as { statement?: unknown } | undefined)?.statement);
+	// a practice problem shows once it went through (its clean result), never from a failed generation
+	if (part.type === "tool-problem" && part.state === "output-available") markdown((part.input as { statement?: unknown } | undefined)?.statement);
 	return out;
 }
 
-/** Every text the learner was shown in a projected transcript, in order. Pure. */
-export function seenTextsOfView(view: readonly LhViewMessage[]): string[] {
+/** Every text the learner was shown in a projected transcript, in order. `pending`: the dock's pending question for the
+ *  same transcript (pendingQuestionOf; absent: no unanswered question counts). Never throws. Pure. */
+export function seenTextsOfView(view: readonly LhViewMessage[], pending?: PendingQuestionAt | null, reading: SeenReading = { unread: 0 }): string[] {
 	const out: string[] = [];
 	for (const m of view) {
-		if (m.role !== "assistant") continue;
-		for (const part of m.parts) out.push(...seenTextsOfPart(part));
+		if (m?.role !== "assistant" || !Array.isArray(m.parts)) continue;
+		for (const part of m.parts) out.push(...seenTextsOfPart(part, pending, reading));
 	}
 	return out;
+}
+
+/** The dock's pending question of a native transcript (pendingQuestionOf, shared with the dock), or null. Never throws. */
+export function pendingQuestionAt(messages: readonly LhMessage[]): PendingQuestionAt | null {
+	try {
+		const p = pendingQuestionOf(messages);
+		return p ? { toolCallId: p.toolCallId, messageId: p.messageId, contentIndex: p.contentIndex } : null;
+	} catch {
+		return null;
+	}
 }
 
 /**

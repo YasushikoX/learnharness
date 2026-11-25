@@ -101,13 +101,14 @@ const seen = (markdown: string) => [...matchNames(visibleMarkdownText(markdown),
 describe("what the learner saw: one definition, shared with the cards (review 1, finding 2)", () => {
 	it("prose and a posed question's lead, question and details count; thinking, a refused question's lead, hidden key points and his own words do not", () => {
 		const posed = explain("e1", { lead: "Now kernel.", question: "Explain the kernel.", keyPoints: ["resistor point", "b"] });
+		// (review 2: the posed question is the last message, the dock's pending one; a later message would supersede it)
 		const messages = [
 			learner("what is a ring?"),
 			think("I will explain entropy next"),
 			say("A ring has two operations."),
-			posed,
 			ask("bad", "quiz", { ...QUIZ_ARGS, lead: "Refused lead mentioning Ohm's law." }),
 			result("bad", "quiz", null, true, "refused"),
+			posed,
 		];
 		const texts = learnerSeenTexts(messages).join(" | ");
 		assert.match(texts, /A ring has two operations/);
@@ -338,17 +339,19 @@ const promptItem = (i: number, over: Partial<VocabularyPromptItem> = {}): Vocabu
 });
 
 describe("the lesson's prompt section", () => {
-	it("lists the items with ids, definitions, pages and states, carried first; done terms on one line", () => {
-		const items = [promptItem(1), promptItem(2, { state: "introduced", carried: true }), promptItem(3, { state: "checked", level: "apply", right: true }), promptItem(4, { carried: true, deferredCount: 2 }), promptItem(5, { state: "asked", carried: true })];
+	it("lists the items with ids, definitions, pages and states; done terms on one line", () => {
+		const items = [promptItem(1), promptItem(2, { state: "introduced", carried: true, listedBefore: 1 }), promptItem(3, { state: "checked", level: "apply", right: true }), promptItem(4, { carried: true, deferredCount: 2, listedBefore: 2 }), promptItem(5, { state: "asked", carried: true, listedBefore: 1 })];
 		const listed = listVocabulary(items);
-		assert.deepEqual(listed, ["t_term4", "t_term5", "t_term2", "t_term1"], "carried still-to-introduce, then carried to-check, then new; the done one is not listed");
+		// review 2 (finding 2): never listed first, then listed but not introduced (fewest listings first), then to check
+		assert.deepEqual(listed, ["t_term1", "t_term5", "t_term4", "t_term2"], "the done one is not listed");
 		const byKey = new Map(items.map((i) => [i.key, i]));
 		const text = vocabularySection("Entropy of a source", listed.map((k) => byKey.get(k)!), "learn", { done: [items[2]!] });
 		const lines = text.split("\n");
 		assert.match(lines[0]!, /^VOCABULARY — the class's own terms that this lesson of "Entropy of a source" owes/);
-		assert.match(lines[1]!, /^- \[t_term4\] term 4 — new, left for later by 2 earlier lessons \(carried over\)\. The material: "definition 4" \(Lecture 3\.pdf, p\. 4\)$/);
+		assert.match(lines[1]!, /^- \[t_term1\] term 1 — new\. The material: "definition 1" \(Lecture 3\.pdf, p\. 1\)$/);
 		assert.match(lines[2]!, /^- \[t_term5\] term 5 — asked about in an earlier session but never named, so not introduced yet \(carried over\)\./);
-		assert.match(lines[3]!, /^- \[t_term2\] term 2 — introduced in an earlier session, not checked yet \(carried over\)\./);
+		assert.match(lines[3]!, /^- \[t_term4\] term 4 — new, left for later by 2 earlier lessons \(carried over\)\. The material: "definition 4" \(Lecture 3\.pdf, p\. 4\)$/);
+		assert.match(lines[4]!, /^- \[t_term2\] term 2 — introduced in an earlier session, not checked yet \(carried over\)\./);
 		assert.match(text, /Already introduced and checked in earlier sessions: term 3 \[t_term3\] \(apply, right\)\./);
 		assert.match(text, /a question tagged with it does not introduce it, and neither do multiple-choice options/);
 		assert.match(text, /Before `finish_lesson`, every core term listed above must have been introduced/);

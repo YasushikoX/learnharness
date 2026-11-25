@@ -466,6 +466,10 @@ export function baseAgentOptions(
 			// One refusal budget for every gate below, the narration guard included (WP6 — agent/refusal-budget.ts): at most
 			// REFUSALS_PER_GATE per gate and REFUSALS_PER_TURN in all, then calls pass. Turn-local: the agent is built once per turn.
 			const refuse = makeGateRefusals(GATE_REFUSAL_CAP, opts.onGateRefusal, REFUSALS_PER_TURN, opts.onGatePass);
+			// WP5 review 2: the vocabulary refusal of one assistant message, shown to every finish_lesson call in it. The
+			// allowance of one is per lesson, counted in SETTLED refusals (vocabularyRefusedBefore): two calls in one message
+			// are prepared before either result exists, so they are one refusal event and both get it.
+			const vocabularyRefusalOf = new WeakMap<object, { block: true; reason: string }>();
 			return {
 				beforeToolCall: async (call: BeforeToolCallContext, signal?: AbortSignal) => {
 					const { assistantMessage, toolCall, context } = call;
@@ -506,10 +510,20 @@ export function baseAgentOptions(
 						// never spends a refusal of the final-problem requirement. It counts only what had reached the learner when the call
 						// was made: this message's prose, not its sibling calls, which have not settled yet (core/learner-seen.ts).
 						if (lessonGates && lessonVocabulary && toolCall.name === FINISH_LESSON_TOOL) {
-							const seen = messagesSeenAtFinish(context.messages as unknown as LhMessage[], assistantMessage as unknown as LhMessage);
-							const missing = finishVocabularyProblem(lessonVocabulary, seen, call.args);
+							const sibling = vocabularyRefusalOf.get(assistantMessage);
+							if (sibling) return sibling;
+							let missing: ReturnType<typeof finishVocabularyProblem> = null;
+							try {
+								const seen = messagesSeenAtFinish(context.messages as unknown as LhMessage[], assistantMessage as unknown as LhMessage);
+								missing = finishVocabularyProblem(lessonVocabulary, seen, call.args);
+							} catch {
+								missing = null; // nothing in one chat may break a lesson turn: an unreadable transcript refuses nothing
+							}
 							const vocabularyRefused = missing ? refuse("vocabulary", true, vocabularyRefusalText(missing)) : undefined;
-							if (vocabularyRefused) return vocabularyRefused;
+							if (vocabularyRefused) {
+								vocabularyRefusalOf.set(assistantMessage, vocabularyRefused);
+								return vocabularyRefused;
+							}
 						}
 						// The sources gate (owner, 2026-11-13 — core/sources-gate.ts): the plan of a course lesson comes after a look
 						// in the course's sources.
@@ -551,7 +565,12 @@ export function baseAgentOptions(
 			// WP5: a clean finish records what the lesson covered of its listed terms, fixed as of now (the lesson result reads
 			// it back, so later lessons never change it); counted exactly as the vocabulary check counts.
 			if (lessonGates && lessonVocabulary && call.toolCall.name === FINISH_LESSON_TOOL && !(after?.isError ?? call.isError)) {
-				const coverage = lessonCoverageAtFinish(lessonVocabulary, messagesSeenAtFinish(call.context.messages as unknown as LhMessage[], call.assistantMessage as unknown as LhMessage));
+				let coverage: ReturnType<typeof lessonCoverageAtFinish> = null;
+				try {
+					coverage = lessonCoverageAtFinish(lessonVocabulary, messagesSeenAtFinish(call.context.messages as unknown as LhMessage[], call.assistantMessage as unknown as LhMessage));
+				} catch {
+					coverage = null; // no line rather than a broken finish
+				}
 				if (coverage) {
 					const details = after?.details ?? call.result.details;
 					return { ...(after ?? {}), details: { ...(details && typeof details === "object" ? details : {}), coverage } };

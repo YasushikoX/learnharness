@@ -1331,7 +1331,7 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
  * Strip paired Markdown emphasis/strikethrough delimiters (`**`, `__`, `~~`, `*`, `_`)
  * in strictly linear O(n) time without backtracking regexes.
  */
-function stripLinearEmphasis(text: string): string {
+export function stripLinearEmphasis(text: string): string {
 	let result = stripPairedDouble(text, "*", false);
 	result = stripPairedDouble(result, "_", true);
 	result = stripPairedDouble(result, "~", false);
