@@ -16,8 +16,10 @@ import { cn } from "@/lib/utils";
 /** UI round 1b (SPEC §7 "Course page"): each way in is ONE whole-card button, no button inside a card. The card is a
  *  hairline surface that takes one fill step on hover; an unavailable card keeps its line readable (it says what is
  *  needed first) and only its icon and title go quiet. Ask's "New" sits beside the card button, not inside it. */
+// UI round 2: one slim row of whole-card buttons (56px: icon, title, a one-line muted description) under the header, so
+// Next up below is the page's dominant card.
 const CARD =
-	"lh-touch group/mode flex h-full w-full min-w-0 flex-col items-start gap-1 rounded-lg border border-border bg-card p-4 text-left outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) enabled:hover:bg-raised enabled:active:bg-raised-strong focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-default";
+	"lh-touch group/mode flex h-14 w-full min-w-0 items-center gap-3 rounded-lg border border-border bg-card px-3 text-left outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) enabled:hover:bg-raised enabled:active:bg-raised-strong focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-default";
 const NEW_BTN = buttonVariants({ variant: "secondary", size: "xs" });
 
 type ModesData = Pick<CourseView, "course" | "skills" | "nextUp" | "notExamined" | "learning" | "known" | "plan" | "sessions"> & { drafting?: boolean };
@@ -73,6 +75,7 @@ export function CourseModes({
 	onLearn,
 	onPractice,
 	onAsk,
+	quiet = false,
 }: {
 	data: ModesData;
 	busy: boolean;
@@ -82,6 +85,8 @@ export function CourseModes({
 	onPractice: () => void;
 	/** Open the Ask conversation: `reopen` = an existing one's chat id; absent = a new one. */
 	onAsk?: (reopen?: string) => void;
+	/** Before a skill map (UI round 2): a quieter, smaller row below the setup; the shared reason shows once beneath it. */
+	quiet?: boolean;
 }) {
 	const states = courseModeStates(data);
 	const target = learnTarget(data);
@@ -94,26 +99,28 @@ export function CourseModes({
 		extra?: React.ReactNode,
 	) => (
 		<div className="relative min-w-0" data-testid={`course-mode-${id}`} data-available={state.available ? "true" : "false"}>
-			<button type="button" className={CARD} disabled={busy || !state.available} data-testid={`course-mode-${id}-start`} onClick={start}>
+			<button type="button" className={cn(CARD, quiet && "h-12", extra && "pr-20")} disabled={busy || !state.available} data-testid={`course-mode-${id}-start`} onClick={start} title={state.line}>
 				<span
 					aria-hidden
 					className={cn(
-						"mb-2 flex size-7 items-center justify-center rounded-sm bg-secondary [&_svg]:size-4",
+						"flex size-7 shrink-0 items-center justify-center rounded-sm bg-secondary [&_svg]:size-4",
 						state.available ? "text-foreground" : "text-muted-foreground",
 					)}
 				>
 					{icon}
 				</span>
-				<span className={cn("w-full truncate whitespace-nowrap text-body font-semibold", !state.available && "text-muted-foreground")}>{label}</span>
-				<span className="text-sm text-muted-foreground" data-testid={`course-mode-${id}-line`}>
-					{state.line}
+				<span className="flex min-w-0 flex-1 flex-col">
+					<span className={cn("truncate whitespace-nowrap", quiet ? "text-chrome font-medium" : "text-body font-semibold", !state.available && "text-muted-foreground")}>{label}</span>
+					<span className={cn("truncate whitespace-nowrap text-meta text-muted-foreground", quiet && !state.available && "sr-only")} data-testid={`course-mode-${id}-line`}>
+						{state.line}
+					</span>
 				</span>
 			</button>
-			{extra && <span className="absolute top-4 right-4">{extra}</span>}
+			{extra && <span className="absolute top-1/2 right-3 -translate-y-1/2">{extra}</span>}
 		</div>
 	);
 	return (
-		<section data-testid="course-modes" aria-label="Ways to study this class" className="grid gap-3 sm:grid-cols-3">
+		<section data-testid="course-modes" aria-label="Ways to study this class" className={cn("grid gap-3 sm:grid-cols-3", quiet && "gap-2")}>
 			{card("learn", <BookOpenIcon strokeWidth={1.75} />, "Learn", states.learn, () => target && onLearn(target))}
 			{card(
 				"ask",
@@ -137,6 +144,9 @@ export function CourseModes({
 				) : undefined,
 			)}
 			{card("practice", <DumbbellIcon strokeWidth={1.75} />, "Practice", states.practice, onPractice)}
+			{quiet && !states.learn.available && (
+				<p className="text-meta text-muted-foreground sm:col-span-3" data-testid="course-modes-reason">{states.learn.line}</p>
+			)}
 		</section>
 	);
 }

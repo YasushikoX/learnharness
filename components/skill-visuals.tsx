@@ -95,11 +95,13 @@ export function DueChip() {
 }
 
 /** Representative ramp step of a band, for the strip. */
+// UI round 2: the strip's bands sit on the palette's warning → success at a lower chroma (pulled toward the muted ink),
+// instead of the saturated orange and mustard of the understanding scale.
 const BAND_COLOR: Record<SkillBand, string> = {
 	new: "var(--border)",
-	low: "var(--lh-understanding-2)",
-	mid: "var(--lh-understanding-5)",
-	known: "var(--lh-understanding-8)",
+	low: "color-mix(in oklab, var(--lh-warning) 70%, var(--muted-foreground))",
+	mid: "color-mix(in oklab, color-mix(in oklab, var(--lh-warning), var(--lh-success)) 65%, var(--muted-foreground))",
+	known: "color-mix(in oklab, var(--lh-success) 70%, var(--muted-foreground))",
 };
 
 /** How the course's skills spread over the understanding bands: one bar with each band's count printed on its segment,

@@ -244,7 +244,9 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 	const moreRows = more.filter((id) => id !== heroLesson);
 	const fading = plan.reviewFading ?? 0;
 	return (
-		<section data-testid="course-exam-plan" className={cn("grid items-start gap-4", boxHasItems && "md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]")}>
+		// UI round 2: Next up first, at full width (the page's one dominant card); the exam card and the lecture notes share
+		// the row beneath it.
+		<section data-testid="course-exam-plan" className="grid items-start gap-6">
 			{boxHasItems && (
 				<div data-testid="course-next-up" className={HERO_CARD}>
 					<div className={PAGE_HEAD}>Next up</div>
@@ -314,7 +316,7 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 					</div>
 				</div>
 			)}
-			<div className="min-w-0 space-y-6" data-testid="course-exam-column">
+			<div className="grid min-w-0 items-start gap-6 md:grid-cols-2" data-testid="course-exam-column">
 				<div className={SIDE_CARD}>
 					<div className="lh-section-title text-foreground">Exam</div>
 					{examDate ? (

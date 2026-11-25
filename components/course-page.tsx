@@ -662,8 +662,9 @@ export function CourseBody({
 		<CoverageContext.Provider value={coverage}>
 		<SkillListContext.Provider value={choose}>
 		<div className="space-y-8">
-			{/* Learn, Ask, Practice (2026-11-25): the three ways in, also before a skill map exists (then only Ask starts). */}
-			<CourseModes data={data} busy={busy} onLearn={(id) => onStart("learn", id)} onPractice={() => onStart("practice")} onAsk={onAsk} />
+			{/* Learn, Ask, Practice (2026-11-25): the three ways in, also before a skill map exists (then only Ask starts).
+			    UI round 2: before a skill map the setup (sources, then the draft) comes first and the modes sit quietly below it. */}
+			{skills.length > 0 && <CourseModes data={data} busy={busy} onLearn={(id) => onStart("learn", id)} onPractice={() => onStart("practice")} onAsk={onAsk} />}
 			<CourseSettings
 				courseId={course.id}
 				pace={course.pace}
@@ -688,6 +689,8 @@ export function CourseBody({
 			/>
 
 			{course.draft && !drafting && <DraftReview data={data} busy={busy} onFeedback={(f) => onDraft(f)} onApprove={onApprove} />}
+
+			{skills.length === 0 && <CourseModes quiet data={data} busy={busy} onLearn={(id) => onStart("learn", id)} onPractice={() => onStart("practice")} onAsk={onAsk} />}
 
 		{skills.length > 0 && (
 			<>
@@ -1008,6 +1011,7 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 		() => initial.skills.length === 0 || !!initial.course.draft || initial.drafting || initial.course.status === "drafting" || !!initial.course.error,
 	);
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const [scrolled, setScrolled] = useState(false);
 
 	const refresh = useCallback(async () => {
 		try {
@@ -1144,9 +1148,10 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 		if (next) scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
 	};
 	return (
-		<div ref={scrollRef} className="relative h-dvh overflow-y-auto">
-			{/* A solid band (UI round 1b, SPEC §8): content scrolling under the sticky header no longer shows through it. */}
-			<header className="lh-drag z-10 bg-background pb-2 pt-[calc(0.5rem+var(--lh-safe-top))] sm:sticky sm:top-0">
+		<div ref={scrollRef} className="relative h-dvh overflow-y-auto" onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}>
+			{/* A solid band (UI round 1b, SPEC §8): content scrolling under the sticky header no longer shows through it. UI
+			    round 2: a bottom hairline once the page has scrolled, so content never shears against empty space. */}
+			<header className={cn("lh-drag z-10 border-b bg-background pb-2 pt-[calc(0.5rem+var(--lh-safe-top))] transition-colors duration-(--lh-duration-hover) sm:sticky sm:top-0", scrolled ? "border-border" : "border-transparent")}>
 				{/* the same column and padding as the page below, so the title lines up with the content (owner, 2026-11-16) */}
 				<div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-3 gap-y-1 px-4 sm:flex-nowrap sm:px-6">
 				<SidebarToggle />

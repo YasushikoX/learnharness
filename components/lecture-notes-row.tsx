@@ -76,21 +76,24 @@ export function LectureNotesRow({ courseId }: { courseId: string }) {
 	const count = notes?.length ?? 0;
 	return (
 		<section data-testid="course-lecture-notes" className="min-w-0">
-			<h2 className={PAGE_HEAD}>
-				Lecture notes
-				{count > 0 && <span className={HEAD_COUNT}>{count}</span>}
-			</h2>
-			<div data-testid="lecture-notes-strip" className="lh-no-scrollbar -mx-1 flex snap-x gap-3 overflow-x-auto px-1 pb-1">
+			{/* UI round 2: "New note" is a normal secondary button beside the heading, not a dashed tile in the strip. */}
+			<div className="flex items-center justify-between gap-3 pb-2">
+				<h2 className={cn(PAGE_HEAD, "pb-0")}>
+					Lecture notes
+					{count > 0 && <span className={HEAD_COUNT}>{count}</span>}
+				</h2>
 				<button
 					type="button"
 					data-testid="lecture-note-new"
 					aria-label="New lecture note"
 					onClick={() => setDialog({ kind: "create" })}
-					className={cn(CARD_W, "lh-touch flex aspect-[4/3] flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-input text-muted-foreground outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised hover:text-foreground focus-visible:ring-2 focus-visible:ring-focus")}
+					className={buttonVariants({ variant: "secondary", size: "sm", className: "lh-touch shrink-0" })}
 				>
-					<PlusIcon className="size-5" strokeWidth={1.5} />
-					<span className="text-xs">New note</span>
+					<PlusIcon aria-hidden />
+					New note
 				</button>
+			</div>
+			<div data-testid="lecture-notes-strip" className="lh-no-scrollbar -mx-1 flex snap-x gap-3 overflow-x-auto px-1 pb-1 empty:hidden">
 				{(notes ?? []).map((n) => (
 					<div key={n.id} data-testid="lecture-note-card" className={cn(CARD_W, "group relative")}>
 						<button type="button" onClick={() => setOpenId(n.id)} className="block w-full text-left">
