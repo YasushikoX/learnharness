@@ -30,13 +30,13 @@ const mocha = BUILTIN_THEMES.find((t) => t.id === "catppuccin-mocha")!;
 describe("resolveAppearance — delta over factory", () => {
 	it("absent everything = the factory view", () => {
 		const a = resolveAppearance(undefined);
-		assert.equal(a.theme, "default");
+		assert.equal(a.theme, "dark");
 		assert.equal(a.background, null);
 		assert.deepEqual(a.colors, {});
 		assert.equal(a.fontFamily, null);
-		assert.equal(a.proseFontSize, 16);
-		assert.equal(a.sessionNameSerif, true);
-		assert.deepEqual(a.mdRendering, { headingWeight: 900, boldColor: null, italicColor: null });
+		assert.equal(a.proseFontSize, 17);
+		assert.equal(a.sessionNameSerif, false);
+		assert.deepEqual(a.mdRendering, { headingWeight: 600, boldColor: null, italicColor: null });
 	});
 
 	it("explicit deltas win field-by-field", () => {
@@ -51,13 +51,13 @@ describe("resolveAppearance — delta over factory", () => {
 describe("appearanceVars — the mapping the provider applies", () => {
 	it("factory appearance on Default: the Default palette plus the type tokens", () => {
 		const vars = appearanceVars(resolveAppearance(undefined), DEFAULT_THEME);
-		assert.equal(vars["--background"], "#151210");
-		assert.equal(vars["--accent"], "#2b2724", "the hover surface: the warm surface + 14 per channel");
-		assert.equal(vars["--lh-ink-strong"], "#ece5da", "emphasis = text on Default");
-		assert.equal(vars["--lh-prose-size"], "16px");
-		assert.equal(vars["--lh-heading-weight"], "900");
+		assert.equal(vars["--background"], "#0e0e10");
+		assert.equal(vars["--accent"], "#252528", "the hover surface: the Dark surface #17171a + 14 per channel");
+		assert.equal(vars["--lh-ink-strong"], "#ededf0", "emphasis = text on Dark (the default)");
+		assert.equal(vars["--lh-prose-size"], "17px");
+		assert.equal(vars["--lh-heading-weight"], "600");
 		assert.equal(vars["--font-prose"], undefined, "no font override at factory");
-		assert.equal(vars["--font-title"], undefined, "CMU stays");
+		assert.equal(vars["--font-title"], undefined, "the chrome sans stays (stylesheet default)");
 	});
 
 	it("JetBrains Mono renders from the bundled face when it is not installed", () => {
@@ -75,7 +75,7 @@ describe("appearanceVars — the mapping the provider applies", () => {
 				colors: { warning: "#fab387" },
 				fontFamily: "Georgia",
 				proseFontSize: 18,
-				sessionNameSerif: false,
+				sessionNameSerif: true,
 				mdRendering: { headingWeight: 700, boldColor: "#ff0000", italicColor: "#00ff00" },
 			}),
 			mocha,
@@ -85,16 +85,16 @@ describe("appearanceVars — the mapping the provider applies", () => {
 		assert.equal(vars["--lh-warning"], "#fab387");
 		assert.equal(vars["--font-prose"], `"Georgia", var(--font-sans3), ui-sans-serif, system-ui, sans-serif`);
 		assert.equal(vars["--lh-prose-size"], "18px");
-		assert.equal(vars["--font-title"], "var(--font-prose)", "serif off → titles follow the prose font");
+		assert.equal(vars["--font-title"], '"lh-cmu", serif', "serif on → titles in CMU Serif");
 		assert.equal(vars["--lh-heading-weight"], "700");
 		assert.equal(vars["--lh-ink-strong"], "#ff0000");
 		assert.equal(vars["--lh-ink-italic"], "#00ff00");
 	});
 
-	it("sessionNameSerif false alone: only the title token changes", () => {
+	it("sessionNameSerif true alone: only the title token changes (UI round 1: serif is opt-in)", () => {
 		const factory = appearanceVars(resolveAppearance(undefined), DEFAULT_THEME);
-		assert.deepEqual(appearanceVars(resolveAppearance({ sessionNameSerif: false }), DEFAULT_THEME), {
-			...factory, "--font-title": "var(--font-prose)",
+		assert.deepEqual(appearanceVars(resolveAppearance({ sessionNameSerif: true }), DEFAULT_THEME), {
+			...factory, "--font-title": '"lh-cmu", serif',
 		});
 	});
 });
@@ -105,7 +105,7 @@ describe("staleVarNames — the removal half of application (owner repro: resets
 			resolveAppearance({
 				background: "#101820",
 				fontFamily: "Georgia",
-				sessionNameSerif: false,
+				sessionNameSerif: true,
 				mdRendering: { headingWeight: 700, boldColor: "#ff0000", italicColor: "#00ff00" },
 			}),
 			DEFAULT_THEME,
@@ -113,9 +113,9 @@ describe("staleVarNames — the removal half of application (owner repro: resets
 		const factory = appearanceVars(resolveAppearance(undefined), DEFAULT_THEME);
 		const stale = staleVarNames(Object.keys(fullDelta), factory);
 		assert.ok(stale.includes("--font-prose"));
-		assert.ok(stale.includes("--font-title"), "serif toggle back ON must clear the title override");
+		assert.ok(stale.includes("--font-title"), "serif toggle back OFF must clear the title override");
 		assert.ok(!stale.includes("--background"), "a theme always sets every color");
-		assert.equal(factory["--background"], "#151210", "an emptied background is the theme's again");
+		assert.equal(factory["--background"], "#0e0e10", "an emptied background is the theme's again");
 		assert.ok(!stale.includes("--lh-prose-size"), "always-applied tokens never go stale");
 	});
 

@@ -110,7 +110,7 @@ describe("SettingsDialog (the designed surface, SSR)", () => {
 });
 
 describe("the shared settings dropdown trigger", () => {
-	it("Agent, Appearance and dictation use the same compact dark mono trigger", () => {
+	it("Agent, Appearance and dictation use the same select trigger (UI round 1: 32px field, lucide chevron)", () => {
 		const surfaces = [
 			[renderToStaticMarkup(<AgentSection agent={undefined} models={undefined} graph={undefined} onSectionChange={() => true} onModelsChange={() => {}} />), "slot-model-strong"],
 			[renderToStaticMarkup(<AppearanceSection appearance={undefined} onSectionChange={() => true} />), "font-trigger"],
@@ -119,10 +119,11 @@ describe("the shared settings dropdown trigger", () => {
 		for (const [html, id] of surfaces) {
 			const tag = tagOf(html, id);
 			const classes = tag.match(/class="([^"]+)"/)![1]!.split(" ");
-			for (const token of ["h-7", "rounded-sm", "border", "border-border", "bg-background", "px-1.5", "font-ui", "text-xs", "hover:border-muted-foreground/50"]) {
+			for (const token of ["h-8", "rounded-md", "border", "border-input", "bg-card", "pl-2.5", "pr-8", "text-sm", "hover:bg-raised"]) {
 				assert.ok(classes.includes(token), `${id}: ${token}`);
 			}
-			assert.ok(html.includes("▾"), `${id}: shared dropdown indicator`);
+			assert.ok(html.includes("lucide-chevron-down"), `${id}: shared dropdown indicator`);
+			assert.ok(!html.includes("▾"), `${id}: no text glyph`);
 		}
 	});
 
@@ -132,15 +133,15 @@ describe("the shared settings dropdown trigger", () => {
 		assert.ok(disabled.includes('disabled=""'));
 		assert.ok(!unavailable.includes('disabled=""'));
 		assert.ok(unavailable.includes("cursor-not-allowed"));
-		assert.ok(!unavailable.includes("hover:border-muted-foreground/50"));
+		assert.ok(!unavailable.includes("hover:bg-raised"));
 	});
 });
 
 describe("Providers settings-label typography", () => {
-	it("Language uses the standard sans SettingsRow label without changing its mono trigger", () => {
+	it("Language uses the standard SettingsRow label (14/500) and the shared select trigger", () => {
 		const html = renderToStaticMarkup(<DictationLanguageSetting />);
-		assert.ok(html.includes('<span class="block font-prose text-(length:--lh-prose-size)">Language</span>'));
-		assert.ok(tagOf(html, "dictation-language").includes("font-ui text-xs"));
+		assert.ok(html.includes('<span class="block text-base font-medium">Language</span>'));
+		assert.ok(tagOf(html, "dictation-language").includes("text-sm"));
 	});
 
 	it("only Providers subscription labels use sans; setup labels retain their compact mono styling", () => {
@@ -406,9 +407,10 @@ describe("AppearanceSection (thin SSR)", () => {
 		assert.ok(!html.includes("theme-remove-"), "presets cannot be removed");
 	});
 
-	it("absent theme = the Default card pressed", () => {
+	it("absent theme = the Dark card pressed (the default since UI round 1)", () => {
 		const html = renderAppearance(undefined);
-		assert.ok(tagOf(html, "theme-card-default").includes('aria-pressed="true"'));
+		assert.ok(tagOf(html, "theme-card-dark").includes('aria-pressed="true"'));
+		assert.ok(!tagOf(html, "theme-card-default").includes('aria-pressed="true"'), "Warm Brass keeps id default and is not pressed");
 	});
 
 	it("an imported theme gets a custom card with a remove button", () => {
@@ -444,7 +446,7 @@ describe("AppearanceSection (thin SSR)", () => {
 		assert.ok(html.includes('data-testid="font-trigger"'));
 		assert.ok(html.includes('data-testid="row-prose-size"'));
 		assert.ok(html.includes('data-testid="row-heading-weight"'));
-		assert.ok(html.includes("16px"));
+		assert.ok(html.includes("17px"));
 		assert.ok(!html.includes('data-testid="row-mode"'), "the mode row is gone — the theme declares it");
 	});
 });

@@ -88,15 +88,15 @@ test("cached setup is immediately usable; fresh metadata/untouched slots update 
 	assert.equal(requests.length, 2);
 	assert.ok(element("setup-stage-pickers"));
 	assert.equal(document.querySelector('[data-testid="setup-stage-keys"]'), null);
-	assert.equal(element("setup-trigger-strong").textContent, "model:free▾");
+	assert.equal(element("setup-trigger-strong").textContent, "model:free");
 	await click("setup-trigger-strong"); await click("model-option-claude-opus-5-5");
 	await click("setup-thinking-strong"); await click("thinking-option-medium");
 	const fresh = catalog(); fresh.slots.cheap = { model: { provider: b.provider, id: b.id }, thinkingLevel: "off" };
 	fresh.models[1] = { ...b, supportedLevels: ["off", "medium", "high"] };
 	await answer(1, fresh);
-	assert.equal(element("setup-trigger-strong").textContent, "claude-opus-5-5▾");
-	assert.equal(element("setup-thinking-strong").textContent?.trim(), "medium▾");
-	assert.equal(element("setup-trigger-cheap").textContent, "claude-opus-5-5▾");
+	assert.equal(element("setup-trigger-strong").textContent, "claude-opus-5-5");
+	assert.equal(element("setup-thinking-strong").textContent?.trim(), "medium");
+	assert.equal(element("setup-trigger-cheap").textContent, "claude-opus-5-5");
 	await click("setup-thinking-strong"); assert.deepEqual(levels(), ["off", "medium✓", "high"]);
 	await click("setup-thinking-strong");
 	await act(async () => snapshot.refresh()); await answer(2, null);
@@ -169,7 +169,7 @@ for (const count of [0, 1, 2]) test(`connecting with ${count} saved slots only r
 		if (before.slots[slot]) continue;
 		await click(`setup-trigger-${slot}`); await click("model-option-claude-opus-5-5");
 	}
-	if (count > 0) assert.equal(element("setup-thinking-strong").textContent?.trim(), "xhigh▾");
+	if (count > 0) assert.equal(element("setup-thinking-strong").textContent?.trim(), "xhigh");
 	await click("setup-save");
 	for (const slot of ["strong", "cheap", "vision"] as const) {
 		if (before.slots[slot]) assert.deepEqual(writes[0]?.[slot], before.slots[slot]);
@@ -185,11 +185,11 @@ test("a partial setup's model/thinking edits survive exclusive provider recovery
 	await act(async () => notifySettingsSaved("keys")); await answer(2, { ...before, models: [], providers: [] });
 	assert.ok(element("setup-stage-keys")); assert.equal(document.querySelector('[data-testid="setup-stage-pickers"]'), null);
 	await act(async () => notifySettingsSaved("keys")); await answer(3, before);
-	assert.equal(element("setup-trigger-strong").textContent, "claude-opus-5-5▾");
-	assert.equal(element("setup-thinking-strong").textContent?.trim(), "medium▾");
+	assert.equal(element("setup-trigger-strong").textContent, "claude-opus-5-5");
+	assert.equal(element("setup-thinking-strong").textContent?.trim(), "medium");
 	await render(<Reader />); await render(<><Reader />{setup()}</>);
-	assert.equal(element("setup-trigger-strong").textContent, "model:free▾");
-	assert.equal(element("setup-thinking-strong").textContent?.trim(), "low▾"); await answer(4, before);
+	assert.equal(element("setup-trigger-strong").textContent, "model:free");
+	assert.equal(element("setup-thinking-strong").textContent?.trim(), "low"); await answer(4, before);
 });
 
 test("Agent opens with cached thinking metadata; refresh and disconnect never clear saved levels", async () => {
@@ -198,10 +198,10 @@ test("Agent opens with cached thinking metadata; refresh and disconnect never cl
 	let changed: ModelsSettings | undefined;
 	await render(<><Reader /><AgentSection agent={undefined} models={models} graph={undefined} compaction={undefined} onSectionChange={() => true} onModelsChange={(next) => { changed = next; }} onCompactionChange={() => true} /></>);
 	await click("slot-thinking-strong"); assert.deepEqual(levels(), ["off", "low✓", "high"]);
-	assert.equal(element("slot-model-strong").textContent, "model:free▾");
+	assert.equal(element("slot-model-strong").textContent, "model:free");
 	await answer(1, catalog());
 	await act(async () => notifySettingsSaved("keys")); await answer(2, catalog(false));
-	assert.equal(element("slot-thinking-strong").textContent, "low▾");
+	assert.equal(element("slot-thinking-strong").textContent, "low");
 	await click("thinking-option-xhigh"); assert.equal(changed?.strong?.thinkingLevel, "xhigh"); assert.equal(changed?.strong?.model?.id, a.id);
 });
 
@@ -262,7 +262,7 @@ for (const result of ["override", "legacy", "http-failure", "network-failure"] a
 	await warm(body); const identities: Array<string | undefined> = [];
 	await render(<><Reader /><StatsBar turns={[]} chatId="fixture" onModelChange={(id) => { identities.push(id); }} /></>);
 	assert.ok(snapshot.catalog, "catalog is already known, not the deferred unknown-catalog case");
-	assert.equal(element("stats-model").textContent, "—▾");
+	assert.equal(element("stats-model").textContent, "—");
 	assert.equal(identities.at(-1), undefined);
 	assert.equal(selectedModelUnavailable(snapshot.catalog, identities.at(-1)), false, "pending session cannot block Send using global Strong");
 	await act(async () => {
@@ -319,9 +319,9 @@ test("cache retention is hidden by default, slot-specific, resettable, and prese
 	assert.equal(changes.length, 0, "mounting untouched controls writes nothing");
 	await click("models-advanced");
 	assert.equal(element("models-advanced").textContent, "Hide advanced settings");
-	assert.equal(element("slot-cache-strong").textContent, "Cache: long▾");
-	assert.equal(element("slot-cache-cheap").textContent, "Cache: default▾");
-	assert.equal(element("slot-cache-vision").textContent, "Cache: not requested▾");
+	assert.equal(element("slot-cache-strong").textContent, "Cache: long");
+	assert.equal(element("slot-cache-cheap").textContent, "Cache: default");
+	assert.equal(element("slot-cache-vision").textContent, "Cache: not requested");
 	await click("slot-cache-strong");
 	const escape = new dom.window.Event("keydown", { bubbles: true, cancelable: true });
 	Object.assign(escape, { key: "Escape" });
@@ -347,7 +347,7 @@ test("cache retention is hidden by default, slot-specific, resettable, and prese
 	await click("models-advanced");
 	assert.equal(document.querySelector('[data-testid="slot-cache-menu-strong"]'), null, "collapse also closes the portaled menu");
 	await click("models-advanced");
-	assert.equal(element("slot-cache-strong").textContent, "Cache: long▾", "hiding did not reset the preference");
+	assert.equal(element("slot-cache-strong").textContent, "Cache: long", "hiding did not reset the preference");
 	await render(<Settings key="new-open" />);
 	assert.equal(document.querySelector('[data-testid="slot-cache-strong"]'), null, "a new settings mount starts collapsed");
 });

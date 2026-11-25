@@ -20,8 +20,8 @@ it("nested rows still start at the parent's rail without a rule on the folder he
 	assert.doesNotMatch(html + row(1, true), /data-sidebar-folder-rule|border-bottom/);
 });
 
-it("folder names use the reading font by default and the same compact styling as sessions when enabled", () => {
-	assert.match(row(0, false), /font-prose[^>]*>Physics/);
+it("folder names use the chrome sans by default (UI round 1) and the same compact styling as sessions when enabled", () => {
+	assert.match(row(0, false), /font-sans[^>]*>Physics/);
 	const compact = row(0, false, true);
 	assert.match(compact, /\bh-8\b/);
 	const button = compact.match(/<button\b[^>]*>/)?.[0] ?? "";

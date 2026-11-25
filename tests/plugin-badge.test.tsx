@@ -49,7 +49,7 @@ it("mountBadge renders plugin-owned plain text through the shared native compone
 	assert.equal(badge.style.backgroundColor, "color-mix(in oklab, #123456 15%, transparent)");
 	assert.equal(badge.hasAttribute("role"), false); assert.equal(badge.hasAttribute("aria-live"), false);
 	assert.equal(f.target.querySelector("button"), null, "badges are not controls");
-	assert.ok(badge.classList.contains("rounded")); assert.ok(badge.classList.contains("text-xs"));
+	assert.ok(badge.classList.contains("rounded-sm")); assert.ok(badge.classList.contains("text-xs"));
 	await act(async () => { handle.update({ text: '<img src=x onerror="alert(1)">', color: "var(--plugin-accent)" }); });
 	assert.ok(f.target.querySelector('[data-slot="status-badge"]') === badge);
 	assert.equal(badge.textContent, '<img src=x onerror="alert(1)">'); assert.equal(badge.querySelector("img"), null);
@@ -57,7 +57,7 @@ it("mountBadge renders plugin-owned plain text through the shared native compone
 	assert.equal(badge.style.backgroundColor, "color-mix(in oklab, var(--plugin-accent) 15%, transparent)");
 	await act(async () => { handle.update({ color: undefined }); });
 	assert.equal(badge.style.color ?? "", ""); assert.equal(badge.style.backgroundColor ?? "", "");
-	assert.ok(badge.classList.contains("bg-muted")); assert.ok(badge.classList.contains("text-muted-foreground"));
+	assert.ok(badge.classList.contains("bg-raised")); assert.ok(badge.classList.contains("text-muted-foreground"));
 	assert.equal(badge.textContent, '<img src=x onerror="alert(1)">');
 	await act(async () => { handle.dispose(); handle.dispose(); });
 	assert.equal(f.target.textContent, "caller-owned"); assert.equal(f.store.getSnapshot().length, 0);

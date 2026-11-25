@@ -509,16 +509,16 @@ for (const check of [false, true]) test(`healthy ${check ? "teach" : "probe"} th
 	if (check) { f.state.reveal = false; f.state.expanded = true; await f.render(); }
 	const frame = document.querySelector<HTMLElement>('[data-testid="thinking-field"]')!;
 	assert.ok(frame);
-	for (const token of ["rounded-[10px]", "border", "border-border/70", "bg-background/60", "focus-within:border-primary/50"]) assert.ok(frame.classList.contains(token), token);
+	for (const token of ["rounded-md", "border", "border-border/70", "bg-background/60", "focus-within:border-primary/50"]) assert.ok(frame.classList.contains(token), token);
 	assert.equal(frame.parentElement?.tagName, "FORM");
 	for (const token of ["border-t", "border-border/60", "p-1.5"]) assert.ok(frame.parentElement?.classList.contains(token), token);
 	const label = frame.firstElementChild!;
 	assert.equal(label.textContent?.toLowerCase(), "your thinking");
-	for (const token of ["px-2.5", "pt-2", "text-xs", "font-medium", "uppercase"]) assert.ok(label.classList.contains(token), token);
+	for (const token of ["px-2.5", "pt-2", "lh-eyebrow"]) assert.ok(label.classList.contains(token), token);
 	const input = frame.querySelector<HTMLElement>("[data-file-path-input]")!;
 	assert.ok(input);
 	assert.equal(input.getAttribute("data-placeholder"), "Your thinking");
-	for (const token of ["field-sizing-content", "lh-input", "max-h-48", "w-full", "resize-none", "bg-transparent", "px-2.5", "py-2", "outline-none", "placeholder:text-muted-foreground/70", "min-h-10"]) assert.ok(input.classList.contains(token), token);
+	for (const token of ["field-sizing-content", "lh-input", "max-h-48", "w-full", "resize-none", "bg-transparent", "px-2.5", "py-2", "outline-none", "placeholder:text-muted-foreground", "min-h-10"]) assert.ok(input.classList.contains(token), token);
 	const submit = frame.querySelector<HTMLButtonElement>('button[type="submit"]')!;
 	assert.ok(submit); assert.equal(submit.disabled, false);
 	assert.equal(submit.textContent, "Submit answer");
@@ -527,7 +527,7 @@ for (const check of [false, true]) test(`healthy ${check ? "teach" : "probe"} th
 	assert.ok(hint); assert.equal(hint.textContent, "↵ submits · ⇧↵ newline");
 	for (const token of ["pl-1.5", "text-xs", "text-muted-foreground"]) assert.ok(hint.classList.contains(token), token);
 	assert.ok(submit.parentElement?.classList.contains("p-1"));
-	for (const token of ["ml-auto", "h-9", "rounded-[6px]", "px-3.5", "text-sm", "font-medium"]) assert.ok(submit.classList.contains(token), token);
+	for (const token of ["ml-auto", "h-9", "rounded-md", "px-3.5", "text-sm", "font-medium"]) assert.ok(submit.classList.contains(token), token);
 	assert.equal(document.getElementById("plugin-editor")?.closest("form"), null, "arbitrary plugin DOM stays outside the host form");
 	assert.equal(Array.from(document.querySelectorAll("button")).some(button => button.textContent === "Dismiss question"), false);
 	assert.equal(f.state.dismissed, 0);

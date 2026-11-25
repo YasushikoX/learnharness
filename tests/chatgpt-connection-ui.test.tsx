@@ -106,7 +106,7 @@ test("disconnected row uses shared Connect action; initial default is ON; cancel
  const f = fixture(); await mount(<ChatGPTConnection setup />);
  assert.equal(byTest("chatgpt-connection").textContent, "ChatGPTConnect");
  assert(!document.body.textContent?.includes(CHATGPT_NOTICE)); const trigger = byTest("chatgpt-login");
- assert.match(trigger.className, /cursor-pointer/); assert.match(trigger.className, /hover:bg-accent/); assert.match(trigger.className, /focus-visible:ring/);
+ assert.match(trigger.className, /cursor-pointer/); assert.match(trigger.className, /hover:bg-raised/); assert.match(trigger.className, /focus-visible:ring/);
  await click(trigger); assert.equal(f.calls.login.length, 0); assert(document.body.textContent?.includes(CHATGPT_NOTICE));
  assert.equal(byTest("chatgpt-account-dialog").querySelector("h2")?.textContent, "ChatGPT");
  assert.equal(byTest("chatgpt-proceed").textContent, "Continue with ChatGPT"); assert(byTest("chatgpt-proceed").querySelector('img[src="/siwc/chatgpt-logo-white.svg"]'));

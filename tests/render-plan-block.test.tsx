@@ -257,7 +257,7 @@ describe("plan block render", () => {
 		// Lines + outlines at the app's standard 1px border weight (owner,
 		// 2026-09-26; was 1.5).
 		assert.match(html, /<rect[^>]*stroke-width="1"/);
-		assert.match(html, /max-width:162\.91px/); // (96+16) × 16/11: 11px labels reach at most the 16px prose size
+		assert.match(html, /max-width:173\.09px/); // (96+16) × 17/11: 11px labels reach at most the 17px prose size
 		// The cap follows the reading size picked in Settings.
 		const big = renderToStaticMarkup(
 			<AppearanceProvider initialAppearance={{ proseFontSize: 20 }} initialTheme={DEFAULT_THEME}>
