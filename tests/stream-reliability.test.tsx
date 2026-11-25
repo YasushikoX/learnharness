@@ -4,7 +4,7 @@ import { readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, it } from "node:test";
-import type { Agent, AgentEvent } from "@earendil-works/pi-agent-core";
+import type { Agent, AgentEvent, AgentTool } from "@earendil-works/pi-agent-core";
 import { createFauxCore, fauxAssistantMessage, fauxText, fauxThinking, fauxToolCall, type FauxResponseStep, type Message } from "@earendil-works/pi-ai";
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
@@ -50,10 +50,10 @@ const streamFrame = (event: object) => `data: ${JSON.stringify(event)}\n\n`;
 const draft = { ...fauxAssistantMessage("The first half of the reply"), stopReason: "pending" };
 const finish = () => fauxAssistantMessage("The remaining explanation.");
 
-function lesson(steps: FauxResponseStep[], disconnect?: (attachment: number) => Response | undefined) {
+function lesson(steps: FauxResponseStep[], disconnect?: (attachment: number) => Response | undefined | Promise<Response | undefined>, options: { tools?: Record<string, AgentTool<any>>; seed?: LhMessage[] } = {}) {
 	const { id } = chatStore.createChat("Planets");
 	chatStore.saveSettings(id, { model: { provider: "openrouter", id: "z-ai/glm-5.3-flash" } });
-	chatStore.saveMessages(id, [
+	chatStore.saveMessages(id, options.seed ?? [
 		newUserMessage("Teach me the planets."),
 		{ ...fauxAssistantMessage([fauxToolCall("quiz", quiz, { id: answer.toolCallId })], { stopReason: "toolUse" }), id: "question" },
 	]);
@@ -69,11 +69,11 @@ function lesson(steps: FauxResponseStep[], disconnect?: (attachment: number) => 
 		if (url === "/api/chat") {
 			requests.push(JSON.parse(String(init?.body)).input as ChatInput);
 			return handleChatRequest(new Request("http://test/api/chat", init), opts => createTeacherAgent(undefined, {
-				...opts, tools: {}, engine: { model: faux.getModel(), streamFn: faux.streamSimple },
+				...opts, tools: options.tools ?? {}, engine: { model: faux.getModel(), streamFn: faux.streamSimple },
 			}));
 		}
 		if (String(url).endsWith("/stream")) {
-			const interrupted = disconnect?.(++attachments);
+			const interrupted = await disconnect?.(++attachments);
 			if (interrupted) return interrupted;
 			const run = runningTurn(id);
 			return run ? piTurnResponse(run) : settledTurnResponse(id);
@@ -84,10 +84,11 @@ function lesson(steps: FauxResponseStep[], disconnect?: (attachment: number) => 
 	const session = new SessionModel({ chatId: id, initialMessages: saved(), fetch: fetchView });
 	return {
 		session, saved, contexts, requests, id, get attachments() { return attachments; },
-		assertOneAnswer() {
+		/** `learnerMessages`: the seed's message plus any the test sent after recovery. */
+		assertOneAnswer(learnerMessages = 1) {
 			assert.equal(requests.filter(input => input.type === "answer").length, 1);
 			assert.equal(saved().filter(message => message.role === "toolResult" && message.toolCallId === answer.toolCallId).length, 1);
-			assert.equal(saved().filter(message => message.role === "user").length, 1);
+			assert.equal(saved().filter(message => message.role === "user").length, learnerMessages);
 			assert.equal(new Set(saved().map(message => message.id)).size, saved().length);
 			for (const messages of contexts) assert.equal(messages.filter(message => message.role === "toolResult" && message.toolCallId === answer.toolCallId).length, 1);
 		},
@@ -112,9 +113,15 @@ for (const hasText of [true, false]) {
 		assert.equal(l.session.getState().cutOffReply, undefined);
 		const context = JSON.stringify(l.contexts.at(-1));
 		assert.doesNotMatch(context, /lhCutoffHasText/);
-		assert.match(context, hasText ? /Continue from where you stopped/ : /Try replying to the existing conversation again/);
-		if (hasText) assert.match(context, /An incomplete explanation/);
-		else assert.doesNotMatch(context, /Fixture-only private thought/);
+		if (hasText) {
+			assert.match(context, /Continue from where you stopped/);
+			assert.match(context, /An incomplete explanation/);
+		} else {
+			// Nothing to continue: the turn re-runs from the saved answer, like Retry, with no marker and no cut-off.
+			assert.doesNotMatch(context, /Fixture-only private thought|cut off/);
+			assert.equal(l.contexts.at(-1)!.at(-1)?.role, "toolResult");
+			assert.equal(l.saved().filter(message => message.role === "custom" && message.customType === "reply-recovery").length, 0);
+		}
 		assert.match(JSON.stringify(l.session.getState().messages), /The remaining explanation/);
 	});
 }
@@ -131,7 +138,7 @@ for (const serverState of ["running", "finished", "failed"] as const) {
 			await gate.promise;
 			if (serverState === "failed") return fauxAssistantMessage("The first half of the reply", { stopReason: "error", errorMessage: "scripted connection failure" });
 			return fauxAssistantMessage("The final saved response.");
-		}, finish], twoBrokenViews);
+		}, finish, () => fauxAssistantMessage("The next answer.")], twoBrokenViews);
 		await output.session.send(answer);
 		assert.equal(output.attachments, 2);
 		assert.equal(output.session.getState().droppedStream, true);
@@ -161,8 +168,20 @@ for (const serverState of ["running", "finished", "failed"] as const) {
 		assert.equal(output.session.getState().nativeMessages.filter(message => message.role === "assistant" &&
 			message.content.some(block => block.type === "text" && block.text === "The first half of the reply")).length, serverState === "failed" ? 1 : 0);
 		output.assertOneAnswer();
+
+		// The turn after recovery: the model receives the recovered reply once, and the learner sees it once.
+		assert.equal(await output.session.send({ type: "text", text: "What comes next?" }), true);
+		const [reply, nextReply] = serverState === "failed" ? ["The remaining explanation.", "The next answer."] : ["The final saved response.", "The remaining explanation."];
+		assert.equal(JSON.stringify(output.contexts.at(-1)).split(reply).length - 1, 1);
+		assert.equal(visibleTexts(output.session).filter(text => text === reply).length, 1);
+		assert.equal(visibleTexts(output.session).filter(text => text === nextReply).length, 1);
+		assert.equal(output.session.getState().error, null);
+		output.assertOneAnswer(2);
 	});
 }
+
+const visibleTexts = (session: InstanceType<typeof SessionModel>) =>
+	session.getState().messages.flatMap(message => message.parts.flatMap(part => part.type === "text" && typeof part.text === "string" ? [part.text] : []));
 
 function controlledAgent(run: (emit: (event: AgentEvent) => void) => Promise<void>) {
 	let emit: (event: AgentEvent) => void = () => {};
@@ -324,8 +343,9 @@ it("replays held checker and grader status on the existing line and writes a con
 		...identity, startedAt: line.startedAt, durationMs: 34, firstEventMs: 0, firstVisibleTextMs: 31, longestEventGapMs: 19,
 		thinkingSpans: [{ startMs: 23, durationMs: 6, source: "reported" }], textSpans: [{ startMs: 29, durationMs: 5 }],
 		tools: [{ name: "quiz", startMs: 4, durationMs: 19 }], checkerSpans: [{ startMs: 4, durationMs: 9 }],
-		graderSpans: [{ startMs: 13, durationMs: 8 }], gateRefusals: { "answer-key": 1, prose: 1 },
-		stopReason: "length", streamEnd: "client-dropped", errorKind: null, clientDrops: 1, visibleTextChars: 13, thinkingChars: 15,
+		graderSpans: [{ startMs: 13, durationMs: 8 }], processingSpans: [], gateRefusals: { "answer-key": 1, prose: 1 },
+		// A view leaving never ends a turn: it settled cleanly, and the departure is counted.
+		stopReason: "length", streamEnd: "completed", errorKind: null, clientDrops: 1, visibleTextChars: 13, thinkingChars: 15,
 	});
 	assert.equal(lines.length, 1);
 	assert.doesNotMatch(JSON.stringify(line), /private|visible words/);
@@ -352,4 +372,346 @@ it("counts a timeline write failure without breaking settlement", async () => {
 	await writer.flush();
 	assert.equal(saved, true);
 	assert.equal(writer.failures, 1);
+});
+
+// ─── Review 1 fixes (wp1-review-1.md): one regression test per item, and one end-to-end test per recovery path that
+// asserts together what the learner sees, what the stored chat holds, and what the model receives on the next turn. ──
+
+const { projectView } = await import("../src/core/view.ts");
+const { sendToUserTool } = await import("../src/agent/tools/send-to-user.ts");
+const { cutOffReplyAtEnd, requireCutOffReply, retryTurnDrops, RETRY_AFTER_COMPACTION_TEXT } = await import("../src/core/input-events.ts");
+const { malformedQuestionsOf, newReplyRecoveryMarker } = await import("../src/core/native-messages.ts");
+const { newCompactionMarker, serializeForSummary } = await import("../src/core/compaction.ts");
+const { viewKeepalive } = await import("../src/server/pi/ui-stream.ts");
+const { claimPreparingTurn } = await import("../src/server/turn-preparation.ts");
+const { placementGradedBeforeTurn } = await import("../src/server/chat-handler.ts");
+const { cutOffRecoveryDisabled, RetryUnavailableNote } = await import("../components/turn-error.tsx");
+
+const cutOff = (content: Parameters<typeof fauxAssistantMessage>[0] = fauxThinking("Fixture-only private thought")) =>
+	fauxAssistantMessage(content, { stopReason: "length" });
+const say = (message: string, id: string) => fauxAssistantMessage([fauxToolCall("send_to_user", { message }, { id })], { stopReason: "toolUse" });
+const occurrences = (haystack: string, needle: string) => haystack.split(needle).length - 1;
+const lengthStops = (context: Message[] | undefined) => (context ?? []).filter(message => message.role === "assistant" && message.stopReason === "length").length;
+const recoveryMarkers = (messages: LhMessage[]) => messages.filter(message => message.role === "custom" && message.customType === "reply-recovery").length;
+
+it("item 1: a continuation stays visible after a send_to_user cut-off, every part exactly once", () => {
+	let n = 0;
+	const id = () => `m${++n}`;
+	const delivered = (message: string): LhMessage[] => {
+		const call = `say-${++n}`;
+		return [{ ...say(message, call), id: id() }, {
+			id: id(), role: "toolResult", toolCallId: call, toolName: "send_to_user",
+			content: [{ type: "text", text: "Message received for display." }], details: {}, isError: false, timestamp: 1,
+		}];
+	};
+	const cut = (content?: Parameters<typeof cutOff>[0]): LhMessage => ({ ...cutOff(content), id: id(), lhCutoffHasText: true });
+	const prose = (text: string): LhMessage => ({ ...fauxAssistantMessage(text), id: id() });
+	const learner = { ...newUserMessage("Teach me the planets."), id: "learner" };
+	const sequences: [string, LhMessage[], string[]][] = [
+		["the reviewer's sequence", [learner, ...delivered("Part one before cut-off"), cut(), newReplyRecoveryMarker(), prose("Part two after continuation.")],
+			["Part one before cut-off", "Part two after continuation."]],
+		["a continuation that itself uses send_to_user", [learner, ...delivered("Part one before cut-off"), cut(), newReplyRecoveryMarker(),
+			...delivered("Part two through the tool, in full."), prose("Part two through the tool, in full.")], ["Part one before cut-off", "Part two through the tool, in full."]],
+		["a cut-off that mixed plain text and send_to_user", [learner, ...delivered("Part one before cut-off"), cut([fauxText("Some plain prose before the limit")]),
+			newReplyRecoveryMarker(), prose("Part two after continuation.")], ["Part one before cut-off", "Some plain prose before the limit", "Part two after continuation."]],
+		["two cut-offs in a row", [learner, ...delivered("Part one before cut-off"), cut(), newReplyRecoveryMarker(), ...delivered("Part two before another cut"),
+			cut(), newReplyRecoveryMarker(), prose("Part three closes the reply.")], ["Part one before cut-off", "Part two before another cut", "Part three closes the reply."]],
+	];
+	for (const [name, record, parts] of sequences) {
+		const texts = projectView(record).filter(message => message.role === "assistant")
+			.flatMap(message => message.parts.flatMap(part => part.type === "text" ? [part.text as string] : []));
+		for (const part of parts) assert.equal(texts.filter(text => text === part).length, 1, `${name}: ${part}`);
+		assert.equal(texts.length, parts.length, name);
+	}
+});
+
+it("end to end, Continue: a send_to_user cut-off continues; seen once, stored once, sent once on the next turn", async () => {
+	const l = lesson([
+		say("Part one before the cut.", "say-1"),
+		cutOff(),
+		fauxAssistantMessage("Part two after continuation."),
+		fauxAssistantMessage("The next answer."),
+	], undefined, { tools: { send_to_user: sendToUserTool } });
+	await l.session.send(answer);
+	assert.equal(l.session.getState().cutOffReply?.hasText, true);
+	await l.session.recoverReply();
+	assert.deepEqual(l.requests.map(input => input.type), ["answer", "continue-reply"]);
+	assert.equal(l.session.getState().cutOffReply, undefined);
+	for (const part of ["Part one before the cut.", "Part two after continuation."]) assert.equal(visibleTexts(l.session).filter(text => text === part).length, 1, part);
+	assert.equal(recoveryMarkers(l.saved()), 1);
+	l.assertOneAnswer();
+
+	await l.session.send({ type: "text", text: "What comes next?" });
+	const next = JSON.stringify(l.contexts.at(-1));
+	assert.equal(occurrences(next, "Part one before the cut."), 1);
+	assert.equal(occurrences(next, "Part two after continuation."), 1);
+	assert.equal(occurrences(next, "Your previous reply was cut off"), 1, "the answered Continue instruction stays between the two halves");
+	assert.equal(visibleTexts(l.session).filter(text => text === "Part two after continuation.").length, 1);
+	l.assertOneAnswer(2);
+});
+
+it("end to end, Retry for an empty cut-off: the cut-off stays stored but never reaches the model again", async () => {
+	const l = lesson([cutOff(), fauxAssistantMessage("The full reply."), fauxAssistantMessage("The next answer.")]);
+	await l.session.send(answer);
+	assert.equal(l.session.getState().cutOffReply?.hasText, false);
+	await l.session.recoverReply();
+	assert.equal(l.session.getState().cutOffReply, undefined);
+	assert.equal(l.session.getState().error, null);
+	assert.equal(visibleTexts(l.session).filter(text => text === "The full reply.").length, 1);
+	assert.equal(l.saved().filter(message => message.role === "assistant" && message.stopReason === "length").length, 1, "failed attempts stay on disk");
+	assert.equal(recoveryMarkers(l.saved()), 0);
+	assert.equal(lengthStops(l.contexts.at(-1)), 0);
+
+	await l.session.send({ type: "text", text: "What comes next?" });
+	const next = l.contexts.at(-1);
+	assert.equal(lengthStops(next), 0);
+	assert.doesNotMatch(JSON.stringify(next), /cut off|Fixture-only private thought/);
+	assert.equal(occurrences(JSON.stringify(next), "The full reply."), 1);
+	l.assertOneAnswer(2);
+});
+
+it("item 3: when the recovery turn of an empty cut-off fails, its Retry continues from the same answer", async () => {
+	const l = lesson([
+		cutOff(),
+		fauxAssistantMessage("The first half", { stopReason: "error", errorMessage: "scripted provider failure" }),
+		fauxAssistantMessage("The full reply."),
+		fauxAssistantMessage("The next answer."),
+	]);
+	await l.session.send(answer);
+	await l.session.recoverReply();
+	assert.match(l.session.getState().error?.message ?? "", /scripted provider failure/);
+	assert.equal(l.session.getState().cutOffReply, undefined, "one recovery UI: the failure banner's Retry");
+	await l.session.send({ type: "retry" });
+	assert.deepEqual(l.requests.map(input => input.type), ["answer", "continue-reply", "retry"]);
+	assert.equal(l.session.getState().error, null);
+	const retried = l.contexts.at(-1)!;
+	assert.equal(lengthStops(retried), 0);
+	assert.equal(retried.at(-1)?.role, "toolResult");
+	assert.equal(visibleTexts(l.session).filter(text => text === "The full reply.").length, 1);
+
+	await l.session.send({ type: "text", text: "What comes next?" });
+	assert.equal(lengthStops(l.contexts.at(-1)), 0);
+	assert.doesNotMatch(JSON.stringify(l.contexts.at(-1)), /cut off/);
+	l.assertOneAnswer(2);
+});
+
+it("item 3: two empty cut-offs in a row recover without replaying either", async () => {
+	const l = lesson([cutOff(), cutOff(), fauxAssistantMessage("The full reply.")]);
+	await l.session.send(answer);
+	await l.session.recoverReply();
+	assert.equal(l.session.getState().cutOffReply?.hasText, false);
+	await l.session.recoverReply();
+	assert.equal(l.session.getState().error, null);
+	assert.equal(lengthStops(l.contexts.at(-1)), 0);
+	assert.equal(l.contexts.at(-1)!.at(-1)?.role, "toolResult");
+	assert.equal(visibleTexts(l.session).filter(text => text === "The full reply.").length, 1);
+	l.assertOneAnswer();
+});
+
+it("item 3: the recovery marker never reaches a compaction summary, and neither does an empty cut-off", () => {
+	const summary = serializeForSummary([
+		newUserMessage("Teach me the planets."),
+		{ ...fauxAssistantMessage("A first half"), stopReason: "length", id: "half" },
+		newReplyRecoveryMarker(),
+		{ ...fauxAssistantMessage("The second half."), id: "second" },
+		{ ...cutOff(), id: "empty" },
+	]);
+	assert.doesNotMatch(summary, /cut off|SYSTEM NOTE|Fixture-only private thought/);
+	assert.match(summary, /A first half[\s\S]*The second half\./);
+});
+
+it("item 3 and 4: an empty cut-off that compaction kept first offers no Retry, says why, and compaction keeps working", async () => {
+	const seed: LhMessage[] = [
+		{ ...newUserMessage("OLD HISTORY the summary replaced"), id: "old" },
+		{ ...fauxAssistantMessage("An old reply"), id: "old-reply" },
+		{ ...newUserMessage("Teach me the planets."), id: "ask" },
+		{ ...cutOff(), id: "cut" },
+	];
+	seed.push(newCompactionMarker("SUMMARY of the earlier lesson", { firstKeptMessageId: "cut", tokensBefore: 1, model: "fixture", at: new Date().toISOString() }));
+	const l = lesson([fauxAssistantMessage("A reply after compaction.")], undefined, { seed });
+	const cutoff = l.session.getState().cutOffReply;
+	assert.deepEqual({ hasText: cutoff?.hasText, blocked: cutoff?.blockedByCompaction }, { hasText: false, blocked: true });
+	const notice = renderToStaticMarkup(<CutOffReplyNotice hasText={false} blockedByCompaction disabled={false} recover={() => {}} />);
+	assert.match(notice, /cannot be retried after compaction/);
+	assert.doesNotMatch(notice, /<button/);
+	assert.throws(() => requireCutOffReply(l.saved(), "cut"), /cannot be retried after compaction/);
+	const refused = await handleChatRequest(new Request("http://test/api/chat", { method: "POST", body: JSON.stringify({ chatId: l.id, input: { type: "continue-reply", messageId: "cut" } }) }));
+	assert.equal(refused.status, 400);
+	await l.session.recoverReply();
+	assert.deepEqual(l.requests, [], "the client never sends a blocked recovery");
+
+	await l.session.send({ type: "text", text: "Let us go on." });
+	const next = JSON.stringify(l.contexts.at(-1));
+	assert.match(next, /SUMMARY of the earlier lesson/);
+	assert.doesNotMatch(next, /OLD HISTORY|Fixture-only private thought/);
+	assert.equal(lengthStops(l.contexts.at(-1)), 0);
+	assert.equal(visibleTexts(l.session).filter(text => text === "A reply after compaction.").length, 1);
+});
+
+it("item 2: a recovery whose turn settles before the reattach leaves no banner and no dropped flag", async () => {
+	const gate = Promise.withResolvers<void>();
+	const l: ReturnType<typeof lesson> = lesson([async () => {
+		await gate.promise;
+		return fauxAssistantMessage("The final saved response.");
+	}, () => fauxAssistantMessage("The next answer.")], async attachment => {
+		if (attachment <= 2) return twoBrokenViews(attachment);
+		// The record said the turn was running; it settles before this view attaches (turn-settled, no agent_start).
+		const handle = runningTurn(l.id)!;
+		const settled = new Response(handle.subscribe()).text();
+		gate.resolve();
+		await settled;
+		assert.equal(runningTurn(l.id), undefined);
+		return settledTurnResponse(l.id);
+	});
+	await l.session.send(answer);
+	assert.equal(l.session.getState().droppedStream, true);
+	await l.session.recoverReply();
+	const state = l.session.getState();
+	assert.deepEqual({ status: state.status, droppedStream: state.droppedStream, error: state.error }, { status: "ready", droppedStream: false, error: null });
+	assert.equal(visibleTexts(l.session).filter(text => text === "The final saved response.").length, 1);
+	assert.deepEqual(l.requests.map(input => input.type), ["answer"]);
+	l.assertOneAnswer();
+	await l.session.send({ type: "text", text: "What comes next?" });
+	assert.equal(occurrences(JSON.stringify(l.contexts.at(-1)), "The final saved response."), 1);
+	l.assertOneAnswer(2);
+});
+
+it("item 4: a retained failure before a compaction cannot be retried, and the banner says why", async () => {
+	const learner: LhMessage = { ...newUserMessage("Teach me the planets."), id: "learner" };
+	const compaction = newCompactionMarker("SUMMARY", { firstKeptMessageId: "learner", tokensBefore: 1, model: "fixture", at: new Date().toISOString() });
+	assert.throws(() => retryTurnDrops([learner, compaction], compaction.id, "Network failure"), /Network failure[\s\S]*cannot be retried after compaction/);
+	assert.deepEqual([...retryTurnDrops([compaction, learner], learner.id, "Network failure")], [], "a failure after compaction still retries");
+
+	// The dropped-stream Retry reads server truth: a retained failure behind a compaction ends as that explained state.
+	let record: Record<string, unknown> = { messages: [learner], turnInFlight: true };
+	const posts: string[] = [];
+	const model = new SessionModel({
+		chatId: "retained-failure", initialMessages: [learner],
+		fetch: async (url, init) => {
+			if (String(url) === "/api/chat") { posts.push(String(init?.body)); return new Response("unexpected", { status: 500 }); }
+			if (String(url).endsWith("/stream")) return new Response(streamFrame({ type: "agent_start" }));
+			return Response.json(record);
+		},
+	});
+	await model.resumeStream(false);
+	assert.equal(model.getState().droppedStream, true);
+	record = { messages: [learner, compaction], turnInFlight: false, turnError: "Network failure" };
+	await model.recoverReply();
+	const state = model.getState();
+	assert.deepEqual(posts, []);
+	assert.deepEqual({ dropped: state.droppedStream, error: state.error?.message, blocked: state.retryBlocked }, { dropped: false, error: "Network failure", blocked: true });
+	assert.match(renderToStaticMarkup(<RetryUnavailableNote />), new RegExp(RETRY_AFTER_COMPACTION_TEXT.replace(/\./g, "\\.")));
+
+	const provider = { ...fauxAssistantMessage("partial", { stopReason: "error", errorMessage: "fetch failed" }), id: "failed" } as LhMessage;
+	assert.equal(new SessionModel({ chatId: "a", initialMessages: [learner, provider, compaction], fetch }).getState().retryBlocked, true);
+	assert.equal(new SessionModel({ chatId: "b", initialMessages: [learner, compaction, provider], fetch }).getState().retryBlocked, false);
+	assert.equal(new SessionModel({ chatId: "c", initialMessages: [compaction, learner], initialError: "Network failure", fetch }).getState().retryBlocked, false);
+});
+
+it("item 5: a cut-off with an unanswered question call has the malformed-question recovery only", () => {
+	const messages: LhMessage[] = [
+		{ ...newUserMessage("Teach me the planets."), id: "learner" },
+		{ ...fauxAssistantMessage([fauxText("Here is a question."), fauxToolCall("quiz", { lead: "Partial" }, { id: "cut-question" })], { stopReason: "length" }), id: "cut" },
+	];
+	assert.equal(malformedQuestionsOf(messages).length, 1);
+	assert.equal(cutOffReplyAtEnd(messages), undefined);
+	assert.throws(() => requireCutOffReply(messages, "cut"), /no longer the latest reply/);
+	assert.equal(new SessionModel({ chatId: "malformed", initialMessages: messages, fetch }).getState().cutOffReply, undefined);
+});
+
+it("item 6: the timeline's longest gap includes the silence before the end, and reported thinking is not inferred", () => {
+	const lines: TurnTimelineLine[] = [];
+	let now = 0;
+	const timeline = new TurnTimeline(identity, line => lines.push(line), () => now);
+	const message = fauxAssistantMessage([fauxThinking("")], { stopReason: "stop" });
+	timeline.event({ type: "turn_start" });
+	now = 800;
+	timeline.event({ type: "message_update", message, assistantMessageEvent: { type: "thinking_start", contentIndex: 0, partial: message } });
+	now = 5_000;
+	timeline.event({ type: "message_update", message, assistantMessageEvent: { type: "thinking_end", contentIndex: 0, content: "", partial: message } });
+	now = 50_000;
+	timeline.finish(false);
+	assert.equal(lines[0]?.longestEventGapMs, 45_000);
+	assert.deepEqual(lines[0]?.thinkingSpans, [{ startMs: 800, durationMs: 4_200, source: "reported" }]);
+});
+
+it("item 7: the cut-off notice stays usable after a failed background sync", () => {
+	const idle = { localStream: false, turnInFlight: false, reconciliation: "failed" as const, compacting: false, retryingStream: false };
+	assert.equal(cutOffRecoveryDisabled(idle), false);
+	assert.equal(cutOffRecoveryDisabled({ ...idle, reconciliation: "syncing" }), true);
+	for (const busy of ["localStream", "turnInFlight", "compacting", "retryingStream"] as const) assert.equal(cutOffRecoveryDisabled({ ...idle, [busy]: true }), true, busy);
+});
+
+it("item 8: a refused keepalive write stops its timer instead of throwing from it", t => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	let writes = 0;
+	const closed = viewKeepalive({ desiredSize: 1, enqueue() { writes++; throw new TypeError("Invalid state: Controller is already closed"); } });
+	assert.doesNotThrow(() => closed.ping());
+	t.mock.timers.tick(TURN_KEEPALIVE_MS * 3);
+	assert.equal(writes, 1);
+	const errored = viewKeepalive({ desiredSize: null, enqueue() { writes++; } });
+	errored.ping();
+	t.mock.timers.tick(TURN_KEEPALIVE_MS * 3);
+	assert.equal(writes, 1);
+});
+
+it("item 8: waiting views are told what holds the turn, and only when it really is grading", async () => {
+	const frames = async (activity?: "grader" | "processing") => {
+		const chatId = `activity-${activity ?? "none"}`;
+		const prep = claimPreparingTurn(chatId, undefined, activity)!;
+		const view = runningTurn(chatId)!.subscribe().getReader();
+		const first = new TextDecoder().decode((await view.read()).value);
+		let second = "";
+		const next = view.read().then(result => { second = new TextDecoder().decode(result.value); });
+		await new Promise<void>(resolve => setImmediate(resolve));
+		await view.cancel();
+		await next;
+		prep.finish();
+		return [first, second];
+	};
+	assert.deepEqual(await frames("processing"), [TURN_KEEPALIVE, streamFrame({ type: "turn-activity", activity: "processing" })]);
+	assert.deepEqual(await frames(), [TURN_KEEPALIVE, ""], "a sketched placement answer is graded later, after read_sketch");
+	assert.equal(TURN_ACTIVITY_LABELS.processing, "Evaluating");
+
+	const answerData = (extra: object) => ({ role: "toolResult", toolName: "probe", toolCallId: "p", isError: false, content: [], details: { kind: "quiz", ...extra } });
+	assert.equal(placementGradedBeforeTurn(answerData({})), true);
+	assert.equal(placementGradedBeforeTurn(answerData({ sketch: { id: "sk_1" } })), false);
+	assert.equal(placementGradedBeforeTurn(answerData({ dismissed: true })), false);
+
+	const lines: TurnTimelineLine[] = [];
+	const timeline = new TurnTimeline(identity, line => lines.push(line));
+	await timeline.run(() => observeTurnActivity("processing", async () => {}));
+	timeline.finish(false);
+	assert.equal(lines[0]?.processingSpans.length, 1);
+	assert.equal(lines[0]?.graderSpans.length, 0);
+	const held = new Response(new ReadableStream<Uint8Array>());
+	const session = new SessionModel({ chatId: "processing", initialMessages: [], fetch: async () => held });
+	const watching = session.resumeStream(false);
+	assert.equal(session.status, "submitted");
+	session.applyWireEvent({ type: "turn-activity", activity: "processing" });
+	assert.equal(session.getState().activity, "processing");
+	await held.body!.cancel();
+	await watching;
+});
+
+it("item 10: Thinking returns when send_to_user prose falls silent", async t => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	let wire!: ReadableStreamDefaultController<Uint8Array>;
+	const streaming = Promise.withResolvers<void>();
+	const encoder = new TextEncoder();
+	const response = new Response(new ReadableStream<Uint8Array>({ start(controller) { wire = controller; } }));
+	const prose = { ...fauxAssistantMessage([fauxToolCall("send_to_user", { message: "Prose so far" }, { id: "say" })]), stopReason: "pending" };
+	const model = new SessionModel({
+		chatId: identity.chatId, initialMessages: [], fetch: async url => String(url).endsWith("/stream") ? response : Response.json({ messages: [] }),
+		onChange() { if (model.status === "streaming" && JSON.stringify(model.getState().messages).includes("Prose so far")) streaming.resolve(); },
+	});
+	const watching = model.resumeStream(false);
+	wire.enqueue(encoder.encode(streamFrame({ type: "message_start", message: prose })));
+	await streaming.promise;
+	assert.equal(model.getState().activity, null);
+	t.mock.timers.tick(MODEL_TEXT_PAUSE_MS);
+	assert.equal(model.getState().activity, "thinking");
+	wire.enqueue(encoder.encode("data: [DONE]\n\n"));
+	wire.close();
+	await watching;
 });

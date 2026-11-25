@@ -147,7 +147,7 @@ import {
 import { ReadingThinkingField } from "@/components/reading-thinking";
 import { FinishLessonButton, LessonFinishedLine, courseOfView } from "@/components/lesson-finish";
 import { LessonResultCard } from "@/components/lesson-result-card";
-import { CutOffReplyNotice, RetryOnFallback, TurnErrorText } from "@/components/turn-error";
+import { CutOffReplyNotice, cutOffRecoveryDisabled, RetryOnFallback, RetryUnavailableNote, TurnErrorText } from "@/components/turn-error";
 import { ComposerEdge } from "@/components/composer-edge";
 import { currentUserThinkingOpen, setAllUserThinkingOpen } from "@/components/thinking-block";
 
@@ -355,7 +355,7 @@ export function Chat({
 	// (core/view.ts projectView); sends are ONE explicit input event each
 	// ({chatId, input} — the stash indirection died with the SDK), and the
 	// turn stream is the VERBATIM AgentEvent passthrough the server emits.
-	const { canonicalMessages, reconciliation, reconcile, pluginQuestionAvailability, pluginQuestionDraft, pluginProblemAvailability, pluginProblemDraft, dismissPluginQuestion, readRecord, readStats, messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, status, evaluating, activity, cutOffReply, droppedStream, retryingStream, recoverReply, error, stop, clearError, resumeStream, setReattachSettled } =
+	const { canonicalMessages, reconciliation, reconcile, pluginQuestionAvailability, pluginQuestionDraft, pluginProblemAvailability, pluginProblemDraft, dismissPluginQuestion, readRecord, readStats, messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, status, evaluating, activity, cutOffReply, droppedStream, retryingStream, retryBlocked, recoverReply, error, stop, clearError, resumeStream, setReattachSettled } =
 		useChatSession({ chatId, initialMessages, initialError, initiallyInFlight });
 
 	const controller = useOptionalInteractionLayers();
@@ -2327,10 +2327,14 @@ export function Chat({
 								onDraftDone={() => setAskDraft(null)}
 							/>
 							{openingError && <p role="alert" className="text-sm text-destructive">{OPENING_PROMPT_FAILURE}</p>}
-							{cutOffReply && <CutOffReplyNotice hasText={cutOffReply.hasText} disabled={busy || compacting || retryingStream} recover={() => void recoverReply()} />}
+							{cutOffReply && <CutOffReplyNotice hasText={cutOffReply.hasText} blockedByCompaction={cutOffReply.blockedByCompaction}
+								disabled={cutOffRecoveryDisabled({ localStream, turnInFlight, reconciliation, compacting, retryingStream })} recover={() => void recoverReply()} />}
 							{error && (
 								<div className="flex items-center justify-between gap-3 rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm">
-									<TurnErrorText message={error.message} />
+									<span>
+										<TurnErrorText message={error.message} />
+										{retryBlocked && <RetryUnavailableNote />}
+									</span>
 									{droppedStream ? (
 										<Button variant="outline" size="xs" disabled={retryingStream || status === "submitted" || status === "streaming"} onClick={() => void recoverReply()}>
 											Retry

@@ -19,6 +19,25 @@ export function turnKeepalive(ping: () => void) {
 	};
 }
 
+/** Keepalives for a view written straight to its controller: a timer can never throw, and a view that errored or
+ *  refuses the write stops its timer for good. A ping waits while the reader still has a frame queued. */
+export function viewKeepalive(controller: Pick<ReadableStreamDefaultController<Uint8Array>, "desiredSize" | "enqueue">) {
+	const frame = new TextEncoder().encode(TURN_KEEPALIVE);
+	let stopped = false;
+	const stop = () => { stopped = true; timer.stop(); };
+	const ping = () => {
+		if (stopped) return;
+		const room = controller.desiredSize;
+		if (room === null) { stop(); return; }
+		try {
+			if (room > 0) controller.enqueue(frame);
+			timer.wrote();
+		} catch { stop(); }
+	};
+	const timer = turnKeepalive(ping);
+	return { ping, stop };
+}
+
 /**
  * THE NATIVE WIRE (Wave D, owner-approved 2026-09-26): one agent turn, streamed
  * to every view as pi AgentEvents — no translation, no part assembly. The one

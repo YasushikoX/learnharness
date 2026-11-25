@@ -22,6 +22,7 @@ import {
 	pendingQuestionOf,
 	failedResponseAtEnd,
 	cutOffReplyAtEnd,
+	failureBlockedByCompaction,
 	retryTurnDrops,
 	sendToUserText,
 	measuredContextTokens,
@@ -251,8 +252,10 @@ export interface SessionState {
 	status: SessionStatus;
 	/** Local submission with optional grading/processing, awaiting its POST response. */
 	evaluating: boolean;
-	activity: "thinking" | "checker" | "grader" | null;
-	cutOffReply: { hasText: boolean } | undefined;
+	activity: "thinking" | "checker" | "grader" | "processing" | null;
+	cutOffReply: { hasText: boolean; blockedByCompaction?: true } | undefined;
+	/** The failure shown cannot be retried because a compaction landed after it; the banner says so. */
+	retryBlocked: boolean;
 	droppedStream: boolean;
 	retryingStream: boolean;
 	reconciliation: "ready" | "syncing" | "failed";
@@ -355,6 +358,8 @@ export class SessionModel {
 	private detachedTail: { messages: LhMessage[]; chars: number } | null = null;
 	/** Request/loop failures are transient; provider failures derive from messages. */
 	private errorValue: { message: string } | null = null;
+	/** The server-retained failure (record turnError) last adopted; errorValue is it while identical. */
+	private retainedError: { message: string } | null = null;
 	/** Dismissing a banner must not authorize an automatic replacement turn. */
 	private automaticContinuationBlocked = false;
 	/** A completed failure from THIS consume, not the previous attempt's record. */
@@ -375,7 +380,7 @@ export class SessionModel {
 		this.base = copyImmutableData(opts.initialMessages);
 		this.tail = copyImmutableData(this.tail);
 		if (pluginQuestionCallsOf(this.base).some(call => call.status === "answerable" || call.status === "unreadable")) { this.reconciliationValue = "syncing"; this.readyRef = false; }
-		this.errorValue = opts.initialError === undefined ? null : { message: opts.initialError };
+		this.errorValue = this.retainedError = opts.initialError === undefined ? null : { message: opts.initialError };
 		this.automaticContinuationBlocked = opts.initialError !== undefined;
 		// BOUND: the browser's native fetch is a Window method — storing it
 		// unbound makes every call throw "Illegal invocation" in the browser
@@ -437,6 +442,7 @@ export class SessionModel {
 			!this.incompleteUsageIds.has(latest.id) && (!live || latest.id === this.liveFailureId)
 				? { message: latest.errorMessage ?? "An error occurred." }
 				: null;
+		const error = this.errorValue ?? (!live && this.droppedStream ? { message: STREAM_DROPPED } : providerError);
 		return {
 			messages: projectView(messages, live),
 			nativeMessages: messages,
@@ -452,7 +458,9 @@ export class SessionModel {
 			reconciliation: this.reconciliationValue,
 			pluginQuestionAvailability: this.pluginQuestionAvailability,
 			pluginProblemAvailability: this.pluginProblemAvailability,
-			error: this.errorValue ?? (!live && this.droppedStream ? { message: STREAM_DROPPED } : providerError),
+			error,
+			retryBlocked: !live && !this.droppedStream && error !== null &&
+				failureBlockedByCompaction(messages, this.errorValue !== null && this.errorValue === this.retainedError),
 			steerQueue: this.steerQueueValue,
 		};
 	}
@@ -677,7 +685,7 @@ export class SessionModel {
 	 */
 	applyWireEvent(event: Record<string, unknown>): boolean {
 		if (event.type === "turn-activity") {
-			if (event.activity === null || event.activity === "checker" || event.activity === "grader") {
+			if (event.activity === null || event.activity === "checker" || event.activity === "grader" || event.activity === "processing") {
 				this.activity = event.activity;
 				this.onChange?.();
 			}
@@ -750,7 +758,9 @@ export class SessionModel {
 					if (last?.type === "thinking") this.modelThinking = true;
 					if (last?.type === "toolCall" || (last?.type === "text" && last.text.trim())) {
 						this.modelThinking = false;
-						if (last.type === "text" && agent.type !== "message_end" && this.consumeAbort) {
+						// send_to_user carries prose like text does: a silence while it streams is thinking again.
+						const prose = last.type === "text" || sendToUserText(last) !== undefined;
+						if (prose && agent.type !== "message_end" && this.consumeAbort) {
 							this.modelTextPause = setTimeout(() => {
 								this.modelThinking = true;
 								this.onChange?.();
@@ -862,8 +872,14 @@ export class SessionModel {
 				if (sawDone) {
 					// Do not expose live annotations as canonical editor authority.
 					const synced = await this.reconcile();
-					if (this.consumeAbort === controller && synced && !this.errorValue) this.clearDroppedStream();
-					else if (this.consumeAbort === controller && synced && this.detachedTail) this.droppedStream = true;
+					if (this.consumeAbort === controller && synced) {
+						// The turn has settled (a full replay, or turn-settled when it finished before this view
+						// attached) and the record is truth. A reply that landed leaves no drop behind; a failure
+						// keeps the dropped state only while the learner has seen more than was saved.
+						const failed = (this.errorValue !== null && this.errorValue.message !== STREAM_DROPPED) || failedResponseAtEnd(this.base) !== undefined;
+						if (failed && this.detachedTail) this.droppedStream = true;
+						else this.clearDroppedStream();
+					}
 					if (this.consumeAbort === controller && this.statusValue !== "error") this.setStatus("ready");
 					if (this.consumeAbort === controller && this.reconciliationValue === "ready") this.onReattachSettled?.();
 				}
@@ -992,13 +1008,15 @@ export class SessionModel {
 			if (!this.droppedStream) {
 				if (this.reconciliationValue !== "ready" && !(await this.reconcile())) return;
 				const cutoff = cutOffReplyAtEnd(this.base);
-				if (current() && cutoff) await this.send({ type: "continue-reply", messageId: cutoff.messageId });
+				if (current() && cutoff && !cutoff.blockedByCompaction) await this.send({ type: "continue-reply", messageId: cutoff.messageId });
 				return;
 			}
 			const record = await this.readRecord({ adoption: "none", isCurrent: current });
 			if (!record || typeof record.turnInFlight !== "boolean") return;
 			if (record.turnInFlight) {
 				this.replaceMessages(record.messages, record.turnError, record.pluginQuestionAvailability, record.pluginProblemAvailability);
+				// Still dropped until this attach settles (consumeStream's terminal), but no banner while it replays.
+				if (this.errorValue?.message === STREAM_DROPPED) this.errorValue = null;
 				await this.resumeStream(false, false);
 				return;
 			}
@@ -1407,7 +1425,7 @@ export class SessionModel {
 			const problemId = activeProblemOf(record)?.pluginProblem?.problemId;
 			for (const key of this.pluginProblemDrafts.keys()) if (key !== problemId) this.pluginProblemDrafts.delete(key);
 			if (turnError !== undefined) {
-				this.errorValue = { message: turnError };
+				this.errorValue = this.retainedError = { message: turnError };
 				this.automaticContinuationBlocked = true;
 			}
 			this.forgetResolvedDrafts(record);

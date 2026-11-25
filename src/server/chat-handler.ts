@@ -137,6 +137,14 @@ function settlementErrorText(error: unknown): string {
 	return error instanceof TurnPersistenceError ? error.message : "An error occurred.";
 }
 
+/** A placement probe/recall answer graded before the turn starts; a sketched one is graded after read_sketch. */
+export function placementGradedBeforeTurn(m: unknown): boolean {
+	const tr = m as Partial<PiToolResultMessage>;
+	if (tr.role !== "toolResult" || tr.isError || (tr.toolName !== "probe" && tr.toolName !== "recall")) return false;
+	const details = tr.details as QuestionAnswerData | undefined;
+	return !!details && !details.dismissed && !details.sketch;
+}
+
 const jobRunner = createJobRunner({
 	chatStore: stores.chatStore,
 	jobStore: stores.jobStore,
@@ -570,11 +578,12 @@ export async function handleChatInput(
 			const submission = questionSubmission ?? problemSubmission!;
 			const work = questionSubmission?.grade ?? problemSubmission?.process;
 			if (work) {
-				const claim = claimPreparingTurn(chatId, startTimeline());
+				const activity = questionSubmission ? "grader" : "processing";
+				const claim = claimPreparingTurn(chatId, startTimeline(), activity);
 				if (!claim) return Response.json({ error: "A turn is already running for this session" }, { status: 409 });
 				preparation = claim;
 				turnClaimed = true;
-				const outcome = await startTimeline().run(() => observeTurnActivity("grader", () => work(claim.signal)));
+				const outcome = await startTimeline().run(() => observeTurnActivity(activity, () => work(claim.signal)));
 				// No captured history may be written after asynchronous plugin processing.
 				const current = stores.chatStore.getChat(chatId);
 				if (!current || !preparation.isCurrent()) return staleSubmission();
@@ -636,7 +645,8 @@ export async function handleChatInput(
 	}
 	const placementTurnInfo = record.course?.mode === "placement" && input.type === "answer" ? courseForTurn(chatId) : undefined;
 	if (placementTurnInfo?.placementSkills) {
-		const claim = claimPreparingTurn(chatId, startTimeline());
+		// Sketched answers are graded later, after read_sketch: only an answer graded here holds the turn as "grader".
+		const claim = claimPreparingTurn(chatId, startTimeline(), appends.some(placementGradedBeforeTurn) ? "grader" : undefined);
 		if (!claim) return Response.json({ error: "A turn is already running for this session" }, { status: 409 });
 		preparation = claim;
 	}
@@ -657,11 +667,9 @@ export async function handleChatInput(
 	if (placementTurnInfo?.placementSkills) {
 		const bySkillId = new Map(placementTurnInfo.placementSkills.map((s) => [s.id, s]));
 		for (const m of appends) {
-			if ((m as { role?: string }).role !== "toolResult") continue;
+			if (!placementGradedBeforeTurn(m)) continue;
 			const tr = m as PiToolResultMessage;
-			if (tr.isError || (tr.toolName !== "probe" && tr.toolName !== "recall")) continue;
-			const details = tr.details as (QuestionAnswerData & { placementGrade?: unknown }) | undefined;
-			if (!details || details.dismissed || details.sketch) continue;
+			const details = tr.details as unknown as QuestionAnswerData & { placementGrade?: unknown };
 
 			let callBlock: { name: string; arguments?: unknown } | undefined;
 			for (let i = record.messages.length - 1; i >= 0; i--) {

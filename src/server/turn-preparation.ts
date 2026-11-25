@@ -4,8 +4,8 @@
  * through handoff; only the real teacher owns replay/events. View cancellation
  * never aborts preparation or another view.
  */
-import { TURN_KEEPALIVE, turnKeepalive, type PiTurnHandle } from "./pi/ui-stream.ts";
-import type { TurnTimeline } from "./turn-timeline.ts";
+import { viewKeepalive, type PiTurnHandle } from "./pi/ui-stream.ts";
+import type { TurnActivity, TurnTimeline } from "./turn-timeline.ts";
 import { beginTurn, endTurn, handoffTurn, isTurnOwner } from "./turn-liveness.ts";
 import { registerTurn, runningTurn, settledTurnResponse, unregisterTurn } from "./turn-runs.ts";
 
@@ -19,8 +19,10 @@ export interface TurnPreparation {
 /** Claims the existing per-session turn gate, with no await or separate job.
  * Aborting preparation does NOT release it: the host must await its callback's
  * settlement and durable cleanup, then call finish (including failure paths).
- * Once handed off, the host calls finish after the real teacher's settlement. */
-export function claimPreparingTurn(chatId: string, grading?: TurnTimeline): TurnPreparation | null {
+ * Once handed off, the host calls finish after the real teacher's settlement.
+ * `activity` is what waiting views are told is holding the turn (grading, plugin
+ * processing), and only when the host really does that work before the teacher. */
+export function claimPreparingTurn(chatId: string, timeline?: TurnTimeline, activity?: TurnActivity): TurnPreparation | null {
 	const owner = {};
 	const preparation = new AbortController();
 	let real: PiTurnHandle | undefined;
@@ -31,7 +33,7 @@ export function claimPreparingTurn(chatId: string, grading?: TurnTimeline): Turn
 		subscribe() {
 			let cancelled = false;
 			let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-			let heartbeat: ReturnType<typeof turnKeepalive> | undefined;
+			let heartbeat: ReturnType<typeof viewKeepalive> | undefined;
 			let resolveReady!: (reader: ReadableStreamDefaultReader<Uint8Array> | null) => void;
 			let rejectReady!: (error: unknown) => void;
 			const ready = new Promise<ReadableStreamDefaultReader<Uint8Array> | null>((resolve, reject) => {
@@ -56,14 +58,9 @@ export function claimPreparingTurn(chatId: string, grading?: TurnTimeline): Turn
 					if (real || finished) connect();
 					else {
 						waiting.add(connect);
-						const encoder = new TextEncoder();
-						const ping = () => {
-							if ((controller.desiredSize ?? 0) > 0) controller.enqueue(encoder.encode(TURN_KEEPALIVE));
-							heartbeat?.wrote();
-						};
-						heartbeat = turnKeepalive(ping);
-						ping();
-						if (grading) controller.enqueue(encoder.encode('data: {"type":"turn-activity","activity":"grader"}\n\n'));
+						heartbeat = viewKeepalive(controller);
+						heartbeat.ping();
+						if (activity) controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: "turn-activity", activity })}\n\n`));
 					}
 				},
 				async pull(controller) {
@@ -86,7 +83,7 @@ export function claimPreparingTurn(chatId: string, grading?: TurnTimeline): Turn
 				async cancel(reason) {
 					cancelled = true;
 					heartbeat?.stop();
-					if (!reader && !finished) grading?.dropped();
+					if (!reader && !finished) timeline?.dropped();
 					waiting.delete(connect);
 					resolveReady(null);
 					const source = reader;

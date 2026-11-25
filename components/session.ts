@@ -154,6 +154,7 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 		cutOffReply: state.cutOffReply,
 		droppedStream: state.droppedStream,
 		retryingStream: state.retryingStream,
+		retryBlocked: state.retryBlocked,
 		error: state.error,
 		steerQueue: state.steerQueue,
 		send,

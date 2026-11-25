@@ -10,7 +10,7 @@ export const TURN_TIMELINE_MAX_BYTES = 4 * 1024 * 1024;
 const MAX_QUEUED_WRITES = 128;
 const timelineFile = join(/* turbopackIgnore: true */ PATHS.data, "logs", "turns.jsonl");
 
-export type TurnActivity = "checker" | "grader";
+export type TurnActivity = "checker" | "grader" | "processing";
 type Span = { startMs: number; durationMs: number };
 type ErrorKind = "provider" | "agent-loop" | "settlement" | "preparation";
 type Identity = { turnId: string; chatId: string; provider: string; model: string; thinking: boolean };
@@ -26,9 +26,11 @@ export type TurnTimelineLine = Identity & {
 	tools: (Span & { name: string })[];
 	checkerSpans: Span[];
 	graderSpans: Span[];
+	processingSpans: Span[];
 	gateRefusals: Record<string, number>;
 	stopReason: StopReason | null;
-	streamEnd: "completed" | "client-dropped" | "aborted" | "error";
+	/** How the turn ended on the server; a view leaving never ends it (clientDrops counts those). */
+	streamEnd: "completed" | "aborted" | "error";
 	errorKind: ErrorKind | null;
 	clientDrops: number;
 	visibleTextChars: number;
@@ -102,6 +104,7 @@ export class TurnTimeline {
 	private nextActivity = 0;
 	private readonly checkerSpans: Span[] = [];
 	private readonly graderSpans: Span[] = [];
+	private readonly processingSpans: Span[] = [];
 	private readonly gateRefusals = new Map<string, number>();
 	private onActivity?: (activity: TurnActivity | null) => void;
 
@@ -131,7 +134,7 @@ export class TurnTimeline {
 		this.onActivity?.(activity);
 		return () => {
 			const span = this.span(start, this.now());
-			(activity === "checker" ? this.checkerSpans : this.graderSpans).push(span);
+			(activity === "checker" ? this.checkerSpans : activity === "grader" ? this.graderSpans : this.processingSpans).push(span);
 			this.activities.delete(id);
 			this.onActivity?.([...this.activities.values()].at(-1) ?? null);
 		};
@@ -152,6 +155,8 @@ export class TurnTimeline {
 		if (event.type === "message_update") {
 			switch (event.assistantMessageEvent.type) {
 				case "thinking_start":
+					// Reported thinking: the wait before it is not an inferred thinking span.
+					this.modelWait = null;
 					this.closeThinking(now);
 					this.thinkingStart = now;
 					break;
@@ -210,17 +215,19 @@ export class TurnTimeline {
 		if (this.finished) return;
 		this.finished = true;
 		const now = this.now();
+		// The silence before the end is the stall this log exists to find.
+		this.longestEventGap = Math.max(this.longestEventGap, now - (this.lastEvent ?? 0));
 		this.closeThinking(now);
 		this.closeText(now);
 		for (const id of this.runningTools.keys()) this.closeTool(id, now);
 		if (this.stopReason === "error") errorKind ??= "provider";
-		const streamEnd = errorKind ? "error" : aborted ? "aborted" : this.clientDrops > 0 ? "client-dropped" : "completed";
+		const streamEnd = errorKind ? "error" : aborted ? "aborted" : "completed";
 		try {
 			this.write?.({
 				...this.identity, startedAt: this.startedAt, durationMs: now,
 				firstEventMs: this.firstEvent, firstVisibleTextMs: this.firstVisibleText, longestEventGapMs: this.longestEventGap,
 				thinkingSpans: this.thinkingSpans, textSpans: this.textSpans, tools: this.tools,
-				checkerSpans: this.checkerSpans, graderSpans: this.graderSpans, gateRefusals: Object.fromEntries(this.gateRefusals),
+				checkerSpans: this.checkerSpans, graderSpans: this.graderSpans, processingSpans: this.processingSpans, gateRefusals: Object.fromEntries(this.gateRefusals),
 				stopReason: this.stopReason, streamEnd, errorKind, clientDrops: this.clientDrops,
 				visibleTextChars: this.visibleTextChars, thinkingChars: this.thinkingChars,
 			});

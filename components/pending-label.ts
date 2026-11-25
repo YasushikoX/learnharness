@@ -35,6 +35,8 @@ export const TURN_ACTIVITY_LABELS = {
 	thinking: DEFAULT_PENDING_LABEL,
 	checker: "Checking the answer key",
 	grader: "Grading",
+	// A plugin processing a practice submission (running tests, for example): the word the submitting tab already shows.
+	processing: "Evaluating",
 } as const;
 
 /** A tool call that is still executing (its arguments are streaming or it has not returned). */
