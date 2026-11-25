@@ -73,7 +73,7 @@ describe("the schema's argument order (reasoning before the pick)", () => {
 				`explanation must precede options and correctAnswer in the emitted schema (got: ${keys.join(", ")})`,
 			);
 			assert.deepEqual(keys, schema === quizInputSchema
-				? ["type", "nodeId", "lead", "previous", "question", "explanation", "verify", "figureCheck", "options", "multiSelect", "correctAnswer", "details"]
+				? ["type", "nodeId", "level", "conceptIds", "lead", "previous", "previousKeyPoints", "question", "explanation", "verify", "figureCheck", "options", "multiSelect", "correctAnswer", "details"]
 				: ["question", "explanation", "verify", "figureCheck", "options", "multiSelect", "correctAnswer", "details"]);
 		}
 	});
@@ -87,6 +87,8 @@ describe("quizInputSchema / quizInputProblems (the authoring contract)", () => {
 		explanation: "Mercury is the innermost planet.",
 		type: "check",
 		nodeId: "planet-order",
+		level: "recall",
+		conceptIds: ["planet order"],
 		lead: "Good start. Next, the order of the planets.",
 	};
 
@@ -720,7 +722,8 @@ describe("explainInputBase / explainInputProblems (the commitment contract)", ()
 		// then the question). Mirrors the quiz reorder (see above).
 		const keys = Object.keys(explainInputObject.properties);
 		// `skill` (a lesson's recall opener, 2026-11-13) is optional and trails; the required fields still lead
-		assert.deepEqual(keys, ["type", "nodeId", "lead", "previous", ...Object.keys(explainInputBase.properties), "skill"]);
+		// WP6 (2026-11-25): level and conceptIds follow the pair; keyPoints is committed right after correctAnswer
+		assert.deepEqual(keys, ["type", "nodeId", "level", "conceptIds", "lead", "previous", "previousKeyPoints", "question", "correctAnswer", "keyPoints", "details", "skill"]);
 	});
 
 	it("an empty commitment is the one authoring problem", () => {
@@ -785,6 +788,8 @@ describe("the quiz role field (predict | check)", () => {
 		explanation: "Mercury is the innermost planet.",
 		type: "check",
 		nodeId: "planet-order",
+		level: "recall",
+		conceptIds: ["planet order"],
 		lead: "Good start. Next, the order of the planets.",
 	};
 	it("the teach schema REQUIRES type; the probe schema has no such field", () => {

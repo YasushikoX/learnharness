@@ -15,6 +15,7 @@ import {
 	quizInputProblems,
 } from "../core/question-core.ts";
 import { figureInputProblems } from "../core/figures/index.ts";
+import { keyPointsProblems } from "../core/question-quality.ts";
 import { circuitSolveTool, figureGuideTool } from "./tools/figures.ts";
 import { filterEnabledTools, type EnabledTools } from "../core/pending.ts";
 import type { JobRecord } from "../core/contracts.ts";
@@ -156,6 +157,9 @@ export const quizExampleBody = {
 	correctAnswer: "a",
 };
 
+/** The teach example's required WP6 fields (exported for the description pins): recorded, never shown. */
+export const quizExampleQuality = { level: "apply" as const, conceptIds: ["chain rule"] };
+
 /** The teach example's `lead` (exported for the description pins). */
 export const quizExampleLead =
 	"Right: the inner function sets how fast the phase changes. Next, the same idea with a different inner function.";
@@ -190,6 +194,7 @@ function quizDescription(delta: { name: "quiz" | "probe"; nodeId: boolean; types
 		? {
 				type: "check" as const,
 				nodeId: "chain-rule",
+				...quizExampleQuality,
 				lead: quizExampleLead,
 				...quizExampleBody,
 			}
@@ -243,6 +248,7 @@ function explainDescription(name: "explain" | "recall", nodeId: boolean, scope: 
 				"say what his last answer showed before the call, not in `lead`; after his answer, say what was right and wrong, then call finish_lesson. " +
 				"`type` recall is the lesson's OPENER: a short question on an earlier skill he learned (set `skill`), posed before the new material."
 			: "") +
+		(nodeId ? WRITTEN_ANSWER_RULE + (scope === "all" ? " A final problem is the exception: it takes the whole skill." : "") : "") +
 		(mixed ? QUIZ_FORM_RULE : "")
 	);
 }
@@ -298,7 +304,7 @@ export function teachExplainToolFor(
 		prepareArguments: prepareTeachQuestionArguments,
 		executionMode: "sequential",
 		execute: async (_toolCallId, input) => {
-			const problems = [...explainInputProblems(input), ...figureInputProblems(input)];
+			const problems = [...explainInputProblems(input), ...keyPointsProblems(input.keyPoints), ...figureInputProblems(input)];
 			const nodeIdProblemText = nodeIdProblem(ctx, input.nodeId);
 			if (nodeIdProblemText) problems.push(nodeIdProblemText);
 			const scopeProblem = explainScopeProblem(scope, input.type, (input as { skill?: unknown }).skill, openerSkills);
@@ -505,13 +511,19 @@ export function quizMechanics(enabled?: EnabledTools): "choice" | "free" | "mixe
 	return (enabled as { quizMix?: boolean } | undefined)?.quizMix === true ? "mixed" : "choice";
 }
 
-/** The rule for picking the form of a question, when the teacher has both tools (owner-approved text, 2026-11-13). */
+/** The rule for picking the form of a question, when the teacher has both tools (owner-approved text, 2026-11-13;
+ *  WP6, 2026-11-25: a written answer is the default for concept checks too). */
 export const QUIZ_FORM_RULE =
-	" CHOOSING THE FORM: you have both `quiz` (multiple choice) and `explain` (free-form). Choose per question. Use `explain` whenever the answer " +
-	"is something he works out or produces: a calculation, a derivation, a proof step, code he writes, a definition or statement from memory. " +
-	"Options would hand him the form of the answer, and recognising a result is not producing it. Use `quiz` for predictions, and for concept " +
-	"checks and quick discriminations where the wrong models are the point. Test: could he pick the right option by eliminating the others, " +
-	"without doing the work? Then it is `explain`.";
+	" CHOOSING THE FORM: you have both `quiz` (multiple choice) and `explain` (a written answer). (The example above shows the argument " +
+	"shape and the escaping only: by this rule a calculation like it is an `explain`.) A concept check or a calculation is an " +
+	"`explain`: options would hand him the form of the answer, and recognising a result is not producing it. Use `quiz` only for a prediction " +
+	"before you teach or show something, and for a misconception trap where the wrong options are the point (each one the answer a specific " +
+	"wrong model gives). Test: could he pick the right option by eliminating the others, without doing the work? Then it is `explain`.";
+
+/** How long a written answer is (WP6): said in every teach explain's description, the final problem excepted. */
+export const WRITTEN_ANSWER_RULE =
+	" A written answer is short: one to three sentences, or a number with its unit, or one line of working; `question` says which form you expect. " +
+	"`keyPoints` are what that answer must contain.";
 
 /** Strip the mechanics keys so filterEnabledTools can never drop the
  *  quizzing tools (the derivation above is their only switch). */

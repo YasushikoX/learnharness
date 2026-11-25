@@ -4,8 +4,10 @@ import { QUESTION_TOOLS } from "../core/pending.ts";
 import { SEND_TO_USER_TOOL, sendToUserText } from "../core/native-messages.ts";
 import { isNarrationSignature } from "../core/narration-signature.ts";
 import { sendToUserApplies } from "./tools/send-to-user.ts";
+import { REFUSALS_PER_GATE } from "./refusal-budget.ts";
 
-export const NARRATION_GUARD_MAX_BLOCKS = 2;
+/** The narration guard's own cap: one gate's share of the shared refusal budget (WP6 — refusal-budget.ts), which also counts it. */
+export const NARRATION_GUARD_MAX_BLOCKS = REFUSALS_PER_GATE;
 
 export const NARRATION_BLOCK_REASON =
 	"This response contains narration: hidden text that never reaches the learner, and what you meant to tell him (a correction, an explanation) may be in it. Put everything the learner needs in the question's `lead` (or send it through `send_to_user`) and keep it out of narration, then retry this question. Deliver learner-facing content, not internal reasoning.";

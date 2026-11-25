@@ -401,7 +401,7 @@ describe("send_to_user native flow (offline)", () => {
 		const lead = "Check it:";
 		const quiz = {
 			// the fork's teach questions carry their own `lead` (required); here it follows the lesson sent above it
-			lead, type: "check", nodeId: "synthetic", question: "What is two plus two?",
+			lead, type: "check", nodeId: "synthetic", level: "recall", conceptIds: [], question: "What is two plus two?",
 			options: [{ label: "Four", value: "4" }, { label: "Five", value: "5" }],
 			correctAnswer: "4", explanation: "Add two pairs.",
 		};
@@ -447,7 +447,7 @@ describe("send_to_user native flow (offline)", () => {
 
 const guardQuizInput = {
 	// the fork's teach questions carry their own `lead` (required)
-	lead: "Check it:", type: "check", nodeId: "synthetic", question: "What is two plus two?",
+	lead: "Check it:", type: "check", nodeId: "synthetic", level: "recall", conceptIds: [], question: "What is two plus two?",
 	options: [{ label: "Four", value: "4" }, { label: "Five", value: "5" }],
 	correctAnswer: "4", explanation: "Add two pairs.",
 };

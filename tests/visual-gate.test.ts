@@ -123,6 +123,8 @@ describe("the visual gate is live in the teacher", () => {
 	const quiz = (lead: string) => ({
 		type: "predict",
 		nodeId: "n1",
+		level: "apply",
+		conceptIds: [],
 		lead,
 		question: "What is $2+2$?",
 		explanation: "$2+2=4$.",

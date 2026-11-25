@@ -57,11 +57,21 @@ function whiteheadQuiz(type: unknown, correctAnswer: unknown) {
 		correctAnswer,
 		type,
 		nodeId: "experience-first",
+		level: "apply",
+		conceptIds: [],
 		lead: "Right. Next, the Parmenides claim.",
 	};
 }
 
 describe("the death-loop shape — quiz type with quotes baked in", () => {
+	it("heals an enum member sent in the wrong case, when exactly one member matches (WP6 review 1, finding 7)", () => {
+		const healed = healEncodedArguments({ level: "Apply", type: " Check " }, quizInputObject) as { level: unknown; type: unknown };
+		assert.equal(healed.level, "apply");
+		assert.equal(healed.type, "check");
+		const left = healEncodedArguments({ level: "hardest" }, quizInputObject) as { level: unknown };
+		assert.equal(left.level, "hardest", "an unknown word is left for the validator to report");
+	});
+
 	it("heals the quote-encoded literal (the ten-retry loop)", () => {
 		const healed = healEncodedArguments({ type: QUOTED("predict") }, quizInputObject) as {
 			type: unknown;
@@ -339,6 +349,8 @@ describe("a leaked tail that duplicates fields the call already carries (Matte 1
 		const parsed = parseQuizInput({
 			type: "check",
 			nodeId: "n1",
+			level: "apply",
+			conceptIds: [],
 			lead: "Forste avsnitt." + '", "question": "Q?"',
 			question: "Q?",
 			explanation: "E.",

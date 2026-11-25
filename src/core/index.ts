@@ -26,6 +26,10 @@ export * from "./source-label.ts";
 export * from "./render-settings.ts";
 
 export * from "./question-core.ts";
+// WP6 (2026-11-25): question levels, concept ids, key points, figure notes and their labels
+export * from "./question-quality.ts";
+export * from "./figure-notes.ts";
+export * from "./lesson-labels.ts";
 export * from "./figures/index.ts";
 // The event bus (push architecture, 2026-10-02): vocabulary + emit/subscribe
 // for every layer; the browser shell consumes the types + the runtime names

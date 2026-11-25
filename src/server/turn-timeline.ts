@@ -28,6 +28,8 @@ export type TurnTimelineLine = Identity & {
 	graderSpans: Span[];
 	processingSpans: Span[];
 	gateRefusals: Record<string, number>;
+	/** Calls a gate would have refused but let through because the turn's refusal budget was spent (WP6). */
+	refusalBudgetPasses: Record<string, number>;
 	stopReason: StopReason | null;
 	/** How the turn ended on the server; a view leaving never ends it (clientDrops counts those). */
 	streamEnd: "completed" | "aborted" | "error";
@@ -106,6 +108,7 @@ export class TurnTimeline {
 	private readonly graderSpans: Span[] = [];
 	private readonly processingSpans: Span[] = [];
 	private readonly gateRefusals = new Map<string, number>();
+	private readonly refusalBudgetPasses = new Map<string, number>();
 	private onActivity?: (activity: TurnActivity | null) => void;
 
 	constructor(
@@ -142,6 +145,11 @@ export class TurnTimeline {
 
 	refuse(gate: string) {
 		this.gateRefusals.set(gate, (this.gateRefusals.get(gate) ?? 0) + 1);
+	}
+
+	/** A gate's call passed because the refusal budget was spent (gate name and count only). */
+	passOverBudget(gate: string) {
+		this.refusalBudgetPasses.set(gate, (this.refusalBudgetPasses.get(gate) ?? 0) + 1);
 	}
 
 	dropped() { this.clientDrops++; }
@@ -230,6 +238,7 @@ export class TurnTimeline {
 				firstEventMs: this.firstEvent, firstVisibleTextMs: this.firstVisibleText, longestEventGapMs: this.longestEventGap,
 				thinkingSpans: this.thinkingSpans, textSpans: this.textSpans, tools: this.tools,
 				checkerSpans: this.checkerSpans, graderSpans: this.graderSpans, processingSpans: this.processingSpans, gateRefusals: Object.fromEntries(this.gateRefusals),
+				refusalBudgetPasses: Object.fromEntries(this.refusalBudgetPasses),
 				stopReason: this.stopReason, streamEnd, errorKind, clientDrops: this.clientDrops,
 				visibleTextChars: this.visibleTextChars, thinkingChars: this.thinkingChars,
 			});

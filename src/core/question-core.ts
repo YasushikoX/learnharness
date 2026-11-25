@@ -23,6 +23,7 @@ import { stripModelValueDebris } from "./value-debris.ts";
 import type { SketchRef } from "./contracts/sketch.ts";
 import { expandCitationsForModel } from "./citations.ts";
 import type { PluginSubmissionImages } from "./plugin-submissions.ts";
+import { conceptIdsField, keyPointsField, levelField, previousKeyPointsField } from "./question-quality.ts";
 
 // ─── shared types ───────────────────────────────────────────────────────────
 
@@ -345,8 +346,12 @@ export const quizInputObject = Type.Object({
 			"one node for as many turns as the understanding needs — one reasoning step at a time, never rush forward. " +
 			"For off-map checks use ask_user_question.",
 	}),
+	// WP6 (2026-11-25, core/question-quality.ts): recorded with the question, never shown, never enforced
+	level: levelField,
+	conceptIds: conceptIdsField,
 	lead: leadField,
 	previous: previousField,
+	previousKeyPoints: previousKeyPointsField,
 	...quizInputBase.properties,
 });
 
@@ -420,9 +425,16 @@ export const explainInputObject = Type.Object({
 			"one node for as many turns as the understanding needs — one reasoning step at a time, never rush forward. " +
 			"For off-map checks use ask_user_question.",
 	}),
+	level: levelField,
+	conceptIds: conceptIdsField,
 	lead: leadField,
 	previous: previousField,
-	...explainInputBase.properties,
+	previousKeyPoints: previousKeyPointsField,
+	question: explainInputBase.properties.question,
+	correctAnswer: explainInputBase.properties.correctAnswer,
+	// committed next to correctAnswer (WP6): hidden from the learner until he has answered
+	keyPoints: keyPointsField,
+	details: explainInputBase.properties.details,
 	// optional and LAST: the required fields lead the property order (the authoring order, owner 2026-10-09)
 	skill: Type.Optional(
 		Type.String({
@@ -440,6 +452,8 @@ export const explainDisplayInputSchema = Type.Object({
 	...explainInputBase.properties,
 	type: Type.Optional(Type.String()),
 	lead: Type.Optional(Type.String()),
+	// lenient on read (normalizeKeyPoints): old records carry none; the boundary already required strings
+	keyPoints: Type.Optional(Type.Array(Type.Unknown())),
 });
 
 /** The explain authoring contract: the commitment must exist. Empty
@@ -523,6 +537,8 @@ export interface QuestionData {
 	correctIndices?: number[];
 	// explain only. NEVER send to the client before answering:
 	committedAnswer?: string;
+	// explain only (WP6): the committed key points. NEVER send to the client before answering:
+	keyPoints?: string[];
 	// quiz only (the MC "why"). NEVER send to the client before answering:
 	explanation?: string;
 	createdAt: string;
@@ -567,6 +583,7 @@ export interface QuestionAnswerData {
 	correct?: boolean; // quiz only
 	correctIndices?: number[]; // quiz only (rendering)
 	committed?: string; // explain only (rendering): the model's committed answer
+	keyPoints?: string[]; // explain only (rendering, WP6): the committed key points, shown once answered
 	explanation?: string; // quiz only (rendering)
 	dismissed?: boolean;
 	/** A STEER (owner, 2026-11-18): the learner set the question aside and wrote to the tutor instead. It is a dismissal (so every reader that
@@ -952,6 +969,7 @@ export function buildAnswer(qd: QuestionData, req: AnswerRequest, tool?: string)
 		// No client grading — the model (or placement grader) grades against the
 		// commitment. The commitment snapshots for the reveal + rendering.
 		base.committed = qd.committedAnswer;
+		if (qd.keyPoints?.length) base.keyPoints = [...qd.keyPoints];
 		if (!base.dontKnow && req.confidence !== undefined) {
 			base.confidence = Math.max(0, Math.min(100, Math.round(req.confidence)));
 		}

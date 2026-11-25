@@ -30,6 +30,7 @@ import {
 	steeredAnswer,
 	toClientQuestion,
 	normalizeQuizType,
+	keyPointsOfCall,
 	CONFIDENCE_LEVELS,
 	CONFIDENCE_STOPS,
 	dockSubmitGate,
@@ -499,9 +500,12 @@ function QuestionDockForm({
 			// One field, reasoning included — no separate explanation
 			// (owner ruling 2026-09-27).
 			q.committedAnswer = explainInput.correctAnswer;
+			// The key points (WP6) ride beside it the same way: snapshotted into the answer, never into toClientQuestion.
+			const keyPoints = keyPointsOfCall(toolName, input);
+			if (keyPoints) q.keyPoints = keyPoints;
 		}
 		return q;
-	}, [toolCallId, kind, input]);
+	}, [toolCallId, kind, input, toolName]);
 
 	// The selection state machine lives in question-core (pure, tested):
 	// single-select displaces, multi-select coexists — picking the ask

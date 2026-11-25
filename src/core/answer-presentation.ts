@@ -4,6 +4,7 @@
 import { displayedOptionLetter, normalizeOptions, optionLetterAt, type QuestionAnswerData } from "./question-core.ts";
 import { parseAskInput, parseExplainInput, parseQuizInput } from "./tool-parts.ts";
 import { repairMathForDisplay } from "./math-delims.ts";
+import { normalizeKeyPoints } from "./question-quality.ts";
 
 /** Read-only lettering for the transcript and the side-chat lesson view.
  *  Older rows already have their display indices; the call only verifies
@@ -35,6 +36,9 @@ export function answerForPresentation(answer: QuestionAnswerData, input: unknown
 	const projected = { ...answer, questionText: source.question };
 	if (quiz) projected.explanation = quiz.explanation;
 	if (explain) projected.committed = explain.correctAnswer;
+	// the key points as committed in the call (WP6); a call from before them keeps whatever the answer snapshot holds
+	const keyPoints = explain ? normalizeKeyPoints((explain as { keyPoints?: unknown }).keyPoints) : undefined;
+	if (keyPoints) projected.keyPoints = keyPoints;
 	if (!answer.options?.length || !("options" in source) || !source.options?.length) return projected;
 
 	const original = normalizeOptions(source.options);

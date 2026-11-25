@@ -212,9 +212,9 @@ describe("show_figure on a live teacher agent", () => {
 		const steer = buildSubagentSteer({ id: "job_live", kind: "visual", toolCallId: "c_live" }, visualOk) as LhMessage;
 		faux.setResponses([
 			// Before the figure is in the run: refused, with nothing ready to list.
-			() => fauxAssistantMessage([fauxToolCall("show_figure", { figure: "job_live" }, { id: "s1" })], { stopReason: "toolUse" }),
+			() => fauxAssistantMessage([fauxToolCall("show_figure", { figure: "job_live", lookAt: ["the shaded band: the allowed error"] }, { id: "s1" })], { stopReason: "toolUse" }),
 			// After the steer joined at the turn boundary: shown.
-			() => fauxAssistantMessage([fauxToolCall("show_figure", { figure: "job_live" }, { id: "s2" })], { stopReason: "toolUse" }),
+			() => fauxAssistantMessage([fauxToolCall("show_figure", { figure: "job_live", lookAt: ["the shaded band: the allowed error"] }, { id: "s2" })], { stopReason: "toolUse" }),
 			() => fauxAssistantMessage([{ type: "text", text: "Done." }], { stopReason: "stop" }),
 		]);
 		const agent = createTeacherAgent(undefined, {
@@ -235,7 +235,7 @@ describe("the show_figure tool", () => {
 	it("shows a delivered figure and answers in one line", async () => {
 		const messages = newFigure("job_1", "c1");
 		const tool = createShowFigureTool({ messages: () => messages });
-		const out = await tool.execute("s1", { figure: " job_1 ", caption: " The band " } as never, undefined);
+		const out = await tool.execute("s1", { figure: " job_1 ", caption: " The band ", lookAt: ["the band around the curve"] } as never, undefined);
 		assert.deepEqual(out.content, [{ type: "text", text: "Shown: figure job_1 (visual)." }]);
 		assert.deepEqual(out.details, { jobId: "job_1", kind: "visual", caption: "The band" });
 	});

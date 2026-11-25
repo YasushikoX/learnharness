@@ -159,6 +159,13 @@ export function healEncodedArguments(
 		if (literals.length > 0) {
 			if (literals.includes(raw)) continue; // already a valid member
 			if (literals.includes(parsed)) fixed = parsed;
+			// a member in the wrong case or with stray spaces ("Apply" for "apply"): the validator's own error names only
+			// the first member, which reads as "use that one" (WP6 review 1, finding 7). Only when exactly one member matches.
+			if (fixed === undefined) {
+				const folded = raw.trim().toLowerCase();
+				const matches = literals.filter((l) => typeof l === "string" && l.toLowerCase() === folded);
+				if (matches.length === 1) fixed = matches[0];
+			}
 		}
 		// The literal branch does not cover null (Type.Null carries no
 		// const) — a union of literals ∪ null must also accept "null".

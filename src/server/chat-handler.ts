@@ -843,6 +843,7 @@ export async function handleChatInput(
 	let liveAgentMessages: (() => LhMessage[]) | undefined;
 	const agentOpts: AgentBuildOptions = {
 		onGateRefusal: gate => activeTimeline.refuse(gate),
+		onGatePass: gate => activeTimeline.passOverBudget(gate),
 		pluginContributions,
 		engine,
 		callPurpose,

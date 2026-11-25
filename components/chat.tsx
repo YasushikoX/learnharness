@@ -17,6 +17,7 @@ import { scheduleOpeningSubmission } from "./plugin-submission-opening";
 import { activeProblemOccurrenceOf, buildAnswer, toClientQuestion, type PluginSubmission, type PluginSubmissionTarget, type QuestionData } from "@/src/core";
 import { validatePluginBuiltinSubmissionAnswer } from "@/src/core";
 import { derivePlanStatuses, resolveLessonLanguage, sessionProgress, type LessonLanguage } from "@/src/core";
+import { keyPointMarksOf } from "@/src/core";
 import { visibleQueuedSteers } from "@/components/session-core";
 import { SetupDialog } from "@/components/setup-dialog";
 import { Hint } from "@/components/ui/hint";
@@ -55,6 +56,7 @@ import { useFieldCycle } from "@/components/field-cycle";
 import { useOptionalInteractionLayers } from "./interaction-layers";
 import { isInteractionScopeEligible } from "./plugin-input-focus";
 import { JobsContext } from "@/components/jobs-context";
+import { LessonLanguageContext } from "@/components/lesson-language";
 import { StatsBar } from "@/components/stats-bar";
 import { useServerEvent, useServerResync } from "@/components/server-events";
 import {
@@ -1348,6 +1350,8 @@ export function Chat({
 
 	// One box per sketch (owner, 2026-10-29): see sketch-readings.ts.
 	const sketchReadings = useMemo(() => buildSketchReadings(messages), [messages]);
+	// The tutor's verdict per key point of each answered written question (WP6): read off its next question.
+	const keyPointMarks = useMemo(() => keyPointMarksOf(messages), [messages]);
 
 	const sendNext = useCallback(() => {
 		if (!nextReady || submissionRunner.occupied) return;
@@ -1927,6 +1931,7 @@ export function Chat({
 			}}
 		>
 		<JobsContext.Provider value={jobs}>
+		<LessonLanguageContext.Provider value={sessionLanguage}>
 		<CitationActionsContext.Provider value={citationActions}>
 		{/* The session surface: the transcript column (header + scroller) and
 		    the plan-tree panel as full-height SIBLINGS — the panel spans top to
@@ -2322,7 +2327,7 @@ export function Chat({
 														// transcript; answered ones render as graded records.
 														if (part.state === "output-available") {
 															return (
-																<AnsweredCard key={pk} answer={part.output as QuestionAnswerData} input={part.input} chatId={chatId} messageId={part.sourceMessageId} toolCallId={part.toolCallId} reading={sketchReadings.readingFor(mi, pi, (part.output as QuestionAnswerData).sketch?.id)} />
+																<AnsweredCard key={pk} answer={part.output as QuestionAnswerData} input={part.input} chatId={chatId} messageId={part.sourceMessageId} toolCallId={part.toolCallId} reading={sketchReadings.readingFor(mi, pi, (part.output as QuestionAnswerData).sketch?.id)} keyPointsMet={part.toolCallId ? keyPointMarks.get(part.toolCallId) : undefined} />
 															);
 														}
 														return null;
@@ -2645,6 +2650,7 @@ export function Chat({
 			</div>
 		</div>
 		</CitationActionsContext.Provider>
+		</LessonLanguageContext.Provider>
 		</JobsContext.Provider>
 		</SessionMermaidContext.Provider>
 		{/* The BYOK setup flow (owner, 2026-09-22): one mount serves the

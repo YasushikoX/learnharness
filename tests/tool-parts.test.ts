@@ -32,6 +32,8 @@ const TEACHER_QUIZ = {
 	explanation: "Convention-T schematizes truth for the object language.",
 	type: "check", // teach-only role field — the display parse KEEPS it (the dock gates by it)
 	nodeId: "convention-t", // teacher-only field — the display parse must accept and strip it
+	level: "apply",
+	conceptIds: [],
 	lead: "Right. Next, what the convention defines.", // teach-only prose field — the display parse KEEPS it (optional there)
 };
 
@@ -371,6 +373,8 @@ describe("parseExplainInput: the dock's display seam for explain calls", () => {
 		question: "Explain why Mercury is hard to observe.",
 		correctAnswer: "Its small angular separation from the Sun — it never strays far from the Sun in our sky.",
 		nodeId: "planet-order", // the teacher's field — STRIPPED by Clean, like quiz
+		level: "apply",
+		conceptIds: [],
 		details: "Think about where it appears at dusk.",
 	};
 

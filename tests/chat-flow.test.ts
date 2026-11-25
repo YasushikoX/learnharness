@@ -67,6 +67,8 @@ const QUIZ_INPUT = {
 	explanation: "Mercury is the innermost planet.",
 	type: "check",
 	nodeId: "planet-order",
+	level: "apply",
+	conceptIds: [],
 	lead: "Right. Next, which planet is closest to the sun.",
 };
 
@@ -692,6 +694,8 @@ describe("teacher chat flow (scripted model)", () => {
 			question: "What is Nietzsche's genealogical claim about religion?",
 			type: "check",
 			nodeId: "genealogy",
+			level: "apply",
+			conceptIds: [],
 			lead: "Next, Nietzsche's claim.",
 			options: [{ label: "A cultural diagnosis" }, { label: "Atheism as a conclusion" }],
 			correctAnswer: "cultural-diagnosis", // the exact live failure shape: a slug, no match
@@ -773,6 +777,8 @@ describe("teacher chat flow (scripted model)", () => {
 			question: "Lewis's indexical analysis of 'actual' — which is it?",
 			type: "check",
 			nodeId: "indexicals",
+			level: "apply",
+			conceptIds: [],
 			lead: "Next, Lewis on indexicals.",
 			options: "definitely not a JSON array — denim all the way down", // ← unhealable garbage
 			correctAnswer: "indexical",
@@ -1332,7 +1338,10 @@ it("explain tool call persists as a pending part; the free-text answer reveals t
 	const EXPLAIN_INPUT = {
 		question: "Explain why Mercury is hard to observe.",
 		correctAnswer: "Its small angular separation from the Sun — it never strays far from the Sun in our sky.",
+		keyPoints: ["small angular separation from the Sun", "it never strays far from the Sun in our sky"],
 		nodeId: "planet-order",
+		level: "apply",
+		conceptIds: [],
 		type: "check", // the teach explain's role field (owner, 2026-10-09)
 		lead: "Right. Next, why Mercury is hard to see.",
 	};
