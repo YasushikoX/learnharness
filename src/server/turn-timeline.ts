@@ -5,6 +5,7 @@ import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import type { StopReason } from "@earendil-works/pi-ai";
 import { PATHS } from "../../config.ts";
 import { sendToUserText } from "../core/native-messages.ts";
+import { normalizeConceptIds } from "../core/question-quality.ts";
 
 export const TURN_TIMELINE_MAX_BYTES = 4 * 1024 * 1024;
 const MAX_QUEUED_WRITES = 128;
@@ -37,6 +38,9 @@ export type TurnTimelineLine = Identity & {
 	clientDrops: number;
 	visibleTextChars: number;
 	thinkingChars: number;
+	/** WP5: in a session of a class with vocabulary coverage, the concept ids the turn's quiz/explain calls carried, and how
+	 *  many of them are not an item of the class (an id the model invented; ignored by the ledger). Absent otherwise. */
+	conceptIds?: { tagged: number; unknown: number };
 };
 
 /** Serialize rotation across turns and keep disk I/O off the settlement path. */
@@ -109,6 +113,8 @@ export class TurnTimeline {
 	private readonly processingSpans: Span[] = [];
 	private readonly gateRefusals = new Map<string, number>();
 	private readonly refusalBudgetPasses = new Map<string, number>();
+	private knownConceptIds?: ReadonlySet<string>;
+	private conceptIds?: { tagged: number; unknown: number };
 	private onActivity?: (activity: TurnActivity | null) => void;
 
 	constructor(
@@ -154,6 +160,12 @@ export class TurnTimeline {
 
 	dropped() { this.clientDrops++; }
 
+	/** Count the concept ids of this turn's quiz/explain calls against the class's coverage items (WP5). */
+	watchConceptIds(known: ReadonlySet<string>) {
+		this.knownConceptIds = known;
+		this.conceptIds = { tagged: 0, unknown: 0 };
+	}
+
 	event(event: AgentEvent) {
 		const now = this.now();
 		this.firstEvent ??= now;
@@ -191,6 +203,11 @@ export class TurnTimeline {
 					this.firstVisibleText ??= now;
 				}
 			}
+		}
+		if (event.type === "tool_execution_start" && this.knownConceptIds && this.conceptIds && (event.toolName === "quiz" || event.toolName === "explain")) {
+			const ids = normalizeConceptIds((event.args as { conceptIds?: unknown } | undefined)?.conceptIds) ?? [];
+			this.conceptIds.tagged += ids.length;
+			this.conceptIds.unknown += ids.filter((id) => !this.knownConceptIds!.has(id)).length;
 		}
 		if (event.type === "tool_execution_start") {
 			const proseChars = sendToUserText({ type: "toolCall", name: event.toolName, id: event.toolCallId, arguments: event.args })?.length;
@@ -241,6 +258,7 @@ export class TurnTimeline {
 				refusalBudgetPasses: Object.fromEntries(this.refusalBudgetPasses),
 				stopReason: this.stopReason, streamEnd, errorKind, clientDrops: this.clientDrops,
 				visibleTextChars: this.visibleTextChars, thinkingChars: this.thinkingChars,
+				...(this.conceptIds ? { conceptIds: { ...this.conceptIds } } : {}),
 			});
 		} catch { /* Diagnostics cannot interfere with settlement. */ }
 	}

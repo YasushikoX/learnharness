@@ -290,8 +290,11 @@ function mergeChat(i: MergeInput & { local: string; remote: string }): MergeResu
 // ─── Courses ───────────────────────────────────────────────────────────────
 
 const COURSE_VERSION = 1;
-/** Fields that move together (an approval sets all four): taken from one side as a unit. */
-const COURSE_UNIT = ["status", "skills", "draft", "error"] as const;
+/** Fields that move together (an approval sets them at once): taken from one side as a unit. The vocabulary mapping
+ *  (WP5) rides the unit because its items name the approved skills and approval writes both: a mapping edit on one device
+ *  and an approval or another edit on the other is a conflict of the unit, so the newer side wins and the other is kept
+ *  as a conflict copy with a note; neither is dropped silently. */
+const COURSE_UNIT = ["status", "skills", "draft", "error", "coverage", "coverageError"] as const;
 /** The weighing pass's fields move together too (fork addition, 2026-11-13): weights, its summary, when and why it failed. */
 const COURSE_WEIGHTS_UNIT = ["skillWeights", "weightsSummary", "weightsAt", "pastExams", "weightsError"] as const;
 

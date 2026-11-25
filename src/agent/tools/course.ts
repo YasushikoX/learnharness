@@ -27,6 +27,19 @@ const finishLessonInput = Type.Object({
 	summary: Type.String({
 		description: "One or two sentences: what the learner showed they can now do — the evidence the lesson is done.",
 	}),
+	// WP5 (2026-11-25): required, so the tutor always decides; [] is valid (and is the answer when the course section lists
+	// no vocabulary). Read by core/coverage-ledger.ts (the finish check, and what carries into the next session).
+	deferred: Type.Array(
+		Type.Object({
+			id: Type.String({ description: "The id of a core term from the course section's VOCABULARY list, copied exactly" }),
+			why: Type.String({ description: "A few words: why it is left for a later session" }),
+		}),
+		{
+			description:
+				"REQUIRED, may be empty ([]). The core terms of this skill (from the course section's VOCABULARY list) you are deliberately leaving for a later " +
+				"session without introducing them, each with a few words of why. They carry into the next lesson on this skill. [] when every term was introduced or the section lists none.",
+		},
+	),
 });
 
 export function finishLessonTool(ctx: { chatId: string; chatStore: Pick<ChatStore, "getChat"> }): AgentTool<typeof finishLessonInput> {

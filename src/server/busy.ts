@@ -4,6 +4,7 @@ import { workerRequestLoad } from "../agent/worker-request-admission.ts";
 import { extractionStatuses } from "../agent/subagents/extraction.ts";
 import { compactionsInFlight } from "./compaction.ts";
 import { courseDraftCount, courseWeighCount } from "./courses.ts";
+import { courseTermMapCount } from "./course-coverage.ts";
 import { wakeWorkCount } from "./jobs.ts";
 import { materialRunCount } from "./materials.ts";
 import { syncStatus } from "./sync-service.ts";
@@ -36,6 +37,7 @@ export function serverBusy(): BusyReport {
 		["graph extraction is running", extractionStatuses().length],
 		["a course is being drafted", courseDraftCount()],
 		["exam weights are being read", courseWeighCount()],
+		["a class's terms are being mapped", courseTermMapCount()],
 		["a material is being read", materialRunCount()],
 		["a background model call is running", slots.active + slots.queue.length + workerRequestLoad()],
 		["a sync round is running", syncStatus().running ? 1 : 0],

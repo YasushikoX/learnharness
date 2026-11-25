@@ -33,7 +33,9 @@ sketches/<chat-id>/<sketch-id>/
                           strokes as drawn), and per page N.svg (what the learner sees) and
                           N.png (what the tutor was shown). Binary/derived; the record names
                           a sketch only by its ID (see "Sketches" below)
-courses/<course-id>.json  A course: title, status, the approved skill IDs, a pending draft.
+courses/<course-id>.json  A course: title, status, the approved skill IDs, a pending draft,
+                          and optionally `coverage`: the class glossary's core terms mapped
+                          to skills or excluded (docs/courses.md "Vocabulary coverage").
                           How well a skill is known is NOT stored: it is folded from the
                           practice sessions whose record carries `course` (problem `skills`
                           tags + conclude outcomes; box 3+ of 5 = known)

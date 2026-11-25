@@ -31,6 +31,11 @@ import { newGraphContextMessage, newMessageId, type GraphContextPick, type LhMar
 /** The teacher's finish tool (course Learn sessions only). */
 export const FINISH_LESSON_TOOL = "finish_lesson";
 
+/** The start of `finish_lesson`'s vocabulary refusal (WP5, core/coverage-ledger.ts): how a transcript shows it fired.
+ *  Here, beside the tool name, so the final-problem gate (core/final-problem.ts) can tell that refusal from a finish
+ *  attempt without an import cycle. */
+export const VOCABULARY_REFUSAL_HEAD = "Refused (vocabulary):";
+
 /** The practice agent's and the placement tester's finish tool (every
  *  other course session). */
 export const FINISH_SESSION_TOOL = "finish_session";
@@ -318,7 +323,16 @@ function recentSolvedBlock(recentSolved: readonly RecentSolvedForPrompt[]): stri
 	];
 }
 
-export function coursePromptSection(mode: CourseMode, courseTitle: string, skills: readonly SessionSkill[], retest = false, missed: readonly MissedForPrompt[] = [], recentSolved: readonly RecentSolvedForPrompt[] = []): string {
+export function coursePromptSection(
+	mode: CourseMode,
+	courseTitle: string,
+	skills: readonly SessionSkill[],
+	retest = false,
+	missed: readonly MissedForPrompt[] = [],
+	recentSolved: readonly RecentSolvedForPrompt[] = [],
+	/** The skill's vocabulary block (WP5, core/coverage-ledger.ts vocabularySection); absent or "" adds nothing. */
+	vocabulary?: string,
+): string {
 	const body: string[] = [];
 	if (mode === "ask") {
 		// Ask (2026-11-25): its doctrine is the editable prompts/ask/ fragments; the section only names the class.
@@ -378,5 +392,6 @@ export function coursePromptSection(mode: CourseMode, courseTitle: string, skill
 		}
 	}
 	if (mode === "practice" || mode === "review") body.push(...missedBlock(missed), ...recentSolvedBlock(recentSolved));
+	if (vocabulary && mode !== "ask") body.push("", vocabulary);
 	return `<course>\n${body.filter((l, i, a) => !(l === "" && a[i - 1] === "")).join("\n").trim()}\n</course>`;
 }

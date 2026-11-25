@@ -1190,9 +1190,9 @@ describe("the course tools", () => {
 	it("finish_lesson logs once, then says it already did", async () => {
 		const learn = chatStore.createChat("Learn: A", undefined, { courseId: "course_x", mode: "learn", skillIds: ["sk_a"] });
 		const tool = finishLessonTool({ chatId: learn.id, chatStore });
-		assert.match(text(await tool.execute("f1", { summary: "s" })), /Logged: the lesson is finished/);
+		assert.match(text(await tool.execute("f1", { summary: "s", deferred: [] })), /Logged: the lesson is finished/);
 		chatStore.saveMessages(learn.id, teacherFinish());
-		assert.match(text(await tool.execute("f2", { summary: "s" })), /already finished/);
+		assert.match(text(await tool.execute("f2", { summary: "s", deferred: [] })), /already finished/);
 	});
 });
 

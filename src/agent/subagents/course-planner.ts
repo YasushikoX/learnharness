@@ -16,8 +16,9 @@
 import { Type, type Static } from "typebox";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { CourseDraft, DraftSkill, Skill } from "../../core/contracts.ts";
+import type { CourseDraft, DraftCoverage, DraftSkill, Skill } from "../../core/contracts.ts";
 import { draftProblems, uncitedMaterials, type DraftCheckContext } from "../../core/course-draft.ts";
+import { draftCoverageFrom, plannerGlossaryBlock, type CoverageGlossary, type PlannerTermOutput } from "../../core/coverage-items.ts";
 import { withLanguageDirective, type LessonLanguage } from "../../core/language.ts";
 import type { PiEngine } from "../models.ts";
 import { serverExecute } from "../tool-execute.ts";
@@ -46,6 +47,14 @@ THE MATERIAL
 
 DELIVERABLE: ONE submit_draft call — a short summary (2–4 sentences: the shape of the map, what it reused) and the skills. Keys are "s1", "s2", …. A skill's "requires" names other keys.`;
 
+/** The vocabulary rules (WP5, 2026-11-25), added to the instructions only when the input lists the class glossary. */
+export const VOCABULARY_INSTRUCTIONS = `THE CLASS'S VOCABULARY — the input lists the class glossary: the terms its material treats as core, with ids
+- Every CORE entry must end up in exactly one of two places: in the \`terms\` of at least one skill that teaches it (an entry may be under several skills), or in \`excludeTerms\` with a short reason (e.g. "named once in the history slide, never used"). The app refuses to approve a map that leaves a core entry in neither, so skipping one only moves the work to the learner.
+- Copy ids EXACTLY from the glossary list ("t_…"). Never invent one: an id that is not in the list is dropped.
+- A word the class uses in two different meanings may be split into senses: write "<id>#<material id>:<page>" (the page where that sense is defined) and give each sense to the skill that needs it.
+- Suggested duplicates are listed as PAIRS with the reason for each. When the two names are one concept (an abbreviation, a plural, a capitalised form), put their ids together in one \`linkTerms\` group: introducing or checking one then counts for both. When they are different concepts, leave them unlinked. Never link a pair you have not checked.
+- Supporting entries need no mapping; map one only when a skill clearly teaches it.`;
+
 const draftSkillSchema = Type.Object({
 	key: Type.String({ minLength: 1, description: 'Draft-local key: "s1", "s2", …' }),
 	reuse: Type.Optional(Type.String({ description: "An EXISTING skill id (from list_skills) this skill IS — omit for a new skill" })),
@@ -54,17 +63,41 @@ const draftSkillSchema = Type.Object({
 	requires: Type.Array(Type.String(), { description: "Keys of the skills that must be known first ([] for none)" }),
 	restsOn: Type.Array(Type.String(), { description: "Ids of EXISTING propositions the skill uses ([] for none)" }),
 	cite: Type.Optional(Type.String({ description: "Where the curriculum asks for it, starting with the material's name" })),
+	terms: Type.Optional(
+		Type.Array(Type.String(), { description: "Only when the input lists a class glossary: the ids (copied exactly, or a sense \"<id>#<material id>:<page>\") of the glossary entries this skill teaches" }),
+	),
+});
+
+const excludeTermSchema = Type.Object({
+	id: Type.String({ description: "A glossary entry id (or sense key) copied exactly" }),
+	reason: Type.String({ description: "A few words: why the class map leaves it out" }),
 });
 
 export const draftSchema = Type.Object({
 	summary: Type.String({ minLength: 1, description: "2–4 sentences: the shape of the map, what it reused" }),
 	skills: Type.Array(draftSkillSchema, { minItems: 1 }),
+	excludeTerms: Type.Optional(Type.Array(excludeTermSchema, { description: "Only with a class glossary: core entries no skill teaches, each with a reason" })),
+	linkTerms: Type.Optional(
+		Type.Array(Type.Array(Type.String()), { description: "Only with a class glossary: groups of entry ids confirmed to be ONE concept under several names" }),
+	),
 });
 
 type DraftInput = Static<typeof draftSchema>;
 
-function fillDraft(input: DraftInput): { summary: string; skills: DraftSkill[] } {
+interface FilledDraft {
+	summary: string;
+	skills: DraftSkill[];
+	/** What it said about the vocabulary (validated against the glossary after the run). */
+	terms: PlannerTermOutput;
+}
+
+function fillDraft(input: DraftInput): FilledDraft {
 	return {
+		terms: {
+			skills: input.skills.map((s) => ({ key: s.key.trim(), terms: s.terms ?? [] })),
+			excludeTerms: (input.excludeTerms ?? []).map((x) => ({ id: x.id, reason: x.reason })),
+			linkTerms: input.linkTerms ?? [],
+		},
 		summary: input.summary.trim(),
 		skills: input.skills.map((s) => ({
 			key: s.key.trim(),
@@ -114,6 +147,8 @@ export interface CoursePlannerInput {
 	approved?: ReadonlyArray<{ id: string; name: string; statement: string }>;
 	/** The language the map is written in (the course's). */
 	language: LessonLanguage;
+	/** The class glossary (WP5): when it has core entries, the planner maps them and the draft carries the proposal. */
+	glossary?: CoverageGlossary | null;
 }
 
 export interface CoursePlannerDeps {
@@ -130,6 +165,8 @@ export interface CoursePlannerDeps {
 
 export function plannerPrompt(input: CoursePlannerInput): string {
 	const parts = [`Course: ${input.title}`, "", input.materialsSection];
+	const glossary = plannerGlossaryBlock(input.glossary);
+	if (glossary) parts.push("", glossary.text);
 	if (input.approved && input.approved.length > 0) {
 		parts.push(
 			"",
@@ -150,17 +187,20 @@ export function plannerPrompt(input: CoursePlannerInput): string {
 	return parts.join("\n");
 }
 
-/** Draft a course's skill map. Throws when the planner never submits. */
-export async function draftCourse(input: CoursePlannerInput, deps: CoursePlannerDeps): Promise<{ summary: string; skills: DraftSkill[] }> {
+/** Draft a course's skill map, and (with a class glossary) its vocabulary mapping, checked against the real glossary.
+ *  Throws when the planner never submits. */
+export async function draftCourse(input: CoursePlannerInput, deps: CoursePlannerDeps): Promise<{ summary: string; skills: DraftSkill[]; coverage?: DraftCoverage }> {
 	const skillsNow = () => [...deps.checkContext().skills.values()];
-	return runSubmitAgent({
+	const glossary = plannerGlossaryBlock(input.glossary);
+	const instructions = glossary ? `${INSTRUCTIONS}\n\n${VOCABULARY_INSTRUCTIONS}` : INSTRUCTIONS;
+	const { terms, ...draft } = await runSubmitAgent({
 		role: "coursePlanner",
 		chatId: deps.courseId,
 		toolName: "submit_draft",
 		toolDescription: "Submit the course's skill map draft: a short summary and every skill.",
 		parameters: draftSchema,
 		fill: fillDraft,
-		systemPrompt: withLanguageDirective(INSTRUCTIONS, input.language, "course"),
+		systemPrompt: withLanguageDirective(instructions, input.language, "course"),
 		prompt: plannerPrompt(input),
 		engine: deps.engine,
 		signal: deps.signal,
@@ -175,4 +215,5 @@ export async function draftCourse(input: CoursePlannerInput, deps: CoursePlanner
 			return problems.length > 0 ? `Fix the draft and submit again:\n- ${problems.join("\n- ")}` : null;
 		},
 	});
+	return glossary && input.glossary ? { ...draft, coverage: draftCoverageFrom(terms, input.glossary, glossary.shown) } : draft;
 }

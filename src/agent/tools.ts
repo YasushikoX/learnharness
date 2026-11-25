@@ -32,6 +32,7 @@ import { createShowImageTool } from "./tools/show-image.ts";
 import { healToolRecord } from "./tools/heal.ts";
 import { verifyQuestion } from "./question-verify.ts";
 import type { GraphStore } from "../core/ports.ts";
+import type { LessonVocabulary } from "../core/coverage-ledger.ts";
 
 export { jobTools };
 export type { ProbeDoneContext } from "./tools/probe.ts";
@@ -484,7 +485,14 @@ export interface TeacherToolContext extends PlanToolContext {
 	/** A course Learn session (owner, 2026-11-13 — core/final-problem.ts): its one skill. Present → `explain` accepts
 	 *  type final whatever the quizzing mechanic, `finish_lesson` waits for an answered final problem, and the grader
 	 *  rates it on finish. Absent → no final problem. */
-	lesson?: { skill: { id: string; name: string }; sessionModel?: ResolvedModelSpec; /** The learned prerequisites a recall opener may test (owner, 2026-11-13). */ openerSkills?: ReadonlyArray<{ id: string; name: string }> };
+	lesson?: {
+		skill: { id: string; name: string };
+		sessionModel?: ResolvedModelSpec;
+		/** The learned prerequisites a recall opener may test (owner, 2026-11-13). */
+		openerSkills?: ReadonlyArray<{ id: string; name: string }>;
+		/** The skill's vocabulary finish check (WP5, core/coverage-ledger.ts); absent without coverage. */
+		vocabulary?: LessonVocabulary;
+	};
 }
 
 /**

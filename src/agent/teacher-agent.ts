@@ -18,7 +18,8 @@ import { practiceTools, createPracticeGate, type PracticeGate, type PracticeTool
 import { pluginProblemTools, isPluginProblemPoseAcknowledgment, type NativePluginProblemContribution } from "./plugin-problem-tools.ts";
 import { placementProbeTool, placementRecallTool } from "./tools/course.ts";
 import { placementGradeAfterReadSketchHook } from "./placement-grade.ts";
-import { FINISH_SESSION_TOOL } from "../core/course-session.ts";
+import { FINISH_LESSON_TOOL, FINISH_SESSION_TOOL } from "../core/course-session.ts";
+import { finishVocabularyProblem, vocabularyRefusalText, type LessonVocabulary } from "../core/coverage-ledger.ts";
 import { hasUnreadPlacementSketch, placementProgressOf, type PlacementProgress, type PlacementSkillInfo } from "../core/placement-frontier.ts";
 import { healToolRecord, withArgumentHeal } from "./tools/heal.ts";
 import { sendToUserApplies, sendToUserTool } from "./tools/send-to-user.ts";
@@ -350,6 +351,9 @@ export function baseAgentOptions(
 	/** A course Learn session's teacher (owner, 2026-11-13): finish_lesson waits for an answered final problem, and
 	 *  plan_init for a look in the course's sources. */
 	lessonGates = false,
+	/** A course Learn session's vocabulary (WP5, core/coverage-ledger.ts): finish_lesson is refused once when a core term
+	 *  of its skill is neither introduced nor deferred. Absent: the class has no coverage, nothing is checked. */
+	lessonVocabulary?: LessonVocabulary,
 ) {
 	// Practice never reaches the role fallback (the handler ALWAYS injects
 	// the session's conversation engine — practice rides the same
@@ -497,6 +501,14 @@ export function baseAgentOptions(
 						const finishProblem = lessonGates ? finishGateProblem(context.messages, toolCall.name, toolCall.id) : null;
 						const finishRefused = finishProblem ? refuse("finish", true, finishGateReason(finishProblem)) : undefined;
 						if (finishRefused) return finishRefused;
+						// The vocabulary check (WP5): once per lesson at most, under the finish gate's own share of the budget.
+						if (lessonGates && lessonVocabulary && toolCall.name === FINISH_LESSON_TOOL) {
+							const live = context.messages as unknown as LhMessage[];
+							const withCall = live.includes(assistantMessage as unknown as LhMessage) ? live : [...live, assistantMessage as unknown as LhMessage];
+							const missing = finishVocabularyProblem(lessonVocabulary, withCall, call.args);
+							const vocabularyRefused = missing ? refuse("finish", true, vocabularyRefusalText(missing)) : undefined;
+							if (vocabularyRefused) return vocabularyRefused;
+						}
 						// The sources gate (owner, 2026-11-13 — core/sources-gate.ts): the plan of a course lesson comes after a look
 						// in the course's sources.
 						const sourcesProblem = lessonGates
@@ -653,7 +665,7 @@ export function createTeacherAgent(
 	const gradeHook = ctx?.lesson ? lessonGradeHook(ctx.lesson) : undefined;
 	return baseAgentOptions("teacher", opts, Object.values(tools), ctx
 		? nodeId => ctx.chatStore.getChat(ctx.chatId)?.tree?.nodes.some(node => node.id === nodeId) ?? false
-		: undefined, undefined, gradeHook, ctx?.lesson !== undefined);
+		: undefined, undefined, gradeHook, ctx?.lesson !== undefined, ctx?.lesson?.vocabulary);
 }
 
 /** The bare teach question set (tests, bare agents): quiz with the shared

@@ -73,6 +73,59 @@ export interface CourseDraft {
 	/** The owner's change request this draft answered. */
 	feedback?: string;
 	skills: DraftSkill[];
+	/** The proposed vocabulary mapping (WP5, 2026-11-25; core/coverage-items.ts): present only on a draft made while the
+	 *  class glossary had core entries. Its items' `skills` are DRAFT KEYS ("s1"); approval turns them into skill ids. */
+	coverage?: DraftCoverage;
+}
+
+// ─── Vocabulary coverage (WP5, 2026-11-25; core/coverage-items.ts, core/coverage-ledger.ts) ─────────────────────────
+
+/** One cited sense of a glossary entry, for a word the class uses in two meanings: the material and the page of the
+ *  occurrence that defines this sense. */
+export interface CoverageSense {
+	materialId: string;
+	page: number;
+}
+
+/**
+ * One coverage item: one class-glossary entry (by its exact id, `t_…` or `c_…`), or one cited sense of it, in exactly
+ * one of two states: ASSIGNED to one or more skills (`skills`, non-empty), or EXCLUDED with a short reason (`excluded`).
+ * Its key is the entry id, or `<entryId>#<materialId>:<page>` for a sense (core/coverage-items.ts itemKey; "#" never
+ * appears in an entry id).
+ */
+export interface CoverageItem {
+	entryId: string;
+	sense?: CoverageSense;
+	/** The entry's name when the item was made: shown when the entry is no longer in the material. */
+	name: string;
+	/** Assigned: the skills that owe it (skill ids on the record, draft keys in a draft). */
+	skills?: string[];
+	/** Excluded: why (a few words). */
+	excluded?: string;
+	/** Excluded by the student's "leave N terms unassigned" at approval. */
+	leftAtApproval?: true;
+}
+
+/** `CourseRecord.coverage`: the approved vocabulary mapping. Absent on every class approved without an indexed glossary. */
+export interface CourseCoverage {
+	/** ISO — when the mapping was approved, mapped or last edited. */
+	updatedAt: string;
+	items: CoverageItem[];
+	/** Groups of item keys confirmed as ONE concept under several names (each group two or more keys, no key in two
+	 *  groups): introducing or checking one satisfies the group. Unlinked suggested duplicates stay separate items. */
+	links: string[][];
+}
+
+/** `CourseDraft.coverage`: the planner's proposal, validated against the real glossary (unknown ids dropped, listed). */
+export interface DraftCoverage {
+	items: CoverageItem[];
+	links: string[][];
+	/** Ids the planner named that are not in the class glossary: dropped, never invented. */
+	dropped: string[];
+	/** The materials whose index was incomplete when the draft was made (names). */
+	incomplete: string[];
+	/** How many core entries the planner was shown with their definition, by name only, and not at all (the input bound). */
+	shown: { full: number; names: number; omitted: number };
 }
 
 /** One drafting run's usage (the money channel — like ExtractionRunUsage). */
@@ -127,6 +180,11 @@ export interface CourseRecord {
 	error?: string;
 	/** Append-only planner usage log. */
 	drafts?: CourseDraftUsage[];
+	/** The approved vocabulary mapping (WP5, 2026-11-25): every core term of the class's material assigned to a skill or
+	 *  excluded. Absent = the class has no coverage behaviour at all. Moves with the approval unit in a sync. */
+	coverage?: CourseCoverage;
+	/** Why the last "Map the class's terms" pass failed. */
+	coverageError?: string;
 	/** Schema stamp — lazy v1, same rule as chat records. */
 	version?: number;
 }
@@ -253,6 +311,75 @@ export interface LessonResult {
 	summary: string | null;
 	/** The next skill in the course's order, when one is ready (not this skill). */
 	next: { id: string; name: string } | null;
+	/** The skill's core terms (WP5): how many it owes, how many were introduced, and the names of those left for next
+	 *  time. Absent when the class has no coverage or the skill owes no core term. */
+	coverage?: { total: number; covered: number; left: string[]; language: LessonLanguage };
+}
+
+// ─── The coverage views (WP5, 2026-11-25; server/course-coverage.ts) ─────────────────────────────────────────────────
+
+/** new: never introduced; introduced: introduced, not checked; checked: an answered question tagged it. */
+export type CoverageTermState = "new" | "introduced" | "checked";
+
+/** A glossary entry as the coverage screens show it. */
+export interface CoverageEntryView {
+	/** The item key (entry id, or entry id + sense). */
+	key: string;
+	name: string;
+	tier: "core" | "supporting";
+	/** The material's definition (of this sense, for a sense), or null when the material uses it without defining it. */
+	definition: string | null;
+	page: number | null;
+	/** The material the definition (or the first use) is in. */
+	material: string | null;
+}
+
+export interface CoverageTermView extends CoverageEntryView {
+	state: CoverageTermState;
+	/** The best level an answered question on it reached, and whether any answer was graded right. */
+	level?: "recall" | "apply" | "analyze" | "transfer";
+	right?: boolean;
+	/** The names it is linked with (one concept). */
+	linked?: string[];
+}
+
+/** One suggested duplicate pair, side by side, for the "same thing" action. */
+export interface CoverageDuplicateView {
+	a: CoverageEntryView;
+	b: CoverageEntryView;
+	reasons: ("alias" | "plural" | "similar_name")[];
+	linked: boolean;
+}
+
+/** GET /api/courses/[id]: `coverage`. */
+export interface CourseCoverageView {
+	/** none: the class has no indexed core term (no coverage behaviour); unmapped: it has, but no mapping was approved
+	 *  (offer "Map the class's terms"); mapped: the record carries a mapping. */
+	status: "none" | "unmapped" | "mapped";
+	/** A "Map the class's terms" pass is running. */
+	mapping: boolean;
+	error?: string;
+	language: LessonLanguage;
+	/** Per approved skill: its terms with their state, core first. */
+	skills: Record<string, { total: number; introduced: number; checked: number; terms: CoverageTermView[] }>;
+	/** Core entries of the glossary with no item (new since approval, or never mapped). */
+	unassigned: CoverageEntryView[];
+	/** Items whose entry (or sense) is no longer in the material: they count toward nothing until removed or remapped. */
+	flagged: Array<{ key: string; name: string; skills: string[] }>;
+	excluded: Array<{ key: string; name: string; reason: string }>;
+	/** Materials whose index is missing or out of date. */
+	incomplete: string[];
+	/** The pending draft's proposal, for the approval screen. */
+	draft?: {
+		/** Per draft key: its terms. */
+		skills: Record<string, CoverageEntryView[]>;
+		unassigned: CoverageEntryView[];
+		excluded: Array<{ key: string; name: string; reason: string }>;
+		duplicates: CoverageDuplicateView[];
+		dropped: string[];
+		incomplete: string[];
+		shown: DraftCoverage["shown"];
+	};
 }
 
 /** One open missed problem on the course page (owner, 2026-11-16). */
@@ -296,4 +423,6 @@ export interface CourseView {
 	sessions: Array<{ id: string; title: string; mode: CourseMode; updatedAt: string; finished?: boolean }>;
 	/** Existing skills a draft reuses, by id (to show their names). */
 	reused: Record<string, { name: string; statement: string }>;
+	/** The class's vocabulary coverage (WP5). Absent when the class has no indexed core term and no mapping. */
+	coverage?: CourseCoverageView;
 }
