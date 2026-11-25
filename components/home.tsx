@@ -1,7 +1,7 @@
 "use client";
 
 import { uploadDraftMaterials } from "@/components/materials-client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { SurfaceRegion, usePageSurfaceBoundary, useSurfaceChromeStyle } from "./plugin-surfaces";
 import { CornerDownLeftIcon, DumbbellIcon } from "lucide-react";
@@ -24,6 +24,8 @@ import { SessionStarter } from "@/components/start-session";
 import type { TurnUsage } from "@/src/core";
 import { enterSends, isCoarsePointer } from "@/components/enter-submits";
 import { useServerReachable } from "@/components/server-events";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 /**
  * Home — the knowledge graph is the main view, full-bleed edge to edge
@@ -48,6 +50,17 @@ export function Home({
 	const surfaceTarget = usePageSurfaceBoundary({ active: pathname === "/", viewKey: "/", bodyRef });
 	const chromeStyle = useSurfaceChromeStyle(surfaceTarget);
 	const [folderFilterSlot, setFolderFilterSlot] = useState<HTMLElement | null>(null);
+	const dockRef = useRef<HTMLDivElement>(null);
+	const [dockHeight, setDockHeight] = useState(0);
+	useLayoutEffect(() => {
+		const dock = dockRef.current;
+		if (!dock) return;
+		const measure = () => setDockHeight(dock.getBoundingClientRect().height);
+		measure();
+		const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+		observer?.observe(dock);
+		return () => observer?.disconnect();
+	}, []);
 	const [topic, setTopic] = useState("");
 	/* The topic MIRROR ("nothing gets lost" round, 2026-10-01 — same
 	 * mechanics as the chat composer, owner's consistency ruling): a
@@ -201,6 +214,7 @@ export function Home({
 				{rendering ? (
 					<GraphView
 						folderFilterSlot={folderFilterSlot}
+							bottomInset={dockHeight + 12}
 						chainSelectOpen={chainSelectOpen}
 						practiceSelection={pickedIds}
 						onPracticeSelectionChange={setPracticeProps}
@@ -221,7 +235,7 @@ export function Home({
 			    OVER the graph (no gradient: the graph runs clean under it to the
 			    bottom edge). Matches chat.tsx's DOCK geometry (max-w-[46rem]
 			    px-4) so nothing shifts when a session starts (owner). */}
-			<div className="pointer-events-none absolute inset-x-0 bottom-0 pb-[calc(1.25rem+var(--lh-safe-bottom))]">
+			<div ref={dockRef} className="pointer-events-none absolute inset-x-0 bottom-0 pb-[calc(1.25rem+var(--lh-safe-bottom))]">
 				<div className="pointer-events-auto mx-auto w-full max-w-[46rem] px-4">
 					{/* The pick bar (owner vision, 2026-10-04): the chain
 					    table's selection is PERSISTENT — picked
@@ -304,7 +318,7 @@ export function Home({
 								type="submit"
 								aria-label="Start session"
 								disabled={(!topic.trim() && !dictation.active) || busy || !reachable}
-								className="lh-press flex size-10 touch:size-12 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:bg-primary/25 disabled:text-primary"
+								className="lh-press flex size-9 touch:size-12 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-primary/90 disabled:bg-primary/25 disabled:text-primary"
 							>
 								<CornerDownLeftIcon className="size-5" />
 							</button>
@@ -318,23 +332,24 @@ export function Home({
 					<StatsBar
 						turns={[] as TurnUsage[]}
 						leadingSlot={
-							<div className="flex items-center gap-0.5" data-testid="home-mode-switch">
+							<div className="flex h-7 items-center rounded-md bg-raised p-0.5" data-testid="home-mode-switch">
 								{(["teach", "practice"] as const).map((m) => (
 									<button
 										key={m}
 										type="button"
 										data-testid={`home-mode-${m}`}
 										onClick={() => setMode(m)}
-										className={
-											// A connected button group (Material 3 Expressive, owner 2026-10-29): the selected segment is a filled
-												// gold pill, the others tonal and squarer; the shapes morph on the fast spatial spring.
-												"lh-touch lh-press flex items-center gap-1 px-2 py-0.5 touch:h-9 touch:px-2.5 lh-eyebrow " +
-											(mode === m
-												? "rounded-md bg-primary text-primary-foreground"
-												: "rounded-lg bg-accent text-foreground hover:bg-accent/70")
-										}
+										aria-pressed={mode === m}
+										className={cn(
+											// UI round 1b (SPEC §3 segmented): the app's one segmented grammar (Settings', the sidebar filter's),
+											// sentence case 13px, the selected segment on the surface fill with a hairline; was a gold eyebrow pill.
+											"lh-touch flex h-6 items-center gap-1.5 rounded-sm px-2.5 text-[13px] font-medium transition-colors duration-(--lh-duration-hover) ease-(--lh-ease)",
+											mode === m
+												? "bg-card text-foreground shadow-[0_0_0_1px_var(--border),0_1px_2px_rgb(0_0_0/0.08)] dark:bg-raised-strong"
+												: "text-muted-foreground hover:text-foreground",
+										)}
 									>
-										{m === "practice" ? <DumbbellIcon aria-hidden="true" className="size-3" /> : null}
+										{m === "practice" ? <DumbbellIcon aria-hidden="true" className="size-3.5" strokeWidth={1.75} /> : null}
 										{m === "teach" ? "Teach" : "Practice"}
 									</button>
 								))}

@@ -122,7 +122,7 @@ test("the real picker searches by language, chooses with Arrow/Enter, and restor
 		assert.ok(trigger().className.split(" ").includes(token), `shared settings trigger: ${token}`);
 	}
 	await click(trigger());
-	assert.match(input().className, /lh-input/);
+	assert.equal(input().getAttribute("data-slot"), "input");
 	assert.equal(document.activeElement, input());
 	assert.equal(document.querySelector('[data-testid="dictation-language-list"] button')!.textContent, "Multilingual");
 	await search("Polish");
@@ -270,8 +270,8 @@ test("the shared model menu preserves ranking, provider identity, keyboard clamp
 	assert.equal(document.activeElement, modelInput);
 	assert.match(options()[0]!.textContent!, /p1 · alpha/);
 	assert.match(options()[1]!.textContent!, /p2 · alpha/);
-	assert.ok(!options()[0]!.className.includes("bg-muted/60"));
-	assert.ok(options()[1]!.className.includes("bg-muted/60"));
+	assert.ok(!options()[0]!.classList.contains("bg-raised"));
+	assert.ok(options()[1]!.classList.contains("bg-raised"));
 	assert.match(options()[0]!.textContent!, /\$1\.00\/\$2\.00/);
 	assert.match(options()[0]!.textContent!, /32k/);
 	assert.match(document.body.textContent!, /Model footer/);

@@ -66,6 +66,7 @@ import { refreshRemoteModelCatalog, useModelCatalog } from "@/components/model-c
 import type { ModelCatalogRefreshOutcome } from "@/src/core";
 import { Hint } from "@/components/ui/hint";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { PromptSegmentDialog, type PromptDeleteOutcome, type PromptSaveOutcome } from "./prompt-segment-dialog";
 import { PromptSegmentRow, promptSegmentName } from "./prompt-segment-row";
 import type React from "react";
@@ -95,7 +96,7 @@ import {
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { prettyModel } from "@/components/usage-format";
 import { cn } from "@/lib/utils";
-import { SettingsGroup, SettingsRow, SettingsMenuTrigger, SettingsSegmentedControl, Toggle, CommitInput } from "./controls.tsx";
+import { SettingsGroup, SettingsList, SettingsRow, SettingsMenuTrigger, SettingsSegmentedControl, Toggle, CommitInput } from "./controls.tsx";
 import { ModelMenuList, ThinkingMenuList } from "./model-menu";
 import { SearchMenuList } from "./search-menu-list";
 import { ChatGPTBackgroundAccess } from "./chatgpt-connection";
@@ -174,7 +175,7 @@ function ModelCatalogRefreshRow() {
 			{state ? CATALOG_REFRESH_MESSAGES[state] : "Check Pi for new models"}
 		</span>
 	}>
-		<Button type="button" variant="outline" size="icon-sm" aria-label="Refresh model catalog" title="Refresh model catalog" aria-busy={pending}
+		<Button type="button" variant="outline" size="icon" aria-label="Refresh model catalog" title="Refresh model catalog" aria-busy={pending}
 			disabled={pending} onClick={() => void refresh()}>
 			<RefreshCw aria-hidden="true" className={pending ? "animate-spin" : undefined} />
 		</Button>
@@ -403,10 +404,7 @@ function MenuTrigger({
 	testid: string;
 	open: boolean;
 	onClick: () => void;
-	/** Owner (2026-09-20): the thinking trigger is FIXED at the width the
-	 *  Default state needs (values shifting it mid-edit shifted the row);
-	 *  the model trigger takes the same width as a MINIMUM — its values
-	 *  genuinely vary in length. */
+	/** Match model and thinking fields across the Models and Roles groups. */
 	widthClass: string;
 	/** The no-key search state grays the whole row; the trigger follows. */
 	disabled?: boolean;
@@ -664,8 +662,8 @@ export function AgentSection({
 			type="button"
 			data-testid={`engine-option-${id}`}
 			onClick={onPick}
-			className={`flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted ${
-				active ? "bg-muted/60 text-card-foreground" : "text-card-foreground"
+			className={`lh-menu-item w-full justify-between ${
+				active ? "bg-raised" : ""
 			}`}
 		>
 			<span>{label}</span>
@@ -718,8 +716,8 @@ export function AgentSection({
 							testid="row-profile"
 						>
 							{profileEdit ? (
-								<span className="flex items-center gap-2">
-									<input
+								<span className="flex max-w-full flex-wrap items-center justify-end gap-2">
+									<Input
 										type="text"
 										autoFocus
 										enterKeyHint="done"
@@ -732,13 +730,13 @@ export function AgentSection({
 											if (e.key === "Escape") { e.stopPropagation(); setProfileEdit(null); setProfileError(null); }
 											if (e.key === "Enter") void saveProfileName();
 										}}
-										className="h-7 touch:h-10 w-40 rounded-sm border border-border bg-background px-1.5 text-xs"
+										className="w-40 max-w-full"
 									/>
-									<button type="button" data-testid="profile-name-save" className="lh-touch text-xs text-foreground hover:underline" onClick={() => void saveProfileName()}>Save</button>
-									<button type="button" data-testid="profile-name-cancel" className="lh-touch text-xs text-muted-foreground hover:text-foreground" onClick={() => { setProfileEdit(null); setProfileError(null); }}>Cancel</button>
+									<Button type="button" variant="outline" data-testid="profile-name-save" onClick={() => void saveProfileName()}>Save</Button>
+									<Button type="button" variant="ghost" data-testid="profile-name-cancel" onClick={() => { setProfileEdit(null); setProfileError(null); }}>Cancel</Button>
 								</span>
 							) : (
-								<span ref={open ? menuAnchorRef : undefined} className="relative flex items-center gap-2">
+								<span ref={open ? menuAnchorRef : undefined} className="relative flex max-w-full flex-wrap items-center justify-end gap-2">
 									<MenuTrigger
 										value={active}
 										emptyLabel={active}
@@ -746,12 +744,12 @@ export function AgentSection({
 										testid="profile-trigger"
 										open={open}
 										onClick={() => setOpenMenu(open ? null : { target: "profile", kind: "profile" })}
-										widthClass="min-w-32"
+										widthClass="w-40"
 									/>
 									{!isBuiltinProfile(active) && (
 										<>
-											<button type="button" data-testid="profile-rename" className="lh-touch text-xs text-muted-foreground hover:text-foreground" onClick={() => { setProfileError(null); setProfileEdit({ mode: "rename", draft: active }); }}>Rename</button>
-											<button type="button" data-testid="profile-delete" disabled={list.filter((e) => !e.builtin).length <= 1} className="lh-touch text-xs text-muted-foreground hover:text-foreground disabled:opacity-40" onClick={() => void run({ action: "delete", name: active })}>Delete</button>
+											<Button type="button" variant="ghost" data-testid="profile-rename" onClick={() => { setProfileError(null); setProfileEdit({ mode: "rename", draft: active }); }}>Rename</Button>
+											<Button type="button" variant="destructive" data-testid="profile-delete" disabled={list.filter((e) => !e.builtin).length <= 1} onClick={() => void run({ action: "delete", name: active })}>Delete</Button>
 										</>
 									)}
 									{open && (
@@ -770,7 +768,7 @@ export function AgentSection({
 														type="button"
 														data-testid={`profile-option-${name}`}
 														onClick={async () => { setOpenMenu(null); if (name !== active) await run({ action: "switch", name }); }}
-														className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted ${name === active ? "bg-muted/60" : ""}`}
+														className={`lh-menu-item w-full justify-between ${name === active ? "bg-raised" : ""}`}
 													>
 														<span className="truncate">{name}{builtin && <span className="text-muted-foreground"> · built-in</span>}</span>
 														<span className="shrink-0 text-muted-foreground" title={gone.length ? `Not connected: ${gone.join(", ")}` : undefined}>
@@ -783,7 +781,7 @@ export function AgentSection({
 												type="button"
 												data-testid="profile-new"
 												onClick={() => { setOpenMenu(null); setProfileError(null); setProfileEdit({ mode: "new", draft: "" }); }}
-												className="w-full rounded-lg px-2 py-1.5 text-left text-muted-foreground transition-colors hover:bg-muted"
+												className="lh-menu-item w-full text-muted-foreground"
 											>
 												New profile…
 											</button>
@@ -794,14 +792,7 @@ export function AgentSection({
 						</SettingsRow>
 					);
 				})()}
-				<button
-					type="button"
-					data-testid="models-advanced"
-					aria-expanded={advancedModels}
-					onClick={() => { setAdvancedModels(!advancedModels); setOpenMenu(null); }}
-					className="lh-touch mb-1 self-start text-xs text-muted-foreground hover:text-foreground"
-				>{advancedModels ? "Hide advanced settings" : "Show advanced settings"}</button>
-				{catalogFailed && <p role="alert" className="text-xs text-error">Model catalog could not be loaded. Check the connection and retry. <button type="button" className="underline" onClick={refreshCatalog}>Retry</button></p>}
+				{catalogFailed && <p role="alert" className="text-sm text-error">Model catalog could not be loaded. Check the connection and retry. <Button type="button" variant="link" onClick={refreshCatalog}>Retry</Button></p>}
 				{MODEL_SLOTS.map((slot) => {
 					const override = models?.[slot];
 					const modelId = override?.model?.id ?? "";
@@ -831,7 +822,7 @@ export function AgentSection({
 							    span holding BOTH triggers of the open menu. */}
 							<span
 								ref={thisMenuOpen ? menuAnchorRef : undefined}
-								className={`relative flex items-center gap-2 ${advancedModels ? "shrink-0" : ""}`}
+								className="relative flex max-w-full flex-wrap items-center justify-end gap-2"
 							>
 								{slot !== "strong" && <><ChatGPTBackgroundAccess provider={coord?.provider} /><NativeSubscriptionBackgroundAccess provider={coord?.provider} /></>}
 								<MenuTrigger
@@ -842,7 +833,7 @@ export function AgentSection({
 									testid={`slot-model-${slot}`}
 									open={thisMenuOpen === "model"}
 									onClick={() => setOpenMenu(thisMenuOpen === "model" ? null : { target: slot, kind: "model" })}
-									widthClass="min-w-20"
+									widthClass="w-44 sm:w-52"
 								/>
 								<MenuTrigger
 									// Legacy display (chunk 2 item 4): no stored level + a known
@@ -854,7 +845,7 @@ export function AgentSection({
 									testid={`slot-thinking-${slot}`}
 									open={thisMenuOpen === "thinking"}
 									onClick={() => setOpenMenu(thisMenuOpen === "thinking" ? null : { target: slot, kind: "thinking" })}
-									widthClass="w-20"
+									widthClass="w-24"
 								/>
 								{advancedModels && <MenuTrigger
 									value={cacheRetentionLabel(override?.cacheRetention)}
@@ -978,6 +969,12 @@ export function AgentSection({
 						</span>
 					</SettingsRow>;
 				})()}
+				<SettingsRow label="Cache retention" hint="Customize the cache preference for each model slot">
+					<Button type="button" variant="ghost" data-testid="models-advanced" aria-expanded={advancedModels}
+						onClick={() => { setAdvancedModels(!advancedModels); setOpenMenu(null); }}>
+						{advancedModels ? "Hide advanced settings" : "Show advanced settings"}
+					</Button>
+				</SettingsRow>
 				<ModelCatalogRefreshRow />
 				<SettingsRow
 					label="Concurrent worker requests"
@@ -1034,7 +1031,10 @@ export function AgentSection({
 					const follows = slot ? `the ${slot} slot` : "the lesson's model";
 					return (
 						<SettingsRow key={role} label={label} hint={hint} testid={`role-row-${role}`}>
-							<span ref={thisMenuOpen ? menuAnchorRef : undefined} className="relative flex items-center gap-2">
+							<span ref={thisMenuOpen ? menuAnchorRef : undefined} className="relative flex max-w-full flex-wrap items-center justify-end gap-2">
+								{override && <Button type="button" variant="ghost" data-testid={`role-reset-${role}`} onClick={() => write(null)} title={`Follow ${follows} again`}>
+									Use slot
+								</Button>}
 								<MenuTrigger
 									value={shown.inherited ? "" : shown.value}
 									emptyLabel={shown.value}
@@ -1042,7 +1042,7 @@ export function AgentSection({
 									testid={`role-model-${role}`}
 									open={thisMenuOpen === "model"}
 									onClick={() => setOpenMenu(thisMenuOpen === "model" ? null : { target: role, kind: "model" })}
-									widthClass="min-w-20"
+									widthClass="w-44 sm:w-52"
 								/>
 								<MenuTrigger
 									value={override?.thinkingLevel ?? ""}
@@ -1051,18 +1051,8 @@ export function AgentSection({
 									testid={`role-thinking-${role}`}
 									open={thisMenuOpen === "thinking"}
 									onClick={() => setOpenMenu(thisMenuOpen === "thinking" ? null : { target: role, kind: "thinking" })}
-									widthClass="w-20"
+									widthClass="w-24"
 								/>
-								<button
-									type="button"
-									data-testid={`role-reset-${role}`}
-									disabled={!override}
-									onClick={() => write(null)}
-									title={`Follow ${follows} again`}
-									className="w-14 shrink-0 text-right text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:invisible"
-								>
-									Use slot
-								</button>
 								{thisMenuOpen === "model" && (
 									<MenuShell
 										preferredSide="down"
@@ -1179,32 +1169,32 @@ export function AgentSection({
 						setFolderError(null);
 					};
 					return (
-						<div data-testid="file-access-row" className="flex flex-col gap-2">
+						<div data-testid="file-access-row" className="lh-settings-row-group lh-settings-list-dividers">
 							<SettingsRow label="File access" hint={!restricted
 								? "Broad local source access, except protected locations"
 								: folders.length ? "Only listed folders and subfolders."
 									: "Restricted: no folders allowed. Add a folder to enable access."}>
-								<div className="flex items-center gap-2 text-xs">
+								<div className="flex items-center gap-2 text-sm">
 									<span>Restrict to listed folders</span>
 									<Toggle checked={restricted} label="Restrict to listed folders" onChange={(on) => onSectionChange(composeFileRestriction(effectiveAgent, on))} />
 								</div>
 							</SettingsRow>
-							{fileAccessError && <p role="alert" data-testid="file-access-config-error" className="text-xs text-error">{fileAccessError}</p>}
-							<div className="flex gap-2 pl-3">
-								<input value={folderInput} aria-label="Allowed folder path" data-testid="file-access-add" placeholder="Absolute path or ~/folder"
+							{fileAccessError && <p role="alert" data-testid="file-access-config-error" className="px-4 py-2 text-sm text-error">{fileAccessError}</p>}
+							<SettingsRow label="Allowed folder">
+							<div className="flex w-80 max-w-full items-center gap-2">
+								<Input value={folderInput} aria-label="Allowed folder path" data-testid="file-access-add" placeholder="Absolute path or ~/folder"
 									onChange={(event) => { setFolderInput(event.target.value); setFolderError(null); }}
 									onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addFolder(); } }}
-									className="min-w-0 flex-1 rounded-sm border border-border bg-background px-2 py-1 font-ui text-xs" />
-								<button type="button" data-testid="file-access-add-button" disabled={!folderInput.trim()} onClick={addFolder} className="rounded-sm border border-border px-2 text-xs disabled:opacity-40">Add folder</button>
+									className="flex-1" />
+								<Button type="button" variant="outline" data-testid="file-access-add-button" disabled={!folderInput.trim()} onClick={addFolder}>Add folder</Button>
 							</div>
-							{folderError && <p role="alert" data-testid="file-access-input-error" className="pl-3 text-xs text-error">{folderError}</p>}
+							</SettingsRow>
+							{folderError && <p role="alert" data-testid="file-access-input-error" className="px-4 py-2 text-sm text-error">{folderError}</p>}
 							{folders.map((folder) => (
-								<div key={folder} data-testid="file-access-folder" className="flex items-center justify-between gap-4 pl-3 text-xs">
-									<span title={folder} className="min-w-0 truncate font-ui text-muted-foreground">{folder}</span>
-									<button type="button" aria-label={`Remove ${folder}`} data-testid="file-access-remove"
-										onClick={() => onSectionChange(composeRemoveFolder(effectiveAgent, folder))}
-										className="rounded-sm px-1.5 text-muted-foreground hover:text-foreground">Remove</button>
-								</div>
+								<SettingsRow key={folder} testid="file-access-folder" label={folder} className="wrap-anywhere">
+									<Button type="button" variant="destructive" aria-label={`Remove ${folder}`} data-testid="file-access-remove"
+										onClick={() => onSectionChange(composeRemoveFolder(effectiveAgent, folder))}>Remove</Button>
+								</SettingsRow>
 							))}
 						</div>
 					);
@@ -1300,12 +1290,12 @@ export function AgentSection({
 				</SettingsRow>
 			</SettingsGroup>
 
-			<SettingsGroup label="System prompts" testid="group-prompts">
+			<SettingsGroup label="System prompts" testid="group-prompts" inset={false}>
 				<p className="text-xs text-muted-foreground">Use the switch to choose between the default and your saved override.</p>
 				{promptListStatus !== "ready" && <div className="flex items-center gap-2">
 					{promptListStatus === "failed" ? <p role="alert" className="text-xs text-error">Couldn't load prompt segments.</p> :
 						<p role="status" className="text-xs text-muted-foreground">{prompts ? "Refreshing prompt segments…" : "Loading prompt segments…"}</p>}
-					<Button type="button" size="xs" variant="outline" onClick={() => void readPrompts()}>Retry</Button>
+					<Button type="button" variant="outline" onClick={() => void readPrompts()}>Retry</Button>
 				</div>}
 				{prompts && (
 					<div className="flex flex-col gap-4">
@@ -1313,16 +1303,18 @@ export function AgentSection({
 						    each agent's own section in prompt-assembly order. */}
 						{sectionedSegments(prompts).map((section) => (
 							<div key={section.id} data-testid={`prompt-section-${section.id}`}>
-								<p className="mb-1 text-xs font-medium text-muted-foreground">
+								<h4 className="mb-2 text-sm font-medium text-muted-foreground">
 									{section.label}
-								</p>
-								{section.segments.map((info) => <PromptSegmentRow key={info.path}
-									path={info.path} usageHint={info.usageHint} hasOverride={info.overrideText !== null} enabled={info.enabled}
-									busy={promptListStatus !== "ready"} switching={switchPending} error={switchError === info.path ? "Couldn't switch prompt versions." : undefined}
-									onView={row => setOpenSegment({ info, mode: "view", row })}
-									onEdit={row => setOpenSegment({ info, mode: "edit", row })}
-									onToggle={(on) => void switchSegment(info.path, on)}
-								/>)}
+								</h4>
+								<SettingsList>
+									{section.segments.map((info) => <PromptSegmentRow key={info.path}
+										path={info.path} usageHint={info.usageHint} hasOverride={info.overrideText !== null} enabled={info.enabled}
+										busy={promptListStatus !== "ready"} switching={switchPending} error={switchError === info.path ? "Couldn't switch prompt versions." : undefined}
+										onView={row => setOpenSegment({ info, mode: "view", row })}
+										onEdit={row => setOpenSegment({ info, mode: "edit", row })}
+										onToggle={(on) => void switchSegment(info.path, on)}
+									/>)}
+								</SettingsList>
 							</div>
 						))}
 					</div>

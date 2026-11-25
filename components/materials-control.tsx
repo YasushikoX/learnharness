@@ -1,13 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CameraIcon, FileTextIcon, ImageIcon, LinkIcon, Loader2Icon, PaperclipIcon, XIcon } from "lucide-react";
+import { BookOpenIcon, CameraIcon, FileTextIcon, ImageIcon, LinkIcon, Loader2Icon, XIcon } from "lucide-react";
 import { usePopoverDismiss } from "./popover-dismiss.ts";
 import { MATERIAL_ACCEPT, indexingProgressLine, isMaterialUrl, type LessonMaterial } from "@/src/core";
 import { MenuShell } from "@/components/menu-shell";
 import { useCamera } from "@/components/use-camera";
 import { Hint } from "@/components/ui/hint";
 import { CONTROL_CLASS, type ControlVariant } from "@/components/control-variant";
+import { buttonVariants } from "@/components/ui/button";
+import { FIELD_CLASS } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+
+/** UI round 1b (SPEC §3): the popover's actions are 28px outline Buttons beside a 28px field; remove is a ghost icon. */
+const ADD_BTN = buttonVariants({ variant: "outline", size: "sm", className: "text-xs" });
+const REMOVE_BTN = buttonVariants({ variant: "ghost", size: "icon-xs", className: "text-muted-foreground hover:text-foreground" });
 import {
 	addLink,
 	draftKey,
@@ -170,7 +177,7 @@ export function MaterialsControl({
 					}}
 					className={CONTROL_CLASS[variant]}
 				>
-					{reading > 0 ? <Loader2Icon className="size-3.5 animate-spin" /> : <PaperclipIcon className="size-3.5 text-muted-foreground" />}
+					{reading > 0 ? <Loader2Icon className="size-3.5 animate-spin" /> : <BookOpenIcon className="size-3.5 text-muted-foreground" />}
 					<span className="text-card-foreground">{sourcesLabel(count, chatId ? reading : 0)}</span>
 				</button>
 			</Hint>
@@ -189,11 +196,14 @@ export function MaterialsControl({
 				}}
 			/>
 			{open && (
+				// UI round 1b (SPEC §8): on the course page the popover opens DOWN and LEFT-aligned to the Sources button (it
+				// spilled over the sidebar when right-aligned), 8px below it (the shell's 4px gap + mt-1).
 				<MenuShell
 					anchorRef={containerRef}
 					testid="materials-menu"
 					preferredSide={courseId ? "down" : "up"}
-					menuClass="flex w-80 flex-col gap-1 lh-menu"
+					align={courseId ? "left" : "right"}
+					menuClass={cn("flex w-80 flex-col gap-1 lh-menu p-2", courseId && "mt-1")}
 				>
 					<div className="px-1 pb-1 text-xs text-muted-foreground">
 						{courseId
@@ -212,8 +222,8 @@ export function MaterialsControl({
 											{materialStatusLine(m)}
 										</span>
 									</span>
-									<button type="button" aria-label={`Remove ${m.name}`} onClick={() => void remove(m.id)} className="text-muted-foreground hover:text-foreground">
-										<XIcon className="size-3.5" />
+									<button type="button" aria-label={`Remove ${m.name}`} onClick={() => void remove(m.id)} className={REMOVE_BTN}>
+										<XIcon />
 									</button>
 								</div>
 							))
@@ -221,35 +231,23 @@ export function MaterialsControl({
 								<div key={d.key} className="flex items-center gap-2 rounded-md px-1 py-1" data-testid={`draft-material-${d.key}`}>
 									<KindIcon kind={d.kind === "link" ? "link" : "file"} />
 									<span className="min-w-0 flex-1 truncate text-foreground">{d.kind === "file" ? d.file.name : d.url}</span>
-									<button type="button" aria-label="Remove" onClick={() => void remove(d.key)} className="text-muted-foreground hover:text-foreground">
-										<XIcon className="size-3.5" />
+									<button type="button" aria-label="Remove" onClick={() => void remove(d.key)} className={REMOVE_BTN}>
+										<XIcon />
 									</button>
 								</div>
 							))}
 					{count === 0 && <div className="px-1 py-1 text-muted-foreground">No source material yet.</div>}
-					<div className="mt-1 flex items-center gap-1.5 border-t pt-2">
-						<button
-							type="button"
-							disabled={busy}
-							data-testid="materials-add-files"
-							onClick={() => fileRef.current?.click()}
-							className="shrink-0 rounded-md border border-border px-2 py-1 transition-colors hover:bg-muted disabled:opacity-50"
-						>
+					<div className="mt-1 flex items-center gap-1.5 border-t border-border pt-2">
+						<button type="button" disabled={busy} data-testid="materials-add-files" onClick={() => fileRef.current?.click()} className={ADD_BTN}>
 							Add files…
+						</button>
+						{camera.available && (
+							<button type="button" disabled={busy} data-testid="materials-camera" onClick={camera.open} className={ADD_BTN}>
+								<CameraIcon />
+								Camera
 							</button>
-							{camera.available && (
-								<button
-									type="button"
-									disabled={busy}
-									data-testid="materials-camera"
-									onClick={camera.open}
-									className="flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-1 transition-colors hover:bg-muted disabled:opacity-50"
-								>
-									<CameraIcon className="size-3.5" />
-									Camera
-								</button>
-							)}
-							<input
+						)}
+						<input
 							value={url}
 							onChange={(e) => setUrl(e.target.value)}
 							onKeyDown={(e) => {
@@ -259,7 +257,7 @@ export function MaterialsControl({
 							aria-label="Source link"
 							data-testid="materials-link-input"
 							disabled={busy}
-							className="h-7 min-w-0 flex-1 rounded-md border border-border bg-background px-1.5 text-xs outline-none placeholder:text-muted-foreground focus:border-muted-foreground/50"
+							className={cn(FIELD_CLASS, "h-7 min-w-0 flex-1 px-2 text-xs")}
 						/>
 					</div>
 					<div className="px-1 text-xs text-muted-foreground">PDF, text, Markdown, images, a photo, or a web link</div>

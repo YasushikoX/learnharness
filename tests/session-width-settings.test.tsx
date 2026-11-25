@@ -18,7 +18,7 @@ import { InteractionLayersProvider } from "../components/interaction-layers.tsx"
 
 (globalThis as Record<string, unknown>).React = React;
 
-it("factory: transcript width Full (absent), adaptive question layout ON", () => {
+it("factory: transcript width unset (the reading column), adaptive question layout ON", () => {
 	assert.equal(FACTORY_SETTINGS.appearance.transcriptMaxWidth, null);
 	assert.equal(FACTORY_SETTINGS.appearance.adaptiveQuestions, true);
 	for (const appearance of [undefined, {}, { proseFontSize: 20 }]) {
@@ -109,13 +109,13 @@ it("inline code and inline math never wrap on the session page; a span wider tha
 	assert.match(chat, /<div data-session-surface="" className="flex h-dvh">/);
 });
 
-it("labels: px at 16px per rem, or Full", () => {
-	assert.equal(transcriptWidthLabel(null), "Full");
+it("labels: px at 16px per rem; unset is the reading column (the first step)", () => {
+	assert.equal(transcriptWidthLabel(null), "736px");
 	assert.equal(transcriptWidthLabel(46), "736px");
 	assert.equal(transcriptWidthLabel(120), "1920px");
 });
 
-it("Appearance rows: the slider commits on release (Full = absent) and the toggle writes adaptiveQuestions", async () => {
+it("Appearance rows: the slider commits on release (reading column = absent) and the toggle writes adaptiveQuestions", async () => {
 	const dom = parseHTML(`<!doctype html><html><body><div id="root"></div></body></html>`);
 	const { document } = dom;
 	const previous = new Map<string, PropertyDescriptor | undefined>();
@@ -147,17 +147,18 @@ it("Appearance rows: the slider commits on release (Full = absent) and the toggl
 	try {
 		await act(async () => root.render(<InteractionLayersProvider><AppearanceProvider initialAppearance={{ proseFontSize: 20 }} initialTheme={DEFAULT_THEME}><Panel /></AppearanceProvider></InteractionLayersProvider>));
 		assert.equal(slider().getAttribute("min"), "46");
-		assert.equal(slider().getAttribute("max"), "122", "one step past 120rem is Full");
+		assert.equal(slider().getAttribute("max"), "120");
 		assert.equal(slider().getAttribute("step"), "2");
-		assert.equal(label(), "Full");
+		assert.equal(label(), "736px");
+		assert.equal(slider().value, "46", "unset sits on the first step");
 		await release(64);
 		assert.deepEqual(writes.at(-1), { proseFontSize: 20, transcriptMaxWidth: 64 });
 		assert.equal(document.documentElement.style.getPropertyValue("--lh-transcript-max"), "64rem");
 		assert.equal(label(), "1024px");
-		await release(122);
-		assert.equal("transcriptMaxWidth" in JSON.parse(JSON.stringify(writes.at(-1))), false, "Full is absence");
+		await release(46);
+		assert.equal("transcriptMaxWidth" in JSON.parse(JSON.stringify(writes.at(-1))), false, "the first step is absence");
 		assert.equal(document.documentElement.style.getPropertyValue("--lh-transcript-max"), "", "the stale cap is removed");
-		assert.equal(label(), "Full");
+		assert.equal(label(), "736px");
 		assert.equal(toggle().getAttribute("aria-checked"), "true");
 		await act(async () => toggle().click());
 		assert.equal(writes.at(-1)?.adaptiveQuestions, false);

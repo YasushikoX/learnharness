@@ -73,7 +73,7 @@ describe("DeleteSessionDialog — the node-dialog shape (owner flow rework 2026-
 		);
 		assert.match(html, /Delete session\?/);
 		const title = html.match(/<h2[^>]*>/)?.[0] ?? "";
-		assert.match(title, /text-sm font-semibold text-destructive/); // red, abort-turn look (owner, 2026-10-13)
+		assert.match(title, /text-\[15px\] font-semibold leading-5 text-destructive/); // red, abort-turn look (owner, 2026-10-13); 15/600 section title (UI round 1b)
 		assert.ok(!title.includes("font-title"), "no serif display title");
 		// the name: mono, normal text-sm size (owner, 2026-10-13), NO bg-muted code-block chrome
 		const name = html.match(/data-testid="session-name-code"[^>]*>/)?.[0] ?? "";

@@ -321,6 +321,25 @@ export function labelBoxesOverlap(
 	return a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
 }
 
+type LabelBox = { x0: number; x1: number; y0: number; y1: number };
+
+/** A region label never sits ON a node (UI round 1b, SPEC §8 "graph ATP label sits on its node"): the centred box
+ *  first, else moved just above the nodes it covers, else just below them (`gap` clear of each disc). Null when no
+ *  spot is free — the label is skipped and returns as the camera moves (the overlap guard's rule). Exported for tests. */
+export function placeRegionLabel(box: LabelBox, nodes: readonly LabelBox[], gap: number): LabelBox | null {
+	const covered = (b: LabelBox) => nodes.filter((n) => labelBoxesOverlap(b, { x0: n.x0 - gap, x1: n.x1 + gap, y0: n.y0 - gap, y1: n.y1 + gap }));
+	const hit = covered(box);
+	if (hit.length === 0) return box;
+	const h = box.y1 - box.y0;
+	const up = { ...box, y1: Math.min(...hit.map((n) => n.y0)) - gap };
+	up.y0 = up.y1 - h;
+	if (covered(up).length === 0) return up;
+	const down = { ...box, y0: Math.max(...hit.map((n) => n.y1)) + gap };
+	down.y1 = down.y0 + h;
+	if (covered(down).length === 0) return down;
+	return null;
+}
+
 /** True when the world bbox, seen through the camera, overlaps the viewport at all. Exported for tests. */
 export function bboxOnScreen(
 	bbox: { minX: number; maxX: number; minY: number; maxY: number },
@@ -334,6 +353,36 @@ export function bboxOnScreen(
 	const y1 = t.y + t.k * bbox.maxY;
 	return x1 >= 0 && x0 <= w && y1 >= 0 && y0 <= h;
 }
+
+/** The node-centre bbox grown to every node's full footprint: the disc on all sides plus, below, the label gap and
+ *  two label lines (labels hang under their disc). World units, so it scales with the camera like the discs do. */
+export function footprintBBox(
+	bbox: { minX: number; maxX: number; minY: number; maxY: number },
+	nodeR: number,
+	labelSize: number,
+): { minX: number; maxX: number; minY: number; maxY: number } {
+	const below = nodeR + (labelSize > 0 ? LABEL_GAP + 2 * labelSize * LABEL_LINE_HEIGHT : 0);
+	return { minX: bbox.minX - nodeR, maxX: bbox.maxX + nodeR, minY: bbox.minY - nodeR, maxY: bbox.maxY + below };
+}
+
+/** A camera the app did not frame itself (restored from storage, carried across a resize) may leave the bottom of the
+ *  graph under the composer dock. Returns the translate-y that lifts the footprint's bottom to `bottomLimit` (screen
+ *  px), `undefined` when it already clears, or `null` when lifting would push its top above `topLimit` (then the
+ *  caller re-fits). Footprints that are mostly off screen are the learner's own framing and are left alone. */
+export function liftAboveDock(
+	box: { minX: number; maxX: number; minY: number; maxY: number },
+	t: { k: number; x: number; y: number },
+	bottomLimit: number,
+	topLimit: number,
+): number | null | undefined {
+	const y0 = t.y + t.k * box.minY;
+	const y1 = t.y + t.k * box.maxY;
+	const overflow = y1 - bottomLimit;
+	if (overflow <= 0.5) return undefined;
+	if (y0 - overflow < topLimit) return null;
+	return t.y - overflow;
+}
+const FIT_PADDING = 40; // screen px kept clear on every side of the fitted graph (the dock inset adds to the bottom)
 const LABEL_MAX_WIDTH = 170; // wrap width at the reference label size, world units
 const LABEL_GAP = 2.9; // world units between node edge and first label line (the 2px-at-fit reference ÷ 0.69)
 const LABEL_LINE_HEIGHT = 1.3;
@@ -488,13 +537,15 @@ export function fitTransform(
 	w: number,
 	h: number,
 	padding: number,
+	bottomInset = 0,
 ): { x: number; y: number; k: number } {
 	const bw = Math.max(bbox.maxX - bbox.minX, 1e-6);
 	const bh = Math.max(bbox.maxY - bbox.minY, 1e-6);
-	const k = Math.min((w - 2 * padding) / bw, (h - 2 * padding) / bh);
+	const availableHeight = Math.max(1, h - 2 * padding - bottomInset);
+	const k = Math.min((w - 2 * padding) / bw, availableHeight / bh);
 	const cx = (bbox.minX + bbox.maxX) / 2;
 	const cy = (bbox.minY + bbox.maxY) / 2;
-	return { x: w / 2 - cx * k, y: h / 2 - cy * k, k };
+	return { x: w / 2 - cx * k, y: padding + availableHeight / 2 - cy * k, k };
 }
 
 /** The arrowhead geometry for a directed edge a→b: shaft endpoints
@@ -663,6 +714,11 @@ export class GraphCanvasRenderer {
 	/** World-space bounds of the current nodes — fit() and the resize-time
 	 *  kFit refresh share it (computed once per setData, not per resize). */
 	private worldBBox: { minX: number; maxX: number; minY: number; maxY: number } | null = null;
+	private bottomInset = 0;
+	/** The camera is still fit()'s own frame: no pan, zoom or restored camera since. */
+	private autoFramed = false;
+	/** The learner panned or zoomed in this session: from then on the camera is theirs and is never lifted. */
+	private userMoved = false;
 
 	private data: CanvasData | null = null;
 	/** id -> node for the current data (avoids O(n^2) scans). */
@@ -763,7 +819,11 @@ export class GraphCanvasRenderer {
 		// transform change just marks dirty (draws happen in OUR loop).
 		this.zoomBehavior = zoom<HTMLCanvasElement, unknown>()
 			.scaleExtent([0.02, 40])
-			.on("zoom", ({ transform }) => {
+			.on("zoom", ({ transform, sourceEvent }) => {
+				if (sourceEvent) {
+					this.autoFramed = false; // the learner moved the camera
+					this.userMoved = true;
+				}
 				this.transform = transform;
 				this.markDirty();
 				// The transform doubles as the persistence payload (view state).
@@ -814,7 +874,7 @@ export class GraphCanvasRenderer {
 			const wx = (prevW / 2 - tx) / k;
 			const wy = (prevH / 2 - ty) / k;
 			this.syncSize();
-			if (!this.hasFit) this.fit(); // first real size → fit once
+			if (!this.hasFit || this.autoFramed) this.fit(); // first real size, or still the app's own frame → (re)fit
 			else {
 				this.refreshFitZoom(); // the gate's "1×" is viewport-bound
 				// Center-anchor (2026-09-17, owner): same world point under
@@ -826,6 +886,7 @@ export class GraphCanvasRenderer {
 						zoomIdentity.translate(this.viewW / 2 - wx * k, this.viewH / 2 - wy * k).scale(k),
 					);
 				}
+				this.keepAboveDock();
 			}
 			// Redraw SYNCHRONOUSLY: syncSize may have reallocated the backing
 			// store (which clears the canvas), and during live window resizes
@@ -867,7 +928,10 @@ export class GraphCanvasRenderer {
 		if (!this.hasFit && data.nodes.length > 0) this.fit();
 		// The camera may be user-restored (constructor initialCamera) — the
 		// gate's "1×" reference still needs the fresh bbox's fit zoom.
-		else this.refreshFitZoom();
+		else {
+			this.refreshFitZoom();
+			this.keepAboveDock();
+		}
 		// Rebuild the live sim around the fresh nodes. New data means the
 		// server spoke (merge or refetch); any pending commit is moot and
 		// the graph is at rest until the next drag.
@@ -887,6 +951,12 @@ export class GraphCanvasRenderer {
 	setSettings(settings: GraphRenderSettings): void {
 		this.settings = settings;
 		this.geoVersion++; // sizes/wrap width changed → rebuild geometry
+		// Node/label sizes change the footprint the fit frames.
+		if (this.hasFit && this.autoFramed) this.fit();
+		else {
+			this.refreshFitZoom();
+			this.keepAboveDock();
+		}
 		this.markDirty();
 	}
 
@@ -967,6 +1037,46 @@ export class GraphCanvasRenderer {
 		this.markDirty();
 	}
 
+	/** Screen px at the bottom covered by the home composer dock (plus clearance): fit-to-view frames the graph above
+	 *  it (UI round 1b, SPEC §8 "bottom node hidden behind the composer"). The dock is measured after the first fit, so
+	 *  a camera that is still that automatic frame re-fits; a camera the learner moved (or restored) stays. */
+	setBottomInset(inset: number): void {
+		const next = Math.max(0, inset);
+		if (next === this.bottomInset) return;
+		this.bottomInset = next;
+		if (!this.hasFit || this.autoFramed) this.fit();
+		else {
+			this.refreshFitZoom();
+			this.keepAboveDock();
+		}
+	}
+
+	/** Every node's full footprint, in world units (see footprintBBox). */
+	private footprint(): { minX: number; maxX: number; minY: number; maxY: number } | null {
+		if (!this.worldBBox) return null;
+		return footprintBBox(this.worldBBox, this.settings?.nodeSize ?? 0, this.settings?.labelSize ?? 0);
+	}
+
+	/** A restored or resize-carried camera keeps the whole graph above the composer dock (UI round 2: the 1024 px
+	 *  shot reopened the camera saved at 1440 px with the bottom node under the dock). Lifts the camera; re-fits when
+	 *  the graph no longer fits at this zoom. Never once the learner has panned or zoomed in this session. */
+	private keepAboveDock(): void {
+		if (this.userMoved || this.autoFramed || !this.hasFit || this.bottomInset <= 0) return;
+		const box = this.footprint();
+		const w = this.canvas.clientWidth;
+		const h = this.canvas.clientHeight;
+		if (!box || w < 10 || h < 10) return;
+		const t = zoomTransform(this.canvas);
+		if (!bboxOnScreen(box, t, w, h)) return;
+		const y = liftAboveDock(box, t, h - this.bottomInset, FIT_PADDING);
+		if (y === undefined) return;
+		if (y === null) {
+			this.fit();
+			return;
+		}
+		select(this.canvas).call(this.zoomBehavior.transform, zoomIdentity.translate(t.x, y).scale(t.k));
+	}
+
 	/** Frame the whole graph (padding included). Keeps the camera on later
 	 *  setData calls — call fit() only for an explicit re-frame (the
 	 *  first-ever open; afterwards the caller-persisted camera wins). */
@@ -975,9 +1085,11 @@ export class GraphCanvasRenderer {
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
 		if (w < 10 || h < 10) return; // layout not ready yet; the ResizeObserver retries
-		const t = fitTransform(this.worldBBox, w, h, 40);
+		// Frames every node's whole disc + label (not just the centres) above the dock.
+		const t = fitTransform(this.footprint() ?? this.worldBBox, w, h, FIT_PADDING, this.bottomInset);
 		this.kFit = t.k;
 		this.hasFit = true;
+		this.autoFramed = true;
 		select(this.canvas).call(
 			this.zoomBehavior.transform,
 			zoomIdentity.translate(t.x, t.y).scale(t.k),
@@ -991,7 +1103,7 @@ export class GraphCanvasRenderer {
 		if (!this.worldBBox) return;
 		const w = this.canvas.clientWidth;
 		const h = this.canvas.clientHeight;
-		if (w >= 10 && h >= 10) this.kFit = fitTransform(this.worldBBox, w, h, 40).k;
+		if (w >= 10 && h >= 10) this.kFit = fitTransform(this.footprint() ?? this.worldBBox, w, h, FIT_PADDING, this.bottomInset).k;
 	}
 
 	destroy(): void {
@@ -1017,6 +1129,7 @@ export class GraphCanvasRenderer {
 	 *  tick loop (cursor-anchored). Sensitivity formula is d3-zoom's own. */
 	private onWheel = (e: WheelEvent) => {
 		e.preventDefault();
+		this.autoFramed = false;
 		const delta = -e.deltaY * (e.deltaMode === 1 ? 0.05 : e.deltaMode ? 1 : 0.002);
 		const { x, y } = this.eventPos(e);
 		const current = this.zoomTarget?.k ?? this.transform.k;
@@ -1870,17 +1983,28 @@ export class GraphCanvasRenderer {
 			// label that would sit on an already-placed one is skipped (it comes
 			// back as you zoom in and the labels move apart on screen).
 			const placed: Array<{ x0: number; x1: number; y0: number; y1: number }> = [];
+			// The discs a label must clear (world units; the label gap is a constant 6 screen px).
+			const r = this.world.nodeR;
+			const discs: LabelBox[] = [];
+			for (const node of data.nodes) {
+				if (isImpNodeId(node.id) || (this.visible && !this.visible.has(node.id))) continue;
+				discs.push({ x0: node.x - r, x1: node.x + r, y0: node.y - r, y1: node.y + r });
+			}
 			for (const rm of this.regionMeta) {
 				if (!rm.lines) continue;
 				const boxW = Math.max(...rm.lines.map((l) => ctx.measureText(l).width));
 				const boxH = rm.lines.length * lineH;
-				const box = { x0: rm.cx - boxW / 2, x1: rm.cx + boxW / 2, y0: rm.cy - boxH / 2, y1: rm.cy + boxH / 2 };
-				if (placed.some((p) => labelBoxesOverlap(p, box))) continue;
+				const box = placeRegionLabel(
+					{ x0: rm.cx - boxW / 2, x1: rm.cx + boxW / 2, y0: rm.cy - boxH / 2, y1: rm.cy + boxH / 2 },
+					discs,
+					6 / k,
+				);
+				if (!box || placed.some((p) => labelBoxesOverlap(p, box))) continue;
 				placed.push(box);
 				ctx.fillStyle = `hsla(${rm.hue}, 55%, ${data.colors.clusterLightness.label}%, 0.85)`;
-				const firstOffset = (-(rm.lines.length - 1) / 2) * lineH;
+				const firstY = (box.y0 + box.y1) / 2 + (-(rm.lines.length - 1) / 2) * lineH;
 				for (let i = 0; i < rm.lines.length; i++) {
-					ctx.fillText(rm.lines[i]!, rm.cx, rm.cy + firstOffset + i * lineH);
+					ctx.fillText(rm.lines[i]!, rm.cx, firstY + i * lineH);
 				}
 			}
 			ctx.restore();

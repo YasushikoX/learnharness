@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { FileTextIcon } from "lucide-react";
+import { buttonVariants } from "@/components/ui/button";
 import { SketchView } from "@/components/sketch/sketch-view";
 import { LectureNoteTextPanel } from "@/components/lecture-note-text-panel";
 import { noteSession, type NoteSession } from "@/components/sketch/note-ink";
@@ -44,8 +45,8 @@ export function LectureNoteView({ courseId, noteId, onClose }: { courseId: strin
 					date: state.note.date,
 					stamp: state.session.stamp,
 					extra: (
-						<button type="button" data-testid="lecture-note-text-toggle" aria-pressed={text} onClick={() => setText((t) => !t)} className="lh-touch inline-flex items-center gap-1 rounded-full border bg-background/85 px-2.5 py-1 text-xs text-foreground hover:bg-muted">
-							<FileTextIcon className="size-3.5" />
+						<button type="button" data-testid="lecture-note-text-toggle" aria-pressed={text} onClick={() => setText((t) => !t)} className={buttonVariants({ variant: "outline", size: "sm", className: "lh-touch bg-background" })}>
+							<FileTextIcon />
 							Text
 						</button>
 					),
@@ -60,7 +61,7 @@ export function LectureNoteView({ courseId, noteId, onClose }: { courseId: strin
 		<div data-testid="lecture-note-loading" role="dialog" aria-label="Lecture note" className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-background p-6 text-sm text-muted-foreground">
 			<p>{state.kind === "error" ? state.message : "Opening the lecture note…"}</p>
 			{state.kind === "error" && (
-				<button type="button" onClick={onClose} className="rounded-sm border px-3 py-1.5 text-xs text-foreground hover:bg-muted">
+				<button type="button" onClick={onClose} className={buttonVariants({ variant: "secondary" })}>
 					Close
 				</button>
 			)}

@@ -1,6 +1,7 @@
 "use client";
 
 import { buttonVariants } from "@/components/ui/button";
+import { FIELD_CLASS } from "@/components/ui/input";
 import { Children, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -98,13 +99,13 @@ function writePlacementSkipped(courseId: string): void {
 function PlacementOffer({ total, busy, onTake, onSkip }: { total: number; busy: boolean; onTake: () => void; onSkip: () => void }) {
 	const target = placementQuestionTarget(total);
 	return (
-		<section data-testid="placement-offer" className="rounded-lg border border-border bg-card/60 px-4 py-3">
-			<div className="font-prose text-(length:--lh-prose-size) font-medium">Find your starting point</div>
-			<p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+		<section data-testid="placement-offer" className="rounded-lg border border-border bg-card p-4">
+			<div className="lh-section-title">Find your starting point</div>
+			<p className="mt-1 text-sm text-muted-foreground">
 				A quick multiple-choice test — about {target === 1 ? "one short question" : `${target} short questions`} for {total === 1 ? "1 skill" : `${total} skills`}, hardest
 				first. What you already know is credited, so you start at your weak spots instead of the most basic skill.
 			</p>
-			<div className="mt-2.5 flex flex-wrap items-center gap-2">
+			<div className="mt-3 flex flex-wrap items-center gap-2">
 				<button type="button" className={BTN_PRIMARY} disabled={busy} data-testid="placement-take" onClick={onTake}>
 					Take the placement test
 				</button>
@@ -154,7 +155,7 @@ function Figure({ value, label, testid, accent, meter }: { value: string; label:
 /** A prerequisite as a chip: a check when it is learned, a lock when it is not. The icon says it, not only the colour. */
 function PrereqChip({ name, learned }: { name: string; learned: boolean }) {
 	return (
-		<span data-testid="prereq-chip" data-learned={learned ? "true" : "false"} className="inline-flex items-center gap-1 rounded-full border border-border/70 px-2 py-0.5 text-xs">
+		<span data-testid="prereq-chip" data-learned={learned ? "true" : "false"} className="inline-flex h-6 items-center gap-1 rounded-sm bg-secondary px-2 text-xs">
 			{learned ? <CheckIcon role="img" aria-label="learned" className="size-3" /> : <LockIcon role="img" aria-label="not learned yet" className="size-3 text-muted-foreground" />}
 			{name}
 		</span>
@@ -164,6 +165,9 @@ function PrereqChip({ name, learned }: { name: string; learned: boolean }) {
 /** UI round 1 (SPEC §3): ordinary actions are secondary sm Buttons; the region's one emphasised action is primary. */
 const BTN = buttonVariants({ variant: "secondary", size: "sm" });
 const BTN_PRIMARY = buttonVariants({ size: "sm" });
+/** The page header's controls (UI round 1b): 32px, the gear a quiet ghost icon button, Review a secondary button. */
+const HEAD_ICON_BTN = buttonVariants({ variant: "ghost", size: "icon" }) + " text-muted-foreground hover:text-foreground";
+const HEAD_BTN = buttonVariants({ variant: "secondary" });
 /** A closed group's summary: a chevron instead of the browser's marker, the whole line a target. */
 const DETAILS_HEAD = "lh-touch flex cursor-pointer list-none items-center gap-1.5 [&::-webkit-details-marker]:hidden";
 /** Missed problems shown before "Show all" (owner, 2026-11-16). */
@@ -181,6 +185,8 @@ export function oneLineStatement(text: string): string {
 }
 /** The page's small type for a rendered name or statement: text-xs, relaxed leading (see rich-text.tsx). */
 const ITEM_TYPE = "[--lh-prose-size:var(--text-xs)] [--lh-prose-leading:1.625]";
+/** A list row's rendered name (UI round 1b): the 14px body rung in the UI font, like every other row on the page. */
+const ROW_NAME = "[--lh-prose-size:var(--text-body)] [--lh-prose-leading:calc(20/14)]";
 
 /**
  * The "Choose skills" practice mode (owner, 2026-11-14): while `choosing`, a tap on a skill row ticks it instead of
@@ -222,14 +228,18 @@ function SkillRow({
 			? Math.round(retrievability({ stability: skill.stability, lastReview: Date.parse(skill.lastReview) }, now) * 100)
 			: null;
 	return (
-		<div className="break-inside-avoid border-b border-border/40" data-testid={`skill-${skill.id}`}>
+		<div className="break-inside-avoid border-b border-border" data-testid={`skill-${skill.id}`}>
 			<button
 				type="button"
 				onClick={choosing ? () => (can ? choose?.toggle(skill.id) : undefined) : () => setOpen((o) => !o)}
 				{...(choosing
 					? { role: "checkbox", "aria-checked": checked, "aria-disabled": !can, "aria-label": `Choose ${skill.name}` }
 					: { "aria-expanded": open, "aria-label": open ? `Collapse ${skill.name}` : `Expand ${skill.name}` })}
-				className={cn("lh-touch flex w-full items-center gap-2 py-2 text-left", choosing && !can && "opacity-50")}
+				className={cn(
+					"lh-touch -mx-2 flex min-h-10 w-[calc(100%+1rem)] items-center gap-2 rounded-sm px-2 text-left outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised focus-visible:ring-2 focus-visible:ring-focus",
+					// a skill that cannot be ticked stays readable: muted text and its lock, never a faded row (SPEC §7)
+					choosing && !can && "cursor-default text-muted-foreground hover:bg-transparent",
+				)}
 			>
 				{choosing ? (
 					<span aria-hidden data-testid={`choose-box-${skill.id}`} className={cn("flex size-4 shrink-0 items-center justify-center rounded-sm border", checked ? "border-foreground bg-foreground text-background" : "border-border")}>
@@ -240,16 +250,17 @@ function SkillRow({
 				) : (
 					<ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
 				)}
-				<span className="min-w-0 flex-1 truncate">
-					<RichLine prose>{skill.name}</RichLine>
+				<span className={cn("min-w-0 flex-1 truncate", ROW_NAME)}>
+					<RichLine>{skill.name}</RichLine>
 				</span>
+				{!skill.learned && skill.missing.length > 0 && <LockIcon role="img" aria-label="locked" data-testid={`skill-lock-${skill.id}`} className="size-3.5 shrink-0 text-muted-foreground" />}
 				{isDue(skill, now) && <DueChip />}
 				<span className="w-24 shrink-0">
 					<UnderstandingBar skill={skill} now={now} className="mt-0" />
 				</span>
 			</button>
 			{open && !choosing && (
-				<div className="space-y-3 pb-3 pl-5 text-xs" data-testid={`skill-detail-${skill.id}`}>
+				<div className="space-y-3 pt-1 pb-4 pl-5.5 text-meta" data-testid={`skill-detail-${skill.id}`}>
 					{actions && <div className="flex flex-wrap items-center gap-1.5">{actions}</div>}
 					{skill.learned ? (
 						<div
@@ -364,18 +375,19 @@ function DraftReview({
 	// A reused skill shows the draft's wording: approval writes it over the stored one (a re-wording into the course language).
 	const label = (s: DraftSkill) => s.name;
 	return (
-		<section data-testid="course-draft" className="rounded-xl border border-border bg-card/60 p-4">
+		<section data-testid="course-draft" className="rounded-lg border border-border bg-card p-5">
 			<div className={PAGE_HEAD}>
 				Draft skill map · {draft.skills.length} skills{reusedCount > 0 ? ` · ${reusedCount} reused` : ""}
 			</div>
 			{draft.feedback && <p className="mb-2 text-xs text-muted-foreground">Answering: “{draft.feedback}”</p>}
 			<p className="mb-3 font-prose text-(length:--lh-prose-size) leading-relaxed">{draft.summary}</p>
-			<ol className="mb-4 space-y-2">
+			{/* UI round 1b: the draft's skills as hairline rows inside the one card, not boxes in a box */}
+			<ol className="mb-4 divide-y divide-border border-y border-border">
 				{draft.skills.map((s) => (
-					<li key={s.key} className="rounded-lg border border-border/60 px-3 py-2" data-testid={`draft-skill-${s.key}`}>
-						<div className="flex items-baseline gap-2">
-							<RichLine prose>{label(s)}</RichLine>
-							{s.reuse && <span className="rounded-full border border-border px-1.5 text-xs text-muted-foreground">reused</span>}
+					<li key={s.key} className="py-2.5" data-testid={`draft-skill-${s.key}`}>
+						<div className={cn("flex items-baseline gap-2 font-medium", ROW_NAME)}>
+							<RichLine>{label(s)}</RichLine>
+							{s.reuse && <span className="shrink-0 rounded-sm bg-secondary px-1.5 text-xs font-normal text-muted-foreground">reused</span>}
 						</div>
 						<RichText className={cn(ITEM_TYPE, "text-muted-foreground")}>{s.statement}</RichText>
 						<p className="mt-0.5 text-xs text-muted-foreground">
@@ -395,7 +407,7 @@ function DraftReview({
 				aria-label="Changes to the draft"
 				data-testid="draft-feedback"
 				rows={3}
-				className="lh-prose w-full rounded-lg border border-border bg-background px-3 py-2 text-(length:--lh-prose-size) outline-none placeholder:text-muted-foreground focus:border-muted-foreground/50"
+				className={cn(FIELD_CLASS, "w-full px-3 py-2 text-body")}
 			/>
 			<div className="mt-2 flex items-center justify-end gap-2">
 				<button
@@ -421,9 +433,14 @@ function DraftReview({
 function SessionLink({ session }: { session: CourseView["sessions"][number] }) {
 	return (
 		<li>
-			<Link href={`/chat/${session.id}`} className="flex items-center gap-2 rounded-md px-2 py-1 text-sm hover:bg-accent">
-				<span className="min-w-0 flex-1 line-clamp-2 break-words sm:line-clamp-none sm:block sm:truncate font-prose">{session.title}</span>
-				<span className="shrink-0 text-xs text-muted-foreground">{COURSE_MODE_LABEL[session.mode]}</span>
+			{/* UI round 1b (SPEC §8): the hover fill bleeds 8px past the column (-mx-2 on the list) so the titles sit flush
+			    with the Sessions heading instead of 11px in. */}
+			<Link
+				href={`/chat/${session.id}`}
+				className="flex min-h-9 items-center gap-3 rounded-sm px-2 py-1.5 text-body outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised focus-visible:ring-2 focus-visible:ring-focus"
+			>
+				<span className="min-w-0 flex-1 line-clamp-2 break-words sm:line-clamp-none sm:block sm:truncate">{session.title}</span>
+				<span className="shrink-0 text-meta text-muted-foreground">{COURSE_MODE_LABEL[session.mode]}</span>
 				{session.finished && <CheckIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Finished" />}
 			</Link>
 		</li>
@@ -438,16 +455,16 @@ function SessionsSection({ sessions }: { sessions: CourseView["sessions"] }) {
 	const open = sessions.filter((s) => !s.finished);
 	const finished = sessions.filter((s) => s.finished);
 	return (
-		<section data-testid="course-sessions" className="border-t border-border/50 pt-6">
+		<section data-testid="course-sessions" className="border-t border-border pt-6">
 			<div className={PAGE_HEAD}>Sessions</div>
 			{open.length > 0 ? (
-				<ul className="space-y-0.5" data-testid="course-sessions-open">
+				<ul className="-mx-2" data-testid="course-sessions-open">
 					{open.map((s) => (
 						<SessionLink key={s.id} session={s} />
 					))}
 				</ul>
 			) : (
-				<p className="px-2 text-xs text-muted-foreground">No session in progress.</p>
+				<p className="text-sm text-muted-foreground">No session in progress.</p>
 			)}
 			{finished.length > 0 && (
 				<div className="mt-2">
@@ -456,13 +473,13 @@ function SessionsSection({ sessions }: { sessions: CourseView["sessions"] }) {
 						onClick={() => setShowFinished((v) => !v)}
 						aria-expanded={showFinished}
 						data-testid="course-sessions-finished-toggle"
-						className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+						className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "-ml-2 text-muted-foreground hover:text-foreground")}
 					>
-						{showFinished ? <ChevronDownIcon className="size-3.5" /> : <ChevronRightIcon className="size-3.5" />}
+						{showFinished ? <ChevronDownIcon /> : <ChevronRightIcon />}
 						Finished · {finished.length}
 					</button>
 					{showFinished && (
-						<ul className="space-y-0.5 opacity-80" data-testid="course-sessions-finished">
+						<ul className="-mx-2 text-muted-foreground" data-testid="course-sessions-finished">
 							{finished.map((s) => (
 								<SessionLink key={s.id} session={s} />
 							))}
@@ -645,8 +662,9 @@ export function CourseBody({
 		<CoverageContext.Provider value={coverage}>
 		<SkillListContext.Provider value={choose}>
 		<div className="space-y-8">
-			{/* Learn, Ask, Practice (2026-11-25): the three ways in, also before a skill map exists (then only Ask starts). */}
-			<CourseModes data={data} busy={busy} onLearn={(id) => onStart("learn", id)} onPractice={() => onStart("practice")} onAsk={onAsk} />
+			{/* Learn, Ask, Practice (2026-11-25): the three ways in, also before a skill map exists (then only Ask starts).
+			    UI round 2: before a skill map the setup (sources, then the draft) comes first and the modes sit quietly below it. */}
+			{skills.length > 0 && <CourseModes data={data} busy={busy} onLearn={(id) => onStart("learn", id)} onPractice={() => onStart("practice")} onAsk={onAsk} />}
 			<CourseSettings
 				courseId={course.id}
 				pace={course.pace}
@@ -671,6 +689,8 @@ export function CourseBody({
 			/>
 
 			{course.draft && !drafting && <DraftReview data={data} busy={busy} onFeedback={(f) => onDraft(f)} onApprove={onApprove} />}
+
+			{skills.length === 0 && <CourseModes quiet data={data} busy={busy} onLearn={(id) => onStart("learn", id)} onPractice={() => onStart("practice")} onAsk={onAsk} />}
 
 		{skills.length > 0 && (
 			<>
@@ -697,8 +717,11 @@ export function CourseBody({
 						<PlacementOffer total={skills.length - data.contextCheck.length} busy={busy} onTake={() => onStart("placement")} onSkip={() => onSkipPlacement?.()} />
 					)}
 
-					{/* Understanding and Reviews due side by side, flat (owner, 2026-11-16): only Next up and Exam are raised. */}
-					<div className={cn("grid gap-x-10 gap-y-8", skills.some((s) => s.learned) && "lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]")}>
+					{/* Understanding and Reviews due side by side, flat (owner, 2026-11-16): only Next up and Exam are raised. UI round
+					    1b: no boxes, a hairline above, a 24px grid; side by side only when the COLUMN is wide enough for "This week"
+					    (a container query), stacked at 1024px. */}
+					<div className="@container border-t border-border pt-6">
+					<div className={cn("grid gap-x-12 gap-y-6", skills.some((s) => s.learned) && "@3xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]")}>
 						<section data-testid="course-overview" className="min-w-0 space-y-3">
 							<div className={PAGE_HEAD}>
 								Understanding<span className={HEAD_COUNT}>{courseProgressPercent(skills.map((s) => s.understanding))}%</span>
@@ -713,11 +736,12 @@ export function CourseBody({
 							</section>
 						)}
 					</div>
+					</div>
 
 					{/* The class's vocabulary (WP5): unassigned and flagged terms, or "Map the class's terms". */}
 					<CoverageSummary />
 
-					<div className="flex flex-wrap items-center gap-2 border-t border-border/50 pt-6">
+					<div className="flex flex-wrap items-center gap-2 border-t border-border pt-6">
 						<h2 className={cn(PAGE_HEAD, "pb-0")}>
 							Skills<span className={HEAD_COUNT}>{skills.length}</span>
 						</h2>
@@ -744,8 +768,9 @@ export function CourseBody({
 								}}
 								focusIds={mapFocus}
 								fitted
+								accentId={data.nextUp[0] ?? null}
 							/>
-							<p className="mt-1 text-xs text-muted-foreground">White: known, learned or next up · gray: locked behind a prerequisite.</p>
+							<p className="mt-2 text-meta text-muted-foreground">Blue outline: next up · dashed with a lock: locked behind a prerequisite.</p>
 						</section>
 					)}
 
@@ -888,10 +913,10 @@ export function CourseBody({
 									</div>
 									<RowList>
 										{(allMissed ? missed : missed.slice(0, MISSED_SHOWN)).map((m) => (
-											<div key={m.id} className="flex items-start justify-between gap-3 border-b border-border/40 py-2 text-sm" data-testid={`course-missed-${m.id}`}>
+											<div key={m.id} className="flex items-center justify-between gap-3 border-b border-border py-2.5 text-body" data-testid={`course-missed-${m.id}`}>
 												<div className="min-w-0">
-													<div className="line-clamp-2">
-														<RichLine prose>{oneLineStatement(m.statement)}</RichLine>
+													<div className={cn("line-clamp-2", ROW_NAME)}>
+														<RichLine>{oneLineStatement(m.statement)}</RichLine>
 													</div>
 													<div className="mt-0.5 text-xs text-muted-foreground">
 														{m.skills.map((s) => s.name).join(", ")} · {m.how} · {m.at.slice(0, 10)}
@@ -913,7 +938,7 @@ export function CourseBody({
 									{missed.length > MISSED_SHOWN && (
 										<button
 											type="button"
-											className="lh-touch mt-1 flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+											className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "lh-touch mt-1 -ml-2 text-muted-foreground hover:text-foreground")}
 											aria-expanded={allMissed}
 											data-testid="course-missed-all"
 											onClick={() => setAllMissed((v) => !v)}
@@ -930,7 +955,7 @@ export function CourseBody({
 			)}
 
 			{choosing && (
-				<div data-testid="choose-bar" className="sticky bottom-3 z-20 flex items-center justify-between gap-3 rounded-xl border border-border bg-background/95 px-3 py-3 shadow-lg sm:px-4 backdrop-blur">
+				<div data-testid="choose-bar" className="lh-popover sticky bottom-3 z-20 flex items-center justify-between gap-3 px-3 py-2.5 sm:px-4">
 					<span className="text-sm" data-testid="choose-count">
 						{chooseCount === 0 ? "Tap skills to practice" : `${chooseCount} skill${chooseCount === 1 ? "" : "s"} chosen`}
 					</span>
@@ -986,6 +1011,7 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 		() => initial.skills.length === 0 || !!initial.course.draft || initial.drafting || initial.course.status === "drafting" || !!initial.course.error,
 	);
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const [scrolled, setScrolled] = useState(false);
 
 	const refresh = useCallback(async () => {
 		try {
@@ -1122,8 +1148,10 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 		if (next) scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
 	};
 	return (
-		<div ref={scrollRef} className="relative h-dvh overflow-y-auto">
-			<header className="lh-drag z-10 bg-background/85 pb-2 pt-[calc(0.5rem+var(--lh-safe-top))] backdrop-blur sm:sticky sm:top-0">
+		<div ref={scrollRef} className="relative h-dvh overflow-y-auto" onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}>
+			{/* A solid band (UI round 1b, SPEC §8): content scrolling under the sticky header no longer shows through it. UI
+			    round 2: a bottom hairline once the page has scrolled, so content never shears against empty space. */}
+			<header className={cn("lh-drag z-10 border-b bg-background pb-2 pt-[calc(0.5rem+var(--lh-safe-top))] transition-colors duration-(--lh-duration-hover) sm:sticky sm:top-0", scrolled ? "border-border" : "border-transparent")}>
 				{/* the same column and padding as the page below, so the title lines up with the content (owner, 2026-11-16) */}
 				<div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-3 gap-y-1 px-4 sm:flex-nowrap sm:px-6">
 				<SidebarToggle />
@@ -1142,27 +1170,28 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 					data-testid="course-title"
 					className="lh-no-drag order-last min-w-0 basis-full resize-none overflow-y-auto bg-transparent lh-page-title outline-none sm:order-none sm:basis-auto sm:flex-1"
 				/>
-				{progress && (
-					<span className="ml-auto shrink-0 text-xs text-muted-foreground sm:ml-0" data-testid="course-progress">
-						{progress}
-					</span>
-				)}
-				<span className="lh-no-drag flex shrink-0 items-center gap-1.5">
+				{/* One quiet group (UI round 1b): the known count as meta text, then 32px controls 8px apart. */}
+				<span className="lh-no-drag ml-auto flex shrink-0 items-center gap-2 sm:ml-0">
+					{progress && (
+						<span className="mr-1 whitespace-nowrap text-meta tabular-nums text-muted-foreground" data-testid="course-progress">
+							{progress}
+						</span>
+					)}
 					<button
 						type="button"
-						className={cn(BTN, "lh-touch flex items-center justify-center px-2")}
+						className={cn(HEAD_ICON_BTN, "lh-touch", settingsOpen && "bg-raised text-foreground")}
 						aria-label="Course settings"
 						title="Course settings"
 						aria-expanded={settingsOpen}
 						data-testid="course-settings-toggle"
 						onClick={toggleSettings}
 					>
-						<SettingsIcon className="size-4" aria-hidden />
+						<SettingsIcon strokeWidth={1.75} aria-hidden />
 					</button>
 					{hasSkills && (
 						<button
 							type="button"
-							className={cn(BTN, "lh-touch")}
+							className={cn(HEAD_BTN, "lh-touch")}
 							disabled={busy || data.review.length === 0}
 							data-testid="course-review-button"
 							onClick={() => void onStart("review")}
@@ -1217,12 +1246,12 @@ data={data}
 					}}
 				/>
 				</WeightEditContext.Provider>
-				<div className="mt-12 border-t border-border/60 pt-4">
+				<div className="mt-12 border-t border-border pt-4">
 					<button
 						type="button"
 						onClick={() => void remove()}
 						data-testid="course-delete"
-						className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+						className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "-ml-2.5 text-destructive")}
 					>
 						Delete course…
 					</button>

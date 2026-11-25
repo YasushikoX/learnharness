@@ -419,7 +419,8 @@ describe("controlled plugin UI", () => {
 	it("shared model/thinking triggers own their canonical chrome typography", () => {
 		const { document } = parseHTML(renderToStaticMarkup(<ModelPickerPill>Fixture model</ModelPickerPill>));
 		const trigger = document.querySelector("button")!;
-		for (const token of ["font-mono", "text-xs"]) assert.ok(trigger.classList.contains(token), token);
+		assert.ok(trigger.classList.contains("text-xs"), "text-xs");
+		assert.equal(trigger.classList.contains("font-mono"), false, "the model id is in the sans font (UI round 2: mono is for code)");
 		assert.equal(trigger.querySelector("span")!.className, "text-card-foreground", "label color stays native foreground");
 		assert.ok(trigger.querySelector("svg.lucide-chevron-down"), "a lucide chevron, no text glyph (UI round 1)");
 	});

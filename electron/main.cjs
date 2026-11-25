@@ -323,16 +323,14 @@ function createWindow(url, beforeLoad) {
 		height: 900,
 		title: PRODUCT_NAME,
 		// Merged chrome (owner, 2026-09-17): the system title bar is gone;
-		// the app's own 60px header bands ARE the title bar. The traffic
-		// lights float over the sidebar's LH wordmark band, vertically
-		// Aligned to the PHASE PILL's drawn box, not the band's geometric
-		// center (owner ask, 2026-09-17): macOS centers each 12px circle at
-		// y+6.75, and the pill box center measures 29.25 in the running app
-		// (band 0–59.5, pill box 19–39.5) — y 22.5 lands the circles at
-		// 29.25, exactly on the pill. Wordmark gutter: components/sidebar.tsx.
+		// the app's own 48px header bands ARE the title bar (UI round 1b;
+		// 60px before). The traffic lights float over the sidebar's LH
+		// wordmark band, centred on it: macOS centres each 12px circle at
+		// y+6.75, so y 17.25 lands the circles at 24, the band's middle and
+		// the top bar's controls' middle. Wordmark gutter: components/sidebar.tsx.
 		// Dragging comes from the renderer's .lh-drag bands (app/globals.css).
 		...(process.platform === "darwin"
-			? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 16, y: 22.5 } }
+			? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 16, y: 17.25 } }
 			: {
 				titleBarStyle: "hidden",
 				// Native min/max/close on the right, at the OS's compact default

@@ -87,7 +87,7 @@ test("Providers has four ordered sections including External CLI (Dictation is i
   return Response.json({ providers: [{ id: "openai", envVar: "OPENAI_API_KEY", label: "OpenAI" }], keys: [{ id: "FUTURE_VAR", info: null, present: true, masked: "…abcd", source: "file", shadowedByEnv: false }] });
  };
  fixture(); await mount(<KeysSection />);
- const headings = [...document.querySelectorAll('[data-testid^="group-"] > p')].map((el) => el.textContent);
+ const headings = [...document.querySelectorAll('[data-testid^="group-"] > h3')].map((el) => el.textContent);
  assert.deepEqual(headings, ["Model API keys", "Subscriptions", "External CLI", "Search"]);
  assert(byTest("claude-code-installation").closest('[data-testid="group-external-cli"]'));
  assert(!document.querySelector('[data-testid="group-dictation"]'), "the Dictation group lives on its own page now");
@@ -204,8 +204,9 @@ test("email-only connected selector and Manage remain responsive; account select
  assert.doesNotMatch(byTest("chatgpt-connection").textContent!, /private-registration|private-issued| · active|signed-out/);
  assert.match(byTest("chatgpt-connection").firstElementChild!.className, /items-center/);
  const row = byTest("chatgpt-connection").firstElementChild!;
- assert.equal(row.children[0]!.textContent, "ChatGPT"); assert.equal(row.children[1]!.tagName, "SELECT"); assert.equal(row.children[2]!.textContent, "Manage…");
- assert.match(row.children[2]!.className, /text-muted-foreground/); assert(!row.textContent?.includes("Connected"));
+ const [select, manage] = row.querySelectorAll("select, button");
+ assert.equal(row.children[0]!.textContent, "ChatGPT"); assert.equal(select?.tagName, "SELECT"); assert.equal(manage?.textContent, "Manage…");
+ assert.match(manage!.className, /text-muted-foreground/); assert(!row.textContent?.includes("Connected"));
  await selectAccount("ChatGPT account", "second"); assert.deepEqual(f.calls.select, ["second"]); assert.equal(f.status.allowBackgroundUse, false);
  await click(button("Manage…")); assert(byTest("chatgpt-managed-identity").textContent?.includes("second@example.invalid"));
  assert.deepEqual([...byTest("chatgpt-account-footer").querySelectorAll("button")].map((b) => b.textContent), ["Disconnect", "Close"]);
@@ -320,7 +321,9 @@ test("missing eligibility remains compatible but never implies authorization rec
 });
 test("connected setup row retains the email dropdown before muted Manage", async () => {
  fixture(connected()); await mount(<ChatGPTConnection setup />);
- const row = byTest("chatgpt-connection").firstElementChild!; assert.equal(row.children[1]!.tagName, "SELECT"); assert.equal(row.children[2]!.textContent, "Manage…"); assert.match(row.children[2]!.className, /text-muted-foreground/);
+ const row = byTest("chatgpt-connection").firstElementChild!;
+ const [select, manage] = row.querySelectorAll("select, button");
+ assert.equal(select?.tagName, "SELECT"); assert.equal(manage?.textContent, "Manage…"); assert.match(manage!.className, /text-muted-foreground/);
 });
 test("Add accounts applies heading default focus for the pre-auth transition", async () => {
  const previous = HTMLElement.prototype.focus; const focused: HTMLElement[] = [];
@@ -403,7 +406,7 @@ for (const value of [true, false]) test(`global toggle keeps its normal cursor w
  await mount(); await click(button("Manage…")); await click(toggle());
  await act(async () => f.push(connected(!value)));
  assert((toggle() as HTMLButtonElement).disabled);
- assert(byTest("chatgpt-global-background").className.includes("[&>button:disabled]:cursor-auto"));
+ assert(byTest("chatgpt-global-background").className.includes("[&_button:disabled]:cursor-auto"));
  assert.equal(toggle().getAttribute("aria-checked"), String(!value));
  await click(toggle()); assert.deepEqual(f.calls.consent, [!value]);
  await act(async () => held.resolve(connected(!value)));

@@ -70,7 +70,7 @@ export function AbortTurnBody({
 				className="mx-4 w-full max-w-sm lh-dialog p-6"
 				onClick={(e) => e.stopPropagation()}
 			>
-				<h2 className="text-sm font-semibold text-card-foreground" data-testid="abort-turn-title">
+				<h2 className="text-[15px] font-semibold leading-5 text-card-foreground" data-testid="abort-turn-title">
 					{copy.title}
 				</h2>
 				<p className="mt-1.5 text-xs text-muted-foreground" data-testid="abort-turn-line">

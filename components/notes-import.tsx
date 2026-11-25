@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type ChangeEvent } from "react";
 import { WaypointsIcon } from "lucide-react";
 import { Hint } from "@/components/ui/hint";
-import { COMPACT_BUTTON, COMPACT_LABEL } from "@/components/chrome-compact";
+import { COMPACT_BUTTON, COMPACT_LABEL, GRAPH_TOOL, GRAPH_TOOL_BUTTON } from "@/components/chrome-compact";
 import { IMPORT_ACCEPT } from "@/lib/notes-import-limits.ts";
 import { useInteractionLayer, useInteractionLayers } from "@/components/interaction-layers";
 import { INTERACTION_LAYER_Z_BASE } from "@/components/host-dialog";
@@ -107,15 +107,15 @@ export function NotesImportControl({ importing, onImportFiles }: { importing: bo
 		onClose: () => { setOpen(false); return "closed"; } });
 	const choices = [["Files", filesRef], ["Folder", folderRef]] as const;
 	return (
-		<div ref={rootRef} className="relative shrink-0 rounded-xl border bg-card/85 px-1 py-[3px] shadow-lg backdrop-blur"
+		<div ref={rootRef} className="relative shrink-0"
 			onBlur={(event) => { if (interactions.isElementEligible(panelRef.current) && !event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
 			<input ref={filesRef} type="file" multiple accept={IMPORT_ACCEPT} className="hidden" onChange={onChange} />
 			<input ref={folderRef} type="file" {...{ webkitdirectory: "" }} className="hidden" onChange={onChange} />
 			<Hint label="Extract files into the graph" side="bottom">
 				<button type="button" onClick={() => setOpen(!open)} aria-expanded={open} aria-haspopup="menu" data-testid="import-notes"
 					aria-label={importing ? "Extracting…" : "Extract files…"}
-					className={`flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent ${COMPACT_BUTTON}`}>
-					<WaypointsIcon className="size-3 shrink-0" /><span className={COMPACT_LABEL}>{importing ? "Extracting…" : "Extract files…"}</span>
+					className={`${GRAPH_TOOL} ${GRAPH_TOOL_BUTTON} ${open ? "bg-raised text-foreground" : ""} ${COMPACT_BUTTON}`}>
+					<WaypointsIcon className="size-3.5 shrink-0" /><span className={COMPACT_LABEL}>{importing ? "Extracting…" : "Extract files…"}</span>
 				</button>
 			</Hint>
 			{open && (

@@ -41,18 +41,14 @@ export function LearnPaceBody({
 			{...backdropDismiss}
 		>
 			<div className="mx-4 w-full max-w-sm lh-dialog p-6" onClick={(e) => e.stopPropagation()}>
-				<h2 className="text-sm font-semibold text-card-foreground">How fast do you want to go?</h2>
-				<div className="mt-3">
+				{/* UI round 1b (SPEC §3 dialogs): a 15/600 title, 32px buttons, Cancel ghost, the dialog's one primary action. */}
+				<h2 className="lh-section-title text-card-foreground">How fast do you want to go?</h2>
+				<div className="mt-4">
 					<PaceRadios pace={pace} onPace={onPace} />
 				</div>
-				<p className="mt-2 text-xs text-muted-foreground">This lesson only. The course and Settings keep their own defaults.</p>
-				<div className="mt-4 flex justify-end gap-2">
-					<button
-						type="button"
-						data-testid="learn-pace-cancel"
-						onClick={onClose}
-						className={buttonVariants({ variant: "ghost", size: "sm" })}
-					>
+				<p className="mt-3 text-sm text-muted-foreground">This lesson only. The course and Settings keep their own defaults.</p>
+				<div className="mt-6 flex justify-end gap-2">
+					<button type="button" data-testid="learn-pace-cancel" onClick={onClose} className={buttonVariants({ variant: "ghost" })}>
 						Cancel
 					</button>
 					<button
@@ -60,7 +56,7 @@ export function LearnPaceBody({
 						data-testid="learn-pace-start"
 						disabled={pace === null || busy}
 						onClick={onStart}
-						className="rounded-sm border border-foreground/30 bg-muted px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-muted/70 disabled:pointer-events-none disabled:opacity-50"
+						className={buttonVariants()}
 					>
 						Start lesson
 					</button>

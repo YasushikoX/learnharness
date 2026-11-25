@@ -14,6 +14,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 
 /** The fork's running log of what changed (owner, 2026-10-29): there are no per-release notes. */
 export const ANDROID_RELEASE_NOTES_URL = "https://github.com/TobiasSamsonsen/learnharness/blob/main/docs/android/STATUS.md";
@@ -37,29 +38,30 @@ export function AndroidUpdateNotice({ onNotNow, onUpdate }: { onNotNow: () => vo
 	return (
 		<div
 			data-testid="android-update-card"
-			className="pointer-events-auto w-[22rem] max-w-full rounded-lg border border-border bg-popover px-4 py-3 text-sm shadow-lg"
+			className="pointer-events-auto w-[22rem] max-w-full lh-popover p-4 text-sm"
 		>
 			<span className="font-medium">A new version of LearnHarness is ready</span>
 			<p className="mt-1 text-xs text-muted-foreground">
-					It downloads over Wi-Fi, in one go. Android may ask you to confirm installing the app, and the app restarts when it is done.
-				</p>
-			<div className="mt-2.5 flex flex-wrap items-center gap-2">
-				<button
+				It downloads over Wi-Fi, in one go. Android may ask you to confirm installing the app, and the app restarts when it is done.
+			</p>
+			<div className="mt-3 flex flex-wrap items-center gap-2">
+				<Button
 					type="button"
 					data-testid="android-update-start"
 					onClick={onUpdate}
-					className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent/80"
+					size="sm"
 				>
 					Update
-				</button>
-				<button
+				</Button>
+				<Button
 					type="button"
 					data-testid="android-update-later"
 					onClick={onNotNow}
-					className="rounded-md border border-border px-3 py-1.5 text-sm transition-colors hover:bg-accent/50"
+					variant="secondary"
+					size="sm"
 				>
 					Not now
-				</button>
+				</Button>
 				<a
 					href={ANDROID_RELEASE_NOTES_URL}
 					target="_blank"

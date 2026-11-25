@@ -40,7 +40,7 @@ test("meter keeps its measured numerator across selected-model/catalog changes, 
 		await act(async () => notifySettingsSaved("models"));
 		assert.equal(context(), "83k / 200k", "only denominator changes");
 		await act(async () => root.render(<StatsBar chatId="fixture" turns={[turn]} contextTokens={null} pricing={pricing} />));
-		assert.equal(context(), "? / 200k");
+		assert.equal(context(), undefined, "post-compaction unknown: the meter leaves the bar (UI round 2)");
 		assert.equal(host.querySelector('[data-testid="stats-cost"]')?.textContent, "$0.0030", "summary spending is still visible");
 		await act(async () => root.render(<StatsBar chatId="fixture" turns={[turn]} contextTokens={72_000} pricing={pricing} />));
 		assert.equal(context(), "72k / 200k");

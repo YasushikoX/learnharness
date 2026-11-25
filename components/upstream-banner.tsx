@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { XIcon } from "lucide-react";
 import type { UpstreamStatus } from "@/src/core";
+import { Button } from "@/components/ui/button";
 
 /** Re-read cadence; the server checks GitHub at most every 6 hours. */
 const POLL_MS = 60 * 60_000;
@@ -66,29 +67,31 @@ export function UpstreamNotice({
 	return (
 		<div
 			data-testid="upstream-banner"
-			className="pointer-events-auto w-[22rem] rounded-lg border border-border bg-popover px-4 py-3 text-sm shadow-lg"
+			className="pointer-events-auto w-[22rem] max-w-[calc(100vw-2rem)] lh-popover p-4 text-sm"
 		>
 			<div className="flex items-start justify-between gap-3">
 				<div>
 					<span className="font-medium">LearnHarness {latest.tag} is out upstream</span>
 					<span className="text-muted-foreground"> — this fork is on {status.current}.</span>
 				</div>
-				<button
+				<Button
 					type="button"
 					aria-label="Dismiss until the next upstream release"
 					data-testid="upstream-dismiss"
 					onClick={onDismiss}
-					className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
+					variant="ghost"
+					size="icon-sm"
+					className="-mr-1.5 -mt-1 text-muted-foreground hover:text-foreground"
 				>
 					<XIcon className="size-4" />
-				</button>
+				</Button>
 			</div>
 			<p className="mt-1 text-xs text-muted-foreground">
 				Claude Code can merge it into your fork, keep the fork&apos;s features, run the tests and rebuild the app.
 			</p>
-			<div className="mt-2.5 flex flex-wrap items-center gap-2">
+			<div className="mt-3 flex flex-wrap items-center gap-2">
 				{canLaunchClaude(status) && (
-					<button
+					<Button
 						type="button"
 						data-testid="upstream-launch"
 						disabled={busy}
@@ -98,19 +101,20 @@ export function UpstreamNotice({
 							setBusy(false);
 							setNote(error ?? "Claude Code opened in a terminal — continue there.");
 						}}
-						className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent/80 disabled:opacity-50"
+						size="sm"
 					>
 						Update with Claude Code
-					</button>
+					</Button>
 				)}
-				<button
+				<Button
 					type="button"
 					data-testid="upstream-copy"
 					onClick={() => void copy()}
-					className="rounded-md border border-border px-3 py-1.5 text-sm transition-colors hover:bg-accent/50"
+					variant="secondary"
+					size="sm"
 				>
 					Copy prompt
-				</button>
+				</Button>
 				<a
 					href={latest.url}
 					target="_blank"

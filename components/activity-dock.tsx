@@ -7,6 +7,7 @@ import type { CallUsage, JobKind, JobRecord } from "@/src/core";
 import { isModelsRefusal, isProviderKeyRefusal, subscriptionLabel, subscriptionLabels } from "@/src/core";
 import { formatTokens, planCostLabel } from "@/components/usage-format";
 import { useServerEvent, useServerResync } from "@/components/server-events";
+import { Button } from "@/components/ui/button";
 
 /**
  * THE BACKGROUND-AGENTS SECTION (owner, sidebar round — the successor of
@@ -377,10 +378,11 @@ export function ActivitySection({ feed: feedProp, trailing }: { feed?: ActivityF
 	// rows match the session rows' hover. Empty means empty: the header sits
 	// alone (the cost span is population, not decoration).
 	return (
-		<section data-testid="activity-section" className="border-t border-border px-3 pb-2 pt-1">
-			<div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-				<ActivityIcon className="size-3" />
-				Background agents
+		<section data-testid="activity-section" className="border-t border-border px-2 py-2">
+			{/* A 32px row on the sidebar's grid (UI round 1b): 16px icon, the label at the Today/Courses rows' x, one line. */}
+			<div className="flex h-8 items-center gap-2 whitespace-nowrap pl-3 text-[13px] font-medium text-muted-foreground">
+				<ActivityIcon className="size-4 shrink-0" strokeWidth={1.75} />
+				<span className="min-w-0 truncate">Background agents</span>
 				{blobs.length > 0 && !trailing && (
 					<span className="ml-auto font-normal tabular-nums" data-testid="activity-total-cost" title="Total running cost (inferred)">
 						{planCostLabel(totalCost, subscriptionLabels(blobs.map((blob) => blob.model)))}
@@ -448,14 +450,15 @@ function ActivityBlobRow({
 		<div
 			data-testid={`activity-blob-${blob.process}`}
 			data-activity-id={blob.id}
-			className="rounded-lg px-2 py-1.5 text-xs transition-colors hover:bg-accent"
+			// UI round 1b: a quiet row like the session rows (raised fill on hover, radius 8), not a card around a button.
+			className="rounded-md px-2 py-1.5 text-xs transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised"
 		>
 			<div className="relative">
 				<button
 					type="button"
 					onClick={onToggleDetail}
 					aria-expanded={detailOpen}
-					className="flex w-full items-center gap-2 pr-7 text-left"
+					className="flex w-full items-center gap-2 rounded-sm pr-7 text-left outline-none focus-visible:ring-2 focus-visible:ring-focus"
 				>
 					<Icon className="size-3.5 shrink-0 text-muted-foreground" />
 					<span className="min-w-0 flex-1">
@@ -478,23 +481,25 @@ function ActivityBlobRow({
 				{/* The explicit END always on the blob's face (SCOPE) — the popover
 				    is for DETAIL, not the control. A failed abort locks the button and
 				    says why; a succeeded one just makes the blob vanish on refresh. */}
-				<button
+				<Button
 					type="button"
+					variant="ghost"
+					size="icon-xs"
 					data-testid="activity-abort"
 					onClick={onAbort}
 					disabled={abortState !== undefined}
 					title={abortState === "failed" ? "Abort failed — try again" : "End this background process"}
 					aria-label={`End ${label} in ${blob.title}`}
-					className="absolute right-1 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+					className="absolute right-0 top-1/2 -translate-y-1/2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
 				>
 					<SquareIcon className="size-3" />
-				</button>
+				</Button>
 			</div>
 
 			{detailOpen && (
 				<div
 					data-testid="activity-blob-detail"
-					className="mt-1 flex flex-col gap-1 rounded-lg bg-accent/40 p-2 text-muted-foreground"
+					className="mt-1 flex flex-col gap-1 rounded-lg bg-raised/60 p-2 text-muted-foreground"
 				>
 					<div className="mb-1.5 flex items-center gap-2">
 						<Icon className="size-3.5 text-muted-foreground" />

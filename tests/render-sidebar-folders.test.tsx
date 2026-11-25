@@ -10,12 +10,12 @@ const row = (depth: number, open: boolean, compact = false) => renderToStaticMar
 );
 
 it("nested rows still start at the parent's rail without a rule on the folder heading itself", () => {
-	assert.equal(sidebarRail(0), 15);
-	assert.deepEqual([sidebarRuleInset(0), sidebarRuleInset(1), sidebarRuleInset(2)], [0, 15, 33]);
-	assert.deepEqual(sidebarRowBox(2), { marginLeft: 33, paddingLeft: 15 });
-	assert.deepEqual(sidebarFolderBox(0), { marginLeft: 0, paddingLeft: 8 }, "the chevron glyph lines up with session titles at 12px");
+	assert.equal(sidebarRail(0), 11);
+	assert.deepEqual([sidebarRuleInset(0), sidebarRuleInset(1), sidebarRuleInset(2)], [0, 11, 29]);
+	assert.deepEqual(sidebarRowBox(2), { marginLeft: 29, paddingLeft: 15 });
+	assert.deepEqual(sidebarFolderBox(0), { marginLeft: 0, paddingLeft: 4 }, "the chevron glyph lines up with session titles at 8px into the inset row");
 	const html = row(1, false);
-	assert.match(html, /data-testid="sidebar-folder-row-f1"[^>]*style="margin-left:15px"/);
+	assert.match(html, /data-testid="sidebar-folder-row-f1"[^>]*style="margin-left:11px"/);
 	assert.match(html, /data-testid="sidebar-folder-f1"[^>]*style="padding-left:11px"/);
 	assert.doesNotMatch(html + row(1, true), /data-sidebar-folder-rule|border-bottom/);
 });
@@ -25,15 +25,15 @@ it("folder names use the chrome sans by default (UI round 1) and the same compac
 	const compact = row(0, false, true);
 	assert.match(compact, /\bh-8\b/);
 	const button = compact.match(/<button\b[^>]*>/)?.[0] ?? "";
-	assert.match(button, /hover:bg-accent/);
+	assert.match(button, /hover:bg-raised/);
 	assert.doesNotMatch(button, /transition-colors|duration-\d/);
 	assert.match(compact, /\bfont-ui\b[^>]*>Physics/);
 });
 
 it("folder boundaries use top and bottom rules aligned to the parent rail", () => {
 	assert.match(renderToStaticMarkup(<SidebarFolderRule depth={0} edge="top" />), /data-sidebar-folder-rule="top"[^>]*\btop-0[^>]*style="left:0"/);
-	assert.match(renderToStaticMarkup(<SidebarFolderRule depth={2} edge="bottom" />), /data-sidebar-folder-rule="bottom"[^>]*\bbottom-0[^>]*style="left:33px"/);
-	assert.match(renderToStaticMarkup(<NewFolderRow depth={1} onCreate={async () => {}} onDone={() => {}} />), /style="margin-left:15px;padding-left:11px"/);
+	assert.match(renderToStaticMarkup(<SidebarFolderRule depth={2} edge="bottom" />), /data-sidebar-folder-rule="bottom"[^>]*\bbottom-0[^>]*style="left:29px"/);
+	assert.match(renderToStaticMarkup(<NewFolderRow depth={1} onCreate={async () => {}} onDone={() => {}} />), /style="margin-left:11px;padding-left:11px"/);
 });
 
 it("the folder Delete reuses the session dialog's surface with plural wording", async () => {

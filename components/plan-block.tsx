@@ -318,6 +318,7 @@ export function PlanDiagram({
 	naturalSize,
 	monochrome,
 	fill,
+	accentId,
 }: {
 	/** usePlanLayout's result for these same nodes + edges. */
 	layout: PlanLayout;
@@ -347,6 +348,8 @@ export function PlanDiagram({
 	 *  dock band's marginalia mode, where the diagram must fit BOTH the
 	 *  flank's width and the band's height rather than run width-first. */
 	fill?: boolean;
+	/** The one node marked `data-accent` (the skill map's next-up skill; its CSS draws the accent outline). */
+	accentId?: string | null;
 }) {
 	// Pad only the full-extent render — the plan window's override viewBox is
 	// a deliberate viewport crop, and the popup keeps its own fit margins.
@@ -462,8 +465,11 @@ export function PlanDiagram({
 						transform={`translate(${layout.x.get(n.id) ?? 0}, ${layout.y.get(n.id) ?? 0})`}
 						data-testid={`plan-node-${n.id}`}
 						data-status={status}
+						data-accent={accentId != null && n.id === accentId ? "" : undefined}
 					>
-						{/* Rectangular — no corner rounding (owner). */}
+						{/* Rectangular — no corner rounding (owner) — in the chat block and the plan window. The skill map
+						    rounds them to 8 in its own CSS (globals.css .lh-skill-map, UI round 2): the owner's later
+						    T3/Apple-style redesign brief supersedes the square corners there. */}
 						<rect
 							width={w}
 							height={h}

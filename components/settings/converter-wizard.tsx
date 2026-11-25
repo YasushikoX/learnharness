@@ -2,7 +2,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ACKNOWLEDGE_LABEL, AI_TEXT_PREFACE, FIXED_VALUES_HEADING, sendLine, type ConverterDraftView, type ConverterDraftsOverview, type ConvertersOverview, type FixedValue } from "@/src/core";
 import { Button } from "@/components/ui/button";
-import { SettingsRow, SettingsSegmentedControl, Toggle } from "./controls";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { SettingsList, SettingsRow, SettingsSegmentedControl, Toggle } from "./controls";
 import { DRAFT_TEST_CLIENT_TIMEOUT_MS, approveDraft, createDraft, discardDraft, fixDraft, loadDrafts, testDraft, updateDraft } from "./converter-wizard-client.ts";
 
 /**
@@ -24,13 +26,10 @@ import { DRAFT_TEST_CLIENT_TIMEOUT_MS, approveDraft, createDraft, discardDraft, 
  * The server does the work and enforces every rule (src/server/converters/drafts.ts); this screen only shows it.
  */
 
-const FIELD =
-	"h-8 min-w-0 flex-1 rounded-md border border-input bg-card px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring";
-const AREA = "min-h-24 rounded-md border border-input bg-card p-2.5 font-mono text-xs text-foreground outline-none focus:border-ring";
-const LINK = "shrink-0 text-xs text-foreground underline-offset-2 hover:underline disabled:text-muted-foreground/40 disabled:no-underline";
-const QUIET_LINK = "shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-error hover:underline";
-const NOTE = "text-xs leading-relaxed text-muted-foreground";
-const BOX = "flex flex-col gap-1 rounded-sm border border-border p-2";
+const FIELD = "w-80 max-w-full";
+const AREA = "min-h-24 font-mono";
+const NOTE = "text-sm/5 text-muted-foreground";
+const BOX = "flex flex-col gap-4 border-t border-border pt-4";
 const MARK = { pass: "✓", fail: "✗", skipped: "–" } as const;
 const STEPS = ["Describe", "Review", "Test", "Approve"] as const;
 
@@ -187,10 +186,10 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 
 	const header = (
 		<div className="flex flex-wrap items-center justify-between gap-2">
-			<p className="text-xs font-medium text-foreground">Draft a connector with AI</p>
-			<button type="button" onClick={() => { cancel(); onClose(); }} className={LINK} data-testid="wizard-close">
+			<h3 className="lh-section-title">Draft a connector with AI</h3>
+			<Button type="button" variant="ghost" onClick={() => { cancel(); onClose(); }} data-testid="wizard-close">
 				Close
-			</button>
+			</Button>
 		</div>
 	);
 
@@ -199,9 +198,9 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 
 	const step = stepOf(draft);
 	const steps = (
-		<ol className="flex flex-wrap gap-3" data-testid="wizard-steps">
+		<ol className="flex flex-wrap gap-x-4 gap-y-2 border-b border-border pb-3" data-testid="wizard-steps">
 			{STEPS.map((s, i) => (
-				<li key={s} data-testid={`wizard-step-${s.toLowerCase()}`} data-current={i === step ? "true" : undefined} className={`text-xs ${i === step ? "font-medium text-foreground" : "text-muted-foreground"}`}>
+				<li key={s} data-testid={`wizard-step-${s.toLowerCase()}`} data-current={i === step ? "true" : undefined} aria-current={i === step ? "step" : undefined} className={`text-sm ${i === step ? "font-semibold text-foreground" : "text-muted-foreground"}`}>
 					{i + 1} {s}
 				</li>
 			))}
@@ -238,44 +237,47 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 					test it on two small PDFs and approve it. Nothing is sent to the service before you have saved its URL and pressed Test.
 				</p>
 				{overview.drafts.length > 0 && (
-					<div className="flex flex-col gap-0.5" data-testid="wizard-drafts">
-						{overview.drafts.map((d) => (
-							<span key={d.id} className="flex items-center gap-3">
-								<button type="button" className={LINK} onClick={() => open(d)} data-testid={`wizard-open-${d.id}`}>
-									Continue {d.serviceName}
-								</button>
-								<span className={NOTE}>{d.status === "ready" ? (d.approvable ? "tested, ready to approve" : "drafted") : d.status === "invalid" ? "not valid yet" : "cannot be described"}</span>
-								<button type="button" className={QUIET_LINK} onClick={() => void discard(d.id)} disabled={busy !== null}>
-									Discard
-								</button>
-							</span>
-						))}
+					<div data-testid="wizard-drafts">
+						<SettingsList>
+							{overview.drafts.map((d) => (
+								<SettingsRow key={d.id} label={d.serviceName} hint={d.status === "ready" ? (d.approvable ? "Tested, ready to approve" : "Drafted") : d.status === "invalid" ? "Incomplete" : "Cannot be described"}>
+									<div className="flex gap-2">
+										<Button type="button" variant="outline" onClick={() => open(d)} aria-label={`Continue ${d.serviceName}`} data-testid={`wizard-open-${d.id}`}>Continue</Button>
+										<Button type="button" variant="destructive" onClick={() => void discard(d.id)} disabled={busy !== null}>Discard</Button>
+									</div>
+								</SettingsRow>
+							))}
+						</SettingsList>
 					</div>
 				)}
-				<SettingsRow label="Service name" testid="wizard-name-row">
-					<input type="text" value={name} onChange={(e) => setName(e.target.value)} aria-label="Service name" data-testid="wizard-name" maxLength={80} placeholder="Acme OCR" className={FIELD} disabled={busy !== null} />
-				</SettingsRow>
-				<SettingsSegmentedControl<Source> label="Documentation" value={source} onChange={setSource} disabled={busy !== null} testidPrefix="wizard-source" options={[{ value: "url", label: "Documentation page" }, { value: "paste", label: "Paste the text" }]} />
-				{source === "url" ? (
-					<SettingsRow label="Documentation page" hint="A public page; the app fetches it once" testid="wizard-docs-url-row">
-						<input type="text" value={docsUrl} onChange={(e) => setDocsUrl(e.target.value)} aria-label="Documentation address" data-testid="wizard-docs-url" placeholder="https://docs.example.com/api/ocr" spellCheck={false} autoCapitalize="off" className={FIELD} disabled={busy !== null} />
+				<SettingsList>
+					<SettingsRow label="Service name" testid="wizard-name-row">
+						<Input type="text" value={name} onChange={(e) => setName(e.target.value)} aria-label="Service name" data-testid="wizard-name" maxLength={80} placeholder="Acme OCR" className={FIELD} disabled={busy !== null} />
 					</SettingsRow>
-				) : (
-					<textarea value={docsText} onChange={(e) => setDocsText(e.target.value)} aria-label="Documentation text" data-testid="wizard-docs-text" rows={6} placeholder="Paste the API reference of the upload and the answer…" className={AREA} disabled={busy !== null} />
-				)}
-				<details data-testid="wizard-sample">
-					<summary className="cursor-pointer text-xs text-foreground">Add a sample request or answer (optional)</summary>
-					<textarea value={sample} onChange={(e) => setSample(e.target.value)} aria-label="Sample request or answer" data-testid="wizard-sample-text" rows={4} className={`${AREA} mt-1 w-full`} disabled={busy !== null} />
-				</details>
-				<p data-testid="wizard-send-line" className="text-xs leading-relaxed text-foreground">
+					<SettingsRow label="Documentation source">
+					<SettingsSegmentedControl<Source> label="Documentation" value={source} onChange={setSource} disabled={busy !== null} testidPrefix="wizard-source" options={[{ value: "url", label: "Documentation page" }, { value: "paste", label: "Paste the text" }]} />
+					</SettingsRow>
+					{source === "url" ? (
+						<SettingsRow label="Documentation page" hint="A public page; the app fetches it once" testid="wizard-docs-url-row">
+							<Input type="text" value={docsUrl} onChange={(e) => setDocsUrl(e.target.value)} aria-label="Documentation address" data-testid="wizard-docs-url" placeholder="https://docs.example.com/api/ocr" spellCheck={false} autoCapitalize="off" className={FIELD} disabled={busy !== null} />
+						</SettingsRow>
+					) : (
+						<div><Textarea value={docsText} onChange={(e) => setDocsText(e.target.value)} aria-label="Documentation text" data-testid="wizard-docs-text" rows={6} placeholder="Paste the API reference of the upload and the answer…" className={AREA} disabled={busy !== null} /></div>
+					)}
+					<details data-testid="wizard-sample">
+						<summary className="cursor-pointer py-2 text-sm font-medium">Add a sample request or answer (optional)</summary>
+						<Textarea value={sample} onChange={(e) => setSample(e.target.value)} aria-label="Sample request or answer" data-testid="wizard-sample-text" rows={4} className={AREA} disabled={busy !== null} />
+					</details>
+				</SettingsList>
+				<p data-testid="wizard-send-line" className={NOTE}>
 					{sendLine({ ...(source === "url" ? { docsUrl } : {}), sample: !!sample.trim(), model: overview.model })}
 				</p>
 				{problem}
-				<div className="flex flex-wrap items-center gap-3">
-					<Button type="button" size="xs" variant="outline" className="lh-hit cursor-pointer disabled:cursor-not-allowed" disabled={!canDraft} onClick={draft1} data-testid="wizard-draft">
+				<div className="flex flex-wrap items-center justify-end gap-2">
+					<Button type="button" variant="outline" disabled={!canDraft} onClick={draft1} data-testid="wizard-draft">
 						{busy === "draft" ? "Drafting…" : source === "url" ? "Fetch the page and draft" : "Draft from the text"}
 					</Button>
-					{busy === "draft" && <button type="button" onClick={cancel} className={LINK} data-testid="wizard-draft-cancel">Cancel</button>}
+					{busy === "draft" && <Button type="button" variant="ghost" onClick={cancel} data-testid="wizard-draft-cancel">Cancel</Button>}
 				</div>
 			</div>
 		);
@@ -291,20 +293,20 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 	const editor = editing !== null && (
 		<div className="flex flex-col gap-1" data-testid="wizard-editor">
 			<p className={NOTE}>The app sets the id, name, version, description and docs link itself; the profile may not name the service&apos;s address.</p>
-			<textarea value={editing} onChange={(e) => setEditing(e.target.value)} aria-label="Profile JSON" data-testid="wizard-editor-text" rows={12} spellCheck={false} className={AREA} />
+			<Textarea value={editing} onChange={(e) => setEditing(e.target.value)} aria-label="Profile JSON" data-testid="wizard-editor-text" rows={12} spellCheck={false} className={AREA} />
 			<span className="flex gap-3">
-				<button type="button" className={LINK} disabled={busy !== null} onClick={() => void save({ profile: editing }, () => setEditing(null))} data-testid="wizard-editor-save">Save JSON</button>
-				<button type="button" className={QUIET_LINK} onClick={() => setEditing(null)}>Cancel</button>
+				<Button type="button" variant="outline" disabled={busy !== null} onClick={() => void save({ profile: editing }, () => setEditing(null))} data-testid="wizard-editor-save">Save JSON</Button>
+				<Button type="button" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
 			</span>
 		</div>
 	);
 	const editButton = draft.profileText !== undefined && editing === null && (
-		<button type="button" className={LINK} disabled={busy !== null} onClick={() => setEditing(draft.profileText ?? "")} data-testid="wizard-edit-json">Edit JSON</button>
+		<Button type="button" variant="outline" disabled={busy !== null} onClick={() => setEditing(draft.profileText ?? "")} data-testid="wizard-edit-json">Edit JSON</Button>
 	);
 	const fixButton = (
-		<button type="button" className={LINK} disabled={!canFix} onClick={() => void start("fix", (signal) => fixDraft(draft.id, signal))} data-testid="wizard-fix">
+		<Button type="button" variant="outline" disabled={!canFix} onClick={() => void start("fix", (signal) => fixDraft(draft.id, signal))} data-testid="wizard-fix">
 			{busy === "fix" ? "Asking AI…" : "Ask AI to fix"}
-		</button>
+		</Button>
 	);
 
 	return (
@@ -365,39 +367,39 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 			{editor}
 
 			{pre && (
-				<>
+				<SettingsList>
 					<SettingsRow label="Service URL" hint="Where the service answers; only you enter it" testid="wizard-url-row">
-						<span className="flex min-w-0 flex-1 items-center justify-end gap-2">
-							<input type="text" value={url} onChange={(e) => setUrl(e.target.value)} aria-label="Service URL" data-testid="wizard-url" placeholder="https://ocr.example.com" disabled={busy !== null} spellCheck={false} autoCapitalize="off" className={FIELD} />
-							<button type="button" onClick={() => void save({ baseUrl: url })} disabled={busy !== null || !urlChanged} data-testid="wizard-url-save" className={LINK}>Save</button>
+						<span className="flex w-80 max-w-full items-center justify-end gap-2">
+							<Input type="text" value={url} onChange={(e) => setUrl(e.target.value)} aria-label="Service URL" data-testid="wizard-url" placeholder="https://ocr.example.com" disabled={busy !== null} spellCheck={false} autoCapitalize="off" className="flex-1" />
+							<Button type="button" variant="outline" onClick={() => void save({ baseUrl: url })} disabled={busy !== null || !urlChanged} data-testid="wizard-url-save">Save</Button>
 						</span>
 					</SettingsRow>
 					{urlChanged && draft.credential.stored && <p className={NOTE}>Saving another URL removes the stored key, so it is never sent to the new address.</p>}
 					{draft.keyNeeded && (
 						<SettingsRow label="API key" hint={keyHint(draft)} testid="wizard-key-row">
-							<span className="flex min-w-0 flex-1 items-center justify-end gap-2">
-								<input type="password" value={key} onChange={(e) => setKey(e.target.value)} aria-label="API key" data-testid="wizard-key" autoComplete="off" placeholder={draft.credential.stored ? "Paste a new key to replace it…" : "Paste key…"} disabled={busy !== null} className={FIELD} />
-								<button type="button" onClick={() => void save({ apiKey: key }, () => setKey(""))} disabled={busy !== null || !key.trim()} data-testid="wizard-key-save" className={LINK}>Save</button>
+							<span className="flex w-80 max-w-full items-center justify-end gap-2">
+								<Input type="password" value={key} onChange={(e) => setKey(e.target.value)} aria-label="API key" data-testid="wizard-key" autoComplete="off" placeholder={draft.credential.stored ? "Paste a new key to replace it…" : "Paste key…"} disabled={busy !== null} className="flex-1 font-mono" />
+								<Button type="button" variant="outline" onClick={() => void save({ apiKey: key }, () => setKey(""))} disabled={busy !== null || !key.trim()} data-testid="wizard-key-save">Save</Button>
 							</span>
 						</SettingsRow>
 					)}
-				</>
+				</SettingsList>
 			)}
 
 			{problem}
 
 			{pre && (
 				<div className="flex flex-wrap items-center gap-3">
-					<Button type="button" size="xs" variant="outline" className="lh-hit cursor-pointer disabled:cursor-not-allowed" disabled={busy !== null || !draft.baseUrl || (draft.keyNeeded && !draft.credential.stored)} onClick={() => void start("test", (signal) => testDraft(draft.id, signal), DRAFT_TEST_CLIENT_TIMEOUT_MS)} data-testid="wizard-test">
+					<Button type="button" variant="outline" disabled={busy !== null || !draft.baseUrl || (draft.keyNeeded && !draft.credential.stored)} onClick={() => void start("test", (signal) => testDraft(draft.id, signal), DRAFT_TEST_CLIENT_TIMEOUT_MS)} data-testid="wizard-test">
 						{busy === "test" ? "Testing…" : "Test"}
 					</Button>
-					{busy === "test" && <button type="button" onClick={cancel} className={LINK} data-testid="wizard-test-cancel">Cancel</button>}
+					{busy === "test" && <Button type="button" variant="ghost" onClick={cancel} data-testid="wizard-test-cancel">Cancel</Button>}
 					<span className={NOTE}>
 						{draft.origin ? `Sends two small test PDFs (two pages, and three pages with a blank one) to ${draft.origin} and checks each page.` : "Save the service URL first; nothing is sent until then."}
 					</span>
 				</div>
 			)}
-			{busy === "fix" && <button type="button" onClick={cancel} className={LINK} data-testid="wizard-fix-cancel">Cancel</button>}
+			{busy === "fix" && <Button type="button" variant="ghost" onClick={cancel} data-testid="wizard-fix-cancel" className="self-end">Cancel</Button>}
 			{report && (
 				<div data-testid="wizard-report" className={BOX}>
 					<p data-testid="wizard-report-verdict" className={`text-xs font-medium ${report.ok ? "text-foreground" : "text-error"}`}>
@@ -429,11 +431,13 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 
 			{pre && (
 				<div className="flex flex-col gap-1" data-testid="wizard-approve-step">
-					<SettingsRow label={ACKNOWLEDGE_LABEL} hint={`Every value under "${FIXED_VALUES_HEADING}" above, for this version of the draft`} testid="wizard-ack-row">
-						<Toggle label={ACKNOWLEDGE_LABEL} checked={read} disabled={busy !== null} onChange={(on) => setAcknowledged(on && draft.shown ? draft.shown : null)} />
-					</SettingsRow>
+					<SettingsList>
+						<SettingsRow label={ACKNOWLEDGE_LABEL} hint={`Every value under "${FIXED_VALUES_HEADING}" above, for this version of the draft`} testid="wizard-ack-row">
+							<Toggle label={ACKNOWLEDGE_LABEL} checked={read} disabled={busy !== null} onChange={(on) => setAcknowledged(on && draft.shown ? draft.shown : null)} />
+						</SettingsRow>
+					</SettingsList>
 					<div className="flex flex-wrap items-center gap-3">
-						<Button type="button" size="xs" variant="outline" className="lh-hit cursor-pointer disabled:cursor-not-allowed" disabled={busy !== null || !draft.approvable || !read} onClick={() => void approve()} data-testid="wizard-approve">
+						<Button type="button" variant="outline" disabled={busy !== null || !draft.approvable || !read} onClick={() => void approve()} data-testid="wizard-approve">
 							Approve
 						</Button>
 						<span className={NOTE} data-testid="wizard-approve-note">
@@ -445,8 +449,8 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 			)}
 
 			<div className="flex flex-wrap items-center gap-3">
-				<button type="button" className={LINK} onClick={() => open(null)} disabled={busy !== null} data-testid="wizard-back">Back to Describe</button>
-				<button type="button" className={QUIET_LINK} onClick={() => void discard(draft.id)} disabled={busy !== null} data-testid="wizard-discard">Discard this draft</button>
+				<Button type="button" variant="ghost" onClick={() => open(null)} disabled={busy !== null} data-testid="wizard-back">Back to Describe</Button>
+				<Button type="button" variant="destructive" onClick={() => void discard(draft.id)} disabled={busy !== null} data-testid="wizard-discard">Discard this draft</Button>
 			</div>
 		</div>
 	);

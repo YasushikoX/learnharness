@@ -623,6 +623,8 @@ function QuestionDockForm({
 	const canSubmit = formCanSubmit || pendingInput;
 	// An answer is picked (the confidence buttons wait for this and nothing else).
 	const answerPicked = dockSubmitGate({ kind, mode: qd.mode, sel, other, text, confidenceSet: true, hasSketch: photo !== null || inkWaiting, requireConfidence: placementRecall }).canSubmit || pendingInput;
+	// The answer is there and only the confidence holds Submit back (the slider's Submit says so beside itself).
+	const confidenceBlocks = showConfidence && conf === null && answerPicked && !canSubmit;
 	const currentQuestion = useRef(qd); currentQuestion.current = qd;
 	const mounted = useRef(true);
 	useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -1229,7 +1231,7 @@ function QuestionDockForm({
 			{showConfidence && (
 				<div ref={confidenceRef} className={cn("border-t border-border px-4 py-3", wordingOnly && "hidden")} data-testid="confidence-row">
 					{confidenceMode === "slider" ? (
-						<ConfidenceSlider value={conf} onChange={setConf} disabled={compactionRunning || preparing} showUnsetHint onDontKnow={pressDontKnow} dontKnowDisabled={compactionRunning || preparing} />
+						<ConfidenceSlider value={conf} onChange={setConf} disabled={compactionRunning || preparing} onDontKnow={pressDontKnow} dontKnowDisabled={compactionRunning || preparing} />
 					) : (
 					<ConfidenceButtons
 						onPick={pressLevel}
@@ -1283,7 +1285,7 @@ function QuestionDockForm({
 				    Submit right. */}
 				<div data-testid={qd.mode === "text" ? "answer-field" : "thinking-field"}>
 					<div className="px-4 pt-3 lh-eyebrow text-muted-foreground">
-						{qd.mode === "text" ? "Your answer" : "YOUR THINKING"}
+						{qd.mode === "text" ? "Your answer" : "Your thinking"}
 					</div>
 					{/* A course lesson's FINAL PROBLEM (or a recall) says what it is: one quiet line. */}
 					{explainGiveUp && finalNote && (
@@ -1525,6 +1527,12 @@ function QuestionDockForm({
 								>
 									I don't know
 								</button>
+							)}
+							{/* UI round 2: say why Submit waits when the only thing missing is the confidence. */}
+							{confidenceBlocks && (
+								<span data-testid="confidence-blocks-submit" className="hidden whitespace-nowrap text-meta text-muted-foreground @md/dock:inline">
+									Set your confidence to submit
+								</span>
 							)}
 							{(!showConfidence || confidenceMode === "slider") && (
 								<Button

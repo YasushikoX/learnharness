@@ -58,7 +58,7 @@ export function DeleteNodeBody({
 			onClick={(e) => e.stopPropagation()}
 			className="w-[32rem] max-w-[calc(100vw-2rem)] lh-dialog p-6"
 		>
-			<h2 className="text-sm font-semibold text-destructive">
+			<h2 className="text-[15px] font-semibold leading-5 text-destructive">
 				{folders.length > 0 ? (nodes.length > 0 ? "Delete nodes and remove empty folders?" : "Remove empty folders?") : nodes.length === 1 ? "Delete node?" : `Delete ${nodes.length} nodes?`}
 			</h2>
 			{/* The node name(s) below the title in JetBrains Mono (owner,

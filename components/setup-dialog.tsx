@@ -36,7 +36,9 @@
  * CMU title, z-50.
  */
 
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, XIcon } from "lucide-react";
+import { buttonVariants } from "@/components/ui/button";
+import { FIELD_CLASS } from "@/components/ui/input";
 import { useEffect, useRef, useState } from "react";
 import { HostDialog } from "@/components/host-dialog";
 import { useInteractionLayers } from "@/components/interaction-layers";
@@ -207,14 +209,14 @@ export function SetupKeysBody({
 								data-testid="setup-key-input"
 								disabled={saving}
 								autoFocus
-								className="h-8 min-w-0 flex-1 rounded-md border border-input bg-card px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring"
+								className={`${FIELD_CLASS} h-8 min-w-0 flex-1 px-2.5 font-mono text-xs`}
 							/>
 							<button
 								type="button"
 								onClick={onSave}
 								disabled={saving || !value.trim()}
 								data-testid="setup-key-save"
-								className="shrink-0 rounded-sm border border-border bg-background px-3 py-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-40"
+								className={buttonVariants({ variant: "outline" })}
 							>
 								{saving ? "Saving…" : "Save key"}
 							</button>
@@ -463,9 +465,9 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 						aria-label="Close setup"
 						data-testid="setup-close"
 						onClick={onClose}
-						className="ml-auto text-muted-foreground transition-colors hover:text-foreground"
+						className={buttonVariants({ variant: "ghost", size: "icon-sm", className: "ml-auto text-muted-foreground hover:text-foreground" })}
 					>
-						✕
+						<XIcon aria-hidden strokeWidth={1.75} />
 					</button>
 </Hint>
 				</header>
@@ -493,7 +495,7 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 									disabled={saving}
 									onClick={() => void applyClaudePreset()}
 									data-testid="setup-claude-preset-apply"
-									className="shrink-0 rounded-md bg-accent px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent/80 disabled:opacity-50"
+									className={buttonVariants({ variant: "secondary" })}
 								>
 									Use recommended
 								</button>
@@ -593,7 +595,7 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 												aria-expanded={openMenu?.slot === slot && openMenu.kind === "thinking"}
 												disabled={!entry}
 												onClick={() => setOpenMenu(openMenu?.slot === slot && openMenu.kind === "thinking" ? null : { slot, kind: "thinking" })}
-												className="flex h-7 w-24 items-center gap-1 rounded-sm border border-border bg-background px-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-40"
+												className="flex h-8 w-28 items-center gap-1.5 rounded-md border border-input bg-card px-2.5 text-sm text-foreground transition-colors hover:bg-raised disabled:cursor-not-allowed disabled:text-muted-foreground"
 											>
 												<span className="min-w-0 flex-1 truncate text-left">
 													{entry ? (level ? THINKING_LABEL[level] ?? level : "…") : "—"}
@@ -631,7 +633,7 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 								data-testid="setup-save"
 								disabled={!allPicked || saving}
 								onClick={() => void save()}
-								className="rounded-sm border border-border bg-background px-3 py-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-40"
+								className={buttonVariants()}
 							>
 								{saving ? "Saving…" : "Save models"}
 							</button>

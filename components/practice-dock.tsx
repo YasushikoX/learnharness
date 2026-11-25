@@ -330,7 +330,7 @@ export function PracticeDock({
 				className={cn("border-t border-border", wordingOnly && "hidden")}
 			>
 				<div className="px-4 pt-3 lh-eyebrow text-muted-foreground">
-					YOUR THINKING
+					Your thinking
 				</div>
 				<PathInput
 					value={thinking}

@@ -28,9 +28,11 @@ export async function captureScreens({ page, origin, theme, stage, signal, withL
 	page.on("request", request => {
 		const url = request.url();
 		const local = url.startsWith(`${origin}/`) || url.startsWith("data:") || url.startsWith("blob:");
-		// The blank class and the delete dialog's impact check use POST.
+		const readsDrawingSettings = url === `${origin}/api/plugins/drawing-pad/call` &&
+			request.postData() === '{"operation":"get-settings"}';
+		// The blank class, delete impact check and plugin settings read use POST.
 		// Catch accidental sends and automatic tutor continuations here.
-		if (local && request.method() === "POST" && !allowedPost.has(url)) {
+		if (local && request.method() === "POST" && !allowedPost.has(url) && !readsDrawingSettings) {
 			errors.push(`Unexpected POST during capture: ${url}`);
 			void request.abort().catch(() => {});
 			return;
@@ -216,7 +218,75 @@ export async function captureScreens({ page, origin, theme, stage, signal, withL
 			await visible(testId(ready ?? `section-${tab}`));
 			await capture(number, `settings-${name}`, description);
 		}
+		await click(testId("converter-wizard-open"));
+		await scroll(testId("wizard-name-row"), "center");
+		await capture(50, "settings-converter-wizard", "Converter wizard with its documentation source and service fields.");
+
+		await click(testId("settings-nav-agent"));
+		await click(`${testId("group-prompts")} [data-testid^="prompt-row-"] button:first-of-type`);
+		await capture(51, "settings-prompt-dialog", "Nested prompt segment dialog showing the shipped prompt.");
 		await page.keyboard.press("Escape");
+
+		await click(testId("settings-nav-sync"));
+		await visible(testId("sync-token-row"));
+		await capture(52, "settings-sync", "Repository and token controls in the Sync settings.");
+
+		await click(testId("settings-nav-core-plugins"));
+		const drawingPad = testId("plugin-drawing-pad");
+		const drawingSwitch = `${drawingPad} [role="switch"]`;
+		const drawingSettings = `${drawingPad} button[aria-label="Settings for Drawing Pad"]`;
+		await click(drawingSwitch);
+		await visible(drawingSettings);
+		await capture(53, "settings-core-plugins", "Core plugin rows with settings actions and enabled switches.");
+		await click(drawingSettings);
+		await visible(`${testId("section-plugin-drawing-pad")} [data-plugin-setting]`);
+		await capture(54, "settings-plugin-page", "Drawing Pad’s declarative settings.");
+		await click(testId("settings-nav-core-plugins"));
+		await click(drawingSwitch);
+		await visible(`${drawingSwitch}[aria-checked="false"]`);
+
+		await click(testId("settings-nav-appearance"));
+		await scroll(testId("group-colors"));
+		await capture(55, "settings-appearance-overrides", "Theme color overrides and their shared fields.");
+
+		await click(testId("settings-nav-keys"));
+		await click(testId("key-anthropic_api_key-row"));
+		await visible(testId("key-anthropic_api_key-input"));
+		await capture(56, "settings-key-editor", "Inline provider key editor before any change is entered.");
+		await page.keyboard.press("Escape");
+		await page.keyboard.press("Escape");
+
+		await page.setViewport(narrow);
+		await click('button[aria-label="Close sidebar"]');
+		const modifier = await page.evaluate(() => navigator.platform.includes("Mac") ? "Meta" : "Control");
+		await page.keyboard.down(modifier);
+		await page.keyboard.press(",");
+		await page.keyboard.up(modifier);
+		await visible(testId("settings-dialog"));
+		await capture(57, "settings-providers-1024", "Providers at 1024 × 768 with the app sidebar collapsed.");
+		await click(testId("settings-nav-agent"));
+		await visible(testId("group-models"));
+		await capture(58, "settings-models-1024", "Model and role controls at 1024 × 768 with the app sidebar collapsed.");
+		await page.keyboard.press("Escape");
+
+		await page.setViewport({ ...narrow, width: 360 });
+		await page.keyboard.down(modifier);
+		await page.keyboard.press(",");
+		await page.keyboard.up(modifier);
+		await visible(testId("settings-list"));
+		await capture(59, "settings-categories-360", "Full-screen Settings category list at 360 px.");
+		await page.setViewport({ ...narrow, width: 412 });
+		await click(testId("settings-list-keys"));
+		await click(testId("key-anthropic_api_key-row"));
+		await visible(testId("key-anthropic_api_key-input"));
+		await capture(60, "settings-key-editor-412", "Full-screen provider key editor at 412 px.");
+		await page.keyboard.press("Escape");
+		await page.keyboard.press("Escape");
+		await page.setViewport(narrow);
+		await click('button[aria-label="Open sidebar"]');
+		await page.setViewport(desktop);
+		// Opening the sidebar refetches its lists; a navigation that cancels those reads leaves them pending forever.
+		await settle();
 
 		await visit("/chat/new", composer);
 		await capture(26, "empty-session", "Empty new-session screen.");
