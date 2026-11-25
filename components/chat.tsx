@@ -116,7 +116,7 @@ import { PluginSessionTopBarActions } from "@/components/plugin-chrome";
 import { usePluginShortcutPage } from "@/components/plugin-shortcuts";
 import { createPluginSessionActionContext, type PluginSessionViewInput } from "@/src/core";
 import type { SessionInputViewReader, SessionViewTargets, NativeQuestionViewState, ViewReaderRef } from "./session-view-readers";
-import type { ArtifactPartProps, JobRecord, Phase3, QuestionAnswerData, QuestionFormDraft, SketchPayload, SketchRef, TurnUsage, SessionPricing } from "@/src/core";
+import type { ArtifactPartProps, CourseMode, JobRecord, Phase3, QuestionAnswerData, QuestionFormDraft, SketchPayload, SketchRef, TurnUsage, SessionPricing } from "@/src/core";
 import { keptSketchOf, READ_SKETCH_TOOL, readSketchCall, sketchStatesOf } from "@/src/core";
 import { SketchDisputeLine, type SketchReadings } from "@/components/artifacts/read-sketch-card";
 import { buildSketchReadings } from "@/components/sketch-readings";
@@ -326,6 +326,7 @@ export function Chat({
 	initiallyCompacting = false,
 	initialConfigured = false,
 	kind = "teach",
+	courseMode,
 }: {
 	chatId: string;
 	title: string;
@@ -344,6 +345,9 @@ export function Chat({
 	 *  renders no phase chip (no probe→teach arc applies) and a Practice
 	 *  tag rides the header instead. */
 	kind?: "teach" | "practice";
+	/** The session's course mode (the record's course link). Only `ask` is read here (2026-11-25): an Ask conversation
+	 *  has no context marker, so the transcript cannot say it is one. */
+	courseMode?: CourseMode;
 	initialPrompt?: string;
 	/** A teacher turn is running server-side but attached to no client
 	 * (navigated away mid-turn, returned while in flight). */
@@ -673,7 +677,10 @@ export function Chat({
 	const course = useMemo(() => courseOfView(messages), [messages]);
 	const isLesson = course?.mode === "learn";
 	const lessonSkill = isLesson ? course.skills[0]?.name : undefined;
-	const sessionFinished = course !== undefined && sessionFinishOf(nativeMessages) !== null;
+	// An Ask conversation (2026-11-25): no phase arc, no graph extraction, no finish. Read from the persisted course link
+	// (the transcript of an Ask chat carries no course marker, and a forged one must not make it a lesson).
+	const askSession = courseMode === "ask";
+	const sessionFinished = !askSession && course !== undefined && sessionFinishOf(nativeMessages) !== null;
 
 	// The attach handoff (stream-reattach wave): the moment a resumed
 	// stream takes over the rendering — the SDK left "ready", so
@@ -2035,7 +2042,7 @@ export function Chat({
 					{/* Practice (owner, 2026-10-04): the coverage ring hides —
 				    practice never extracts, so an ever-filling ring with no
 				    run behind it would lie. */}
-					{kind !== "practice" && course?.mode !== "placement" && (
+					{kind !== "practice" && course?.mode !== "placement" && !askSession && (
 						<CoverageRing
 							chatId={chatId}
 							refreshKey={coverageTick}
@@ -2043,7 +2050,7 @@ export function Chat({
 							initialGraph={initialGraph}
 						/>
 					)}
-					{course && (
+					{course && !askSession && (
 						<FinishLessonButton
 							lesson={isLesson}
 							finished={sessionFinished}
@@ -2061,7 +2068,17 @@ export function Chat({
 					)}
 					{/* Practice sessions: no phase arc — a quiet Practice tag
 					    instead of the phase chip. */}
-					{course?.mode === "placement" ? (
+					{askSession ? (
+						<span
+							data-testid="phase-chip"
+							data-phase="ask"
+							aria-hidden="true"
+							className="pointer-events-none flex shrink-0 select-none items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+						>
+							<MessageCircleQuestionIcon className="size-3" />
+							Questions
+						</span>
+					) : course?.mode === "placement" ? (
 						<span
 							data-testid="phase-chip"
 							data-phase="placement"
@@ -2097,8 +2114,12 @@ export function Chat({
 						<div data-session-find-root="" className={`${TRANSCRIPT_COLUMN} relative flex flex-1 flex-col gap-4 pt-4`}>
 							{messages.length === 0 && !busy && (
 								<ConversationEmptyState
-									title="New session"
-									description="The teacher will open by probing what you already know."
+									title={askSession ? "Ask about this class" : "New session"}
+									description={
+										askSession
+											? "Ask anything about the class. Answers come from its material, with page references. Nothing here counts toward your progress."
+											: "The teacher will open by probing what you already know."
+									}
 								/>
 							)}
 

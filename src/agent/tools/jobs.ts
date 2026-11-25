@@ -31,6 +31,9 @@ export interface JobToolContext {
 	 *  Research dispatch does not depend on it: web_fetch is keyless and
 	 *  web_search reports a missing provider as a recoverable tool result. */
 	searchAvailable?: () => boolean;
+	/** The Ask agent's wording (2026-11-25): visual and demo say "answer" instead of "teach" and name no tool Ask lacks
+	 *  (it has no `ls`). Same jobs, same runner. */
+	wording?: "ask";
 }
 
 export const researchInputSchema = Type.Object({
@@ -155,6 +158,26 @@ const PDF_DESCRIPTION =
 	"continues; the brief arrives later as a new message. For quick looks at plain text or image files, use the read tool " +
 	"directly instead of dispatching. Local PDF paths follow File access settings; use ls to discover allowed folders.";
 
+// The Ask agent's wording (2026-11-25): an Ask conversation answers questions, it does not teach.
+const ASK_DEMO_ACK =
+	"This call is fire-and-forget: finish your answer now and do not wait or poll. " +
+	"The tested demo arrives later as a message to you and stays hidden from the learner until you show it with show_figure.";
+const ASK_VISUAL_ACK =
+	"This call is fire-and-forget: finish your answer now and do not wait or poll. " +
+	"The verified figure arrives later as a message to you and stays hidden from the learner until you show it with show_figure.";
+const ASK_DEMO_DESCRIPTION =
+	"Dispatch a background sub-agent that BUILDS and headlessly TESTS an interactive figure — a single-file HTML demo " +
+	"(parameter sweep, simulation, animation). Use it when how something changes is the answer and moving it explains better than a still picture. " +
+	"The call is ASYNC and fire-and-forget — it resolves immediately; the tested demo arrives later as a new message and stays hidden until " +
+	"you show it with show_figure. Write a precise brief: concept, controls, interactions, style.";
+const ASK_VISUAL_DESCRIPTION =
+	"Dispatch a background sub-agent that hand-authors ONE precise SVG figure, renders it, LOOKS at the render, and iterates until correct: " +
+	"exact spatial pictures auto-layout diagrams can't do (coordinate geometry, number lines, vectors, function plots, physical layouts). " +
+	"Pass `pdf` ({ path, page }) to mark up a figure on one page of one of the class's PDFs, with the path from the material section: " +
+	"the maker crops it from that page itself; name the page and describe the figure in the brief. " +
+	"The call is ASYNC and fire-and-forget — it resolves immediately; the verified figure arrives later as a new message and stays hidden until " +
+	"you show it with show_figure.";
+
 /**
  * Per-request job tool registry: each tool closes over the composition root's
  * context (chatId + jobStore + the spawn seam), so concurrent chats never
@@ -164,6 +187,7 @@ const PDF_DESCRIPTION =
  * existing user-toggle filtering still applies outside this registry.
  */
 export function jobTools(ctx: JobToolContext): Record<string, AgentTool<any>> {
+	const ask = ctx.wording === "ask";
 	return {
 		research: {
 			name: "research",
@@ -177,14 +201,14 @@ export function jobTools(ctx: JobToolContext): Record<string, AgentTool<any>> {
 		demo: {
 			name: "demo",
 			label: "demo",
-			description: DEMO_DESCRIPTION,
+			description: ask ? ASK_DEMO_DESCRIPTION : DEMO_DESCRIPTION,
 			parameters: demoInputSchema,
-			execute: serverExecute("demo", demoInputSchema, (input, { toolCallId }) => dispatch(ctx, "demo", toolCallId, DEMO_ACK, input)),
+			execute: serverExecute("demo", demoInputSchema, (input, { toolCallId }) => dispatch(ctx, "demo", toolCallId, ask ? ASK_DEMO_ACK : DEMO_ACK, input)),
 		},
 		visual: {
 			name: "visual",
 			label: "visual",
-			description: VISUAL_DESCRIPTION,
+			description: ask ? ASK_VISUAL_DESCRIPTION : VISUAL_DESCRIPTION,
 			parameters: visualInputSchema,
 			// An unusable image path, PDF or page fails the CALL (no job is
 			// created), so the teacher corrects it in the same turn.
@@ -195,7 +219,7 @@ export function jobTools(ctx: JobToolContext): Record<string, AgentTool<any>> {
 					if (input.pdf !== undefined) await checkPdfPage(input.pdf.path, input.pdf.page, signal);
 				}
 				signal?.throwIfAborted();
-				return dispatch(ctx, "visual", toolCallId, VISUAL_ACK, input);
+				return dispatch(ctx, "visual", toolCallId, ask ? ASK_VISUAL_ACK : VISUAL_ACK, input);
 			}),
 		},
 		pdf: {

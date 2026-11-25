@@ -100,6 +100,9 @@ const nextConfig: NextConfig = {
 			// Side questions (2026-11-02): the side model's base prompt is read
 			// from disk per ask — a directory no agent-composition read names.
 			"src/agent/prompts/side-chat/*.md",
+			// Ask (2026-11-25): composed through directory discovery like placement, but named here so a tracer change can
+			// never drop it and leave the Ask agent on its generated sections alone (scripts/build-server.mjs checks it).
+			"src/agent/prompts/ask/*.md",
 			"src/agent/image-processing/*.mjs",
 			"src/agent/image-processing/LICENSE",
 			"node_modules/@silvia-odwyer/photon-node/**/*",

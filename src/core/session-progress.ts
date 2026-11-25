@@ -2,6 +2,7 @@ import type { LhMessage } from "./native-messages.ts";
 import { PRACTICE_CONCLUDE_TOOL } from "./native-messages.ts";
 import type { PlanTree } from "./contracts.ts";
 import type { DerivedPlanStatuses } from "./contracts/plan.ts";
+import type { CourseMode } from "./contracts/course.ts";
 import { placementQuestionTarget } from "./course-session.ts";
 
 /** 0–1, clamped; 0 = nothing done yet (the bar then stays hidden). */
@@ -66,9 +67,11 @@ export function answeredQuestionCount(messages: readonly LhMessage[]): number {
 
 /** The session bar's fill (0–1) for a course session, or null when the mode has none. */
 export function sessionProgress(
-	mode: "learn" | "practice" | "review" | "placement" | "check",
+	mode: CourseMode,
 	input: { messages: readonly LhMessage[]; skillCount: number; tree: PlanTree | null; statuses: DerivedPlanStatuses | null; finished: boolean },
 ): number {
+	// an Ask session (2026-11-25) has nothing to get through
+	if (mode === "ask") return 0;
 	if (mode === "learn") return learnProgress(input.tree, input.statuses, input.finished);
 	if (mode === "placement") return clamp01(answeredQuestionCount(input.messages) / placementQuestionTarget(input.skillCount));
 	return clamp01(concludedProblemCount(input.messages) / Math.max(1, input.skillCount));

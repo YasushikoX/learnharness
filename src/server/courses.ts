@@ -83,7 +83,7 @@ import { weighCourse } from "../agent/subagents/exam-weigher.ts";
 import { callUsage } from "../agent/subagents/extraction.ts";
 import { materialTools } from "../agent/tools/materials.ts";
 import { plannerGraphTools } from "../agent/tools/planner-graph.ts";
-import { stampNewSession } from "./chats.ts";
+import { stampNewSession, titleFromPrompt } from "./chats.ts";
 import { removeCourseLectureNotes } from "./lecture-notes.ts";
 import { listMaterials, removeMaterial, waitForMaterials } from "./materials.ts";
 import { stores } from "./stores.ts";
@@ -233,7 +233,8 @@ function extractChatCourseEvidence(chat: ChatRecord | null): ChatCourseEvidence 
 	const rawNote = link.mode === "learn" ? finishSummaryOf(chat.messages) : null;
 	const note = rawNote ? { summary: rawNote.summary, at: rawNote.at, chatId: chat.id } : null;
 	const concludeCalls: Array<{ callId: string; at: number }> = [];
-	if (link.mode !== "learn" && link.mode !== "placement") {
+	// an Ask conversation (2026-11-25) concludes nothing, whatever its transcript holds
+	if (link.mode !== "learn" && link.mode !== "placement" && link.mode !== "ask") {
 		const clean = new Set<string>();
 		for (const m of chat.messages) {
 			const r = m as { role?: string; toolCallId?: string; isError?: boolean };
@@ -298,7 +299,8 @@ function courseEvidence(): { byCourse: Map<string, SkillEvent[]>; notes: Map<str
 	const problems = new Map<string, ConcludedProblem[]>();
 	const notes = new Map<string, LessonNote>();
 	const presentFiles = new Set<string>();
-	const courseChats = stores.chatStore.listChats().filter((summary) => Boolean(summary.course));
+	// an Ask conversation is never evidence: it is not opened, cached or counted
+	const courseChats = stores.chatStore.listChats().filter((summary) => Boolean(summary.course) && summary.course?.mode !== "ask");
 	const state = evidenceCacheState();
 	// Size the LRU cap from the number of course chats in this scan (bounded by [floor, ceiling])
 	// so scanning more chats than the floor never thrashes the cache.
@@ -307,7 +309,8 @@ function courseEvidence(): { byCourse: Map<string, SkillEvent[]>; notes: Map<str
 		const file = chatEvidenceFile(summary.id);
 		if (file) presentFiles.add(file);
 		const ev = chatCourseEvidence(summary.id);
-		if (!ev) continue;
+		// an Ask conversation is never evidence: it does not even open an (empty) entry for its course
+		if (!ev || ev.link.mode === "ask") continue;
 		const { link, events, note, problems: chatProblems } = ev;
 		byCourse.set(link.courseId, [...(byCourse.get(link.courseId) ?? []), ...events]);
 		if (link.mode === "practice" || link.mode === "review" || link.mode === "check") {
@@ -952,7 +955,7 @@ function sessionSkill(id: string, ctx: ReadContext): SessionSkill {
 export function ratingChanges(chatId: string): RatingChange[] | null {
 	const ev = chatCourseEvidence(chatId);
 	const link = ev?.link;
-	if (!ev || !link || link.mode === "learn" || link.mode === "placement") return null;
+	if (!ev || !link || link.mode === "learn" || link.mode === "placement" || link.mode === "ask") return null;
 	const ctx = readContext();
 	const requiresOf = (id: string) => ctx.skills.get(id)?.requires ?? [];
 	const all = [...ctx.byCourse.values()].flat();
@@ -1034,6 +1037,8 @@ export function createCourseSession(
 ): Result<{ id: string; title: string; prompt: string }> {
 	const course = stores.courseStore.getCourse(courseId);
 	if (!course) return { ok: false, status: 404, error: "Unknown course" };
+	// Ask (2026-11-25) needs no skill map: right after an upload the learner can ask about the PDF.
+	if (mode === "ask") return createAskSession(course, skillId, skillIds, retest);
 	if (course.skills.length === 0) return { ok: false, status: 409, error: "Approve the course's skill map first" };
 	const ctx = readContext();
 	const p = partitionOf(course, ctx);
@@ -1129,6 +1134,35 @@ export function createCourseSession(
 	return { ok: true, value: { id: chat.id, title: chat.title, prompt: courseFirstMessage(mode, course.title, skills, courseLanguage(course), retest) } };
 }
 
+/** An Ask conversation on the course (2026-11-25, agent/ask-agent.ts): an ordinary chat linked to the course with no
+ *  skills and NO messages: no context marker and no generated first message, so it opens on an empty composer. */
+function createAskSession(course: CourseRecord, skillId?: string, skillIds?: readonly string[], retest = false): Result<{ id: string; title: string; prompt: string }> {
+	if (skillId !== undefined || skillIds !== undefined || retest) return { ok: false, status: 400, error: "An Ask conversation takes no skills" };
+	const link: ChatCourseLink = { courseId: course.id, mode: "ask", skillIds: [] };
+	const chat = stores.chatStore.createChat(courseSessionTitle("ask", course.title, []), undefined, link);
+	// the course's language; no learner profile (the Ask agent reads none)
+	stampNewSession(chat.id, { language: courseLanguage(course), learnerProfile: false });
+	// The course record is NOT touched (review 1 finding 3): its updatedAt orders Today and the course list, and an Ask
+	// conversation is not studying. createChat already announces the new chat.
+	return { ok: true, value: { id: chat.id, title: chat.title, prompt: courseFirstMessage("ask", course.title, [], courseLanguage(course)) } };
+}
+
+/** An Ask conversation's title (2026-11-25): "Questions: <course>" until the learner asks something, then their first
+ *  question, trimmed, so several conversations can be told apart. Only while the default title stands and no question
+ *  has been asked yet (a title the learner chose is kept). Called by the chat handler once the input is saved. */
+export function titleAskConversation(chatId: string, priorMessages: readonly { role?: string }[], text: string): void {
+	const record = stores.chatStore.getChat(chatId);
+	if (record?.course?.mode !== "ask") return;
+	if (priorMessages.some((m) => m.role === "user")) return;
+	// Only the untouched default, "Questions: <course>", is replaced. An exact match, not a prefix: the learner may have
+	// named it "Questions: Week 3" themselves. (A course renamed since leaves the old default standing; that is the
+	// safe side.)
+	const course = stores.courseStore.getCourse(record.course.courseId);
+	if (!course || record.title !== courseSessionTitle("ask", course.title, [])) return;
+	const title = titleFromPrompt(text);
+	if (title) stores.chatStore.renameChat(chatId, title);
+}
+
 /** What deleting these sessions takes from the courses (merge review finding 1): skill progress is derived from the
  *  course sessions' transcripts through the same three channels as courseEvidence (skill events, a learn session's
  *  lesson note, concluded practice/review/check problems), so a session that recorded any of them takes that progress
@@ -1174,6 +1208,8 @@ export function courseForTurn(
 	const link = stores.chatStore.getChat(chatId)?.course;
 	if (!link) return undefined;
 	const course = stores.courseStore.getCourse(link.courseId);
+	// Ask (2026-11-25): the course's name only. No skills, no evidence read, no exam line (nothing here is paced).
+	if (link.mode === "ask") return { section: coursePromptSection("ask", course?.title ?? "(deleted course)", []), mode: "ask" };
 	const ctx = readContext();
 	const idSet = new Set(link.skillIds);
 	const weights = link.mode === "placement" ? sanitizeWeights(course?.skillWeights) : undefined;

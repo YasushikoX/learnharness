@@ -452,6 +452,8 @@ export function inputAppends(
 			// over an open question or a live practice problem (answer or
 			// dismiss it first).
 			if (!record.course) throw new ChatInputError("finish input is a course-session affordance");
+			// An Ask conversation (2026-11-25) has no end to log: it is never finished, never evidence.
+			if (record.course.mode === "ask") throw new ChatInputError("an Ask conversation has no finish");
 			// In a Learn session the marker is a REQUEST for the final problem (owner, 2026-11-13): it finishes nothing,
 			// so it may be pressed again after a final problem that was not passed.
 			if (sessionFinishOf(record.messages)) throw new ChatInputError("this session is already finished");
