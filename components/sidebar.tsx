@@ -749,6 +749,7 @@ function SessionsSidebar() {
 	   shell measures it on its first (hidden) pass. */
 	const [ctxChatId, setCtxChatId] = useState<string | null>(null);
 	const ctxAnchorRef = useRef<HTMLElement | null>(null);
+	const ctxRowRef = useRef<HTMLElement | null>(null);
 	const [renamingId, setRenamingId] = useState<string | null>(null);
 	const [deleting, setDeleting] = useState<ChatListItem | null>(null);
 	/** The session row whose swipe actions are open (one at a time). */
@@ -770,8 +771,26 @@ function SessionsSidebar() {
 		// the fallback; the anchor is assigned before the state flip so the shell measures it on its first pass.
 		const trigger = e.currentTarget.parentElement?.querySelector<HTMLElement>('[data-testid="session-menu-trigger"]');
 		ctxAnchorRef.current = trigger ?? e.currentTarget;
+		ctxRowRef.current = e.currentTarget.parentElement ?? e.currentTarget;
 		setCtxFolderId(null);
 		setCtxChatId(chat.id);
+	};
+
+	// Where the session menu opens (UI round 2): NEXT TO the row's "…" trigger, its top on the row's top, so it never
+	// slices its own row and no row text shows beside it. Without room to the right (a phone's drawer) it opens below
+	// the whole row instead, right-aligned to the trigger.
+	const sessionMenuAnchorRect = () => {
+		const trigger = ctxAnchorRef.current;
+		if (!trigger || typeof window === "undefined") return null;
+		const t = trigger.getBoundingClientRect();
+		const row = (ctxRowRef.current ?? trigger).getBoundingClientRect();
+		const MENU_W = 208; // the menu's w-52
+		if (t.right + 4 + MENU_W <= window.innerWidth - 8) {
+			// The shell right-aligns to `right`: a virtual box exactly the menu's width just past the trigger.
+			const x = t.right + 4;
+			return { left: x, right: x + MENU_W, top: row.top - 4, bottom: row.top - 4 };
+		}
+		return { left: row.left, right: t.right, top: row.top, bottom: row.bottom };
 	};
 
 	// The menu contract (agent-section's): any pointerdown outside the menu
@@ -1336,6 +1355,7 @@ function SessionsSidebar() {
 				{ctxChatId !== null && (
 					<MenuShell onClose={() => { setCtxChatId(null); return "closed"; }}
 						anchorRef={ctxAnchorRef}
+						getAnchorRect={sessionMenuAnchorRect}
 						testid="session-context-menu"
 						preferredSide="down"
 						menuClass="flex w-52 flex-col gap-0.5 lh-menu"
