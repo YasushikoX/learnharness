@@ -5,7 +5,7 @@ import { createContext, Fragment, useCallback, useEffect, useLayoutEffect, useMe
 import { usePathname } from "next/navigation";
 import { useChatSession } from "@/components/session";
 import { usePlugins } from "./plugins";
-import { HANDOFF_WAIT_MS, isWritingText, pendingLabel, probeHandoffOwed } from "./pending-label.ts";
+import { HANDOFF_WAIT_MS, isWritingText, pendingLabel, probeHandoffOwed, TURN_ACTIVITY_LABELS } from "./pending-label.ts";
 import { EMPTY_KEY_STATE, nextKeyState } from "./stable-keys.ts";
 import { LandedText, SettledContext } from "./landed-text.tsx";
 import { PluginSubmissionRunner, SubmissionModelEpoch, type SubmissionAttempt } from "./plugin-submission-runner";
@@ -67,10 +67,12 @@ import {
 	textPartMessageId,
 	kbdEventForAction as kbdEventForChat,
 	type ChatInput,
-	type ChatSettings,
 	type LhMessage,
 	type ModelSlotName,
+	type ModelsSettings,
 } from "@/src/core";
+import { ChatSettingsSeedProvider, chatSettingsGeneration, fetchChatSettings, type ChatSettingsSeed, type ChatSettingsSnapshot } from "@/components/chat-settings-client";
+import { useSettingsSaved } from "@/components/settings-signal";
 import { PlanBlock, PlanPopup, latestTree } from "@/components/plan-block";
 import { PlanMarginalia, planExists } from "@/components/plan-window";
 import { MermaidOverlay, SessionMermaidContext, type SessionImage } from "@/components/session-overlay";
@@ -114,7 +116,7 @@ import { PluginSessionTopBarActions } from "@/components/plugin-chrome";
 import { usePluginShortcutPage } from "@/components/plugin-shortcuts";
 import { createPluginSessionActionContext, type PluginSessionViewInput } from "@/src/core";
 import type { SessionInputViewReader, SessionViewTargets, NativeQuestionViewState, ViewReaderRef } from "./session-view-readers";
-import type { ArtifactPartProps, JobRecord, Phase3, QuestionAnswerData, QuestionFormDraft, SketchPayload, SketchRef, TurnUsage, SessionPricing } from "@/src/core";
+import type { ArtifactPartProps, CourseMode, JobRecord, Phase3, QuestionAnswerData, QuestionFormDraft, SketchPayload, SketchRef, TurnUsage, SessionPricing } from "@/src/core";
 import { keptSketchOf, READ_SKETCH_TOOL, readSketchCall, sketchStatesOf } from "@/src/core";
 import { SketchDisputeLine, type SketchReadings } from "@/components/artifacts/read-sketch-card";
 import { buildSketchReadings } from "@/components/sketch-readings";
@@ -127,7 +129,7 @@ import {
 	CompactionMomentDivider,
 	type CompactionDividerData,
 } from "@/components/compaction-divider";
-import { CoverageRing } from "@/components/extraction-coverage";
+import { CoverageRing, type GraphRead, type SessionCoverage } from "@/components/extraction-coverage";
 import { Button } from "@/components/ui/button";
 import {
 	activeProblemOf,
@@ -147,7 +149,7 @@ import {
 import { ReadingThinkingField } from "@/components/reading-thinking";
 import { FinishLessonButton, LessonFinishedLine, courseOfView } from "@/components/lesson-finish";
 import { LessonResultCard } from "@/components/lesson-result-card";
-import { RetryOnFallback, TurnErrorText } from "@/components/turn-error";
+import { CutOffReplyNotice, cutOffRecoveryDisabled, RetryOnFallback, RetryUnavailableNote, TurnErrorText } from "@/components/turn-error";
 import { ComposerEdge } from "@/components/composer-edge";
 import { currentUserThinkingOpen, setAllUserThinkingOpen } from "@/components/thinking-block";
 
@@ -314,22 +316,38 @@ export function Chat({
 	chatId,
 	title,
 	initialMessages,
+	initialSession,
+	initialModels,
+	initialGraph,
+	initialCoverage,
 	initialError,
 	initialPrompt,
 	initiallyInFlight,
 	initiallyCompacting = false,
 	initialConfigured = false,
 	kind = "teach",
+	courseMode,
 }: {
 	chatId: string;
 	title: string;
 	initialMessages: LhMessage[];
+	/** Server-rendered session settings, kind, and course link so controls hydrate without refetching the full transcript. */
+	initialSession?: ChatSettingsSnapshot;
+	/** Global models section (for ModelControl's fallback on legacy unstamped sessions). */
+	initialModels?: ModelsSettings;
+	/** Server-rendered graph extraction settings for CoverageRing. */
+	initialGraph?: GraphRead | null;
+	/** Server-rendered extraction coverage for CoverageRing. */
+	initialCoverage?: SessionCoverage | null;
 	/** Memory-only settlement notice supplied on reopening. */
 	initialError?: string;
 	/** The session kind (practice sessions, owner 2026-10-04): practice
 	 *  renders no phase chip (no probe→teach arc applies) and a Practice
 	 *  tag rides the header instead. */
 	kind?: "teach" | "practice";
+	/** The session's course mode (the record's course link). Only `ask` is read here (2026-11-25): an Ask conversation
+	 *  has no context marker, so the transcript cannot say it is one. */
+	courseMode?: CourseMode;
 	initialPrompt?: string;
 	/** A teacher turn is running server-side but attached to no client
 	 * (navigated away mid-turn, returned while in flight). */
@@ -344,6 +362,10 @@ export function Chat({
 	 *  only decides whether the pill rides the composer. */
 	initialConfigured?: boolean;
 }) {
+	const settingsSeed = useMemo<ChatSettingsSeed | null>(
+		() => (initialSession ? { chatId, ...initialSession, ...(initialModels ? { models: initialModels } : {}) } : null),
+		[chatId, initialSession, initialModels],
+	);
 	// Reattach plumbing (background-turn runner wave): the hook holds the
 	// settled terminal's callback — a stable ref assigned below, once
 	// syncFromServer exists (refs, not closures: no stale capture).
@@ -355,7 +377,7 @@ export function Chat({
 	// (core/view.ts projectView); sends are ONE explicit input event each
 	// ({chatId, input} — the stash indirection died with the SDK), and the
 	// turn stream is the VERBATIM AgentEvent passthrough the server emits.
-	const { canonicalMessages, reconciliation, reconcile, pluginQuestionAvailability, pluginQuestionDraft, pluginProblemAvailability, pluginProblemDraft, dismissPluginQuestion, readRecord, readStats, messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, status, evaluating, error, stop, clearError, resumeStream, setReattachSettled } =
+	const { canonicalMessages, reconciliation, reconcile, pluginQuestionAvailability, pluginQuestionDraft, pluginProblemAvailability, pluginProblemDraft, dismissPluginQuestion, readRecord, readStats, messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, status, evaluating, activity, cutOffReply, droppedStream, retryingStream, retryBlocked, recoverReply, error, stop, clearError, resumeStream, setReattachSettled } =
 		useChatSession({ chatId, initialMessages, initialError, initiallyInFlight });
 
 	const controller = useOptionalInteractionLayers();
@@ -655,7 +677,10 @@ export function Chat({
 	const course = useMemo(() => courseOfView(messages), [messages]);
 	const isLesson = course?.mode === "learn";
 	const lessonSkill = isLesson ? course.skills[0]?.name : undefined;
-	const sessionFinished = course !== undefined && sessionFinishOf(nativeMessages) !== null;
+	// An Ask conversation (2026-11-25): no phase arc, no graph extraction, no finish. Read from the persisted course link
+	// (the transcript of an Ask chat carries no course marker, and a forged one must not make it a lesson).
+	const askSession = courseMode === "ask";
+	const sessionFinished = !askSession && course !== undefined && sessionFinishOf(nativeMessages) !== null;
 
 	// The attach handoff (stream-reattach wave): the moment a resumed
 	// stream takes over the rendering — the SDK left "ready", so
@@ -688,10 +713,10 @@ export function Chat({
 		return () => clearTimeout(timer);
 	}, [handoffOwed, status, turnInFlight]);
 	const turnRunning = status === "submitted" || status === "streaming" || turnInFlight || handoffWait;
-	const liveLabel = useMemo(() => pendingLabel(messages), [messages]);
+	const liveLabel = activity ? TURN_ACTIVITY_LABELS[activity] : pendingLabel(messages);
 	// The line goes quiet (it keeps its height, so nothing shifts) once the tutor
 	// is writing visible text in a live stream; it returns with the next tool or thinking.
-	const liveLineQuiet = status === "streaming" && !handoffWait && isWritingText(messages);
+	const liveLineQuiet = !activity && status === "streaming" && !handoffWait && isWritingText(messages);
 	// Stable keys: a live message keeps its component when the saved id replaces its temporary one.
 	const keyState = useRef(EMPTY_KEY_STATE);
 	const messageKeys = useMemo(() => {
@@ -1107,6 +1132,7 @@ export function Chat({
 		disabled: pluginOwnsDock && !pluginMicAvailable,
 		// the lesson's language picks the dictation language
 		chatId,
+		initialSession,
 	});
 	const dictation: Dictation = { ...recording,
 		phase: recording.destinationId === "main" ? recording.phase : "idle",
@@ -1478,7 +1504,9 @@ export function Chat({
 		!compacting &&
 		!busy &&
 		phaseAt3(messages) === "plan";
-	const [sessionLanguage, setSessionLanguage] = useState<LessonLanguage>("en");
+	const [sessionLanguage, setSessionLanguage] = useState<LessonLanguage>(() =>
+		resolveLessonLanguage(initialSession?.settings),
+	);
 	const sendPlanContinue = useCallback(() => {
 		if (!planContinueReady) return;
 		void send({ type: "text", text: sessionLanguage === "nb" ? "Ser bra ut, la oss starte." : "Looks good, let's start." });
@@ -1517,14 +1545,21 @@ export function Chat({
 			if (statsRequest.current === request) statsRequest.current = null;
 		}
 	}, [readStats]);
-	useEffect(() => {
-		let cancelled = false;
-		fetch(`/api/chats/${encodeURIComponent(chatId)}`)
-			.then((r) => (r.ok ? (r.json() as Promise<{ settings?: ChatSettings }>) : null))
-			.then((b) => { if (!cancelled && b) setSessionLanguage(resolveLessonLanguage(b.settings)); })
+	const refreshSessionLanguage = useCallback(() => {
+		const gen = chatSettingsGeneration(chatId);
+		fetchChatSettings(chatId)
+			.then((b) => {
+				if (chatSettingsGeneration(chatId) !== gen) return;
+				setSessionLanguage(resolveLessonLanguage(b.settings));
+			})
 			.catch(() => {});
-		return () => { cancelled = true; };
 	}, [chatId]);
+	useEffect(() => {
+		refreshSessionLanguage();
+	}, [refreshSessionLanguage]);
+	useSettingsSaved((section) => {
+		if (section === "lesson") refreshSessionLanguage();
+	});
 	useEffect(() => {
 		void syncTurns();
 		return () => statsRequest.current?.abort();
@@ -1756,7 +1791,7 @@ export function Chat({
 			// says persistTurn has made the record durable truth.
 			if (statusRef.current === "error") {
 				setTurnInFlight(false);
-				clearError();
+				if (!droppedStream) clearError();
 				void syncFromServer();
 			}
 			return;
@@ -1872,6 +1907,7 @@ export function Chat({
 	usePluginShortcutPage(`/chat/${encodeURIComponent(chatId)}`, captureActionContext);
 
 	return (
+		<ChatSettingsSeedProvider value={settingsSeed}>
 		<ChatActionsContext.Provider
 			value={{
 				chatId,
@@ -2006,8 +2042,15 @@ export function Chat({
 					{/* Practice (owner, 2026-10-04): the coverage ring hides —
 				    practice never extracts, so an ever-filling ring with no
 				    run behind it would lie. */}
-					{kind !== "practice" && course?.mode !== "placement" && <CoverageRing chatId={chatId} refreshKey={coverageTick} />}
-					{course && (
+					{kind !== "practice" && course?.mode !== "placement" && !askSession && (
+						<CoverageRing
+							chatId={chatId}
+							refreshKey={coverageTick}
+							initialCoverage={initialCoverage}
+							initialGraph={initialGraph}
+						/>
+					)}
+					{course && !askSession && (
 						<FinishLessonButton
 							lesson={isLesson}
 							finished={sessionFinished}
@@ -2025,7 +2068,17 @@ export function Chat({
 					)}
 					{/* Practice sessions: no phase arc — a quiet Practice tag
 					    instead of the phase chip. */}
-					{course?.mode === "placement" ? (
+					{askSession ? (
+						<span
+							data-testid="phase-chip"
+							data-phase="ask"
+							aria-hidden="true"
+							className="pointer-events-none flex shrink-0 select-none items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+						>
+							<MessageCircleQuestionIcon className="size-3" />
+							Questions
+						</span>
+					) : course?.mode === "placement" ? (
 						<span
 							data-testid="phase-chip"
 							data-phase="placement"
@@ -2061,8 +2114,12 @@ export function Chat({
 						<div data-session-find-root="" className={`${TRANSCRIPT_COLUMN} relative flex flex-1 flex-col gap-4 pt-4`}>
 							{messages.length === 0 && !busy && (
 								<ConversationEmptyState
-									title="New session"
-									description="The teacher will open by probing what you already know."
+									title={askSession ? "Ask about this class" : "New session"}
+									description={
+										askSession
+											? "Ask anything about the class. Answers come from its material, with page references. Nothing here counts toward your progress."
+											: "The teacher will open by probing what you already know."
+									}
 								/>
 							)}
 
@@ -2315,7 +2372,7 @@ export function Chat({
 								</span>
 							)}
 							{turnRunning && (
-								<PendingTurnIndicator evaluating={evaluating} label={liveLabel} quiet={liveLineQuiet} />
+								<PendingTurnIndicator evaluating={evaluating && activity !== "grader"} label={liveLabel} quiet={liveLineQuiet} />
 							)}
 							{/* The margin bubbles of the learner's questions about the text (owner design, 2026-11-02). */}
 							<ClarifyLayer
@@ -2327,10 +2384,19 @@ export function Chat({
 								onDraftDone={() => setAskDraft(null)}
 							/>
 							{openingError && <p role="alert" className="text-sm text-destructive">{OPENING_PROMPT_FAILURE}</p>}
+							{cutOffReply && <CutOffReplyNotice hasText={cutOffReply.hasText} blockedByCompaction={cutOffReply.blockedByCompaction}
+								disabled={cutOffRecoveryDisabled({ localStream, turnInFlight, reconciliation, compacting, retryingStream })} recover={() => void recoverReply()} />}
 							{error && (
 								<div className="flex items-center justify-between gap-3 rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm">
-									<TurnErrorText message={error.message} />
-									{retryable && (
+									<span>
+										<TurnErrorText message={error.message} />
+										{retryBlocked && <RetryUnavailableNote />}
+									</span>
+									{droppedStream ? (
+										<Button variant="outline" size="xs" disabled={retryingStream || status === "submitted" || status === "streaming"} onClick={() => void recoverReply()}>
+											Retry
+										</Button>
+									) : retryable && (
 										<span className="flex shrink-0 items-center gap-2">
 											<Button variant="outline" size="xs" data-testid="retry-failed-turn" onClick={retryFailedTurn}>
 												Retry
@@ -2421,6 +2487,7 @@ export function Chat({
 					readingThinkingRevision={readingThinkingSeed.revision}
 					onReadingThinking={(value) => { applyReadingThinking(value); if (pendingPlugin) pluginQuestionDraft(pendingPlugin).readingThinking = value; }}
 					phase={phases.at(-1) ?? "probe"}
+					language={sessionLanguage}
 					turns={turns}
 					contextTokens={contextTokens}
 					cliContextWindow={cliContextWindowOf(nativeMessages)}
@@ -2596,6 +2663,7 @@ export function Chat({
 			}}
 		/>
 		</ChatActionsContext.Provider>
+		</ChatSettingsSeedProvider>
 	);
 }
 
@@ -2756,6 +2824,7 @@ export function DockOverlay({
 	readingThinkingRevision,
 	onReadingThinking,
 	phase,
+	language,
 	turns,
 	contextTokens,
 	cliContextWindow,
@@ -2824,6 +2893,8 @@ export function DockOverlay({
 	onReadingThinking: (v: string) => void;
 	/** Session phase at the pending question — scales the thinking field. */
 	phase: Phase3;
+	/** Active lesson language, for question read-aloud voice selection. */
+	language?: LessonLanguage;
 	/** The session's usage log — the stats bar beneath the composer folds it. */
 	turns: TurnUsage[];
 	contextTokens: number | null;
@@ -3366,6 +3437,8 @@ export function DockOverlay({
 									sketchAvailable={sketchAvailable}
 									layoutRequest={layoutRequest}
 									onLayout={setQuestionLayout}
+									language={language}
+									chatId={chatId}
 								/>
 							) : pluginPractice ? (
 								<PluginProblemDock {...pluginPractice} viewReader={customViewReader} expanded={expanded} onExpand={() => { setExpanded(true); void suppressFoldDuringReveal(); }} />

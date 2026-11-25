@@ -62,7 +62,7 @@ test("live question validation → turn_end placeholder → canonical sync keeps
 		const pending = findPendingToolCall(state.messages, pendingQuestionOf(state.nativeMessages));
 		root.render(pending ? <QuestionDock key={`question:${pending.key}`}
 			toolName="quiz" toolCallId={pending.toolCallId} input={pending.input as QuizToolInput}
-			expanded onExpand={() => {}} onSubmit={answer => { submitted = answer; }} dictationClaim={false} /> : null);
+			confidenceControl="buttons" expanded onExpand={() => {}} onSubmit={answer => { submitted = answer; }} dictationClaim={false} /> : null);
 	};
 	model.onChange = render;
 	const event = async (value: unknown) => {

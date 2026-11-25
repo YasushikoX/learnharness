@@ -295,6 +295,9 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 		}
 
 		if (role === "custom") {
+			// Continue after a cut-off starts a new reply in the same group: its closing prose is the continuation the
+			// learner asked for, never a second copy of what send_to_user delivered before the cut.
+			if ((m as LhMarkerMessage).customType === "reply-recovery") groupOutputs.length = 0;
 			projectMarker(m as LhMarkerMessage, out, hiddenDispatches);
 			continue;
 		}
@@ -648,6 +651,7 @@ function projectMarker(marker: LhMarkerMessage, out: LhViewMessage[], hiddenDisp
 		case "side-question-told":
 		case "practice-hint":
 		case "check-nudge":
+		case "reply-recovery":
 			// Raw context entries do not split the teaching segment or render
 			// loud transcript pills. Its quiet speech-bubble reopens the saved
 			// conversation in the floating/docked companion.

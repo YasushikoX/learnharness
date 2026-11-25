@@ -25,7 +25,7 @@ beforeEach(async () => {
 	root = createRoot(host);
 	answers = [];
 	await act(async () => root.render(<QuestionDock toolName="quiz" toolCallId="q1" input={input} expanded
-		dictationClaim={false} onExpand={() => {}} onSubmit={(a) => { answers.push(a); }} />));
+		confidenceControl="buttons" dictationClaim={false} onExpand={() => {}} onSubmit={(a) => { answers.push(a); }} />));
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
 

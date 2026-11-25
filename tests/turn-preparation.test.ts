@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { claimPreparingTurn } from "../src/server/turn-preparation.ts";
 import { beginTurn, endTurn, isTurnRunning } from "../src/server/turn-liveness.ts";
 import { abortTurn, registerTurn, rememberTurnFailure, runningTurn, settledTurnResponse, unregisterTurn } from "../src/server/turn-runs.ts";
-import type { PiTurnHandle } from "../src/server/pi/ui-stream.ts";
+import { TURN_KEEPALIVE, type PiTurnHandle } from "../src/server/pi/ui-stream.ts";
 import { subscribe } from "../src/core/events.ts";
 
 const encode = (text: string) => new TextEncoder().encode(text);
@@ -57,11 +57,12 @@ describe("private turn preparation ownership", () => {
 		assert.equal(isTurnRunning(id), false);
 	});
 
-	it("preparation emits no bytes; cancellation before handoff detaches only that view", async () => {
+	it("preparation opens with a comment and cancellation detaches only that view", async () => {
 		const id = chatId();
 		const prep = claimPreparingTurn(id)!;
 		const outer = runningTurn(id)!;
 		const cancelled = outer.subscribe().getReader();
+		assert.equal(new TextDecoder().decode((await cancelled.read()).value), TURN_KEEPALIVE);
 		let readCompleted = false;
 		const pending = cancelled.read().then((result) => { readCompleted = true; return result; });
 		await Promise.resolve();
@@ -76,7 +77,7 @@ describe("private turn preparation ownership", () => {
 		assert.equal(real.subscriptions, 1, "cancelled waiting subscriber never attaches to teacher");
 		assert.equal(runningTurn(id), outer);
 		real.send("data: [DONE]\n\n"); real.settle(); prep.finish();
-		assert.equal(await text, real.replayText());
+		assert.equal(await text, TURN_KEEPALIVE + real.replayText());
 	});
 
 	it("waiting and late views forward the teacher's own replay and live bytes, without a second log", async () => {
@@ -89,7 +90,7 @@ describe("private turn preparation ownership", () => {
 		real.send('data: {"type":"message_end"}\n\n');
 		const late = new Response(outer.subscribe()).text();
 		real.send("data: [DONE]\n\n"); real.settle(); prep.finish();
-		assert.equal(await first, real.replayText());
+		assert.equal(await first, TURN_KEEPALIVE + real.replayText());
 		assert.equal(await late, real.replayText());
 		assert.equal(real.subscriptions, 2);
 	});
@@ -125,7 +126,7 @@ describe("private turn preparation ownership", () => {
 			if (outcome.includes("failure")) rememberTurnFailure(id, "Save/start failed");
 			prep.finish(); prep.finish();
 			const expected = await settledTurnResponse(id).text();
-			for (const text of texts) assert.equal(await text, expected);
+			for (const text of texts) assert.equal(await text, TURN_KEEPALIVE + expected);
 			assert.equal(await new Response(outer.subscribe()).text(), expected, "late retained handle also terminates");
 			assert.equal(runningTurn(id), undefined);
 			assert.equal(isTurnRunning(id), false);

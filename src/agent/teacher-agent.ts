@@ -24,7 +24,9 @@ import { healToolRecord, withArgumentHeal } from "./tools/heal.ts";
 import { sendToUserApplies, sendToUserTool } from "./tools/send-to-user.ts";
 import { makeNarrationGuard, narrationGuardApplies, SEND_TO_USER_DELIVERY_RULE } from "./narration-guard.ts";
 import { CLAUDE_CODE_PROVIDER } from "./claude-code/constants.ts";
-import { CLAUDE_CODE_TOOL_NAMES_RULE } from "./claude-code/tool-names-rule.ts";
+import { CLAUDE_CODE_TOOL_NAMES_RULE, claudeCodeToolNamesRule } from "./claude-code/tool-names-rule.ts";
+import { askSystemPrompt } from "./ask-prompt.ts";
+import type { TurnSources } from "../core/materials.ts";
 import { createReadTool, readTool } from "./tools/read.ts";
 import { quizInputObject, quizInputProblems } from "../core/question-core.ts";
 import { figureInputProblems } from "../core/figures/index.ts";
@@ -78,7 +80,8 @@ import { sourcesGateProblem, sourcesGateReason } from "../core/sources-gate.ts";
 
 /** Which agent's prompt directory to compose. Practice (2026-10-04)
  *  composes ONLY its own directory — see prompt-segments.ts. */
-export type AgentKind = "prober" | "teacher" | "practice" | "placement";
+/** ask (2026-11-25): the course Ask agent (agent/ask-agent.ts), built through baseAgentOptions. */
+export type AgentKind = "prober" | "teacher" | "practice" | "placement" | "ask";
 
 /** Reserve conversation builtins even when role/mechanics/settings gates hide them.
  * New builtin names must join this catalog; actual turn tools are reserved too. */
@@ -130,6 +133,7 @@ const composedInstructions: Record<AgentKind, string> = {
 	teacher: composeInstructions("teacher"),
 	practice: composeInstructions("practice"),
 	placement: composeInstructions("placement"),
+	ask: composeInstructions("ask"),
 };
 
 // Money channel (wave 4): the chat-handler passes a per-turn collector;
@@ -147,6 +151,7 @@ export interface AgentBuildOptions {
 	messages?: AgentMessage[];
 	/** Money channel: one call per model request. */
 	onUsage?: StepUsageCollector;
+	onGateRefusal?: (gate: string) => void;
 	/** Append-only reference updates before each already-scheduled internal
 	 * model call. Does not schedule an extra call or interrupt live output. */
 	contextUpdates?: (messages: readonly AgentMessage[]) => AgentMessage[];
@@ -192,7 +197,10 @@ export interface AgentBuildOptions {
 	/** The lesson's source material (fork addition): its system-prompt
 	 *  section (core/materials.ts materialsPromptSection) and the lookup
 	 *  tools (tools/materials.ts), added to every conversation agent. */
-	materials?: { section: string; tools: AgentTool<any>[] };
+	materials?: { section: string; tools: AgentTool<any>[]; /** Ask conversations only: the kinds of source it can check. */ sources?: TurnSources };
+	/** The Ask agent's tool names this turn (2026-11-25, agent/ask-agent.ts sets it): its prompt mentions a tool only when
+	 *  it is offered (agent/ask-prompt.ts). Absent on an Ask prompt = no tools (a selection clarification). */
+	askTools?: readonly string[];
 	/** The course section (fork addition — docs/courses.md §4): a course
 	 *  session's per-turn rules (core/course-session.ts), appended after
 	 *  the material, and its tools (a Learn session's finish_lesson —
@@ -266,12 +274,14 @@ export const GATE_REFUSAL_CAP = 3;
 
 /** A refusal counter for one run: `refuse(gate, blocks, reason)` is the block result while `gate` has refused at most
  *  GATE_REFUSAL_CAP times, then undefined (the gate lets the call through). A gate that does not block is not counted. */
-export function makeGateRefusals(cap = GATE_REFUSAL_CAP) {
+export function makeGateRefusals(cap = GATE_REFUSAL_CAP, onRefusal?: (gate: string) => void) {
 	const refusals: Record<string, number> = {};
 	return (gate: string, blocks: boolean, reason: string): { block: true; reason: string } | undefined => {
 		if (!blocks) return undefined;
 		refusals[gate] = (refusals[gate] ?? 0) + 1;
-		return refusals[gate]! > cap ? undefined : { block: true, reason };
+		if (refusals[gate]! > cap) return undefined;
+		onRefusal?.(gate);
+		return { block: true, reason };
 	};
 }
 
@@ -309,8 +319,14 @@ function learnerFor(kind: AgentKind, learner: string | undefined): string {
  *  prompt (the clarification call, server/clarify.ts). */
 export function agentSystemPrompt(
 	kind: AgentKind,
-	opts: Pick<AgentBuildOptions, "promptSwitches" | "language" | "materials" | "course" | "pace" | "difficulty" | "learner">,
+	opts: Pick<AgentBuildOptions, "promptSwitches" | "language" | "materials" | "course" | "pace" | "difficulty" | "learner" | "askTools">,
 ): string {
+	// Ask (2026-11-25): its own composition — no shared fragment, no lesson directive, only what this turn offers.
+	if (kind === "ask") {
+		const tools = opts.askTools ?? [];
+		const sources = opts.materials?.sources ?? { pdf: false, other: tools.includes("material_search"), notes: tools.includes("lecture_note_search") };
+		return askSystemPrompt({ caps: { tools, sources }, switches: opts.promptSwitches, language: opts.language, materials: opts.materials, course: opts.course });
+	}
 	const composed = opts.promptSwitches ? composeInstructions(kind, opts.promptSwitches) : composedInstructions[kind]!;
 	return withLanguageDirective(
 		[composed, opts.materials?.section, opts.course?.section, paceFor(kind, opts.pace), difficultyFor(kind, opts.difficulty), learnerFor(kind, opts.learner)].filter(Boolean).join("\n\n"),
@@ -319,7 +335,9 @@ export function agentSystemPrompt(
 	);
 }
 
-function baseAgentOptions(
+/** The shared conversation-agent construction. Exported for the Ask agent (agent/ask-agent.ts), which composes its own
+ *  registry and passes it in, like the factories below. */
+export function baseAgentOptions(
 	kind: AgentKind,
 	opts: AgentBuildOptions,
 	tools: AgentTool<any, any>[],
@@ -353,12 +371,18 @@ function baseAgentOptions(
 	const builtinPrompt = [
 		composedPrompt,
 		narrationGuard ? SEND_TO_USER_DELIVERY_RULE : undefined,
-		engine.model.provider === CLAUDE_CODE_PROVIDER ? CLAUDE_CODE_TOOL_NAMES_RULE : undefined,
+		engine.model.provider === CLAUDE_CODE_PROVIDER
+			? kind === "ask"
+				// Ask's examples are its own tools; with none there is nothing to name
+				? opts.askTools?.length ? claudeCodeToolNamesRule(opts.askTools.slice(0, 2)) : undefined
+				: CLAUDE_CODE_TOOL_NAMES_RULE
+			: undefined,
 	].filter((part): part is string => part !== undefined).join("\n\n---\n\n");
 	// The fork's own builtins join the registry BEFORE it is bound and reserved below, so plugins can neither shadow
 	// them nor lose them. read_sketch (Android plan M2) rides EVERY agent, always — practice builds its own (it shares
 	// the conclude gate). A caller-owned registry (opts.tools — the tests') is never touched.
-	if (!opts.tools && !tools.some((t) => t.name === READ_SKETCH_TOOL)) {
+	// Ask (2026-11-25) takes no sketch input, so it has nothing to read.
+	if (!opts.tools && kind !== "ask" && !tools.some((t) => t.name === READ_SKETCH_TOOL)) {
 		tools = [
 			...tools,
 			...Object.values(
@@ -388,7 +412,7 @@ function baseAgentOptions(
 			? [withArgumentHeal(sendToUserTool)]
 			: []),
 	];
-	const contributions = kind !== "placement" && opts.tools === undefined && opts.chatId && opts.pluginContributions
+	const contributions = kind !== "placement" && kind !== "ask" && opts.tools === undefined && opts.chatId && opts.pluginContributions
 		? opts.pluginContributions({ chatId: opts.chatId, agent: kind }, [...CONVERSATION_TOOL_NAMES, ...builtinTools.map(tool => tool.name)])
 		: undefined;
 	const questionLedger = contributions?.questionTypes?.length && opts.chatId
@@ -440,13 +464,14 @@ function baseAgentOptions(
 		...(kind === "teacher" || kind === "placement" || questionLedger || narrationHooks ? (() => {
 			// A refusal cap (owner, 2026-11-10): after GATE_REFUSAL_CAP refusals by one gate in this run, that gate lets
 			// the call through, so a model that keeps failing it cannot loop. Run-local: the agent is built once per turn.
-			const refuse = makeGateRefusals();
+			const refuse = makeGateRefusals(GATE_REFUSAL_CAP, opts.onGateRefusal);
 			return {
 				beforeToolCall: async (call: BeforeToolCallContext, signal?: AbortSignal) => {
 					const { assistantMessage, toolCall, context } = call;
 					if (kind === "placement" && (toolCall.name === "probe" || toolCall.name === "recall" || toolCall.name === FINISH_SESSION_TOOL)) {
 						const unread = hasUnreadPlacementSketch(context.messages as unknown as LhMessage[]);
 						if (unread) {
+							opts.onGateRefusal?.("placement-sketch");
 							return {
 								block: true,
 								reason: `A sketch (${unread.sketchId}) is attached to the learner's last answer — call read_sketch on it first before posing the next question or finishing.`,
@@ -481,7 +506,7 @@ function baseAgentOptions(
 						if (sourcesRefused) return sourcesRefused;
 					}
 					const guarded = await narrationHooks?.beforeToolCall?.(call, signal);
-					if (guarded?.block) return guarded;
+					if (guarded?.block) { opts.onGateRefusal?.("narration"); return guarded; }
 					questionLedger?.validatedCall(call);
 					return undefined;
 				},

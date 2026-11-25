@@ -2,6 +2,41 @@ import type { Agent, AgentEvent, AgentMessage } from "@earendil-works/pi-agent-c
 import { ToolCallIdUniquifier } from "./call-ids.ts";
 import type { ChatGPTRequestCycle } from "../../agent/chatgpt-request-cycle.ts";
 import { pluginQuestionLedgerFor } from "../../agent/plugin-question-tools.ts";
+import type { TurnActivity, TurnTimeline } from "../turn-timeline.ts";
+
+export const TURN_KEEPALIVE_MS = 15_000;
+export const TURN_KEEPALIVE = ": ping\n\n";
+
+export function turnKeepalive(ping: () => void) {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	return {
+		wrote() {
+			clearTimeout(timer);
+			timer = setTimeout(ping, TURN_KEEPALIVE_MS);
+			timer.unref?.();
+		},
+		stop() { clearTimeout(timer); },
+	};
+}
+
+/** Keepalives for a view written straight to its controller: a timer can never throw, and a view that errored or
+ *  refuses the write stops its timer for good. A ping waits while the reader still has a frame queued. */
+export function viewKeepalive(controller: Pick<ReadableStreamDefaultController<Uint8Array>, "desiredSize" | "enqueue">) {
+	const frame = new TextEncoder().encode(TURN_KEEPALIVE);
+	let stopped = false;
+	const stop = () => { stopped = true; timer.stop(); };
+	const ping = () => {
+		if (stopped) return;
+		const room = controller.desiredSize;
+		if (room === null) { stop(); return; }
+		try {
+			if (room > 0) controller.enqueue(frame);
+			timer.wrote();
+		} catch { stop(); }
+	};
+	const timer = turnKeepalive(ping);
+	return { ping, stop };
+}
 
 /**
  * THE NATIVE WIRE (Wave D, owner-approved 2026-09-26): one agent turn, streamed
@@ -71,6 +106,7 @@ import { pluginQuestionLedgerFor } from "../../agent/plugin-question-tools.ts";
 export type TurnWireEvent =
 	| AgentEvent
 	| { type: "message_update"; message: AgentMessage }
+	| { type: "turn-activity"; activity: TurnActivity | null }
 	| { type: "error"; errorText: string };
 
 export interface PiTurnSpec {
@@ -78,6 +114,7 @@ export interface PiTurnSpec {
 	 * an admission-recovery run. This hook never schedules a run itself. */
 	beforeCycle?: () => void;
 	requestCycle?: ChatGPTRequestCycle;
+	timeline?: TurnTimeline;
 	/** The per-turn agent (stateless engine — built from the record). */
 	agent: Agent;
 	/** The handler's error-masking policy for LOOP-level failures (the
@@ -128,13 +165,15 @@ export interface PiTurnHandle {
 }
 
 export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
-	const { agent, onError, onFinish, onSettleError, onSettleFailure, usedToolCallIds, updateFlushMs = 100, requestCycle } = spec;
+	const { agent, onError, onFinish, onSettleError, onSettleFailure, usedToolCallIds, updateFlushMs = 100, requestCycle, timeline } = spec;
 	const uniquifier = usedToolCallIds ? new ToolCallIdUniquifier(usedToolCallIds) : undefined;
 	const questions = pluginQuestionLedgerFor(agent);
 
 	let settled = false;
 	let sawAbort = false;
 	let reportedErrorText: string | undefined;
+	let errorKind: "agent-loop" | "settlement" | null = null;
+	let activity: TurnActivity | null = null;
 
 	// THE PER-TURN STATE LOG (memory-only — the settle-only disk writes
 	// are unchanged). COMPACTION LAW (owner, 2026-10-09, supersedes the
@@ -156,6 +195,12 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 	// relative order of concurrent keys stays chronological).
 	const pending = new Map<string, TurnWireEvent>();
 	const subscribers = new Set<PiTurnSubscriber>();
+	timeline?.bindActivity((next) => {
+		if (settled || next === activity) return;
+		activity = next;
+		flushPending();
+		for (const sub of subscribers) sub.push({ type: "turn-activity", activity });
+	});
 
 	const coalesceKey = (event: TurnWireEvent): string | null => {
 		if (event.type === "message_update") return "message";
@@ -220,6 +265,7 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 		settled = true;
 		for (const sub of subscribers) sub.done();
 		subscribers.clear();
+		timeline?.finish(sawAbort, errorKind);
 	};
 	// The settle seam: the record write is the agent's OWN final state
 	// (native history — signatures, usage, provider stamps all real).
@@ -237,6 +283,7 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 			const mapped = (uniquifier?.remapSettled(settled_) as AgentMessage[]) ?? settled_;
 			onFinish(questions?.settled(settled_, mapped) ?? mapped, sawAbort);
 		} catch (err) {
+			errorKind ??= "settlement";
 			console.error("[turn] settlement failed:", err);
 			try { onSettleFailure?.(err, reportedErrorText); }
 			catch (cleanupError) { console.error("[turn] settlement cleanup failed:", cleanupError); }
@@ -272,10 +319,11 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 	};
 	requestCycle?.bindRelease(handle);
 	agent.subscribe((event) => {
+		timeline?.event(event);
 		if (!requestCycle?.hold(event)) handle(event);
 	});
 
-	void (async () => {
+	const run = async () => {
 		try {
 			do {
 				spec.beforeCycle?.();
@@ -300,33 +348,54 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 				return;
 			}
 			console.error("[turn] agent loop failed:", err);
+			errorKind = "agent-loop";
 			reportedErrorText = onError?.(err) ?? "An error occurred.";
 			send({ type: "error", errorText: reportedErrorText });
 			settleWith();
 			closeAll();
 		}
-	})();
+	};
+	void (timeline ? timeline.run(run) : run());
 
 	return {
 		subscribe() {
 			let sub: PiTurnSubscriber | undefined;
+			let detach: (() => void) | undefined;
 			const stream = new ReadableStream<Uint8Array>({
 				start(controller) {
 					const encoder = new TextEncoder();
 					let closed = false;
+					const keepalive = turnKeepalive(() => {
+						if (closed) return;
+						// Skip a ping while the reader has a queued frame.
+						if ((controller.desiredSize ?? 0) > 0) write(TURN_KEEPALIVE);
+						else keepalive.wrote();
+					});
+					const close = () => {
+						closed = true;
+						keepalive.stop();
+						if (sub) subscribers.delete(sub);
+					};
+					detach = () => {
+						if (closed) return;
+						close();
+						timeline?.dropped();
+					};
+					const write = (frame: string) => {
+						try {
+							controller.enqueue(encoder.encode(frame));
+							if (!settled) keepalive.wrote();
+						} catch { detach?.(); }
+					};
 					sub = {
 						push(event) {
 							if (closed) return;
-							try {
-								controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-							} catch {
-								/* reader cancelled — stop emitting, keep running */
-								closed = true;
-							}
+							try { write(`data: ${JSON.stringify(event)}\n\n`); }
+							catch { detach?.(); }
 						},
 						done() {
 							if (closed) return;
-							closed = true;
+							close();
 							try {
 								controller.enqueue(encoder.encode("data: [DONE]\n\n"));
 								controller.close();
@@ -342,7 +411,9 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 					// in-flight message — the full content, once, never the chunk
 					// history (COMPACTION LAW).
 					subscribers.add(sub);
+					if (!settled) write(TURN_KEEPALIVE);
 					for (const event of log) sub.push(event);
+					if (activity !== null) sub.push({ type: "turn-activity", activity });
 					// A subscriber that attached after settle (the unregister
 					// race) still gets the full history + [DONE].
 					if (settled) sub.done();
@@ -351,7 +422,7 @@ export function runPiTurn(spec: PiTurnSpec): PiTurnHandle {
 					// THE OWNER RULING (2026-09-25): a view leaving NEVER kills
 					// the turn — only the explicit abort channel does. The turn
 					// runs on; the compacted log keeps the state for the next view.
-					if (sub) subscribers.delete(sub);
+					detach?.();
 				},
 			});
 			return stream;

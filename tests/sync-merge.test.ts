@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { applyPortableSettings, mergeFile, portableSettings, type MergeInput } from "../src/core/sync-merge.ts";
-import { CURRENT_CHAT_VERSION } from "../src/core/contracts/chat.ts";
+import { CURRENT_CHAT_VERSION, NEWEST_CHAT_VERSION } from "../src/core/contracts/chat.ts";
 
 const j = (v: unknown) => JSON.stringify(v, null, "\t");
 const lines = (...recs: unknown[]) => recs.map((r) => JSON.stringify(r)).join("\n") + "\n";
@@ -100,11 +100,28 @@ describe("mergeFile: chats", () => {
 	});
 
 	it("leaves a chat from a newer app version alone, whichever side has it", () => {
+		// an ordinary chat one above the version this build writes for it: the Ask stamp (2026-11-25) does not raise
+		// the bound for chats that are not Ask
 		const newer = j(chat({ version: CURRENT_CHAT_VERSION + 1, title: "x" }));
 		const r = merge("chats/chat_1.json", { local: j(chat({})), remote: newer });
 		assert.match(r.skipped ?? "", /newer version/);
 		assert.equal(r.content, j(chat({})), "this device's copy is not rewritten");
 		assert.ok(merge("chats/chat_1.json", { local: newer, remote: j(chat({})) }).skipped);
+	});
+
+	it("applies each chat's own ceiling: a Learn chat stamped with the Ask version, and an Ask chat stamped above it, are left alone", () => {
+		const learn = { course: { courseId: "c", mode: "learn", skillIds: [] } };
+		const learnNewer = j(chat({ ...learn, version: NEWEST_CHAT_VERSION, title: "x" }));
+		const learnMerge = merge("chats/chat_1.json", { local: j(chat(learn)), remote: learnNewer });
+		assert.match(learnMerge.skipped ?? "", /newer version/);
+		assert.equal(learnMerge.content, j(chat(learn)));
+		const ask = { course: { courseId: "c", mode: "ask", skillIds: [] } };
+		const askNewer = j(chat({ ...ask, version: NEWEST_CHAT_VERSION + 1, title: "x" }));
+		assert.ok(merge("chats/chat_1.json", { local: j(chat({ ...ask, version: NEWEST_CHAT_VERSION })), remote: askNewer }).skipped);
+		// an Ask chat written before the Ask stamp existed (version 2) still merges, and leaves with the Ask stamp
+		const legacy = merge("chats/chat_1.json", { local: j(chat(ask)), remote: j(chat({ ...ask, version: NEWEST_CHAT_VERSION, updatedAt: "2026-01-03T00:00:00Z" })) });
+		assert.equal(legacy.skipped, null);
+		assert.equal(parse(legacy.content).version, NEWEST_CHAT_VERSION);
 	});
 
 	it("merges two chats at the version this build writes, and stamps the result with it", () => {
@@ -124,6 +141,18 @@ describe("mergeFile: chats", () => {
 		// mergeChat merges fields by name. A schema bump can add a field it copies whole from the newer side (losing the
 		// other device's part), which is how side threads and image snapshots arrived unnoticed.
 		assert.equal(CURRENT_CHAT_VERSION, 2);
+		// Ask chats (2026-11-25) are stamped 3 only so builds without Ask refuse them; their fields are schema 2's.
+		assert.equal(NEWEST_CHAT_VERSION, 3);
+	});
+
+	it("keeps an Ask chat's stamp through a merge, so a build without Ask goes on refusing it", () => {
+		const ask = { course: { courseId: "c", mode: "ask", skillIds: [] }, version: NEWEST_CHAT_VERSION };
+		const r = merge("chats/chat_1.json", {
+			local: j(chat({ ...ask, messages: [msg("m1")] })),
+			remote: j(chat({ ...ask, updatedAt: "2026-01-03T00:00:00Z", messages: [msg("m1"), msg("m2")] })),
+		});
+		assert.equal(r.skipped, null);
+		assert.equal(parse(r.content).version, NEWEST_CHAT_VERSION);
 	});
 
 	it("unions image snapshots by key, also when the newer copy is the shorter one", () => {

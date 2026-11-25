@@ -38,7 +38,7 @@ import type { PlanTree } from "./contracts/plan.ts";
 import { derivePlanStatusesLh, derivedNodeStatus } from "./contracts/plan.ts";
 import { COMPACTED_HISTORY_HEADER } from "./contracts/chat.ts";
 import type { LhMessage, LhMarkerMessage } from "./native-messages.ts";
-import { newMessageId, requestSketchPages } from "./native-messages.ts";
+import { emptyCutOffIds, newMessageId, requestSketchPages } from "./native-messages.ts";
 import { sketchOfMessage } from "./sketch.ts";
 import { leadOf } from "./tutor-prose.ts";
 import { sketchStatesOf } from "./sketch-gate.ts";
@@ -377,8 +377,10 @@ export function serializeForSummary(messages: readonly LhMessage[]): string {
 			? `[sketch ${ref.id} — read as: ${reading.reading}${reading.uncertain.length > 0 ? ` (doubts: ${reading.uncertain.join("; ")})` : ""}${reading.settled.length > 0 ? ` (settled: ${reading.settled.join("; ")})` : ""}]`
 			: `[sketch ${ref.id} — not read]`;
 	};
+	const emptyCutOffs = emptyCutOffIds(messages);
 	for (const m of messages) {
 		const role = (m as { role?: string }).role;
+		if (emptyCutOffs.has(m.id)) continue;
 		if (role === "user") {
 			lines.push(`[LEARNER] ${citationsToReadableText(contentText((m as { content: unknown }).content))}`);
 		} else if (role === "assistant") {
@@ -410,6 +412,7 @@ export function serializeForSummary(messages: readonly LhMessage[]): string {
 		} else if (role === "custom") {
 			const marker = m as LhMarkerMessage;
 			if (marker.customType === "plan-block") continue; // UI-only
+			if (marker.customType === "reply-recovery") continue; // an instruction for one reply, not conversation
 			const markerText = contentText(marker.content);
 			if (marker.customType === "side-question" && !markerText) continue;
 			if (marker.customType === "side-question") lines.push(`[LEARNER–HELPER CONVERSATION] ${citationsToReadableText(markerText)}`);
@@ -443,6 +446,35 @@ export function planTreeToText(tree: PlanTree | undefined, messages: readonly Lh
 	return lines.join("\n");
 }
 
+/** Which summary a session gets: a tutoring session's (teach, probe, practice), or an Ask conversation's (2026-11-25). */
+export type CompactionKind = "teach" | "practice" | "probe" | "ask";
+
+/**
+ * The Ask conversation's summary (2026-11-25, review 1 finding 5): an Ask conversation answers questions, so what its
+ * future turns need is what was asked, what was answered with which sources, and anything still owed. No learner
+ * assessment and no teaching plan: Ask records nothing about the learner and has no plan.
+ */
+export function buildAskCompactionPrompt(spanText: string): string {
+	return `You are compacting the earlier part of a question-and-answer conversation about a university class — writing the summary your future self will read INSTEAD of that transcript. Everything before the cut is replaced by what you write; everything after stays verbatim. The transcript below labels the learner as [LEARNER], the assistant as [TUTOR], tool traffic as [RESULT …]/[SYSTEM NOTE].
+
+Write the summary with EXACTLY these sections, in this order:
+
+## Questions and answers
+Every question the learner asked, in order, each with the answer's key claims in a line or two. Keep every citation exactly as given — the source's name and its page, pages or section — next to the claim it supports, and say which parts were marked as general knowledge (not from the class material) and which could not be checked.
+
+## Sources read
+Each source and page or section that was read in the conversation, with the exact name and path given in the material section or the lookup results, and what it said that a later answer might rely on (definitions, notation, values) — exact wording where it was quoted.
+
+## Pending
+Anything still owed at the cut: a figure or demo dispatched but not shown yet (its job id and what it shows), a promised follow-up, a question not answered yet. Write "Nothing." when nothing is pending.
+
+Rules: no assessment of the learner, no plan, no praise, no filler, nothing beyond the transcript. Keep every identifier (job ids, material names, file paths, page numbers) exact.
+
+TRANSCRIPT TO SUMMARIZE:
+
+${spanText}`;
+}
+
 /**
  * The summarizer prompt. The summary's REQUIRED SHAPE (owner rulings):
  * the learner's understanding AND its evolution, the teaching arc, the
@@ -455,9 +487,10 @@ export function buildCompactionPrompt(input: {
 	spanText: string;
 	/** The plan tree rendered (planTreeToText) or null. */
 	planTreeText: string | null;
-	/** The session kind (wording: tutor vs practice agent). */
-	kind: "teach" | "practice" | "probe";
+	/** The session kind (wording: tutor vs practice agent; an Ask conversation has its own summary). */
+	kind: CompactionKind;
 }): string {
+	if (input.kind === "ask") return buildAskCompactionPrompt(input.spanText);
 	const planSection =
 		input.planTreeText ?? "No plan tree exists in this session (nothing was persisted).";
 	return `You are compacting the earlier part of a tutoring session — writing the summary your future self will read INSTEAD of that transcript. Everything before the cut is replaced by what you write; everything after stays verbatim. The learner's transcript below labels the learner as [LEARNER], the tutoring agent as [TUTOR], tool traffic as [RESULT …]/[SYSTEM NOTE].

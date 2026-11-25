@@ -24,7 +24,7 @@ export async function mountPluginChrome(frontend: PluginFrontendModule, children
 		MutationObserver: dom.window.MutationObserver, CustomEvent: dom.window.CustomEvent,
 		getComputedStyle: (element: HTMLElement) => ({
 			columnGap: element.tagName === "HEADER" ? "12" : "4", paddingLeft: "12", paddingRight: "12",
-			flexGrow: element.className.includes("flex-1") ? "1" : "0", minWidth: "16", marginLeft: "0", marginRight: "0",
+			flexGrow: (element.getAttribute("class") ?? "").includes("flex-1") ? "1" : "0", minWidth: "16", marginLeft: "0", marginRight: "0",
 			getPropertyValue: () => "", display: "block", visibility: "visible",
 		}),
 		requestAnimationFrame: (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0),

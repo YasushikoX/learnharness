@@ -658,6 +658,8 @@ export interface QuestionFormDraft {
 	other: string;
 	text: string;
 	confidenceIndex: number | null;
+	/** Numeric confidence (0–100) for slider mode; takes precedence over confidenceIndex when present. */
+	confidence?: number | null;
 }
 
 export interface QuestionDraft {

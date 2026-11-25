@@ -38,7 +38,17 @@ describe("resolveSettings", () => {
 
 	it("null record (first boot): non-model knobs land on factory defaults; every model view is EMPTY", () => {
 		const eff = resolveSettings(null);
-		assert.deepEqual(eff.general, { autoUpdate: true, language: "en", dictationEngine: "local", dictationOnline: false, pace: "thorough", difficulty: "short" });
+		assert.deepEqual(eff.general, {
+			autoUpdate: true,
+			language: "en",
+			dictationEngine: "local",
+			dictationOnline: false,
+			pace: "thorough",
+			difficulty: "short",
+			readAloudAuto: false,
+			readAloudRate: 1,
+			readAloudVoice: null,
+		});
 		assert.deepEqual(eff.agent.tools, {});
 		assert.deepEqual(eff.agent.prompts, {});
 		assert.deepEqual(eff.agent.search, {});
@@ -56,6 +66,7 @@ describe("resolveSettings", () => {
 		assert.equal(eff.appearance.fontFamily, null);
 		assert.equal(eff.appearance.proseFontSize, 16);
 		assert.equal(eff.appearance.sessionNameSerif, true);
+		assert.equal(eff.appearance.confidenceControl, "slider");
 		assert.equal(eff.appearance.mdRendering.headingWeight, 900);
 		// wave 7 collapse: the master switch ONLY + the redesign's chunk
 		// budget — absent record resolves the factory 4096 (halved back

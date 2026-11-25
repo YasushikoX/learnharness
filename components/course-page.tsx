@@ -33,6 +33,7 @@ import {
 } from "@/src/core";
 import { DistributionStrip, DueChip, DueTimeline, UnderstandingBar, useNow } from "@/components/skill-visuals";
 import { CourseSettings } from "@/components/course-settings";
+import { CourseModes } from "@/components/course-modes";
 import { LearnPaceDialog } from "@/components/learn-pace-dialog";
 import { ExamPlanSection, WeightEditContext, WeightEditor, WeightNote } from "@/components/exam-plan";
 import { SkillMap } from "@/components/skill-map";
@@ -485,6 +486,7 @@ export function CourseBody({
 	onChanged,
 	settingsOpen,
 	onSettingsOpenChange,
+	onAsk,
 }: {
 	data: CoursePayload;
 	busy: boolean;
@@ -507,6 +509,8 @@ export function CourseBody({
 	 *  closed line at the top, as before. */
 	settingsOpen?: boolean;
 	onSettingsOpenChange?: (open: boolean) => void;
+	/** Open the course's Ask conversation (2026-11-25): `reopen` = an existing one's chat id, absent = a new one. */
+	onAsk?: (reopen?: string) => void;
 }) {
 	// The map opens where the learner is: what is due, then what is next.
 	const mapFocus = useMemo(
@@ -532,7 +536,8 @@ export function CourseBody({
 	const missed = data.missed ?? [];
 	// The starting-point card and the Retest row both start a placement-style test: while the card shows, only the card
 	// (owner, 2026-11-16).
-	const offerPlacement = data.sessions.length === 0 && !placementSkipped && skills.length > data.contextCheck.length;
+	// (an Ask conversation is not studying: it leaves the offer up)
+	const offerPlacement = data.sessions.every((s) => s.mode === "ask") && !placementSkipped && skills.length > data.contextCheck.length;
 
 	// The visual layer (owner, 2026-11-09; one grouped list and a Map button since 2026-11-14): the color bars read `now`; a
 	// tap on a band or a review bucket narrows the list to the skills that match, sorted weakest first.
@@ -628,6 +633,8 @@ export function CourseBody({
 	return (
 		<SkillListContext.Provider value={choose}>
 		<div className="space-y-8">
+			{/* Learn, Ask, Practice (2026-11-25): the three ways in, also before a skill map exists (then only Ask starts). */}
+			<CourseModes data={data} busy={busy} onLearn={(id) => onStart("learn", id)} onPractice={() => onStart("practice")} onAsk={onAsk} />
 			<CourseSettings
 				courseId={course.id}
 				pace={course.pace}
@@ -1027,6 +1034,17 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 		const { id, prompt } = (await res.json()) as { id: string; prompt: string };
 		router.push(`/chat/${id}?prompt=${encodeURIComponent(prompt)}`);
 	};
+	// Ask about this class (2026-11-25): reopen the newest Ask conversation, or start one. It opens on an empty composer.
+	const onAsk = async (reopen?: string) => {
+		if (reopen) {
+			router.push(`/chat/${reopen}`);
+			return;
+		}
+		const res = await call(`/api/courses/${courseId}/sessions`, { mode: "ask" });
+		if (!res) return;
+		const { id } = (await res.json()) as { id: string };
+		router.push(`/chat/${id}`);
+	};
 	// "Choose skills": one practice session on the ticked skills (owner, 2026-11-14)
 	const onPracticeSet = async (skillIds: string[]) => {
 		const res = await call(`/api/courses/${courseId}/sessions`, { mode: "practice", skillIds });
@@ -1175,6 +1193,7 @@ data={data}
 					onChanged={() => void refresh()}
 					settingsOpen={settingsOpen}
 					onSettingsOpenChange={setSettingsOpen}
+					onAsk={(reopen) => void onAsk(reopen)}
 				/>
 				</WeightEditContext.Provider>
 				<div className="mt-12 border-t border-border/60 pt-4">

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDownIcon, ChevronUpIcon, EllipsisIcon, EraserIcon, LassoSelectIcon, LightbulbIcon, MessageSquareIcon, MicIcon, MoonIcon, PenLineIcon, Redo2Icon, SendIcon, SunIcon, Trash2Icon, Undo2Icon, XIcon } from "lucide-react";
 import { ConfidenceButtons } from "@/components/confidence-buttons";
+import { ConfidenceSlider } from "@/components/confidence-slider";
 import { isDictationActive } from "@/components/dictation";
 import { usePalmGuard } from "@/components/sketch/palm-guard";
 import { SketchHintCard } from "@/components/sketch/sketch-hint-card";
@@ -12,6 +13,7 @@ import type { SketchTool } from "@/components/sketch/sketch-canvas";
 import { displayInk, type SheetTone } from "@/components/sketch/sketch-sheet";
 import type { SketchStatus } from "@/components/sketch/sketch-status";
 import { SKETCH_COLORS, SKETCH_ERASER_SIZES, SKETCH_WIDTHS, type EraserSettings, type PenSettings, type ToolbarPrefs } from "@/components/sketch/pen-settings";
+import type { ConfidenceControl } from "@/src/core";
 import { cn } from "@/lib/utils";
 
 /**
@@ -95,6 +97,12 @@ onClose: () => void;
 	/** Submit pressed while it cannot go through: say why. */
 	onSubmitBlocked: (reason: string) => void;
 	onConfidence: (index: number) => void;
+	/** Confidence control mode when asking for confidence on submit (default "buttons"). */
+	confidenceMode?: ConfidenceControl;
+	/** Optional initial confidence (0–100) for slider mode. */
+	initialConfidence?: number | null;
+	/** Called when slider mode submits a 0–100 confidence value. */
+	onConfidenceValue?: (value: number) => void;
 	/** The Hint button (owner, 2026-11-17): absent where the question or problem offers no hint. */
 	hint?: HintControl;
 	/** The Steer button (owner, 2026-11-18): set the question aside and write to the tutor instead; the dock opens its message box. Absent
@@ -439,7 +447,11 @@ export function SketchToolbar(p: SketchToolbarProps) {
 
 				{p.asking && (
 					<div data-ink-hole="" className={card}>
-						<ConfidenceButtons onPick={p.onConfidence} testidPrefix="sketch-confidence" className="min-w-0" />
+						{p.confidenceMode === "slider" ? (
+							<SketchConfidenceSlider initialValue={p.initialConfidence ?? null} onSubmit={(value) => p.onConfidenceValue?.(value)} />
+						) : (
+							<ConfidenceButtons onPick={p.onConfidence} testidPrefix="sketch-confidence" className="min-w-0" />
+						)}
 					</div>
 				)}
 
@@ -455,6 +467,27 @@ export function SketchToolbar(p: SketchToolbarProps) {
 						{p.status.text}
 					</div>
 				)}
+			</div>
+		</div>
+	);
+}
+
+function SketchConfidenceSlider({ initialValue, onSubmit }: { initialValue: number | null; onSubmit: (value: number) => void }) {
+	const [value, setValue] = useState<number | null>(initialValue);
+	return (
+		<div className="flex flex-col gap-2">
+			<ConfidenceSlider value={value} onChange={setValue} testid="sketch-confidence-slider" showUnsetHint />
+			<div className="flex justify-end">
+				<button
+					type="button"
+					data-testid="sketch-confidence-submit"
+					disabled={value === null}
+					onClick={() => { if (value !== null) onSubmit(value); }}
+					className="lh-touch inline-flex h-8 items-center gap-1.5 rounded-full bg-primary px-3.5 text-xs font-medium text-primary-foreground transition-opacity hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+				>
+					<SendIcon className="size-3.5" />
+					Submit answer
+				</button>
 			</div>
 		</div>
 	);

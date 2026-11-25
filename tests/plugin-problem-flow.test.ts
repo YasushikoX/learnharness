@@ -20,6 +20,7 @@ const { getPluginHost } = await import("../src/server/plugins.ts"), { handleChat
 const { createPracticeAgent } = await import("../src/agent/teacher-agent.ts"), { chatStore } = await import("../src/store/chats.ts");
 const { isTurnRunning } = await import("../src/server/turn-liveness.ts"), { runningTurn, abortTurn } = await import("../src/server/turn-runs.ts");
 const { activeProblemOf, modelSolutionForConclude, newUserMessage } = await import("../src/core/native-messages.ts");
+const { TURN_KEEPALIVE } = await import("../src/server/pi/ui-stream.ts");
 const host = await getPluginHost(); await host.setEnabled("problem-fixture", true);
 const ctx = await host.call("problem-fixture", "context") as PluginBackendContext;
 after(async () => { await host.dispose(); globalThis.fetch = realFetch; fs.rmSync(root, { recursive: true, force: true }); });
@@ -63,6 +64,17 @@ test("practice processing owns the turn, rejects concurrent processing and saves
   assert.deepEqual((marker.details as { processing: unknown }).processing, { result: false });
   assert.equal(f.factories(), 1); assert.match(f.modelInput(), /processing/); assert.ok(activeProblemOf(f.saved().messages)); assert.equal(isTurnRunning(f.chat.id), false);
   await f.settle(await f.post()); assert.equal(calls, 2); assert.equal(f.submissions().length, 2);
+});
+
+test("a view waiting on plugin processing is told it is evaluating, not grading", { timeout: 10000 }, async t => {
+  const started = deferred<void>(), release = deferred<JsonValue>(); t.after(() => release.resolve(false));
+  const f = await fixture(t, async () => { started.resolve(); return release.promise; });
+  const response = f.post(); await f.wait(started.promise, response);
+  const view = runningTurn(f.chat.id)!.subscribe().getReader(), decoder = new TextDecoder();
+  assert.equal(decoder.decode((await view.read()).value), TURN_KEEPALIVE);
+  assert.equal(decoder.decode((await view.read()).value), 'data: {"type":"turn-activity","activity":"processing"}\n\n');
+  await view.cancel();
+  release.resolve(false); await f.settle(await response);
 });
 
 test("only the existing conclude tool assesses and closes a processed plugin problem", { timeout: 10000 }, async t => {

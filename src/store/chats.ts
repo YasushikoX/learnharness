@@ -14,7 +14,7 @@ import { PATHS } from "../../config.ts";
 import { emit } from "../core/events.ts";
 import type { ChatStore } from "../core/ports.ts";
 import type { ChatCourseLink, ChatRecord, ClarifyEntry, ClarifyThread, ChatSettings, ChatSummary, ExtractionRunUsage, ImageSnapshot, PlanTree, SideChatThread, TurnUsage } from "../core/contracts.ts";
-import { CURRENT_CHAT_VERSION } from "../core/contracts.ts";
+import { chatVersionFor } from "../core/contracts.ts";
 import type { LhMessage } from "../core/native-messages.ts";
 import { activeProblemOf, danglingQuestionOf } from "../core/native-messages.ts";
 import { phaseAt3Lh } from "../core/phases.ts";
@@ -53,7 +53,7 @@ function createChat(title: string, kind?: "practice", course?: ChatCourseLink): 
 	fs.mkdirSync(PATHS.chats, { recursive: true });
 	writeChat(record);
 	emit("chats-changed", {});
-	return { ...record, version: CURRENT_CHAT_VERSION }; // the in-memory twin of what landed on disk
+	return { ...record, version: chatVersionFor(record) }; // the in-memory twin of what landed on disk
 }
 
 /** THE WRITE CHOKE POINT (schema-versioning wave, owner 2026-10-10): every
@@ -61,7 +61,7 @@ function createChat(title: string, kind?: "practice", course?: ChatCourseLink): 
  *  lazy migration means existing files only get stamped on their next write.
  *  A future-version guard lives on the read side (getChat). */
 function writeChat(record: ChatRecord): void {
-	writeFileAtomicSync(chatFile(record.id), JSON.stringify({ ...record, version: CURRENT_CHAT_VERSION }, null, "\t"), { allowInPlaceFallback: true });
+	writeFileAtomicSync(chatFile(record.id), JSON.stringify({ ...record, version: chatVersionFor(record) }, null, "\t"), { allowInPlaceFallback: true });
 	summaryCache.delete(record.id); // our own write: never trust the stat when we know the file changed
 }
 
@@ -75,9 +75,13 @@ function getChat(id: string): ChatRecord | null {
 	// Honest refusal (owner ruling 2026-10-10): a record stamped NEWER than
 	// this build (the downgrade scenario) reads as absent, never misparsed —
 	// the next read-modify-write must not rewrite what it doesn't understand.
+	// The bound is the record's OWN ceiling (re-check finding 1, 2026-11-25): an Ask chat may carry the Ask stamp, an
+	// ordinary chat may not. A flat bound of the Ask stamp would accept an ordinary chat stamped 3 by some newer build
+	// and the next write would stamp it back to 2.
 	const v = (parsed as { version?: unknown }).version;
-	if (typeof v === "number" && v > CURRENT_CHAT_VERSION) {
-		console.error(`[chat ${id}] record stamped with schema version ${v} > ${CURRENT_CHAT_VERSION} — this app build is older; refusing to read it`);
+	const max = chatVersionFor((parsed ?? {}) as { course?: unknown });
+	if (typeof v === "number" && v > max) {
+		console.error(`[chat ${id}] record stamped with schema version ${v} > ${max} — this app build is older; refusing to read it`);
 		return null;
 	}
 	return parsed as ChatRecord;
@@ -109,7 +113,8 @@ function summarize({ messages, tree, turns, extractions, clarifications: _clarif
 			pendingQuestion: danglingQuestionOf(messages) !== null,
 			// A finished course session (owner, 2026-10-25): the
 			// sidebar row says so.
-			...(summary.course && sessionFinishOf(messages as LhMessage[]) ? { finished: true } : {}),
+			// An Ask conversation (2026-11-25) is never finished, whatever its transcript holds (synced or imported history).
+			...(summary.course && summary.course.mode !== "ask" && sessionFinishOf(messages as LhMessage[]) ? { finished: true } : {}),
 			// Practice: a posed problem with no conclude (the sidebar's "Problem waiting"); false on teaching
 			// sessions, which have no problem tool (upstream v0.5.0 sets it; the fork's cache kept it unset).
 			pendingProblem: activeProblemOf(messages) !== null,

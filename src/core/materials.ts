@@ -222,10 +222,17 @@ export function readMaterialIds(messages: readonly unknown[], materials: readonl
 /** What a material's block says in the prompt: its profile, or a catalog entry or a definitions-and-notation cut of it. */
 type BlockForm = "full" | "catalog" | "defs";
 
+/** Who the section is written for: a lesson (the default), or a course Ask conversation (2026-11-25), whose own
+ *  prompt fragments (agent/prompts/ask/) say how to look things up, so its section only lists the sources. */
+export type MaterialSectionVariant = "lesson" | "ask";
+
 /** One material's block in the system prompt. Pure. */
-export function materialBlock(m: LessonMaterial, path: string, form: BlockForm = "full"): string {
+export function materialBlock(m: LessonMaterial, path: string, form: BlockForm = "full", variant: MaterialSectionVariant = "lesson"): string {
 	const kind = m.kind === "pdf" ? `PDF${m.pages ? `, ${m.pages} pages` : ""}` : m.kind === "web" ? `web page, ${m.url}` : m.kind;
-	const head = `<material id="${m.id}" name="${m.name}" kind="${kind}" path="${path}"${m.addedMidLesson ? ' added="during the lesson"' : ""}>`;
+	const added = m.addedMidLesson && variant === "lesson" ? ' added="during the lesson"' : "";
+	const head = `<material id="${m.id}" name="${m.name}" kind="${kind}" path="${path}"${added}>`;
+	// an Ask conversation may have no lookups at all (a selection clarification), so its block names no tool
+	const lookup = variant === "lesson" ? " Use material_search / material_read on it directly." : "";
 	const body =
 		m.status === "ready" && m.profile
 			? form === "catalog"
@@ -234,9 +241,22 @@ export function materialBlock(m: LessonMaterial, path: string, form: BlockForm =
 					? `${catalogEntry(m.profile)}\n\n${definitionsAndNotation(m.profile) ?? ""}`.trim()
 					: m.profile.trim()
 			: m.status === "reading"
-				? "(Still being read — its profile is not ready yet. Use material_search / material_read on it directly.)"
-				: `(Its profile could not be built${m.error ? `: ${m.error}` : ""}. Use material_search / material_read on it directly.)`;
+				? `(Still being read — its profile is not ready yet.${lookup})`
+				: `(Its profile could not be built${m.error ? `: ${m.error}` : ""}.${lookup})`;
 	return `${head}\n${body}\n</material>`;
+}
+
+/** The Ask conversation's material rules (2026-11-25): what the list is, nothing about lessons or tools. */
+export const ASK_MATERIAL_RULES =
+	"The class's sources. Cite a source by its `name`. A profile summarises a source, with page references, to help choose what to read: it is never something to answer, quote or cite from.";
+const ASK_CATALOG_RULES = `${ASK_MATERIAL_RULES} There are many sources, so most are listed only by scope and contents; a source read in this conversation is shown with its definitions and notation.`;
+
+/** Which kinds of source an Ask conversation can check (its prompt names them). Pure. */
+export interface TurnSources {
+	pdf: boolean;
+	/** text, web and image material */
+	other: boolean;
+	notes: boolean;
 }
 
 /**
@@ -251,6 +271,7 @@ export function materialsPromptSection(
 	pathOf: (m: LessonMaterial) => string,
 	newSince?: number,
 	pinned: ReadonlySet<string> = new Set(),
+	variant: MaterialSectionVariant = "lesson",
 ): string | undefined {
 	if (materials.length === 0) return undefined;
 	// Small sets ride in full, as ever. Past the threshold (owner, 2026-11-19) the prompt carries a catalog, and the
@@ -263,8 +284,9 @@ export function materialsPromptSection(
 	const formOf = (m: LessonMaterial): BlockForm => (!catalog ? "full" : pinned.has(m.id) ? pinForm : "catalog");
 	const added = materials.filter((m) => m.addedMidLesson && newSince !== undefined && Date.parse(m.addedAt) > newSince);
 	const note =
-		added.length > 0
+		added.length > 0 && variant === "lesson"
 			? `\n\nJust added by the learner: ${added.map((m) => `"${m.name}"`).join(", ")}. If this changes the lesson's target or scope, say how you will take it into account and adjust the plan.`
 			: "";
-	return `<source_material>\n${catalog ? CATALOG_RULES : MATERIAL_RULES}${note}\n\n${materials.map((m) => materialBlock(m, pathOf(m), formOf(m))).join("\n\n")}\n</source_material>`;
+	const rules = variant === "ask" ? (catalog ? ASK_CATALOG_RULES : ASK_MATERIAL_RULES) : catalog ? CATALOG_RULES : MATERIAL_RULES;
+	return `<source_material>\n${rules}${note}\n\n${materials.map((m) => materialBlock(m, pathOf(m), formOf(m), variant)).join("\n\n")}\n</source_material>`;
 }

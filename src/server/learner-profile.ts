@@ -15,7 +15,8 @@ export function digestChats(): DigestChat[] {
 	const out: DigestChat[] = [];
 	for (const summary of stores.chatStore.listChats()) {
 		const mode = summary.course?.mode;
-		if (mode === "placement") continue;
+		// an Ask conversation (2026-11-25) answers questions and records nothing about the learner
+		if (mode === "placement" || mode === "ask") continue;
 		const record = stores.chatStore.getChat(summary.id);
 		if (!record) continue;
 		out.push({

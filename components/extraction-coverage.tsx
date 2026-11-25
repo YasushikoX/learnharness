@@ -47,7 +47,7 @@ export interface SessionCoverage {
  *  nothing rather than a fake zero; the honest-render doctrine). */
 async function fetchCoverage(chatId: string): Promise<SessionCoverage | null> {
 	try {
-		const res = await fetch(`/api/chats/${encodeURIComponent(chatId)}`);
+		const res = await fetch(`/api/chats/${encodeURIComponent(chatId)}?view=coverage`);
 		if (!res.ok) return null;
 		const body = (await res.json()) as { coverage?: SessionCoverage | null };
 		return body.coverage ?? null;
@@ -81,19 +81,22 @@ export async function fetchGraphRead(): Promise<GraphRead | null> {
 	}
 }
 
-/** The manual-extract seam, shared by both surfaces. 409 is BENIGN (the
- *  run is already in flight) — returns "running" so the caller flips to the
- *  optimistic/running state instead of an error. Returns false only on a
- *  real failure, where the caller reverts. */
-async function requestExtract(chatId: string): Promise<boolean> {
+/** The manual-extract seam, shared by both surfaces. A 409 that says a run
+ *  is already in flight (`running: true`) is BENIGN — returns "running" so
+ *  the caller flips to the optimistic/running state instead of an error.
+ *  Any other refusal (an Ask conversation, 2026-11-25: never extracted) is a
+ *  failure, where the caller reverts. Exported for tests. */
+export async function requestExtract(chatId: string): Promise<boolean> {
 	try {
 		const res = await fetch("/api/graph/coverage/extract", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ chatId }),
 		});
-		if (!res.ok && res.status !== 409) return false;
-		return true; // 202 started, or 409 already-running — both "running"
+		if (res.ok) return true; // 202 started
+		if (res.status !== 409) return false;
+		const body = (await res.json().catch(() => null)) as { running?: unknown } | null;
+		return body?.running === true; // 409 already-running only
 	} catch {
 		return false;
 	}
@@ -242,9 +245,19 @@ export function ringFill(uncoveredTokens: number, chunkTokens: number): number {
  * (resets as the fold drains coverage) + the settings signal (the
  * threshold/kill-switch re-read live).
  */
-export function CoverageRing({ chatId, refreshKey = 0 }: { chatId: string; refreshKey?: number }) {
-	const [graph, setGraph] = useState<GraphRead | null>(null);
-	const [coverage, setCoverage] = useState<SessionCoverage | null>(null);
+export function CoverageRing({
+	chatId,
+	refreshKey = 0,
+	initialCoverage,
+	initialGraph,
+}: {
+	chatId: string;
+	refreshKey?: number;
+	initialCoverage?: SessionCoverage | null;
+	initialGraph?: GraphRead | null;
+}) {
+	const [graph, setGraph] = useState<GraphRead | null>(() => initialGraph ?? null);
+	const [coverage, setCoverage] = useState<SessionCoverage | null>(() => initialCoverage ?? null);
 	const [open, setOpen] = useState(false);
 	const [nonce, setNonce] = useState(0);
 	const rootRef = useRef<HTMLDivElement>(null);
