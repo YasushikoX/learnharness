@@ -571,7 +571,7 @@ describe("WP6 review 1", () => {
 		assert.match(qq.KEY_POINTS_NEXT_TEXT, /right when it is correct in the form the question asked for, even if it leaves out working the question did not ask for/);
 		assert.doesNotMatch(qq.KEY_POINTS_NEXT_TEXT, /right when it has them all/);
 		assert.match(qq.KEY_POINTS_NEXT_TEXT, /or when a correct result could not have been reached without it/);
-		assert.match(String(qq.keyPointsField.description), /checkable in an answer of the form `question` asks for/);
+		assert.match(String((qq.keyPointsField as { description?: string }).description), /checkable in an answer of the form `question` asks for/);
 	});
 
 	it("finding 2: finish keeps its own share of refusals whatever the other gates spent, and does not use up their total", () => {
