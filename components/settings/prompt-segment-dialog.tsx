@@ -3,7 +3,7 @@
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { HostDialog } from "@/components/host-dialog";
 import type { CloseOutcome } from "@/components/interaction-layers";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { PromptText } from "./prompt-text";
 import { SettingsSegmentedControl } from "./controls";
 
@@ -100,8 +100,8 @@ export function PromptSegmentDialog({ name, source, override, mode, returnFocusF
 	}
 
 	return <HostDialog open onClose={requestClose} returnFocusFallback={returnFocusFallback} aria-labelledby={titleId} aria-describedby={nameId}
-		backdropProps={{ className: "fixed inset-0 flex items-center justify-center bg-background/80" }}
-		frame={<div aria-busy={busy !== null} data-testid="prompt-segment-dialog" className="settings-dialog-pop mx-4 flex h-[720px] max-h-[90dvh] w-full max-w-4xl flex-col overflow-hidden rounded-md border border-border bg-card font-ui shadow-xl" />}>
+		backdropProps={{ className: "fixed inset-0 flex items-center justify-center lh-scrim" }}
+		frame={<div aria-busy={busy !== null} data-testid="prompt-segment-dialog" className="settings-dialog-pop mx-4 flex h-[720px] max-h-[90dvh] w-full max-w-4xl flex-col overflow-hidden lh-dialog" />}>
 		<header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
 			<div className="min-w-0">
 				<h2 id={titleId} className="text-sm font-semibold">{title}</h2>
@@ -123,7 +123,7 @@ export function PromptSegmentDialog({ name, source, override, mode, returnFocusF
 					<Button type="button" variant="destructive" size="sm" onClick={onClose}>Discard changes</Button>
 				</div>
 			</div> : <div className="flex flex-wrap items-center justify-between gap-2">
-				{editing && savedText !== null && <button type="button" className="rounded-sm border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-40" disabled={busy !== null || dirty} onClick={() => void remove()}>{busy === "delete" ? "Deleting…" : "Delete override"}</button>}
+				{editing && savedText !== null && <button type="button" className={buttonVariants({ variant: "destructive", size: "sm" })} disabled={busy !== null || dirty} onClick={() => void remove()}>{busy === "delete" ? "Deleting…" : "Delete override"}</button>}
 				<div className="ml-auto flex gap-2">
 					<Button ref={closeButton} type="button" variant="ghost" size="sm" disabled={busy !== null} onClick={requestClose}>Close</Button>
 					{editing && <Button type="button" size="sm" disabled={busy !== null || (!dirty && !activationFailed)} onClick={() => void save()}>

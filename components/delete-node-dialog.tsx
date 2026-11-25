@@ -1,5 +1,6 @@
 "use client";
 
+import { buttonVariants } from "@/components/ui/button";
 import { useEffect, useState, type ReactElement, type ReactNode } from "react";
 import { HostDialog } from "@/components/host-dialog";
 
@@ -55,7 +56,7 @@ export function DeleteNodeBody({
 			aria-label="Delete node"
 			data-testid="delete-node-dialog"
 			onClick={(e) => e.stopPropagation()}
-			className="w-[32rem] max-w-[calc(100vw-2rem)] rounded-xl border bg-card p-5 shadow-xl"
+			className="w-[32rem] max-w-[calc(100vw-2rem)] lh-dialog p-6"
 		>
 			<h2 className="text-sm font-semibold text-destructive">
 				{folders.length > 0 ? (nodes.length > 0 ? "Delete nodes and remove empty folders?" : "Remove empty folders?") : nodes.length === 1 ? "Delete node?" : `Delete ${nodes.length} nodes?`}
@@ -71,11 +72,11 @@ export function DeleteNodeBody({
 			    more" — the count in the title carries the full number). */}
 			<div className="mt-1.5">
 				{nodes.length === 1 ? (
-					<code data-testid="node-name-code" className="font-mono text-sm text-foreground">
+					<code data-testid="node-name-code" className="font-sans text-sm font-medium text-foreground">
 						{nodes[0]?.name}
 					</code>
 				) : (
-					<code data-testid="node-names-code" className="font-mono text-sm text-foreground">
+					<code data-testid="node-names-code" className="font-sans text-sm font-medium text-foreground">
 						{nodes.slice(0, 8).map((n) => n.name).join(", ")}
 						{nodes.length > 8 ? `, and ${nodes.length - 8} more` : ""}
 					</code>
@@ -116,7 +117,7 @@ export function DeleteNodeBody({
 					data-testid="node-delete-cancel"
 					onClick={onClose}
 					disabled={busy}
-					className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+					className={buttonVariants({ variant: "ghost", size: "sm" })}
 				>
 					Cancel
 				</button>
@@ -128,7 +129,7 @@ export function DeleteNodeBody({
 					// Destructive red (owner, polish round) — the
 					// app's established destructive pair (chat's
 					// refusal banner): border + text, fill on hover.
-					className="rounded-sm border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-40"
+					className={buttonVariants({ variant: "destructiveSolid", size: "sm" })}
 				>
 					{busy ? "Deleting…" : "Delete"}
 				</button>
@@ -228,6 +229,6 @@ export function DeleteNodeDialog({
 				renderFrame={(frame) => <HostDialog open frame={frame} onClose={() => {
 					if (busy) return "blocked";
 					onClose(); return "closed";
-				}} backdropProps={{ className: "fixed inset-0 z-50 flex items-center justify-center bg-background/80" }}>{frame.props.children}</HostDialog>}
+				}} backdropProps={{ className: "fixed inset-0 z-50 flex items-center justify-center lh-scrim" }}>{frame.props.children}</HostDialog>}
 			/>;
 }

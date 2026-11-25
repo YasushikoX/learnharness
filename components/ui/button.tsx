@@ -16,7 +16,7 @@ import type { PluginButtonColors as ButtonColors } from "@/src/core"
  * `buttonVariants` is the class helper for elements that cannot be a <Button> (a link, a label).
  */
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap select-none transition-[background-color,color,border-color,opacity,transform] duration-(--lh-duration-hover) ease-(--lh-ease) outline-none focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-45 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap select-none transition-[background-color,color,border-color,opacity,transform] duration-(--lh-duration-hover) ease-(--lh-ease) outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-45 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
@@ -30,7 +30,7 @@ const buttonVariants = cva(
         destructive:
           "bg-secondary text-destructive hover:bg-raised-strong active:bg-raised-strong",
         destructiveSolid:
-          "bg-destructive text-white hover:bg-destructive/90 active:bg-destructive/85",
+          "bg-destructive text-white dark:text-zinc-950 hover:bg-destructive/90 active:bg-destructive/85",
         link: "h-auto! px-0! text-primary underline-offset-4 hover:underline",
         custom: "border border-transparent bg-primary text-primary-foreground",
       },

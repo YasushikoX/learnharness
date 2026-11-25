@@ -1,5 +1,6 @@
 "use client";
 
+import { buttonVariants } from "@/components/ui/button";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CourseSummary } from "@/src/core";
@@ -95,18 +96,18 @@ export function DeleteCourseDialog({
 	};
 
 	return createPortal(
-		<div ref={rootRef} className="fixed inset-0 z-50 flex items-center justify-center bg-background/80" {...backdropDismiss}>
+		<div ref={rootRef} className="fixed inset-0 z-50 flex items-center justify-center lh-scrim" {...backdropDismiss}>
 			<div
 				role="dialog"
 				aria-modal="true"
 				aria-label="Delete course"
 				data-testid="delete-course-dialog"
 				onClick={(e) => e.stopPropagation()}
-				className="w-[32rem] max-w-[calc(100vw-2rem)] rounded-xl border bg-card p-5 shadow-xl"
+				className="w-[32rem] max-w-[calc(100vw-2rem)] lh-dialog p-6"
 			>
 				<h2 className="text-sm font-semibold text-destructive">Delete course?</h2>
 				<div className="mt-1.5">
-					<code data-testid="course-name-code" className="font-mono text-sm text-foreground">
+					<code data-testid="course-name-code" className="font-sans text-sm font-medium text-foreground">
 						{course.title}
 					</code>
 				</div>
@@ -134,7 +135,7 @@ export function DeleteCourseDialog({
 						data-testid="delete-course-cancel"
 						onClick={onClose}
 						disabled={busy}
-						className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40"
+						className={buttonVariants({ variant: "ghost", size: "sm" })}
 					>
 						Cancel
 					</button>
@@ -143,7 +144,7 @@ export function DeleteCourseDialog({
 						data-testid="delete-course-confirm"
 						onClick={() => void run()}
 						disabled={busy}
-						className="rounded-sm border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-40"
+						className={buttonVariants({ variant: "destructiveSolid", size: "sm" })}
 					>
 						{busy ? "Deleting…" : "Delete"}
 					</button>

@@ -1,5 +1,6 @@
 "use client";
 
+import { buttonVariants } from "@/components/ui/button";
 import type { ReactElement, ReactNode } from "react";
 import { HostDialog } from "@/components/host-dialog";
 import { useBackdropDismiss } from "@/components/backdrop-dismiss";
@@ -66,7 +67,7 @@ export function AbortTurnBody({
 	const copy = COPY[mode];
 	const frame = (
 			<div
-				className="mx-4 w-full max-w-sm rounded-xl border bg-card p-5 shadow-lg"
+				className="mx-4 w-full max-w-sm lh-dialog p-6"
 				onClick={(e) => e.stopPropagation()}
 			>
 				<h2 className="text-sm font-semibold text-card-foreground" data-testid="abort-turn-title">
@@ -81,7 +82,7 @@ export function AbortTurnBody({
 						type="button"
 						data-testid="abort-turn-cancel"
 						onClick={onClose}
-						className="rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+						className={buttonVariants({ variant: "ghost", size: "sm" })}
 					>
 						Cancel
 					</button>
@@ -90,7 +91,7 @@ export function AbortTurnBody({
 						data-testid="abort-turn-confirm"
 						onClick={onConfirm}
 						// Destructive red — the app's established destructive pair.
-						className="rounded-sm border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/20"
+						className={buttonVariants({ variant: "destructive", size: "sm" })}
 					>
 						{copy.action}
 					</button>
@@ -99,7 +100,7 @@ export function AbortTurnBody({
 	);
 	if (renderFrame) return renderFrame(frame);
 	return <div role="dialog" aria-modal="true" aria-label={copy.title} data-testid="abort-turn-dialog"
-		className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm"
+		className="fixed inset-0 z-50 flex items-center justify-center lh-scrim"
 		{...backdropDismiss}>{frame}</div>;
 }
 
@@ -119,7 +120,7 @@ export function AbortTurnDialog({
 	return <AbortTurnBody mode={mode} onClose={onClose} onConfirm={() => onConfirm(mode)} busy={busy}
 		renderFrame={(frame) => <HostDialog open frame={frame} aria-label={COPY[mode].title}
 			onClose={() => { onClose(); return "closed"; }}
-			backdropProps={{ className: "fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm", "data-testid": "abort-turn-dialog" }}>
+			backdropProps={{ className: "fixed inset-0 z-50 flex items-center justify-center lh-scrim", "data-testid": "abort-turn-dialog" }}>
 			{frame.props.children}
 		</HostDialog>} />;
 }
