@@ -54,6 +54,24 @@ test("editing under the built-in profile forks a copy", () => {
 	assert.equal(unchanged, applied.record, "no change, no fork");
 });
 
+test("the global image generator survives profile switches and never forks a built-in", () => {
+	const image = { provider: "openrouter", id: "openai/gpt-image-1" };
+	const withImage: UserSettings = { ...base(), models: { ...base().models, image } };
+	const applied = applyProfile(withImage, CLAUDE_PROFILE_NAME);
+	assert.ok(applied.ok);
+	assert.deepEqual(applied.record.models?.image, image);
+	const edited = { ...applied.record, models: { ...applied.record.models, image: { ...image, id: "openai/gpt-image-1-mini" } } };
+	const synced = syncActiveProfile(applied.record, edited);
+	assert.equal(synced.profiles?.active, CLAUDE_PROFILE_NAME);
+	assert.equal(synced.profiles?.items?.[`${CLAUDE_PROFILE_NAME} (copy)`], undefined);
+	const created = createProfile(synced, "Image-free snapshot");
+	assert.ok(created.ok);
+	assert.equal(created.record.profiles?.items?.["Image-free snapshot"]?.models?.image, undefined);
+	const back = applyProfile(created.record, DEFAULT_PROFILE_NAME);
+	assert.ok(back.ok);
+	assert.deepEqual(back.record.models?.image, edited.models.image);
+});
+
 test("names: unique, non-empty, built-in reserved; rename and delete rules", () => {
 	assert.equal(createProfile(base(), "  ").ok, false);
 	assert.equal(createProfile(base(), CLAUDE_PROFILE_NAME.toLowerCase()).ok, false);

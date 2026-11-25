@@ -43,6 +43,11 @@ export function VisualCard({ part }: ArtifactPartProps) {
 }
 
 /** The figure itself — exported: the steer card renders the delivered artifact. */
+export function generatedVisualLabel(result: VisualResult | undefined): string | null {
+	const generated = result?.image?.generated;
+	return generated ? `Generated illustration · ${generated.model}` : null;
+}
+
 export function VisualOutputCard({
 	output,
 	messageId,
@@ -146,6 +151,9 @@ export function VisualOutputCard({
 			}>
 				<div className="flex min-w-0 items-baseline gap-2">
 					<span className="shrink-0 lh-eyebrow text-muted-foreground">Figure</span>
+					{generatedVisualLabel(result) && (
+						<span className="text-xs text-muted-foreground" data-testid="generated-figure-caption">{generatedVisualLabel(result)}</span>
+					)}
 					{caption && (
 						<span className="font-sans text-sm leading-5 text-muted-foreground" data-testid="figure-caption">
 							{caption}

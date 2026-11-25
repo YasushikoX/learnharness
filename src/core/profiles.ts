@@ -7,9 +7,10 @@ import { MODEL_SLOTS, type ModelProfile, type ModelsSettings, type ProfilesSetti
  * these to the record, the Agent page describes them from the same data.
  *
  * Invariant (kept server-side by `syncActiveProfile` after every models or
- * agent write): the ACTIVE profile mirrors the live `models` section and
+ * agent write): the ACTIVE profile mirrors the live model slots and
  * `agent.models`, which the engine keeps reading as before. Switching a
- * profile copies its contents into those two places.
+ * profile copies its contents into those two places. The global `models.image`
+ * selection stays outside profiles, survives switches, and never forks a built-in.
  *
  * Built-in "Claude subscription" (was the one-way preset): read-only. Editing a
  * model while it is active forks it into a user profile "Claude subscription
@@ -60,7 +61,8 @@ function userItems(record: UserSettings | null): Record<string, ModelProfile> {
 /** The live models as a profile snapshot. */
 export function liveProfile(record: UserSettings | null): ModelProfile {
 	const out: ModelProfile = {};
-	if (record?.models && Object.keys(record.models).length) out.models = structuredClone(record.models);
+	const models = Object.fromEntries(MODEL_SLOTS.flatMap((slot) => record?.models?.[slot] ? [[slot, structuredClone(record.models[slot])]] : []));
+	if (Object.keys(models).length) out.models = models;
 	if (record?.agent?.models && Object.keys(record.agent.models).length) out.roles = structuredClone(record.agent.models);
 	return out;
 }
@@ -118,7 +120,6 @@ export function profileProviders(profile: ModelProfile): string[] {
 		const model = profile.models?.[slot]?.model;
 		if (model) out.add(model.provider);
 	}
-	if (profile.models?.image) out.add(profile.models.image.provider);
 	for (const role of Object.values(profile.roles ?? {})) if (role?.model) out.add(role.model.provider);
 	return [...out];
 }
@@ -148,7 +149,8 @@ function withProfile(record: UserSettings | null, name: string, profile: ModelPr
 	else delete agent.models;
 	const next: UserSettings = { ...r, agent, profiles: { ...ensureProfiles(r), active: name } };
 	const models: ModelsSettings | undefined = profile.models && Object.keys(profile.models).length ? structuredClone(profile.models) : undefined;
-	if (models) next.models = models;
+	const image = r.models?.image ? structuredClone(r.models.image) : undefined;
+	if (models || image) next.models = { ...models, ...(image ? { image } : {}) };
 	else delete next.models;
 	return next;
 }
@@ -210,8 +212,8 @@ function uniqueCopyName(record: UserSettings, base: string): string {
 }
 
 /** After a write to `models` or `agent.models`: keep the active profile in step with the live
- *  models. A built-in active profile forks into a user copy instead. Unchanged live models
- *  return `next` as is. Pure. */
+ *  slots and roles. A built-in active profile forks into a user copy instead. Global image-only
+ *  changes and otherwise unchanged live models return `next` as is. Pure. */
 export function syncActiveProfile(prev: UserSettings | null, next: UserSettings): UserSettings {
 	if (sameProfile(liveProfile(prev), liveProfile(next))) return next;
 	const base = ensureProfilesRecord(next);

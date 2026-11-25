@@ -122,10 +122,7 @@ Your FINAL message: 1-2 sentences of notes for the teacher (what the figure show
 NEVER the SVG source itself. If you genuinely cannot make a correct picture of the brief, say exactly
 that in your final message and why.`;
 
-const IMAGE_INSTRUCTIONS = `ANNOTATING THE LEARNER'S IMAGE — this brief comes with one of the learner's own pictures. Your
-figure is that picture with marks on it, not a new drawing:
-
-- Place it EXACTLY ONCE, at its natural size, before your marks so they sit on top:
+const ANNOTATION_RULES = `- Place it EXACTLY ONCE, at its natural size, before your marks so they sit on top:
   <image href="${LEARNER_IMAGE_HREF}" x="…" y="…" width="W" height="H"/> — W×H is given with the image.
   The loop substitutes the real picture; never draw or describe its content yourself.
 - Use static SVG marks and inline attributes only: no scripts, animation, foreignObject, style blocks,
@@ -139,11 +136,18 @@ figure is that picture with marks on it, not a new drawing:
 - If a feature the brief names is not in the picture, never guess where it is: leave it unmarked and say
   so in your notes.`;
 
+const IMAGE_INSTRUCTIONS = `ANNOTATING THE LEARNER'S IMAGE — this brief comes with one of the learner's own pictures. Your
+figure is that picture with marks on it, not a new drawing:
+
+${ANNOTATION_RULES}`;
+
 const GENERATED_IMAGE_INSTRUCTIONS = `COMPOSING WITH A GENERATED ILLUSTRATION — the picture is a generated raster base for appearance,
 not evidence. Treat every factual claim as coming from the brief, not from pixels the generator invented:
 - Do not copy labels, arrows, counts, scales, or other claims from the generated picture into the figure.
 - Add the brief's exact labels and marks as deterministic SVG, and inspect their placement on the final render.
-- If the generated appearance conflicts with the brief or cannot support an accurate composition, say so and do not guess.`;
+- If the generated appearance conflicts with the brief or cannot support an accurate composition, say so and do not guess.
+
+${ANNOTATION_RULES}`;
 
 const PDF_INSTRUCTIONS = `FINDING THE FIGURE ON A PDF PAGE — the picture you were given is one whole page of the learner's PDF
 (often a lecture slide), and the brief names one figure on it:
@@ -237,7 +241,7 @@ export async function runVisualMaker(input: VisualMakerInput, opts: VisualMakerO
 	const systemPrompt = pdf
 		? `${INSTRUCTIONS}\n\n${IMAGE_INSTRUCTIONS}\n\n${PDF_INSTRUCTIONS}`
 		: learnerImage
-			? `${INSTRUCTIONS}\n\n${IMAGE_INSTRUCTIONS}${input.generated ? `\n\n${GENERATED_IMAGE_INSTRUCTIONS}` : ""}`
+			? `${INSTRUCTIONS}\n\n${input.generated ? GENERATED_IMAGE_INSTRUCTIONS : IMAGE_INSTRUCTIONS}`
 			: INSTRUCTIONS;
 	const prompt = [
 		pdf

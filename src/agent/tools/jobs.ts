@@ -7,6 +7,7 @@ import type { JobStore } from "../../core/ports.ts";
 import { checkLearnerImage } from "./learner-image.ts";
 import { checkPdfPage } from "./pdf-figure.ts";
 import { resolveSourcePath } from "./fs-shared.ts";
+import type { ImageModelSelection } from "../image-generation.ts";
 
 /**
  * Async sub-agent job tools (vision §2.5; W2/W6 kinds + the pi-model
@@ -31,6 +32,8 @@ export interface JobToolContext {
 	 *  Research dispatch does not depend on it: web_fetch is keyless and
 	 *  web_search reports a missing provider as a recoverable tool result. */
 	searchAvailable?: () => boolean;
+	/** Explicit generator choice, read at dispatch so an unset choice fails the call. */
+	imageModel?: () => ImageModelSelection | undefined;
 	/** The Ask agent's wording (2026-11-25): visual and demo say "answer" instead of "teach" and name no tool Ask lacks
 	 *  (it has no `ls`). Same jobs, same runner. */
 	wording?: "ask";
@@ -227,6 +230,7 @@ export function jobTools(ctx: JobToolContext): Record<string, AgentTool<any>> {
 				if (!ctx.jobStore.findJobByToolCallId(ctx.chatId, toolCallId)) {
 					if (input.image !== undefined && input.pdf !== undefined) throw new Error("Pass either image or pdf, not both.");
 					if (input.generate !== undefined && (input.image !== undefined || input.pdf !== undefined)) throw new Error("Pass generate by itself, not with image or pdf.");
+					if (input.generate !== undefined && !ctx.imageModel?.()) throw new Error("Image generation is not configured — choose an image model in Settings → Agent → Models.");
 					if (input.image !== undefined) await checkLearnerImage(input.image);
 					if (input.pdf !== undefined) await checkPdfPage(input.pdf.path, input.pdf.page, signal);
 				}

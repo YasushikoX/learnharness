@@ -270,6 +270,14 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 			await refuse(keyRefusal.error);
 			return;
 		}
+		const requested = resolveInput(job, input) as VisualToolInput | undefined;
+		const imageSelection = job.kind === "visual" && typeof requested?.generate === "string" && requested.generate.trim() ? deps.imageModel?.() : undefined;
+		const imageKeyRefusal = imageSelection ? deps.providerKeyMissing?.(imageSelection.provider, "vision") : null;
+		if (imageKeyRefusal) {
+			console.info(`[job ${jobId}] refused — ${JSON.stringify(imageKeyRefusal)}`);
+			await refuse(imageKeyRefusal.error);
+			return;
+		}
 		try {
 			await run(jobId, engine, input, makeLoopContext(jobId, engine));
 		} finally {

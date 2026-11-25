@@ -114,6 +114,7 @@ afterEach(async () => {
 
 const catalog: ModelCatalogResponse = {
 	imageModels: [],
+	image: null,
 	models: [
 		{
 			id: "claude-sonnet-4-5",

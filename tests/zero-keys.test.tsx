@@ -124,6 +124,7 @@ describe("the dictation keyless seam (owner dictation trio)", () => {
  *  reads: the strong pin and the present-key providers list. */
 const catalog = (strongProvider: string | null, ...keyedProviders: string[]): ModelCatalogResponse => ({
 	imageModels: [],
+	image: null,
 	models: [],
 	defaults: null,
 	rolePins: {

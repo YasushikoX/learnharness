@@ -59,6 +59,8 @@ export interface ModelCatalogResponse {
 	models: ModelCatalogEntry[];
 	/** Image generators, separate from chat models including image-input models. */
 	imageModels: ImageModelCatalogEntry[];
+	/** Saved generator choice, projected separately so setup cannot erase it. */
+	image: { provider: string; id: string } | null;
 	/** Strong-slot conversation default, or null when no default model is
 	 * configured. A session's explicit model choice resolves separately. */
 	defaults: CatalogDefaults | null;

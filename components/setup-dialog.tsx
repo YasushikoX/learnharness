@@ -389,7 +389,7 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 		if (!allPicked || saving) return;
 		setSaving(true);
 		setError(null);
-		const models: ModelsSettings = {};
+		const models: ModelsSettings = { ...(catalog?.image ? { image: catalog.image } : {}) };
 		for (const slot of SLOT_ORDER) {
 			const level = levels[slot];
 			models[slot] = {

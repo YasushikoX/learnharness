@@ -236,11 +236,13 @@ export function modelCatalog(): ModelCatalogResponse {
 		.getProviders()
 		.filter((p) => keyed.has(p.id))
 		.flatMap((p) => piModels().getModelsOfType("image", p.id))
+		.filter((model) => !["openrouter/auto", "openrouter/auto-beta", "openrouter/auto-code"].includes(model.id))
 		.map(toImageModelDto)
 		.sort((a, b) => (a.provider === b.provider ? a.id.localeCompare(b.id) : a.provider.localeCompare(b.provider)));
 	return {
 		models,
 		imageModels,
+		image: effectiveSettings().models.image ?? null,
 		defaults: catalogDefaults(),
 		rolePins: catalogRolePins(),
 		slots: catalogSlots(),

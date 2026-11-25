@@ -35,7 +35,7 @@ const a: ModelCatalogEntry = { id: "vendor/model:free", name: "Model free", prov
 const b: ModelCatalogEntry = { ...a, id: "claude-opus-5-5", name: "Claude Opus 5.5", supportedLevels: ["off", "medium"] };
 function catalog(connected = true): ModelCatalogResponse {
 	return {
-		models: connected ? [a, b] : [], imageModels: connected ? [{ id: "image-one", name: "Image One", provider: provider.id, output: ["image"] }] : [], defaults: null,
+		models: connected ? [a, b] : [], imageModels: connected ? [{ id: "image-one", name: "Image One", provider: provider.id, output: ["image"] }] : [], image: null, defaults: null,
 		rolePins: { researcher: null, demoBuilder: null, visualMaker: null, extractor: null, auditor: null, planner: null, pdfReader: null, coursePlanner: null, checker: null, grader: null, sideQuestion: null },
 		slots: { strong: { model: { provider: a.provider, id: a.id }, thinkingLevel: "low" }, cheap: { model: { provider: a.provider, id: a.id }, thinkingLevel: "high" }, vision: { model: { provider: a.provider, id: a.id }, thinkingLevel: "low" } },
 		providers: [{ ...provider, keyPresent: connected }],
@@ -107,6 +107,17 @@ test("cached setup is immediately usable; fresh metadata/untouched slots update 
 		cheap: { model: { provider: b.provider, id: b.id }, thinkingLevel: "off" },
 		vision: { model: { provider: a.provider, id: a.id }, thinkingLevel: "low" },
 	});
+});
+
+test("setup preserves the saved image generator while repairing chat slots", async () => {
+	installFetch();
+	const configured = catalog();
+	configured.image = { provider: provider.id, id: "image-one" };
+	await warm(configured);
+	await render(<><Reader />{setup()}</>);
+	await answer(1, configured);
+	await click("setup-save");
+	assert.deepEqual(writes[0]?.image, configured.image);
 });
 
 test("zero providers always means exclusive connection stage; reconnect with all saved slots only closes, even if every selection remains unavailable", async () => {
@@ -299,6 +310,9 @@ test("availability and setup completeness never conflate missing metadata, disco
 	body.models = [b]; body.providers = [{ ...provider, keyPresent: true }];
 	assert.equal(selectedModelUnavailable(body, `${b.provider}:${b.id}`), false);
 	body.slots.cheap = null; assert.equal(savedSlotsConfigured(body.slots), false);
+	body.slots = { strong: null, cheap: null, vision: null };
+	body.image = { provider: provider.id, id: "image-one" };
+	assert.equal(savedSlotsConfigured(body.slots), false, "an image generator alone does not configure chat models");
 });
 
 test("shared refresh fences late failure as well as late success, and Retry clears a current error", async () => {

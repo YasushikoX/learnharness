@@ -4,7 +4,7 @@ import { Agent } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { normalizeContext, type AssistantMessage, type AssistantMessageEvent, type Model, type Api, type StreamFunction } from "@earendil-works/pi-ai";
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
-import { configureWorkerRequestAdmission, createWorkerRequestScope, refreshWorkerRequestAdmission, workerRequestStream } from "../src/agent/worker-request-admission.ts";
+import { configureWorkerRequestAdmission, createWorkerRequestScope, refreshWorkerRequestAdmission, workerRequest, workerRequestStream } from "../src/agent/worker-request-admission.ts";
 import { usageWasAdmitted } from "../src/agent/subscription-request-cycle.ts";
 
 const key = Symbol.for("lh.worker-request-admission.pool.v1");
@@ -120,6 +120,32 @@ test("queued/pre-aborted cancellation never invokes transport and preserves no-d
 	assert.equal(f.sources.length, 1);
 	finish(f.sources[0]!); await first; await tick();
 	assert.equal(f.sources.length, 1);
+});
+
+test("promise requests share capacity and cancel queued or active work", async () => {
+	configureWorkerRequestAdmission(() => 1);
+	const signals: AbortSignal[] = [];
+	let started = 0;
+	let finishFirst!: () => void;
+	const firstGate = new Promise<void>((resolve) => { finishFirst = resolve; });
+	const first = workerRequest(async (signal) => { started++; signals.push(signal); await firstGate; return "first"; });
+	const queuedOwner = new AbortController();
+	const queued = workerRequest(async () => { started++; return "queued"; }, queuedOwner.signal);
+	await tick();
+	assert.equal(started, 1);
+	queuedOwner.abort(new Error("cancel queued"));
+	await assert.rejects(queued, /cancel queued/);
+	assert.equal(started, 1);
+	finishFirst();
+	assert.equal(await first, "first");
+	const activeOwner = new AbortController();
+	const active = workerRequest(async (signal) => { started++; signals.push(signal); await new Promise<void>(() => {}); }, activeOwner.signal);
+	await tick();
+	assert.equal(started, 2);
+	activeOwner.abort(new Error("cancel active"));
+	await assert.rejects(active, /cancel active/);
+	assert.equal(signals[1]?.aborted, true);
+	assert.equal(globals[key]?.active, 0);
 });
 
 test("abort during reserved-permit handoff releases exactly once and skips canceled source", async () => {

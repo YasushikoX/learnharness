@@ -8,6 +8,8 @@
  *      placeholder protocol (fake model + fake headless), one REAL resvg
  *      render of an embedded raster, and the job runner end to end
  *   4. the cards: no invert switch on images, the ImageCard chrome
+ *   5. generated images: dispatch/configuration gates, generated-only instructions,
+ *      and visible generated provenance
  *
  * Cleanup follows tests/demos.test.tsx (created chat/job files removed in
  * after(); overrides reset in finally blocks).
@@ -42,12 +44,13 @@ import { jobTools } from "../src/agent/tools/jobs.ts";
 import { LEARNER_IMAGE_HREF, runVisualMaker } from "../src/agent/subagents/visual-maker.ts";
 import { headlessOverride, realHeadless, type HeadlessApi } from "../src/agent/subagents/headless.ts";
 import { createJobRunner, visualModelOverride, type JobRunnerDeps } from "../src/agent/subagents/runner.ts";
+import { providerKeyMissing } from "../src/core/settings.ts";
 import { isSubagentFailure, type JobRecord, type SteerMessage, type VisualResult } from "../src/core/contracts.ts";
 import type { JobStore } from "../src/core/ports.ts";
 import type { PiEngine } from "../src/agent/models.ts";
 import { chatStore } from "../src/store/chats.ts";
 import { jobStore } from "../src/store/jobs.ts";
-import { VisualOutputCard } from "../components/artifacts/visual-card.tsx";
+import { generatedVisualLabel, VisualOutputCard } from "../components/artifacts/visual-card.tsx";
 import { ImageCard, ImagePresentation, imageDownloadName, imageSvgDocument } from "../components/artifacts/image-card.tsx";
 import { artifactRenderers } from "../components/artifacts/index.ts";
 
@@ -266,7 +269,7 @@ describe("show_image", () => {
 // ─── 3. visual with an image ─────────────────────────────────────────────────
 
 describe("visual with an image: dispatch", () => {
-	function fakeJobs() {
+	function fakeJobs(configured = true) {
 		const created: unknown[] = [];
 		const spawned: unknown[] = [];
 		const store = {
@@ -277,7 +280,7 @@ describe("visual with an image: dispatch", () => {
 				return job;
 			},
 		} as unknown as JobStore;
-		const tools = jobTools({ chatId: "chat_x", jobStore: store, spawn: (_job, input) => spawned.push(input) });
+		const tools = jobTools({ chatId: "chat_x", jobStore: store, spawn: (_job, input) => spawned.push(input), imageModel: () => configured ? { provider: "openrouter", id: "image-fixture" } : undefined });
 		return { tools, created, spawned };
 	}
 
@@ -295,6 +298,13 @@ describe("visual with an image: dispatch", () => {
 		assert.match((result.content[0] as { text: string }).text, /^Dispatched \(job job_1\)/);
 		assert.equal(created.length, 1);
 		assert.deepEqual(spawned, [{ brief: "Circle the left half.", image: p }]);
+	});
+
+	it("rejects generation at dispatch when no image model is configured", async () => {
+		const { tools, created, spawned } = fakeJobs(false);
+		await assert.rejects(tools.visual!.execute("call-unconfigured", { brief: "b", generate: "picture" }), /Image generation is not configured/);
+		assert.equal(created.length, 0);
+		assert.equal(spawned.length, 0);
 	});
 
 	it("dispatches generated imagery but rejects mixing it with learner sources", async () => {
@@ -356,6 +366,17 @@ describe("visual maker with a learner image (fake model + fake headless)", () =>
 		assert.match(text(requests[2]!), /ERROR: edit not applied — the image must use exactly one href/);
 		assert.equal(result.svg, MARKED_SVG, "the delivered SVG still references the picture");
 		assert.equal(headless.svgCalls.length, 1, "no re-render: the SVG never changed");
+	});
+
+	it("uses generated-specific instructions without calling the picture the learner's own", async () => {
+		const image = await loadLearnerImage(file("generated-instructions.png", raster(40, 30)));
+		const { engine, requests } = scripted([
+			fauxAssistantMessage([fauxToolCall("write_svg", { svg: MARKED_SVG }, { id: "w1" }), fauxToolCall("render_svg", {}, { id: "r1" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("Done.")]),
+		]);
+		await runVisualMaker({ brief: "Label the yellow half.", image, generated: { provider: "openrouter", model: "image-fixture", prompt: "abstract halves" } }, { engine, headless: fakeHeadless() });
+		assert.match(text(requests[0]!), /COMPOSING WITH A GENERATED ILLUSTRATION/);
+		assert.doesNotMatch(text(requests[0]!), /ANNOTATING THE LEARNER'S IMAGE/);
 	});
 
 	it("without an image the result carries no image field", async () => {
@@ -503,6 +524,23 @@ describe("visual job runner with an image", () => {
 		assert.match(steers[0]!.content as string, /^Generated visual job_\S+ is drawn and verified/);
 	});
 
+	it("refuses a missing image-provider key before calling the generator", async () => {
+		const job = visualChat("Test: missing image key", { brief: "Label it.", generate: "An abstract illustration" });
+		const engine = scripted([]).engine;
+		let calls = 0;
+		const { steers, runner } = testRunner({
+			engineFor: () => engine,
+			imageModel: () => ({ provider: "openrouter", id: "image-fixture" }),
+			generateImage: async () => { calls++; throw new Error("must not generate"); },
+			providerKeyMissing: (provider, tier) => provider === "openrouter" ? providerKeyMissing(provider, [tier]) : null,
+		});
+		await runner.runJob(job.id);
+		assert.equal(calls, 0);
+		assert.equal(jobStore.getJob(job.id)?.status, "error");
+		assert.match(jobStore.getJob(job.id)?.error ?? "", /No OpenRouter key is set/);
+		assert.match(steers[0]?.content as string, /No OpenRouter key is set/);
+	});
+
 	it("an image gone by run time delivers a FAILED steer", async () => {
 		const p = file("vanishing.png", raster(8, 8));
 		const job = visualChat("Test: annotate runner, vanished image", { brief: "b", image: p });
@@ -526,6 +564,11 @@ describe("visual job runner with an image", () => {
 // ─── 4. the cards ────────────────────────────────────────────────────────────
 
 describe("image cards", () => {
+	it("names generated imagery and its model without labeling learner images", () => {
+		assert.equal(generatedVisualLabel({ svg: "<svg/>", image: { path: "Generated illustration", snapshotId: "0".repeat(64), generated: { provider: "openrouter", model: "image-fixture", prompt: "abstract" } } }), "Generated illustration · image-fixture");
+		assert.equal(generatedVisualLabel({ svg: "<svg/>", image: { path: "/a.png", snapshotId: "0".repeat(64) } }), null);
+	});
+
 	const details = {
 		path: "/Users/learner/Photos/IMG_0042.HEIC.jpeg",
 		caption: "Your breadboard",

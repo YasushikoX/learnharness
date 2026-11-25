@@ -295,6 +295,10 @@ GET /api/models response.
 export interface ModelCatalogResponse {
     models: ModelCatalogEntry[];
     imageModels: ImageModelCatalogEntry[];
+    image: {
+        provider: string;
+        id: string;
+    } | null;
     defaults: CatalogDefaults | null;
     rolePins: RolePins;
     slots: SlotPins;
@@ -308,6 +312,9 @@ export interface ModelCatalogResponse {
 
 - [models](#modelcatalogresponse-models)
 - [imageModels](#modelcatalogresponse-imagemodels)
+- [image](#modelcatalogresponse-image)
+- [image.provider](#modelcatalogresponse-imageprovider)
+- [image.id](#modelcatalogresponse-imageid)
 - [defaults](#modelcatalogresponse-defaults)
 - [rolePins](#modelcatalogresponse-rolepins)
 - [slots](#modelcatalogresponse-slots)
@@ -325,6 +332,29 @@ Image generators, separate from chat models including image-input models.
 
 ```ts
 imageModels: ImageModelCatalogEntry[];
+```
+
+### ModelCatalogResponse image
+
+Saved generator choice, projected separately so setup cannot erase it.
+
+```ts
+image: {
+    provider: string;
+    id: string;
+} | null;
+```
+
+### ModelCatalogResponse image.provider
+
+```ts
+provider: string;
+```
+
+### ModelCatalogResponse image.id
+
+```ts
+id: string;
 ```
 
 ### ModelCatalogResponse defaults

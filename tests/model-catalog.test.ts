@@ -63,6 +63,7 @@ describe("the model catalog projection", () => {
 		const { models, imageModels, defaults, providers, slots } = modelCatalog();
 		assert.ok(imageModels.some((m) => m.provider === "openrouter" && m.output.includes("image")));
 		assert.ok(imageModels.every((m) => !("supportedLevels" in m) && !("contextWindow" in m)));
+		assert.ok(imageModels.every((m) => !["openrouter/auto", "openrouter/auto-beta", "openrouter/auto-code"].includes(m.id)));
 		// 0.85.1 ships 366 OpenRouter models — the exact count is pi's, but
 		// the shape and the config models' presence are ours to pin.
 		assert.ok(models.length > 300, `expected a full catalog, got ${models.length}`);

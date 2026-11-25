@@ -24,7 +24,7 @@ function output(model: PluginModelSpec = spec): AssistantMessage {
 		content: [{ type: "thinking", thinking: "Reasoning", thinkingSignature: "native-signature" }, { type: "toolCall", id: "native-call", name: "plugin_tool", arguments: { task: "native arguments" } }, { type: "text", text: "Response", textSignature: "native-text-signature" }] };
 }
 function listing(model: PluginModelSpec = spec): ModelCatalogResponse {
-	return { imageModels: [], models: [{ provider: model.provider, id: model.id, name: "Explicit fixture model", reasoning: true, input: ["text"], supportedLevels: ["off", "medium"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 }, contextWindow: 8192, maxTokens: 1024 }],
+	return { imageModels: [], image: null, models: [{ provider: model.provider, id: model.id, name: "Explicit fixture model", reasoning: true, input: ["text"], supportedLevels: ["off", "medium"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 }, contextWindow: 8192, maxTokens: 1024 }],
 		providers: [{ id: model.provider, envVar: "FIXTURE_KEY", keyPresent: true }], defaults: { model }, rolePins: { researcher: { model }, demoBuilder: null, visualMaker: null, extractor: null, auditor: null, planner: null, pdfReader: null, coursePlanner: null, checker: null, grader: null, sideQuestion: null }, slots: { strong: { model }, cheap: null, vision: null } };
 }
 function request(model: PluginModelSpec = spec): PluginInferenceRequest {

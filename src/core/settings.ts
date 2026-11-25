@@ -254,8 +254,8 @@ export interface ModelsSettings {
 // ─── Model profiles ──────────────────────────────────────────────────────────
 
 /** One saved model profile: the three slots plus the per-role overrides —
- *  nothing else (owner, 2026-11: models only). Applying a profile REPLACES the
- *  live `models` section and `agent.models` with these. */
+ *  nothing else (owner, 2026-11: models only). Applying a profile REPLACES those
+ *  slots and `agent.models`; the global `models.image` selection is preserved. */
 export interface ModelProfile {
 	models?: ModelsSettings;
 	roles?: Partial<Record<BackgroundModelRole, RoleModelOverride>>;
@@ -667,7 +667,7 @@ export interface UserSettings {
 	agent?: AgentSettings;
 	/** The strong/cheap/vision model slots (model slots wave, 2026-09-20). */
 	models?: ModelsSettings;
-	/** Saved model profiles (core/profiles.ts). Mirrors the live `models` + `agent.models` for the active profile. */
+	/** Saved model profiles (core/profiles.ts). Mirrors the live model slots + `agent.models` for the active profile; global `models.image` is excluded. */
 	profiles?: ProfilesSettings;
 	/** The custom OpenAI-compatible endpoint (non-secret config only). */
 	customProvider?: CustomProviderSettings;

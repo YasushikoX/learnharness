@@ -79,6 +79,7 @@ exports.activate = async ctx => {
 const pin = { provider: "fixture", id: "integration-model", thinkingLevel: "off" } as const;
 const catalog: ModelCatalogResponse = {
 	imageModels: [],
+	image: null,
 	models: [{ provider: pin.provider, id: pin.id, name: "Offline integration fixture", reasoning: false, input: ["text"], supportedLevels: ["off"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 8192, maxTokens: 1024 }],
 	providers: [{ id: pin.provider, envVar: "", keyPresent: true }], defaults: { model: pin, thinkingLevel: "off" },
 	rolePins: { researcher: null, demoBuilder: null, visualMaker: null, extractor: null, auditor: null, planner: null, pdfReader: null, coursePlanner: null, checker: null, grader: null, sideQuestion: null }, slots: { strong: { model: pin }, cheap: null, vision: null },

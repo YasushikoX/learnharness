@@ -14,12 +14,18 @@ function catalogModel(id: string) {
 	// Native CLI routing determines billing. Adapter zero-rate placeholders
 	// must never become an apparent $0 estimate or subscription classification.
 	if (colon < 0 || isSubscriptionModel(id) || [CLAUDE_CODE_PROVIDER, CUSTOM_PROVIDER.id].includes(id.slice(0, colon))) return undefined;
-	return piModels().getModel(id.slice(0, colon), id.slice(colon + 1));
+	const provider = id.slice(0, colon);
+	const modelId = id.slice(colon + 1);
+	return piModels().getModel(provider, modelId) ?? piModels().getModelOfType("image", provider, modelId);
 }
 
 export function callCost(call: Partial<CallUsage>, modelId: string): number | null {
 	const model = catalogModel(modelId);
 	if (!model || call.inputTokens === undefined || call.outputTokens === undefined) return null;
+	// Pi's image catalog has token rates only. Per-image products expose zero
+	// token rates, so their calculated zero is unknown pricing, not a free call.
+	if (model.type === "image" && [model.cost, ...(model.cost.tiers ?? [])].every((rate) =>
+		[rate.input, rate.output, rate.cacheRead, rate.cacheWrite].every((cost) => cost === 0))) return null;
 	const input = call.inputTokens;
 	const output = call.outputTokens;
 	const cacheRead = call.cacheReadTokens ?? 0;
