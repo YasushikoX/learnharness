@@ -1,16 +1,31 @@
 /**
  * Pure text-to-speech preparation for pending questions (no DOM / no Node).
  *
- * Converts displayed Markdown (including LaTeX math, inline code, and fenced
- * code blocks) and displayed options into clean, sentence-sized utterances fit
- * for `window.speechSynthesis`. Never emits raw LaTeX backslash commands.
+ * Parses displayed Markdown through the same CommonMark/GFM/math + raw HTML +
+ * HAST sanitisation pipeline as `ToolContentResponse`, ensuring nothing hidden
+ * on screen (HTML comments, `<script>`/`<style>`, collapsed `<details>` bodies,
+ * unclosed code/figure fences) is ever spoken. Never emits raw LaTeX backslash
+ * commands.
  *
- * Sentence boundary masking (`maskSpans`) and abbreviation-aware merging
- * (`shouldMergeSegments`) are adapted from `amoghu1s1/twig`
- * (`src/core/sentence-reader.ts`, AGPL-3.0).
+ * Sentence boundary merging (`shouldMergeSegments`) is adapted from
+ * `amoghu1s1/twig` (`src/core/sentence-reader.ts`, AGPL-3.0).
  */
 
-import { repairMathForDisplay } from "./math-delims.ts";
+import type { Element, ElementContent, Root, RootContent } from "hast";
+import { raw } from "hast-util-raw";
+import { defaultSchema, sanitize, type Schema } from "hast-util-sanitize";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfmFootnoteFromMarkdown } from "mdast-util-gfm-footnote";
+import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
+import { gfmTaskListItemFromMarkdown } from "mdast-util-gfm-task-list-item";
+import { mathFromMarkdown } from "mdast-util-math";
+import { toHast } from "mdast-util-to-hast";
+import { gfmFootnote } from "micromark-extension-gfm-footnote";
+import { gfmTable } from "micromark-extension-gfm-table";
+import { gfmTaskListItem } from "micromark-extension-gfm-task-list-item";
+import { math } from "micromark-extension-math";
+import { DEFAULT_LESSON_LANGUAGE, type LessonLanguage } from "./language.ts";
+import { repairMathForDisplay, transformMathDelimiters } from "./math-delims.ts";
 
 export interface SpeechQuestionOption {
 	/** Displayed letter (e.g. "A", "B", …), if shown. */
@@ -28,10 +43,94 @@ export interface QuestionSpeechInput {
 	context?: string;
 	/** Displayed options in displayed order with displayed letters. */
 	options?: readonly SpeechQuestionOption[];
+	/** Active lesson language (controls spoken phrases and sentence splitting). */
+	language?: LessonLanguage;
+}
+
+export interface SpeechPhrases {
+	/** Locale passed to Intl.Segmenter for sentence splitting. */
+	readonly locale: string;
+	/** Spoken placeholder for formulas (fallback in English, used for all formulas in non-English languages). */
+	readonly formula: string;
+	/** Spoken placeholder for a fenced code block. */
+	readonly codeBlock: string;
+	/** Spoken placeholder for inline code that contains a backslash command. */
+	readonly inlineCode: string;
+	/** Spoken placeholder for a diagram or figure fence. */
+	readonly diagram: string;
+	/** Spoken placeholder for an image without alt text. */
+	readonly image: string;
+	/** Spoken placeholder for a bare URL link. */
+	readonly link: string;
+	/** True only for languages with a dedicated spoken math vocabulary. */
+	readonly verbalizeMath: boolean;
+}
+
+/**
+ * Compact per-language phrase table for speech placeholders and locale.
+ * Adding a new lesson language only requires adding one entry here.
+ */
+export const SPEECH_PHRASES: Readonly<Record<LessonLanguage, SpeechPhrases>> = {
+	en: {
+		locale: "en",
+		formula: "formula",
+		codeBlock: "Code block.",
+		inlineCode: "code",
+		diagram: "Diagram.",
+		image: "image",
+		link: "link",
+		verbalizeMath: true,
+	},
+	nb: {
+		locale: "nb",
+		formula: "formel",
+		codeBlock: "Kodeblokk.",
+		inlineCode: "kode",
+		diagram: "Diagram.",
+		image: "bilde",
+		link: "lenke",
+		verbalizeMath: false,
+	},
+};
+
+function phrasesFor(language?: LessonLanguage): SpeechPhrases {
+	return SPEECH_PHRASES[language ?? DEFAULT_LESSON_LANGUAGE] ?? SPEECH_PHRASES[DEFAULT_LESSON_LANGUAGE];
 }
 
 const DEFAULT_MAX_UTTERANCE_CHARS = 220;
-const MATH_FALLBACK = "formula";
+
+/** All figure and diagram fence languages rendered as visuals (docs/figures.md + md-blocks.tsx). */
+const DIAGRAM_LANGUAGES = new Set(["plot", "blocks", "circuit", "logic", "timing", "mermaid"]);
+
+const ALERT_MARKER_RE = /^\[!(note|tip|important|warning|caution)\][ \t]*(?:\n|$)/i;
+const RAW_BACKSLASH_COMMAND_RE = /\\[A-Za-z]/;
+
+// Same sanitisation schema Streamdown/ToolContentResponse uses, also stripping
+// `<style>` bodies so CSS text is never read aloud.
+const SPEECH_SANITIZE_SCHEMA: Schema = {
+	...defaultSchema,
+	strip: [...(defaultSchema.strip ?? ["script"]), "style"],
+};
+
+// Structural GFM extensions (tables, footnotes, task lists) plus math.
+// Micromark's attention/strikethrough/autolink-literal tokenizers have
+// quadratic worst cases on repeated `*`/`_`/`~`; emphasis is stripped in a
+// dedicated linear pass over prose text nodes instead.
+const MD_EXTENSIONS = [
+	gfmTable(),
+	gfmFootnote(),
+	gfmTaskListItem(),
+	math({ singleDollarTextMath: true }),
+	{ disable: { null: ["attention"] } },
+];
+const MDAST_EXTENSIONS = [
+	gfmTableFromMarkdown(),
+	gfmFootnoteFromMarkdown(),
+	gfmTaskListItemFromMarkdown(),
+	mathFromMarkdown(),
+];
+
+// ─── English LaTeX verbalization ─────────────────────────────────────────────
 
 const GREEK_LETTERS: Readonly<Record<string, string>> = {
 	alpha: "alpha",
@@ -158,6 +257,8 @@ const MATH_OPERATORS: Readonly<Record<string, string>> = {
 	aleph: "aleph",
 };
 
+const ATOMIC_SYMBOL_COMMANDS = new Set(["infty", "emptyset", "varnothing", "ell", "hbar", "aleph"]);
+
 const MATH_FUNCTIONS: Readonly<Record<string, string>> = {
 	sin: "sine",
 	cos: "cosine",
@@ -190,12 +291,19 @@ const MATH_FUNCTIONS: Readonly<Record<string, string>> = {
 	pmod: "mod",
 };
 
-const UNWRAP_COMMANDS = new Set([
+const FUNCTION_LETTERS = new Set(["f", "g", "h", "F", "G", "H", "P", "Q"]);
+
+const TEXT_UNWRAP_COMMANDS = new Set([
 	"text",
 	"textrm",
 	"textbf",
 	"textit",
 	"textup",
+	"mbox",
+	"hbox",
+]);
+
+const MATH_UNWRAP_COMMANDS = new Set([
 	"mathrm",
 	"mathbf",
 	"mathit",
@@ -207,8 +315,6 @@ const UNWRAP_COMMANDS = new Set([
 	"boldsymbol",
 	"bm",
 	"operatorname",
-	"mbox",
-	"hbox",
 	"boxed",
 ]);
 
@@ -224,19 +330,7 @@ const DECORATOR_SUFFIXES: Readonly<Record<string, string>> = {
 	ddot: "double dot",
 };
 
-const STRIP_COMMANDS = new Set([
-	"left",
-	"right",
-	"big",
-	"Big",
-	"bigg",
-	"Bigg",
-	"bigl",
-	"bigr",
-	"Bigl",
-	"Bigr",
-	"biggl",
-	"biggr",
+const SPACING_COMMANDS = new Set([
 	"displaystyle",
 	"textstyle",
 	"scriptstyle",
@@ -251,9 +345,78 @@ const STRIP_COMMANDS = new Set([
 	"thickspace",
 	"negthinspace",
 	"hfill",
-	"vphantom",
-	"phantom",
 ]);
+
+const DELIM_SIZE_COMMANDS = new Set([
+	"big",
+	"Big",
+	"bigg",
+	"Bigg",
+	"bigl",
+	"bigr",
+	"Bigl",
+	"Bigr",
+	"biggl",
+	"biggr",
+	"Biggl",
+	"Biggr",
+]);
+
+const UNICODE_MATH: Readonly<Record<string, string>> = {
+	"±": "plus or minus",
+	"×": "times",
+	"·": "times",
+	"÷": "divided by",
+	"≤": "less than or equal to",
+	"≥": "greater than or equal to",
+	"≠": "not equal to",
+	"≈": "approximately equal to",
+	"≡": "equivalent to",
+	"→": "to",
+	"←": "from",
+	"↔": "if and only if",
+	"⇒": "implies",
+	"⇔": "if and only if",
+	"∞": "infinity",
+	"∂": "partial",
+	"∇": "nabla",
+	"√": "square root of",
+	"∑": "sum",
+	"∏": "product",
+	"∫": "integral",
+	"∈": "in",
+	"∉": "not in",
+	"⊂": "subset of",
+	"⊆": "subset or equal to",
+	"∪": "union",
+	"∩": "intersection",
+	"∅": "empty set",
+	"∀": "for all",
+	"∃": "there exists",
+	"¬": "not",
+	"∧": "and",
+	"∨": "or",
+	"−": "minus",
+	"°": "degrees",
+	"π": "pi",
+	"θ": "theta",
+	"α": "alpha",
+	"β": "beta",
+	"γ": "gamma",
+	"δ": "delta",
+	"ε": "epsilon",
+	"λ": "lambda",
+	"μ": "mu",
+	"σ": "sigma",
+	"ω": "omega",
+	"Δ": "capital delta",
+	"Σ": "capital sigma",
+	"Ω": "capital omega",
+	"²": "squared",
+	"³": "cubed",
+};
+
+const UNICODE_ATOMIC_VALUES = new Set(["∞", "∅", "π", "θ", "α", "β", "γ", "δ", "ε", "λ", "μ", "σ", "ω", "Δ", "Σ", "Ω"]);
 
 /** Read a braced `{...}` group starting at `start`, returning its inner text and next index. */
 function readBraceGroup(src: string, start: number): { content: string; end: number } | null {
@@ -337,46 +500,224 @@ function readBounds(src: string, start: number): { lower?: string; upper?: strin
 	return { lower, upper, end: i };
 }
 
-/** Convert a LaTeX math expression into spoken words, or `"formula"` when unreliable. */
-export function latexToSpeech(raw: string): string {
-	const trimmed = raw.trim();
+type DelimKind = "paren" | "square" | "brace" | "abs" | "norm";
+
+interface DelimToken {
+	kind: DelimKind;
+	dir: "open" | "close" | "either";
+	end: number;
+}
+
+/** Read an opening or closing delimiter token starting at `start` (handling `\left` / `\right` / size prefixes). */
+function readDelimToken(src: string, start: number): DelimToken | null {
+	let i = start;
+	let side: "open" | "close" | null = null;
+	if (src[i] === "\\") {
+		let j = i + 1;
+		while (j < src.length && /[A-Za-z]/.test(src[j]!)) j++;
+		const cmd = src.slice(i + 1, j);
+		if (cmd === "left") {
+			side = "open";
+			i = j;
+			while (i < src.length && /\s/.test(src[i]!)) i++;
+		} else if (cmd === "right") {
+			side = "close";
+			i = j;
+			while (i < src.length && /\s/.test(src[i]!)) i++;
+		} else if (DELIM_SIZE_COMMANDS.has(cmd)) {
+			i = j;
+			while (i < src.length && /\s/.test(src[i]!)) i++;
+		} else if (cmd === "" && i + 1 < src.length) {
+			const next = src[i + 1];
+			if (next === "{") return { kind: "brace", dir: "open", end: i + 2 };
+			if (next === "}") return { kind: "brace", dir: "close", end: i + 2 };
+			if (next === "|") return { kind: "norm", dir: "either", end: i + 2 };
+			return null;
+		} else {
+			return null;
+		}
+	}
+
+	if (i >= src.length) return null;
+	const ch = src[i]!;
+	if (ch === "(") return { kind: "paren", dir: side ?? "open", end: i + 1 };
+	if (ch === ")") return { kind: "paren", dir: side ?? "close", end: i + 1 };
+	if (ch === "[") return { kind: "square", dir: side ?? "open", end: i + 1 };
+	if (ch === "]") return { kind: "square", dir: side ?? "close", end: i + 1 };
+	if (ch === "|") return { kind: "abs", dir: side ?? "either", end: i + 1 };
+	if (ch === "\\" && i + 1 < src.length) {
+		const next = src[i + 1];
+		if (next === "{") return { kind: "brace", dir: side ?? "open", end: i + 2 };
+		if (next === "}") return { kind: "brace", dir: side ?? "close", end: i + 2 };
+		if (next === "|") return { kind: "norm", dir: side ?? "either", end: i + 2 };
+	}
+	return null;
+}
+
+/**
+ * Scan from just after an opening delimiter of `openKind` until its matching
+ * closing delimiter, rejecting mismatched or unclosed delimiters (returns null).
+ */
+function readBalancedDelimContent(
+	src: string,
+	contentStart: number,
+	openKind: DelimKind,
+): { content: string; end: number } | null {
+	const stack: DelimKind[] = [openKind];
+	let braceDepth = 0;
+	let i = contentStart;
+
+	while (i < src.length) {
+		const ch = src[i]!;
+		if (ch === "{") {
+			braceDepth++;
+			i++;
+			continue;
+		}
+		if (ch === "}") {
+			if (braceDepth === 0) return null;
+			braceDepth--;
+			i++;
+			continue;
+		}
+		if (braceDepth > 0) {
+			if (ch === "\\" && i + 1 < src.length) i += 2;
+			else i++;
+			continue;
+		}
+
+		// Reject invisible \left. or \right. (piecewise/evaluation bars -> formula)
+		if (ch === "\\") {
+			let j = i + 1;
+			while (j < src.length && /[A-Za-z]/.test(src[j]!)) j++;
+			const cmd = src.slice(i + 1, j);
+			if (cmd === "left" || cmd === "right") {
+				let k = j;
+				while (k < src.length && /\s/.test(src[k]!)) k++;
+				if (src[k] === ".") return null;
+			}
+		}
+
+		const tok = readDelimToken(src, i);
+		if (tok) {
+			if (tok.dir === "open") {
+				stack.push(tok.kind);
+				i = tok.end;
+				continue;
+			}
+			if (tok.dir === "close") {
+				const top = stack[stack.length - 1];
+				if (top !== tok.kind) return null;
+				stack.pop();
+				if (stack.length === 0) {
+					return { content: src.slice(contentStart, i), end: tok.end };
+				}
+				i = tok.end;
+				continue;
+			}
+			// Symmetric delimiter (`|` or `\|`): closes if matching top of stack, else ambiguous/nested.
+			if (tok.dir === "either") {
+				const top = stack[stack.length - 1];
+				if (top === tok.kind) {
+					stack.pop();
+					if (stack.length === 0) {
+						return { content: src.slice(contentStart, i), end: tok.end };
+					}
+					i = tok.end;
+					continue;
+				}
+				// Symmetric delimiter inside non-matching group (e.g. P(A|B) or nested |...|):
+				// if it's already on the stack we can't disambiguate, otherwise push only if not inside parens with single bar.
+				if (stack.includes(tok.kind)) return null;
+				stack.push(tok.kind);
+				i = tok.end;
+				continue;
+			}
+		}
+
+		if (ch === "\\" && i + 1 < src.length) {
+			let j = i + 1;
+			while (j < src.length && /[A-Za-z]/.test(src[j]!)) j++;
+			i = j === i + 1 ? i + 2 : j;
+			continue;
+		}
+		i++;
+	}
+
+	return null;
+}
+
+interface VerbalizedLatex {
+	text: string;
+	/** Number of top-level tokens; 1 means atomic (safe to leave unwrapped in frac/pow/sub/sqrt). */
+	tokens: number;
+	/** True when the whole expression is already enclosed by an outer `open bracket ... close bracket`. */
+	alreadyBracketed: boolean;
+	/** True when the expression contains a comma/list separator. */
+	hasComma: boolean;
+}
+
+/** Wrap a verbalized sub-expression when it holds more than one token and is not already bracketed. */
+function wrapIfCompound(part: VerbalizedLatex): string {
+	if (part.tokens <= 1 || part.alreadyBracketed) return part.text;
+	return `open bracket ${part.text} close bracket`;
+}
+
+/** Convert a LaTeX math expression into spoken words, or the localised `"formula"` placeholder when unreliable or non-English. */
+export function latexToSpeech(rawLatex: string, language: LessonLanguage = DEFAULT_LESSON_LANGUAGE): string {
+	const trimmed = rawLatex.trim();
 	if (!trimmed) return "";
+
+	const phrases = phrasesFor(language);
+	if (!phrases.verbalizeMath) return phrases.formula;
 
 	// Complex multiline/tabular/matrix environments cannot be reliably spoken linearly.
 	if (/\\begin\s*\{/.test(trimmed) || /\\end\s*\{/.test(trimmed)) {
-		return MATH_FALLBACK;
+		return phrases.formula;
 	}
 
 	const spoken = verbalizeLatex(trimmed, 0);
-	if (spoken === null) return MATH_FALLBACK;
-	const cleaned = normalizeSpokenSpacing(spoken);
-	if (!cleaned) return MATH_FALLBACK;
-	// Hard safety guarantee: never emit raw backslash commands or unbalanced TeX braces.
-	if (/\\[A-Za-z]+/.test(cleaned) || /[{}]/.test(cleaned)) return MATH_FALLBACK;
-	return cleaned;
+	if (!spoken || !spoken.text || /\\[A-Za-z]/.test(spoken.text)) {
+		return phrases.formula;
+	}
+	return normalizeSpokenSpacing(spoken.text);
 }
 
-function verbalizeLatex(src: string, depth: number): string | null {
+function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 	if (depth > 8) return null;
 	let out = "";
+	let tokens = 0;
+	let hasComma = false;
+	let soleBracketed = false;
+	let leadingUnaryMinus = false;
+	const tokenState: { prev: "start" | "op" | "value" | "fn" | "fn-letter" } = { prev: "start" };
 	let i = 0;
-	let prevToken: "value" | "op" | "none" = "none";
 
-	const pushWord = (word: string, kind: "value" | "op") => {
-		if (!word) return;
+	const pushPart = (
+		word: string,
+		nextKind: "op" | "value" | "fn" | "fn-letter",
+		tokenWeight = 1,
+		isBracketed = false,
+	) => {
+		const w = word.trim();
+		if (!w) return;
 		if (out && !out.endsWith(" ")) out += " ";
-		out += word;
-		prevToken = kind;
+		out += w;
+		if (tokens === 0 && isBracketed) soleBracketed = true;
+		else soleBracketed = false;
+		tokens += tokenWeight;
+		tokenState.prev = nextKind;
+	};
+
+	const nextNonSpaceChar = (pos: number): string | undefined => {
+		let k = pos;
+		while (k < src.length && /\s/.test(src[k]!)) k++;
+		return src[k];
 	};
 
 	while (i < src.length) {
 		const ch = src[i]!;
-
 		if (/\s/.test(ch)) {
-			i++;
-			continue;
-		}
-		if (ch === "~") {
 			i++;
 			continue;
 		}
@@ -385,13 +726,67 @@ function verbalizeLatex(src: string, depth: number): string | null {
 			if (!group) return null;
 			const inner = verbalizeLatex(group.content, depth + 1);
 			if (inner === null) return null;
-			pushWord(inner, "value");
+			pushPart(inner.text, "value", inner.tokens, inner.alreadyBracketed);
+			if (inner.hasComma) hasComma = true;
 			i = group.end;
 			continue;
 		}
 		if (ch === "}") {
 			return null;
 		}
+
+		// Handle delimiters — including `\left(`, `\big[`, `(`, `[`, `\{`, `|`, `\|`.
+		const delim = readDelimToken(src, i);
+		if (delim) {
+			if (delim.dir === "close") return null;
+			const balanced = readBalancedDelimContent(src, delim.end, delim.kind);
+			if (!balanced) return null;
+			const inner = verbalizeLatex(balanced.content, depth + 1);
+			if (inner === null || !inner.text) return null;
+			i = balanced.end;
+
+			if (delim.kind === "paren") {
+				const isFnCall = tokenState.prev === "fn" || tokenState.prev === "fn-letter";
+				if (isFnCall) {
+					const followedByPower = nextNonSpaceChar(i) === "^";
+					const argSpoken =
+						inner.tokens === 1 && !inner.hasComma && !inner.alreadyBracketed && !followedByPower
+							? inner.text
+							: wrapIfCompound(inner);
+					// If `f(x)^2`, wrap `open bracket f of x close bracket` so `^2` applies unambiguously to the call.
+					if (followedByPower) {
+						out = `open bracket ${out} of ${argSpoken} close bracket`;
+						tokens += 1 + inner.tokens;
+						soleBracketed = true;
+						tokenState.prev = "value";
+					} else {
+						pushPart(`of ${argSpoken}`, "value", 1 + inner.tokens);
+					}
+				} else {
+					pushPart(`open bracket ${inner.text} close bracket`, "value", Math.max(2, inner.tokens + 1), true);
+				}
+				continue;
+			}
+			if (delim.kind === "square") {
+				pushPart(`open square bracket ${inner.text} close square bracket`, "value", Math.max(2, inner.tokens + 1));
+				continue;
+			}
+			if (delim.kind === "brace") {
+				pushPart(`open brace ${inner.text} close brace`, "value", Math.max(2, inner.tokens + 1));
+				continue;
+			}
+			if (delim.kind === "abs") {
+				const body = wrapIfCompound(inner);
+				pushPart(`absolute value of ${body}`, "value", Math.max(2, inner.tokens + 1));
+				continue;
+			}
+			if (delim.kind === "norm") {
+				const body = wrapIfCompound(inner);
+				pushPart(`norm of ${body}`, "value", Math.max(2, inner.tokens + 1));
+				continue;
+			}
+		}
+
 		if (ch === "\\") {
 			const next = src[i + 1];
 			if (!next) return null;
@@ -401,16 +796,12 @@ function verbalizeLatex(src: string, depth: number): string | null {
 				continue;
 			}
 			if (next === "%") {
-				pushWord("percent", "value");
+				pushPart("percent", "value");
 				i += 2;
 				continue;
 			}
-			if (next === "{" || next === "}") {
-				i += 2;
-				continue;
-			}
-			if (next === "|") {
-				pushWord("norm", "op");
+			if (next === "$") {
+				pushPart("dollars", "value");
 				i += 2;
 				continue;
 			}
@@ -419,16 +810,20 @@ function verbalizeLatex(src: string, depth: number): string | null {
 				return null;
 			}
 			if (!/[A-Za-z]/.test(next)) {
-				i += 2;
-				continue;
+				return null;
 			}
 			let j = i + 1;
 			while (j < src.length && /[A-Za-z]/.test(src[j]!)) j++;
 			const cmd = src.slice(i + 1, j);
 			i = j;
 
-			if (STRIP_COMMANDS.has(cmd)) {
+			if (SPACING_COMMANDS.has(cmd)) {
 				continue;
+			}
+
+			if (cmd === "left" || cmd === "right") {
+				// Unrecognized delimiter after \left/\right (e.g. \left. or \left\langle)
+				return null;
 			}
 
 			if (cmd === "frac" || cmd === "dfrac" || cmd === "tfrac" || cmd === "cfrac") {
@@ -437,15 +832,18 @@ function verbalizeLatex(src: string, depth: number): string | null {
 				const den = readArg(src, num.end);
 				if (!den) return null;
 				i = den.end;
-				const numText = verbalizeLatex(num.content, depth + 1);
-				const denText = verbalizeLatex(den.content, depth + 1);
-				if (numText === null || denText === null || !numText || !denText) return null;
-				const numTrim = numText.trim();
-				const denTrim = denText.trim();
-				if (numTrim === "1" && denTrim === "2") pushWord("one half", "value");
-				else if (numTrim === "1" && denTrim === "3") pushWord("one third", "value");
-				else if (numTrim === "1" && denTrim === "4") pushWord("one quarter", "value");
-				else pushWord(`${numTrim} over ${denTrim}`, "value");
+				const numRes = verbalizeLatex(num.content, depth + 1);
+				const denRes = verbalizeLatex(den.content, depth + 1);
+				if (numRes === null || denRes === null || !numRes.text || !denRes.text) return null;
+				if (numRes.tokens === 1 && denRes.tokens === 1 && numRes.text === "1" && denRes.text === "2") {
+					pushPart("one half", "value", 2);
+				} else if (numRes.tokens === 1 && denRes.tokens === 1 && numRes.text === "1" && denRes.text === "3") {
+					pushPart("one third", "value", 2);
+				} else if (numRes.tokens === 1 && denRes.tokens === 1 && numRes.text === "1" && denRes.text === "4") {
+					pushPart("one quarter", "value", 2);
+				} else {
+					pushPart(`${wrapIfCompound(numRes)} over ${wrapIfCompound(denRes)}`, "value", 2);
+				}
 				continue;
 			}
 
@@ -456,16 +854,17 @@ function verbalizeLatex(src: string, depth: number): string | null {
 				if (!arg) return null;
 				i = arg.end;
 				const inner = verbalizeLatex(arg.content, depth + 1);
-				if (inner === null || !inner) return null;
+				if (inner === null || !inner.text) return null;
+				const body = wrapIfCompound(inner);
 				if (!rootOpt) {
-					pushWord(`square root of ${inner.trim()}`, "value");
+					pushPart(`square root of ${body}`, "value", 2);
 				} else {
 					const idx = verbalizeLatex(rootOpt.content, depth + 1);
-					if (idx === null || !idx) return null;
-					const n = idx.trim();
-					if (n === "2") pushWord(`square root of ${inner.trim()}`, "value");
-					else if (n === "3") pushWord(`cube root of ${inner.trim()}`, "value");
-					else pushWord(`${n}th root of ${inner.trim()}`, "value");
+					if (idx === null || !idx.text || idx.tokens > 1) return null;
+					const n = idx.text;
+					if (n === "2") pushPart(`square root of ${body}`, "value", 2);
+					else if (n === "3") pushPart(`cube root of ${body}`, "value", 2);
+					else pushPart(`${n}th root of ${body}`, "value", 2);
 				}
 				continue;
 			}
@@ -488,10 +887,10 @@ function verbalizeLatex(src: string, depth: number): string | null {
 				const lower = bounds.lower !== undefined ? verbalizeLatex(bounds.lower, depth + 1) : undefined;
 				const upper = bounds.upper !== undefined ? verbalizeLatex(bounds.upper, depth + 1) : undefined;
 				if (lower === null || upper === null) return null;
-				if (lower && upper) pushWord(`${word} from ${lower.trim()} to ${upper.trim()} of`, "op");
-				else if (lower) pushWord(`${word} over ${lower.trim()} of`, "op");
-				else if (upper) pushWord(`${word} to ${upper.trim()} of`, "op");
-				else pushWord(cmd === "sum" || cmd === "prod" ? word : `${word} of`, "op");
+				if (lower && upper) pushPart(`${word} from ${lower.text} to ${upper.text} of`, "op", 2);
+				else if (lower) pushPart(`${word} over ${lower.text} of`, "op", 2);
+				else if (upper) pushPart(`${word} to ${upper.text} of`, "op", 2);
+				else pushPart(cmd === "sum" || cmd === "prod" ? word : `${word} of`, "op", 2);
 				continue;
 			}
 
@@ -501,10 +900,10 @@ function verbalizeLatex(src: string, depth: number): string | null {
 				if (bounds.lower !== undefined) {
 					const sub = verbalizeLatex(bounds.lower, depth + 1);
 					if (sub === null) return null;
-					const phrase = sub.trim().replace(/\bto\b/, "approaches");
-					pushWord(`limit as ${phrase} of`, "op");
+					const phrase = sub.text.replace(/\bto\b/, "approaches");
+					pushPart(`limit as ${phrase} of`, "op", 2);
 				} else {
-					pushWord("limit", "op");
+					pushPart("limit", "op", 1);
 				}
 				continue;
 			}
@@ -517,21 +916,33 @@ function verbalizeLatex(src: string, depth: number): string | null {
 				i = bot.end;
 				const t = verbalizeLatex(top.content, depth + 1);
 				const b = verbalizeLatex(bot.content, depth + 1);
-				if (t === null || b === null) return null;
-				pushWord(`${t.trim()} choose ${b.trim()}`, "value");
+				if (t === null || b === null || !t.text || !b.text) return null;
+				pushPart(`${wrapIfCompound(t)} choose ${wrapIfCompound(b)}`, "value", 2);
 				continue;
 			}
 
-			if (UNWRAP_COMMANDS.has(cmd)) {
+			if (TEXT_UNWRAP_COMMANDS.has(cmd)) {
 				const arg = readArg(src, i);
 				if (!arg) return null;
 				i = arg.end;
-				if (cmd === "text" || cmd === "textrm" || cmd === "textbf" || cmd === "textit" || cmd === "textup" || cmd === "mbox" || cmd === "hbox") {
-					pushWord(arg.content.trim(), "value");
+				const textContent = arg.content.trim();
+				if (!textContent) continue;
+				const wordCount = textContent.split(/\s+/).filter(Boolean).length;
+				pushPart(textContent, "value", wordCount);
+				continue;
+			}
+
+			if (MATH_UNWRAP_COMMANDS.has(cmd)) {
+				const arg = readArg(src, i);
+				if (!arg) return null;
+				i = arg.end;
+				const trimmedArg = arg.content.trim();
+				if (/^[A-Za-z]+$/.test(trimmedArg)) {
+					pushPart(trimmedArg, cmd === "operatorname" ? "fn" : "value", 1);
 				} else {
 					const inner = verbalizeLatex(arg.content, depth + 1);
 					if (inner === null) return null;
-					pushWord(inner, "value");
+					pushPart(inner.text, cmd === "operatorname" ? "fn" : "value", inner.tokens, inner.alreadyBracketed);
 				}
 				continue;
 			}
@@ -541,23 +952,23 @@ function verbalizeLatex(src: string, depth: number): string | null {
 				if (!arg) return null;
 				i = arg.end;
 				const inner = verbalizeLatex(arg.content, depth + 1);
-				if (inner === null) return null;
-				pushWord(`${inner.trim()} ${DECORATOR_SUFFIXES[cmd]}`, "value");
+				if (inner === null || !inner.text) return null;
+				pushPart(`${wrapIfCompound(inner)} ${DECORATOR_SUFFIXES[cmd]}`, "value", 2);
 				continue;
 			}
 
 			if (cmd in GREEK_LETTERS) {
-				pushWord(GREEK_LETTERS[cmd]!, "value");
+				pushPart(GREEK_LETTERS[cmd]!, "value", 1);
 				continue;
 			}
 
 			if (cmd in MATH_OPERATORS) {
-				pushWord(MATH_OPERATORS[cmd]!, "op");
+				pushPart(MATH_OPERATORS[cmd]!, ATOMIC_SYMBOL_COMMANDS.has(cmd) ? "value" : "op", 1);
 				continue;
 			}
 
 			if (cmd in MATH_FUNCTIONS) {
-				pushWord(MATH_FUNCTIONS[cmd]!, "op");
+				pushPart(MATH_FUNCTIONS[cmd]!, "fn", 1);
 				continue;
 			}
 
@@ -566,106 +977,111 @@ function verbalizeLatex(src: string, depth: number): string | null {
 		}
 
 		if (ch === "^") {
+			if (tokenState.prev === "start" || tokenState.prev === "op") return null;
+			const wasFn = tokenState.prev === "fn";
 			const arg = readArg(src, i + 1);
 			if (!arg) return null;
 			i = arg.end;
 			const rawExp = arg.content.trim();
+			if (!rawExp) return null;
 			if (rawExp === "\\circ" || rawExp === "\\degree") {
-				pushWord("degrees", "value");
+				pushPart("degrees", "value", 1);
 				continue;
 			}
 			if (rawExp === "\\prime" || rawExp === "'") {
-				pushWord("prime", "value");
+				pushPart("prime", tokenState.prev === "fn-letter" ? "fn-letter" : "value", 1);
 				continue;
 			}
 			if (rawExp === "T" || rawExp === "\\top") {
-				pushWord("transpose", "value");
+				pushPart("transpose", "value", 1);
 				continue;
 			}
 			const exp = verbalizeLatex(rawExp, depth + 1);
-			if (exp === null || !exp) return null;
-			const expTrim = exp.trim();
-			if (expTrim === "2") pushWord("squared", "value");
-			else if (expTrim === "3") pushWord("cubed", "value");
-			else if (expTrim === "minus 1" || expTrim === "-1") pushWord("to the power of minus 1", "value");
-			else pushWord(`to the power of ${expTrim}`, "value");
+			if (exp === null || !exp.text) return null;
+			const nextKind = wasFn ? "fn" : "value";
+			if (exp.tokens === 1 && exp.text === "2") {
+				pushPart("squared", nextKind, 1);
+			} else if (exp.tokens === 1 && exp.text === "3") {
+				pushPart("cubed", nextKind, 1);
+			} else {
+				pushPart(`to the power of ${wrapIfCompound(exp)}`, nextKind, 2);
+			}
 			continue;
 		}
 
 		if (ch === "_") {
+			if (tokenState.prev === "start" || tokenState.prev === "op") return null;
+			const wasFnLetter = tokenState.prev === "fn-letter";
 			const arg = readArg(src, i + 1);
 			if (!arg) return null;
 			i = arg.end;
 			const sub = verbalizeLatex(arg.content, depth + 1);
-			if (sub === null || !sub) return null;
-			pushWord(`sub ${sub.trim()}`, "value");
+			if (sub === null || !sub.text) return null;
+			pushPart(`sub ${wrapIfCompound(sub)}`, wasFnLetter ? "fn-letter" : "value", 2);
 			continue;
 		}
 
 		if (ch === "+") {
-			pushWord("plus", "op");
+			pushPart("plus", "op", 1);
 			i++;
 			continue;
 		}
 		if (ch === "-") {
-			pushWord(prevToken === "value" ? "minus" : "negative", "op");
+			if (tokenState.prev === "value" || tokenState.prev === "fn-letter") {
+				pushPart("minus", "op", 1);
+			} else {
+				if (tokens === 0) leadingUnaryMinus = true;
+				pushPart("negative", "op", 1);
+			}
 			i++;
 			continue;
 		}
 		if (ch === "=") {
-			pushWord("equals", "op");
+			pushPart("equals", "op", 1);
 			i++;
 			continue;
 		}
 		if (ch === "<") {
-			pushWord("less than", "op");
+			pushPart("less than", "op", 1);
 			i++;
 			continue;
 		}
 		if (ch === ">") {
-			pushWord("greater than", "op");
+			pushPart("greater than", "op", 1);
 			i++;
 			continue;
 		}
 		if (ch === "*") {
-			pushWord("times", "op");
+			pushPart("times", "op", 1);
 			i++;
 			continue;
 		}
 		if (ch === "/") {
-			pushWord("over", "op");
+			pushPart("over", "op", 1);
 			i++;
 			continue;
 		}
 		if (ch === "'") {
-			pushWord("prime", "value");
+			pushPart("prime", tokenState.prev === "fn-letter" ? "fn-letter" : "value", 1);
 			i++;
 			continue;
 		}
 		if (ch === "!") {
-			pushWord("factorial", "value");
+			pushPart("factorial", "value", 1);
 			i++;
 			continue;
 		}
 		if (ch === "%") {
-			pushWord("percent", "value");
-			i++;
-			continue;
-		}
-		if (ch === "(" || ch === ")" || ch === "[" || ch === "]") {
-			if (ch === "(" || ch === "[") prevToken = "op";
-			else prevToken = "value";
-			i++;
-			continue;
-		}
-		if (ch === "|") {
-			prevToken = "op";
+			pushPart("percent", "value", 1);
 			i++;
 			continue;
 		}
 		if (ch === "," || ch === ";" || ch === ":") {
 			if (out && !out.endsWith(" ")) out += ",";
-			prevToken = "op";
+			hasComma = true;
+			tokens += 1;
+			soleBracketed = false;
+			tokenState.prev = "op";
 			i++;
 			continue;
 		}
@@ -674,17 +1090,24 @@ function verbalizeLatex(src: string, depth: number): string | null {
 		if (/[0-9]/.test(ch)) {
 			let j = i;
 			while (j < src.length && /[0-9.]/.test(src[j]!)) j++;
-			pushWord(src.slice(i, j), "value");
+			pushPart(src.slice(i, j), "value", 1);
 			i = j;
 			continue;
 		}
 
-		// Plain identifier letters
+		// Plain identifier letters: single math variables separated so `ab` reads as "a b" (2 tokens)
 		if (/[A-Za-z]/.test(ch)) {
 			let j = i;
 			while (j < src.length && /[A-Za-z]/.test(src[j]!)) j++;
 			const letters = src.slice(i, j);
-			pushWord(letters, "value");
+			if (letters.length === 1) {
+				pushPart(letters, FUNCTION_LETTERS.has(letters) ? "fn-letter" : "value", 1);
+			} else {
+				for (let k = 0; k < letters.length; k++) {
+					const letter = letters[k]!;
+					pushPart(letter, "value", 1);
+				}
+			}
 			i = j;
 			continue;
 		}
@@ -692,70 +1115,129 @@ function verbalizeLatex(src: string, depth: number): string | null {
 		// Unicode math symbols that may appear directly
 		const unicodeSpoken = UNICODE_MATH[ch];
 		if (unicodeSpoken) {
-			pushWord(unicodeSpoken, "op");
+			if (ch === "−") {
+				if (tokenState.prev === "value" || tokenState.prev === "fn-letter") {
+					pushPart("minus", "op", 1);
+				} else {
+					if (tokens === 0) leadingUnaryMinus = true;
+					pushPart("negative", "op", 1);
+				}
+			} else {
+				pushPart(unicodeSpoken, UNICODE_ATOMIC_VALUES.has(ch) ? "value" : "op", 1);
+			}
 			i++;
 			continue;
 		}
 
-		i++;
+		// Unrecognized character in math: fall back to "formula" rather than silently dropping it.
+		return null;
 	}
 
-	return out.trim();
+	const text = out.trim();
+	// A single signed atom like `-1`, `-3`, or `-x` (leading unary minus + one atom) is unambiguous unwrapped.
+	const effectiveTokens = leadingUnaryMinus && tokens === 2 ? 1 : tokens;
+	return {
+		text,
+		tokens: effectiveTokens,
+		alreadyBracketed: soleBracketed,
+		hasComma,
+	};
 }
 
-const UNICODE_MATH: Readonly<Record<string, string>> = {
-	"±": "plus or minus",
-	"×": "times",
-	"·": "times",
-	"÷": "divided by",
-	"≤": "less than or equal to",
-	"≥": "greater than or equal to",
-	"≠": "not equal to",
-	"≈": "approximately equal to",
-	"≡": "equivalent to",
-	"→": "to",
-	"←": "from",
-	"↔": "if and only if",
-	"⇒": "implies",
-	"⇔": "if and only if",
-	"∞": "infinity",
-	"∂": "partial",
-	"∇": "nabla",
-	"√": "square root of",
-	"∑": "sum",
-	"∏": "product",
-	"∫": "integral",
-	"∈": "in",
-	"∉": "not in",
-	"⊂": "subset of",
-	"⊆": "subset or equal to",
-	"∪": "union",
-	"∩": "intersection",
-	"∅": "empty set",
-	"∀": "for all",
-	"∃": "there exists",
-	"¬": "not",
-	"∧": "and",
-	"∨": "or",
-	"−": "minus",
-	"°": "degrees",
-	"π": "pi",
-	"θ": "theta",
-	"α": "alpha",
-	"β": "beta",
-	"γ": "gamma",
-	"δ": "delta",
-	"ε": "epsilon",
-	"λ": "lambda",
-	"μ": "mu",
-	"σ": "sigma",
-	"ω": "omega",
-	"Δ": "capital delta",
-	"Σ": "capital sigma",
-	"Ω": "capital omega",
-	"²": "squared",
-	"³": "cubed",
-};
+// ─── Linear-time Markdown emphasis stripping & prose normalization ───────────
+
+/**
+ * Strip paired Markdown emphasis/strikethrough delimiters (`**`, `__`, `~~`, `*`, `_`)
+ * in strictly linear O(n) time without backtracking regexes.
+ */
+function stripLinearEmphasis(text: string): string {
+	let result = stripPairedDouble(text, "*", false);
+	result = stripPairedDouble(result, "_", true);
+	result = stripPairedDouble(result, "~", false);
+	result = stripPairedSingle(result, "*", false);
+	result = stripPairedSingle(result, "_", true);
+	return result;
+}
+
+function isWordChar(ch: string | undefined): boolean {
+	return ch !== undefined && /[A-Za-z0-9_]/.test(ch);
+}
+
+function stripPairedDouble(text: string, marker: string, respectWordBoundary: boolean): string {
+	const drop = new Uint8Array(text.length);
+	const stack: number[] = [];
+	let i = 0;
+	while (i < text.length - 1) {
+		if (text[i] === marker && text[i + 1] === marker) {
+			const prev = i > 0 ? text[i - 1] : undefined;
+			const next = i + 2 < text.length ? text[i + 2] : undefined;
+			const canClose =
+				stack.length > 0 &&
+				prev !== undefined &&
+				!/\s/.test(prev) &&
+				(!respectWordBoundary || !isWordChar(next));
+			const canOpen =
+				next !== undefined &&
+				!/\s/.test(next) &&
+				(!respectWordBoundary || !isWordChar(prev));
+
+			if (canClose) {
+				const openPos = stack.pop()!;
+				drop[openPos] = 1;
+				drop[openPos + 1] = 1;
+				drop[i] = 1;
+				drop[i + 1] = 1;
+			} else if (canOpen) {
+				stack.push(i);
+			}
+			i += 2;
+			continue;
+		}
+		i++;
+	}
+	if (stack.length === 0 && !drop.includes(1)) return text;
+	let out = "";
+	for (let k = 0; k < text.length; k++) {
+		if (!drop[k]) out += text[k]!;
+	}
+	return out;
+}
+
+function stripPairedSingle(text: string, marker: string, respectWordBoundary: boolean): string {
+	const drop = new Uint8Array(text.length);
+	const stack: number[] = [];
+	for (let i = 0; i < text.length; i++) {
+		if (text[i] !== marker) continue;
+		const prev = i > 0 ? text[i - 1] : undefined;
+		const next = i + 1 < text.length ? text[i + 1] : undefined;
+		// Do not consume part of an unpaired double marker
+		if (prev === marker || next === marker) continue;
+
+		const canClose =
+			stack.length > 0 &&
+			prev !== undefined &&
+			!/\s/.test(prev) &&
+			(!respectWordBoundary || !isWordChar(next));
+		const canOpen =
+			next !== undefined &&
+			!/\s/.test(next) &&
+			(!respectWordBoundary || !isWordChar(prev));
+
+		if (canClose) {
+			const openPos = stack.pop()!;
+			drop[openPos] = 1;
+			drop[i] = 1;
+		} else if (canOpen) {
+			stack.push(i);
+		}
+	}
+	if (!drop.includes(1)) return text;
+	let out = "";
+	for (let k = 0; k < text.length; k++) {
+		if (!drop[k]) out += text[k]!;
+	}
+	return out;
+}
 
 function normalizeSpokenSpacing(text: string): string {
 	return text
@@ -764,113 +1246,293 @@ function normalizeSpokenSpacing(text: string): string {
 		.trim();
 }
 
-/**
- * Strip Markdown syntax and convert inline/display LaTeX & code blocks into
- * clean speakable prose. Pure, no DOM.
- */
-export function markdownToSpeech(markdown: string): string {
-	if (!markdown.trim()) return "";
+function cleanProseText(rawText: string, language: LessonLanguage): string {
+	const phrases = phrasesFor(language);
+	let text = stripLinearEmphasis(rawText);
+	// Strip stray unreferenced footnote markers like [^1]
+	if (text.includes("[^")) {
+		text = text.replace(/\[\^[^\]\s]+\]/g, "");
+	}
+	// Handle bare scientific/math superscripts & subscripts outside $...$ (e.g. 10^{-3}, a_{n+1})
+	if (text.includes("^{")) {
+		text = text.replace(/(?<![A-Za-z0-9])([A-Za-z0-9]{1,24})\^\{([^{}]+)\}/g, (match) => latexToSpeech(match, language));
+	}
+	if (text.includes("_{")) {
+		text = text.replace(/(?<![A-Za-z0-9])([A-Za-z0-9]{1,24})_\{([^{}]+)\}/g, (match) => latexToSpeech(match, language));
+	}
+	// Replace bare URLs in prose with localised link word
+	if (text.includes("://")) {
+		text = text.replace(/https?:\/\/\S+/gi, phrases.link);
+	}
+	// Safety net: never emit a raw LaTeX command in prose
+	if (text.includes("\\")) {
+		text = text.replace(/\\[A-Za-z]+(?:\{[^}]*\})*/g, phrases.formula);
+	}
+	return text;
+}
 
-	let text = repairMathForDisplay(markdown).replace(/\r\n?/g, "\n");
+// ─── HAST walking (mirrors ToolContentResponse's visible DOM) ────────────────
 
-	// 1. Replace fenced code blocks (and figure fences) before touching inline syntax.
-	text = text.replace(/(^|\n)[ \t]*(`{3,}|~{3,})([^\n]*)\n[\s\S]*?\n[ \t]*\2[ \t]*(?=\n|$)/g, (_, lead: string, _fence: string, info: string) => {
-		const lang = info.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
-		const note = lang === "plot" || lang === "blocks" ? "Diagram." : "Code block.";
-		return `${lead}${note}\n`;
-	});
+function classList(node: Element): string[] {
+	const cls: unknown = node.properties?.className;
+	if (Array.isArray(cls)) return cls.map(String);
+	if (typeof cls === "string") return cls.split(/\s+/).filter(Boolean);
+	return [];
+}
 
-	// 2. Preserve inline code text as placeholders so underscores/asterisks inside code are never stripped as Markdown or math.
-	const inlineCodes: string[] = [];
-	text = text.replace(/(`+)([\s\S]*?)\1/g, (_, _ticks: string, body: string) => {
-		const idx = inlineCodes.push(body.replace(/\s+/g, " ").trim()) - 1;
-		return `\uE000CODE${idx}\uE001`;
-	});
+function codeLanguage(node: Element): string {
+	for (const cls of classList(node)) {
+		if (cls.startsWith("language-")) return cls.slice("language-".length).toLowerCase();
+	}
+	return "";
+}
 
-	// 3. Verbalize display math ($$...$$ and \[...\]) and inline math (\(...\) and $...$).
-	const mathSpans: string[] = [];
-	const pushMath = (rawLatex: string) => {
-		const idx = mathSpans.push(latexToSpeech(rawLatex)) - 1;
-		return ` \uE000MATH${idx}\uE001 `;
+function rawTextOf(node: Root | Element | ElementContent): string {
+	if (node.type === "text") return node.value;
+	if ("children" in node && Array.isArray(node.children)) {
+		return node.children.map((c) => rawTextOf(c as ElementContent)).join("");
+	}
+	return "";
+}
+
+function isFootnoteRefLink(node: Element): boolean {
+	if (node.tagName !== "a") return false;
+	const props = node.properties ?? {};
+	return "dataFootnoteRef" in props || "dataFootnoteBackref" in props;
+}
+
+function isDetailsOpen(node: Element): boolean {
+	const props = node.properties ?? {};
+	return "open" in props && props.open !== false && props.open !== undefined;
+}
+
+function isBlockElement(tagName: string): boolean {
+	return (
+		tagName === "p" ||
+		tagName === "div" ||
+		tagName === "section" ||
+		tagName === "article" ||
+		tagName === "blockquote" ||
+		tagName === "pre" ||
+		tagName === "ul" ||
+		tagName === "ol" ||
+		tagName === "li" ||
+		tagName === "dl" ||
+		tagName === "dt" ||
+		tagName === "dd" ||
+		tagName === "table" ||
+		tagName === "tr" ||
+		tagName === "details" ||
+		tagName === "summary" ||
+		/^h[1-6]$/.test(tagName)
+	);
+}
+
+function stripBlockquoteAlertMarker(children: ElementContent[]): ElementContent[] {
+	const firstElIdx = children.findIndex((c) => c.type === "element" || (c.type === "text" && c.value.trim() !== ""));
+	if (firstElIdx === -1) return children;
+	const first = children[firstElIdx]!;
+	if (first.type !== "element" || first.tagName !== "p") return children;
+	const pFirstIdx = first.children.findIndex((c) => c.type === "element" || (c.type === "text" && c.value.trim() !== ""));
+	if (pFirstIdx === -1) return children;
+	const lead = first.children[pFirstIdx]!;
+	if (lead.type !== "text") return children;
+	const m = ALERT_MARKER_RE.exec(lead.value);
+	if (!m) return children;
+	const restText = lead.value.slice(m[0].length);
+	const nextParagraphChildren = first.children
+		.map((c, idx) => (idx === pFirstIdx ? { type: "text" as const, value: restText } : c))
+		.filter((c) => !(c.type === "text" && c.value === ""));
+	const updatedFirst: Element = { ...first, children: nextParagraphChildren };
+	return children.map((c, idx) => (idx === firstElIdx ? updatedFirst : c));
+}
+
+function collectBlocksFromHast(root: Root, language: LessonLanguage): string[] {
+	const phrases = phrasesFor(language);
+	const blocks: string[] = [];
+	let current = "";
+
+	const flush = () => {
+		const cleaned = normalizeSpokenSpacing(current);
+		if (cleaned) blocks.push(cleaned);
+		current = "";
 	};
 
-	text = text.replace(/\$\$([\s\S]+?)\$\$/g, (_, inner: string) => pushMath(inner));
-	text = text.replace(/\\\[([\s\S]+?)\\\]/g, (_, inner: string) => pushMath(inner));
-	text = text.replace(/\\\(([\s\S]+?)\\\)/g, (_, inner: string) => pushMath(inner));
-	// Inline $...$: avoid currency like "$5 and $10" by requiring no space right after opening $ or before closing $,
-	// and not immediately followed by a digit after closing $.
-	text = text.replace(/(?<!\\)\$(?!\s)([^$\n]+?)(?<!\s)(?<!\\)\$(?!\d)/g, (_, inner: string) => pushMath(inner));
+	const appendInline = (chunk: string) => {
+		if (!chunk) return;
+		if (current && !/\s$/.test(current) && !/^[\s,.;:?!]/.test(chunk)) {
+			current += " ";
+		}
+		current += chunk;
+	};
 
-	// 4. Strip Markdown structure & formatting.
-	// Images ![alt](url)
-	text = text.replace(/!\[([^\]]*)\]\([^)]*\)/g, (_, alt: string) => (alt.trim() ? alt.trim() : "image"));
-	// Links [label](url)
-	text = text.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
-	// Reference-style links [label][ref]
-	text = text.replace(/\[([^\]]+)\]\[[^\]]*\]/g, "$1");
-	// Reference link definitions
-	text = text.replace(/^[ \t]*\[[^\]]+\]:[ \t]*\S+.*$/gm, "");
-	// Autolinks <https://...>
-	text = text.replace(/<(https?:\/\/[^>]+)>/g, "link");
-	// Headings: ensure sentence pause after heading
-	text = text.replace(/^[ \t]*#{1,6}[ \t]+(.+?)[ \t]*#*$/gm, (_, heading: string) => {
-		const h = heading.trim();
-		return /[.!?:]$/.test(h) ? h : `${h}.`;
+	const walkInline = (node: RootContent): string => {
+		if (node.type === "text") {
+			return cleanProseText(node.value, language);
+		}
+		if (node.type !== "element") return "";
+		const tag = node.tagName;
+		const classes = classList(node);
+		if (classes.includes("sr-only")) return "";
+		if (tag === "br") return " ";
+		if (tag === "hr") return "";
+		if (tag === "img") {
+			const alt = typeof node.properties?.alt === "string" ? node.properties.alt.trim() : "";
+			return alt || phrases.image;
+		}
+		if (isFootnoteRefLink(node)) return "";
+		if (tag === "sup") {
+			const nonEmpty = node.children.filter((c) => !(c.type === "text" && !c.value.trim()));
+			if (nonEmpty.length > 0 && nonEmpty.every((c) => c.type === "element" && isFootnoteRefLink(c))) {
+				return "";
+			}
+		}
+		if (tag === "a") {
+			const inner = node.children.map(walkInline).join("").trim();
+			if (!inner) return "";
+			if (/^https?:\/\/\S+$/i.test(inner)) return phrases.link;
+			return inner;
+		}
+		if (tag === "code") {
+			const lang = codeLanguage(node);
+			const rawCode = rawTextOf(node);
+			if (lang === "math" || classes.includes("math-inline") || classes.includes("math-display")) {
+				const spoken = latexToSpeech(rawCode, language);
+				return spoken ? ` ${spoken} ` : "";
+			}
+			const normalized = rawCode.replace(/\s+/g, " ").trim();
+			if (!normalized) return "";
+			if (RAW_BACKSLASH_COMMAND_RE.test(normalized)) {
+				return ` ${phrases.inlineCode} `;
+			}
+			return normalized;
+		}
+		if (tag === "details") {
+			const kids = isDetailsOpen(node)
+				? node.children
+				: node.children.filter((c): c is Element => c.type === "element" && c.tagName === "summary");
+			return kids.map(walkInline).join(" ");
+		}
+		return node.children.map(walkInline).join("");
+	};
+
+	const walkBlock = (node: RootContent): void => {
+		if (node.type === "text") {
+			if (node.value.trim()) appendInline(cleanProseText(node.value, language));
+			return;
+		}
+		if (node.type !== "element") return;
+		const tag = node.tagName;
+		const classes = classList(node);
+		if (classes.includes("sr-only")) return;
+		if (tag === "hr") {
+			flush();
+			return;
+		}
+
+		// Collapsed <details> contributes ONLY its <summary>; open <details> contributes summary + body.
+		if (tag === "details") {
+			flush();
+			const kids = isDetailsOpen(node)
+				? node.children
+				: node.children.filter((c): c is Element => c.type === "element" && c.tagName === "summary");
+			for (const child of kids) walkBlock(child);
+			flush();
+			return;
+		}
+
+		if (tag === "blockquote") {
+			flush();
+			const kids = stripBlockquoteAlertMarker(node.children);
+			for (const child of kids) walkBlock(child);
+			flush();
+			return;
+		}
+
+		if (tag === "pre") {
+			flush();
+			const codeEl = node.children.find((c): c is Element => c.type === "element" && c.tagName === "code");
+			const lang = codeEl ? codeLanguage(codeEl) : "";
+			if (lang === "math" || (codeEl && classList(codeEl).includes("math-display"))) {
+				const spoken = latexToSpeech(rawTextOf(codeEl ?? node), language);
+				if (spoken) blocks.push(spoken);
+			} else if (DIAGRAM_LANGUAGES.has(lang)) {
+				blocks.push(phrases.diagram);
+			} else {
+				blocks.push(phrases.codeBlock);
+			}
+			return;
+		}
+
+		if (tag === "table") {
+			flush();
+			const walkRows = (el: Element) => {
+				for (const child of el.children) {
+					if (child.type !== "element") continue;
+					if (child.tagName === "tr") {
+						const cells = child.children
+							.filter((c): c is Element => c.type === "element" && (c.tagName === "th" || c.tagName === "td"))
+							.map((cell) => normalizeSpokenSpacing(cell.children.map(walkInline).join("")))
+							.filter(Boolean);
+						if (cells.length > 0) blocks.push(`${cells.join(", ")}.`);
+					} else {
+						walkRows(child);
+					}
+				}
+			};
+			walkRows(node);
+			return;
+		}
+
+		if (isBlockElement(tag)) {
+			flush();
+			const hasBlockChild = node.children.some((c) => c.type === "element" && isBlockElement(c.tagName));
+			if (hasBlockChild) {
+				for (const child of node.children) walkBlock(child);
+			} else {
+				for (const child of node.children) appendInline(walkInline(child));
+			}
+			flush();
+			return;
+		}
+
+		appendInline(walkInline(node));
+	};
+
+	for (const child of root.children) {
+		walkBlock(child);
+	}
+	flush();
+	return blocks;
+}
+
+/**
+ * Parse and sanitise displayed Markdown through the same CommonMark/GFM/math
+ * + raw HTML + HAST sanitisation pipeline as `ToolContentResponse`, converting
+ * only visible content into clean speakable prose. Pure, no DOM.
+ */
+export function markdownToSpeech(markdown: string, language: LessonLanguage = DEFAULT_LESSON_LANGUAGE): string {
+	if (!markdown.trim()) return "";
+
+	const needsMathPrepass = markdown.includes("\\") || (markdown.includes("$") && /[\b\t\n\v\f\r]/.test(markdown));
+	const prepared = (needsMathPrepass ? transformMathDelimiters(repairMathForDisplay(markdown)) : markdown).replace(/\r\n?/g, "\n");
+	const mdast = fromMarkdown(prepared, {
+		extensions: MD_EXTENSIONS,
+		mdastExtensions: MDAST_EXTENSIONS,
 	});
-	// Horizontal rules
-	text = text.replace(/^[ \t]*(?:[-*_][ \t]*){3,}$/gm, "");
-	// Blockquote prefixes
-	text = text.replace(/^[ \t]*>[ \t]?/gm, "");
-	// Markdown tables: drop delimiter rows and turn cell rows into comma-separated phrases
-	text = text.replace(/^[ \t]*\|?(?:[ \t]*:?-{3,}:?[ \t]*\|)+[ \t]*:?-{3,}:?[ \t]*\|?[ \t]*$/gm, "");
-	text = text.replace(/^[ \t]*\|(.+)\|[ \t]*$/gm, (_, row: string) => {
-		const cells = row
-			.split("|")
-			.map((c) => c.trim())
-			.filter(Boolean);
-		return cells.length ? `${cells.join(", ")}.` : "";
-	});
-	// Unordered and ordered list markers
-	text = text.replace(/^[ \t]*[-*+][ \t]+/gm, "");
-	text = text.replace(/^[ \t]*\d+[.)][ \t]+/gm, "");
+	const rawHast = raw(toHast(mdast, { allowDangerousHtml: true }) as Root) as Root;
+	const cleanHast = sanitize(rawHast, SPEECH_SANITIZE_SCHEMA) as Root;
 
-	// Emphasis & strikethrough
-	text = text.replace(/\*\*([\s\S]+?)\*\*/g, "$1");
-	text = text.replace(/__([\s\S]+?)__/g, "$1");
-	text = text.replace(/~~([\s\S]+?)~~/g, "$1");
-	text = text.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, "$1");
-	text = text.replace(/(?<![\w\\])_([^_\n]+?)_(?!\w)/g, "$1");
-
-	// Simple HTML tags (keep inner text)
-	text = text.replace(/<br\s*\/?>/gi, ". ");
-	text = text.replace(/<\/?[a-zA-Z][^>]*>/g, "");
-
-	// Unescape markdown punctuation escapes (\*, \_, \#, etc.)
-	text = text.replace(/\\([\\`*_{}[\]()#+\-.!|>~])/g, "$1");
-
-	// Restore verbalized math spans (already guaranteed free of raw \commands)
-	text = text.replace(/\uE000MATH(\d+)\uE001/g, (_, idx: string) => mathSpans[Number(idx)] ?? "");
-
-	// Safety net: strip any stray raw LaTeX command that appeared outside $...$ (and outside inline code)
-	text = text.replace(/\\[A-Za-z]+(?:\{[^}]*\})*/g, MATH_FALLBACK);
-
-	// Restore inline code text literally so identifiers and paths are spoken as-is
-	text = text.replace(/\uE000CODE(\d+)\uE001/g, (_, idx: string) => inlineCodes[Number(idx)] ?? "");
-
-	// Paragraph breaks become sentence breaks if not already punctuated.
-	const paragraphs = text
-		.split(/\n{2,}/)
-		.map((p) => normalizeSpokenSpacing(p.replace(/\n+/g, " ")))
-		.filter(Boolean);
-
-	return paragraphs
-		.map((p, idx) => (idx < paragraphs.length - 1 && !/[.!?:]$/.test(p) ? `${p}.` : p))
+	const blocks = collectBlocksFromHast(cleanHast, language);
+	return blocks
+		.map((b, idx) => (idx < blocks.length - 1 && !/[.!?:]$/.test(b) ? `${b}.` : b))
 		.join(" ");
 }
 
 // ─── Sentence splitting (adapted from amoghu1s1/twig src/core/sentence-reader.ts, AGPL-3.0) ──
 
 const ABBREVIATIONS = new Set([
+	// English
 	"mr.",
 	"mrs.",
 	"ms.",
@@ -914,36 +1576,47 @@ const ABBREVIATIONS = new Set([
 	"oct.",
 	"nov.",
 	"dec.",
+	// Norwegian
+	"f.eks.",
+	"bl.a.",
+	"osv.",
+	"ca.",
+	"nr.",
+	"kap.",
+	"dvs.",
+	"m.m.",
+	"o.l.",
+	"jf.",
 ]);
 
 function shouldMergeSegments(left: string, right: string): boolean {
 	const trimmedLeft = left.trimEnd();
 	const trimmedRight = right.trimStart();
 	if (!trimmedLeft || !trimmedRight) return false;
-	const lastWord = trimmedLeft.match(/([A-Za-z]+(?:\.[A-Za-z]+)*\.)$/)?.[1]?.toLowerCase();
+	const lastWord = trimmedLeft.match(/([A-Za-zÆØÅæøå]+(?:\.[A-Za-zÆØÅæøå]+)*\.)$/)?.[1]?.toLowerCase();
 	if (!lastWord) return false;
 	if (ABBREVIATIONS.has(lastWord)) return true;
 	// Single capital initial followed by a capitalized word (e.g. "J. Smith")
-	if (/^[a-z]\.$/.test(lastWord) && /^[A-Z]/.test(trimmedRight)) return true;
+	if (/^[a-zæøå]\.$/.test(lastWord) && /^[A-ZÆØÅ]/.test(trimmedRight)) return true;
 	return false;
 }
 
-function segmentSentences(text: string): string[] {
-	const raw: string[] = [];
+function segmentSentences(text: string, locale: string): string[] {
+	const rawSegments: string[] = [];
 	if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
-		const segmenter = new Intl.Segmenter("en", { granularity: "sentence" });
+		const segmenter = new Intl.Segmenter(locale, { granularity: "sentence" });
 		for (const part of segmenter.segment(text)) {
-			if (part.segment.trim()) raw.push(part.segment);
+			if (part.segment.trim()) rawSegments.push(part.segment);
 		}
 	} else {
 		const fallback = text.match(/[^.!?]+[.!?]+(?:\s+|$)|[^.!?]+$/g) ?? [text];
 		for (const part of fallback) {
-			if (part.trim()) raw.push(part);
+			if (part.trim()) rawSegments.push(part);
 		}
 	}
 
 	const merged: string[] = [];
-	for (const seg of raw) {
+	for (const seg of rawSegments) {
 		if (merged.length > 0 && shouldMergeSegments(merged[merged.length - 1]!, seg)) {
 			merged[merged.length - 1] = `${merged[merged.length - 1]!.trimEnd()} ${seg.trim()}`;
 		} else {
@@ -983,10 +1656,15 @@ function splitLongSentence(sentence: string, maxChars: number): string[] {
 }
 
 /** Split spoken text into sentence-sized utterances bounded by `maxChars`. */
-export function splitSpeechUtterances(text: string, maxChars = DEFAULT_MAX_UTTERANCE_CHARS): string[] {
+export function splitSpeechUtterances(
+	text: string,
+	maxChars = DEFAULT_MAX_UTTERANCE_CHARS,
+	language: LessonLanguage = DEFAULT_LESSON_LANGUAGE,
+): string[] {
 	const cleaned = normalizeSpokenSpacing(text);
 	if (!cleaned) return [];
-	return segmentSentences(cleaned).flatMap((s) => splitLongSentence(s, maxChars));
+	const { locale } = phrasesFor(language);
+	return segmentSentences(cleaned, locale).flatMap((s) => splitLongSentence(s, maxChars));
 }
 
 /**
@@ -995,28 +1673,29 @@ export function splitSpeechUtterances(text: string, maxChars = DEFAULT_MAX_UTTER
  * displayed options in displayed order with displayed letters.
  */
 export function buildQuestionSpeech(input: QuestionSpeechInput, maxChars = DEFAULT_MAX_UTTERANCE_CHARS): string[] {
+	const language = input.language ?? DEFAULT_LESSON_LANGUAGE;
 	const utterances: string[] = [];
 
-	const questionText = markdownToSpeech(input.question);
+	const questionText = markdownToSpeech(input.question, language);
 	if (questionText) {
-		utterances.push(...splitSpeechUtterances(questionText, maxChars));
+		utterances.push(...splitSpeechUtterances(questionText, maxChars, language));
 	}
 
 	if (input.context) {
-		const contextText = markdownToSpeech(input.context);
+		const contextText = markdownToSpeech(input.context, language);
 		if (contextText) {
-			utterances.push(...splitSpeechUtterances(contextText, maxChars));
+			utterances.push(...splitSpeechUtterances(contextText, maxChars, language));
 		}
 	}
 
 	if (input.options?.length) {
 		for (const opt of input.options) {
-			const labelText = markdownToSpeech(opt.label);
+			const labelText = markdownToSpeech(opt.label, language);
 			if (!labelText) continue;
-			const descText = opt.description ? markdownToSpeech(opt.description) : "";
+			const descText = opt.description ? markdownToSpeech(opt.description, language) : "";
 			const body = descText ? `${labelText}${/[.!?:]$/.test(labelText) ? "" : "."} ${descText}` : labelText;
 			const prefix = opt.letter ? `${opt.letter}: ` : "";
-			utterances.push(...splitSpeechUtterances(`${prefix}${body}`, maxChars));
+			utterances.push(...splitSpeechUtterances(`${prefix}${body}`, maxChars, language));
 		}
 	}
 

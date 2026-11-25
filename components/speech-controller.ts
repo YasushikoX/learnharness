@@ -10,10 +10,14 @@ import {
 /**
  * Small controller around `window.speechSynthesis` for question read-aloud.
  *
- * Works offline in Electron on macOS and Windows using system voices, with
- * late-loading voice handling (`voiceschanged`), language-aware voice choice,
- * sequential sentence-sized utterance playback so Stop is prompt, and clean
- * dependency injection for tests.
+ * Works offline in Electron on macOS and Windows using system voices, with:
+ * - late-loading voice handling (`voiceschanged`),
+ * - language-matched voice selection (honoring an explicit setting only when
+ *   its language matches the lesson),
+ * - Chromium/Electron reliability guards: strong reference to the active
+ *   utterance (prevents GC before `onend`), `resume()` before `speak()`,
+ *   short gap between `cancel()` and `speak()`, and a length-scaled watchdog
+ *   so the control can never stay stuck on Stop.
  */
 
 export interface SpeechVoiceLike {
@@ -37,6 +41,7 @@ export interface SpeechSynthesisLike {
 	getVoices(): readonly SpeechVoiceLike[];
 	speak(utterance: SpeechUtteranceLike): void;
 	cancel(): void;
+	resume?: () => void;
 	addEventListener?: (type: string, listener: () => void) => void;
 	removeEventListener?: (type: string, listener: () => void) => void;
 	onvoiceschanged?: (() => void) | null;
@@ -47,6 +52,15 @@ export type SpeechUtteranceCtor = new (text: string) => SpeechUtteranceLike;
 export interface SpeechControllerDeps {
 	synthesis?: SpeechSynthesisLike | null;
 	Utterance?: SpeechUtteranceCtor | null;
+	/** Gap in ms between `cancel()` and the next `speak()` (default 40 ms). */
+	cancelGapMs?: number;
+	/** Minimum watchdog timeout in ms per utterance (default 8000 ms). */
+	watchdogMinMs?: number;
+	/** Extra watchdog budget per character at 1× rate in ms (default 150 ms). */
+	watchdogMsPerChar?: number;
+	/** Optional timer hooks for deterministic tests. */
+	scheduleTimer?: (fn: () => void, ms: number) => unknown;
+	cancelTimer?: (handle: unknown) => void;
 }
 
 export type SpeechStatus = "ready" | "unsupported" | "no-voices";
@@ -65,12 +79,19 @@ export interface SpeakOptions {
 
 export interface SpeechController {
 	getState(): SpeechState;
+	/** Current strongly-retained utterance while speaking, or null when idle. */
+	getActiveUtterance(): SpeechUtteranceLike | null;
 	subscribe(listener: (state: SpeechState) => void): () => void;
 	speak(utterances: readonly string[], options: SpeakOptions): boolean;
 	stop(): void;
 	refreshVoices(): void;
 	dispose(): void;
 }
+
+export const DEFAULT_CANCEL_GAP_MS = 40;
+export const DEFAULT_WATCHDOG_MIN_MS = 8_000;
+export const DEFAULT_WATCHDOG_MS_PER_CHAR = 150;
+export const DEFAULT_WATCHDOG_MAX_MS = 120_000;
 
 const LANGUAGE_PREFIXES: Readonly<Record<LessonLanguage, readonly string[]>> = {
 	en: ["en"],
@@ -95,10 +116,18 @@ function matchRank(voiceLang: string, prefixes: readonly string[]): number {
 	return -1;
 }
 
+/** True when a voice's BCP-47 language tag matches the given lesson language. */
+export function voiceMatchesLanguage(voice: SpeechVoiceLike, language: LessonLanguage): boolean {
+	return matchRank(voice.lang, LANGUAGE_PREFIXES[language]) !== -1;
+}
+
 /**
- * Choose a voice for the lesson's language, honoring an explicit user choice
- * when present and installed, and falling back sensibly when no voice matches
- * the lesson language.
+ * Choose a voice for the lesson's language.
+ *
+ * An explicit voice chosen in Settings is used only when its language matches
+ * the lesson language; otherwise a matching voice for the lesson language is
+ * preferred. Falls back to the explicit voice, system default, or first voice
+ * only when no installed voice matches the lesson language at all.
  */
 export function pickSpeechVoice(
 	voices: readonly SpeechVoiceLike[],
@@ -107,12 +136,15 @@ export function pickSpeechVoice(
 ): SpeechVoiceLike | null {
 	if (voices.length === 0) return null;
 
-	if (preferredVoice) {
-		const exact = voices.find((v) => v.voiceURI === preferredVoice || v.name === preferredVoice);
-		if (exact) return exact;
+	const prefixes = LANGUAGE_PREFIXES[language];
+	const explicit = preferredVoice
+		? voices.find((v) => v.voiceURI === preferredVoice || v.name === preferredVoice) ?? null
+		: null;
+
+	if (explicit && matchRank(explicit.lang, prefixes) !== -1) {
+		return explicit;
 	}
 
-	const prefixes = LANGUAGE_PREFIXES[language];
 	let best: SpeechVoiceLike | null = null;
 	let bestScore = -Infinity;
 
@@ -128,6 +160,7 @@ export function pickSpeechVoice(
 	}
 
 	if (best) return best;
+	if (explicit) return explicit;
 	return voices.find((v) => v.default) ?? voices[0] ?? null;
 }
 
@@ -154,6 +187,18 @@ function clampRate(rate: number | undefined): number {
 	return Math.min(READ_ALOUD_RATE_MAX, Math.max(READ_ALOUD_RATE_MIN, rate));
 }
 
+/** Compute a generous watchdog timeout (ms) scaled to utterance length and playback rate. */
+export function utteranceWatchdogMs(
+	text: string,
+	rate: number,
+	minMs = DEFAULT_WATCHDOG_MIN_MS,
+	msPerChar = DEFAULT_WATCHDOG_MS_PER_CHAR,
+): number {
+	const safeRate = clampRate(rate);
+	const scaled = Math.ceil((text.length * msPerChar) / safeRate) + minMs;
+	return Math.min(DEFAULT_WATCHDOG_MAX_MS, Math.max(minMs, scaled));
+}
+
 export function createSpeechController(deps?: SpeechControllerDeps): SpeechController {
 	const resolved = deps !== undefined
 		? { synthesis: deps.synthesis ?? null, Utterance: deps.Utterance ?? null }
@@ -161,9 +206,33 @@ export function createSpeechController(deps?: SpeechControllerDeps): SpeechContr
 	const { synthesis, Utterance } = resolved;
 	const supported = synthesis !== null && Utterance !== null;
 
+	const cancelGapMs = deps?.cancelGapMs ?? DEFAULT_CANCEL_GAP_MS;
+	const watchdogMinMs = deps?.watchdogMinMs ?? DEFAULT_WATCHDOG_MIN_MS;
+	const watchdogMsPerChar = deps?.watchdogMsPerChar ?? DEFAULT_WATCHDOG_MS_PER_CHAR;
+	const scheduleTimer = deps?.scheduleTimer ?? ((fn: () => void, ms: number) => globalThis.setTimeout(fn, ms));
+	const cancelTimer = deps?.cancelTimer ?? ((handle: unknown) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>));
+
 	const listeners = new Set<(state: SpeechState) => void>();
 	let runId = 0;
 	let disposed = false;
+	// Strong reference to the active utterance prevents Chromium/Electron GC before `onend`.
+	let activeUtterance: SpeechUtteranceLike | null = null;
+	let gapTimer: unknown = null;
+	let watchdogTimer: unknown = null;
+
+	const clearGapTimer = () => {
+		if (gapTimer !== null) {
+			cancelTimer(gapTimer);
+			gapTimer = null;
+		}
+	};
+
+	const clearWatchdogTimer = () => {
+		if (watchdogTimer !== null) {
+			cancelTimer(watchdogTimer);
+			watchdogTimer = null;
+		}
+	};
 
 	const readVoices = (): readonly SpeechVoiceLike[] => {
 		if (!supported) return [];
@@ -214,6 +283,9 @@ export function createSpeechController(deps?: SpeechControllerDeps): SpeechContr
 
 	const stop = () => {
 		runId++;
+		clearGapTimer();
+		clearWatchdogTimer();
+		activeUtterance = null;
 		if (supported) {
 			try {
 				synthesis.cancel();
@@ -238,6 +310,10 @@ export function createSpeechController(deps?: SpeechControllerDeps): SpeechContr
 		}
 
 		const currentRun = ++runId;
+		clearGapTimer();
+		clearWatchdogTimer();
+		activeUtterance = null;
+
 		try {
 			synthesis.cancel();
 		} catch {
@@ -253,8 +329,10 @@ export function createSpeechController(deps?: SpeechControllerDeps): SpeechContr
 		let index = 0;
 		const speakNext = () => {
 			if (disposed || currentRun !== runId) return;
+			clearWatchdogTimer();
 			const text = queue[index];
 			if (text === undefined) {
+				activeUtterance = null;
 				setState({ speaking: false });
 				return;
 			}
@@ -262,23 +340,60 @@ export function createSpeechController(deps?: SpeechControllerDeps): SpeechContr
 			utterance.rate = rate;
 			utterance.lang = lang;
 			if (chosenVoice) utterance.voice = chosenVoice;
+			// Retain a strong reference until completion, error, stop, or watchdog expiry.
+			activeUtterance = utterance;
+
+			let settled = false;
 			utterance.onend = () => {
-				if (disposed || currentRun !== runId) return;
+				if (settled || disposed || currentRun !== runId) return;
+				settled = true;
+				clearWatchdogTimer();
+				if (activeUtterance === utterance) activeUtterance = null;
 				index++;
 				speakNext();
 			};
 			utterance.onerror = () => {
-				if (disposed || currentRun !== runId) return;
+				if (settled || disposed || currentRun !== runId) return;
+				settled = true;
+				clearWatchdogTimer();
+				if (activeUtterance === utterance) activeUtterance = null;
 				setState({ speaking: false });
 			};
+
+			const timeoutMs = utteranceWatchdogMs(text, rate, watchdogMinMs, watchdogMsPerChar);
+			watchdogTimer = scheduleTimer(() => {
+				if (settled || disposed || currentRun !== runId) return;
+				settled = true;
+				watchdogTimer = null;
+				stop();
+			}, timeoutMs);
+
+			try {
+				synthesis.resume?.();
+			} catch {
+				// Best-effort resume before speak in case the engine paused after OS sleep.
+			}
 			try {
 				synthesis.speak(utterance);
 			} catch {
-				if (currentRun === runId) setState({ speaking: false });
+				if (currentRun === runId) {
+					settled = true;
+					clearWatchdogTimer();
+					activeUtterance = null;
+					setState({ speaking: false });
+				}
 			}
 		};
 
-		speakNext();
+		// Leave a short gap after cancel() so Chromium/Electron doesn't drop the first utterance.
+		if (cancelGapMs > 0) {
+			gapTimer = scheduleTimer(() => {
+				gapTimer = null;
+				speakNext();
+			}, cancelGapMs);
+		} else {
+			speakNext();
+		}
 		return true;
 	};
 
@@ -298,6 +413,7 @@ export function createSpeechController(deps?: SpeechControllerDeps): SpeechContr
 
 	return {
 		getState: () => state,
+		getActiveUtterance: () => activeUtterance,
 		subscribe(listener) {
 			listeners.add(listener);
 			return () => {

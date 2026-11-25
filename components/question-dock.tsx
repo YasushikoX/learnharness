@@ -59,7 +59,8 @@ import {
 	type SketchPayload,
 	type Phase3,
 } from "@/src/core";
-import { confidenceIndexFor, initialConfidenceFromDraft, QuestionConfidenceRow, stepConfidenceKey } from "@/components/confidence-slider";
+import { ConfidenceButtons } from "@/components/confidence-buttons";
+import { confidenceIndexFor, ConfidenceSlider, initialConfidenceFromDraft, stepConfidenceKey } from "@/components/confidence-slider";
 import { QuestionReadAloud } from "@/components/question-read-aloud";
 import { useAppearance } from "@/components/settings/appearance";
 import type { PrepareBuiltinSubmission } from "./plugin-submission-adapters";
@@ -891,7 +892,7 @@ function QuestionDockForm({
 				if (e.defaultPrevented || kind !== "quiz" || sel.dontKnow) return;
 				e.preventDefault();
 				setConf((c) => stepConfidenceKey(confidenceMode, c, e.key));
-			} else if (kind === "quiz" && confidenceMode === "buttons" && /^[0-5]$/.test(e.key)) {
+			} else if (kind === "quiz" && (e.key === "0" || (confidenceMode === "buttons" && /^[1-5]$/.test(e.key)))) {
 				// 1-5 press Guess..Certain and submit, 0 presses "I don't know" (owner, 2026-10-28)
 				e.preventDefault();
 				if (e.key === "0") pressDontKnow();
@@ -984,35 +985,15 @@ function QuestionDockForm({
 		}, { onStop: () => { holdingPosition.current = false; } });
 	}, [arrangement, qd.id]);
 
-	// Displayed-only options for read-aloud: never leaks hidden descriptions, answers, hints, or tutor planning.
-	const speechOptions = useMemo(
-		() => qd.options.map((opt, i) => ({
-			letter: displayedOptionLetter(qd.optionOrder, i + 1),
-			label: opt.label,
-			description: kind !== "quiz" ? opt.description : undefined,
-		})),
-		[qd.options, qd.optionOrder, kind],
-	);
-
 	// The question part (label, question, context) and the answer list are
 	// shared by both arrangements; the refs feed the layout probe.
 	const questionPart = (
-		<div ref={questionPartRef} data-question-part="">
-			<div className={cn(QC_LABEL, "flex items-center justify-between gap-2")}>
-				<span>
-					{questionCardLabel(toolName, kind, qd.questionType)}
-					{qd.mode === "multi-select" && " · select all that apply"}
-				</span>
-				<QuestionReadAloud
-					questionId={toolCallId}
-					question={qd.question}
-					context={qd.context}
-					options={wordingOnly ? undefined : speechOptions}
-					language={language}
-					active={Boolean(active)}
-					stopRef={stopSpeechRef}
-				/>
+		<div ref={questionPartRef} data-question-part="" className="relative">
+			<div className={QC_LABEL}>
+				{questionCardLabel(toolName, kind, qd.questionType)}
+				{qd.mode === "multi-select" && " · select all that apply"}
 			</div>
+			<QuestionReadAloud questionId={toolCallId} qd={qd} kind={kind} wordingOnly={wordingOnly} language={language} active={Boolean(active)} stopRef={stopSpeechRef} className="absolute -top-1 right-0" />
 			{/* The wording is markable for "Ask about this" (owner, 2026-11-06): the stem and the context, not the options. */}
 			<ClarifyWording messageId={messageId} callId={toolCallId} dock>
 				<div className={QC_QUESTION}>
@@ -1220,16 +1201,26 @@ function QuestionDockForm({
 			    levels wait for one. Keys: 1-5 press the levels, 0 presses "I don't know", ←/→ move the highlight, Enter presses it. */}
 			{showConfidence && (
 				<div ref={confidenceRef} className={cn("border-t border-border/60 px-4 py-2.5", wordingOnly && "hidden")} data-testid="confidence-row">
-					<QuestionConfidenceRow
-						mode={confidenceMode}
-						value={conf}
-						onSliderChange={setConf}
-						onButtonPick={pressLevel}
-						onDontKnow={pressDontKnow}
-						buttonsDisabled={!answerPicked || compactionRunning || preparing}
-						sliderDisabled={compactionRunning || preparing}
-						dontKnowDisabled={compactionRunning || preparing}
+					{confidenceMode === "slider" ? (
+						<ConfidenceSlider value={conf} onChange={setConf} disabled={compactionRunning || preparing} showUnsetHint onDontKnow={pressDontKnow} dontKnowDisabled={compactionRunning || preparing} />
+					) : (
+					<ConfidenceButtons
+						onPick={pressLevel}
+						disabled={!answerPicked || compactionRunning || preparing}
+						highlight={confidenceIndexFor(conf)}
+						leading={
+							<button
+								type="button"
+								disabled={compactionRunning || preparing}
+								onClick={pressDontKnow}
+								data-testid="dont-know-button"
+								className="lh-touch h-10 min-w-0 flex-[1.8] truncate rounded-[6px] border border-dashed border-border/70 bg-transparent px-0 text-[11px] tracking-tighter text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+							>
+								I don't know
+							</button>
+						}
 					/>
+					)}
 				</div>
 			)}
 

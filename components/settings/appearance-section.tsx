@@ -520,7 +520,7 @@ export function AppearanceSection({
 			</SettingsRow>
 			<SettingsRow
 				label="Confidence input"
-				hint="How you rate confidence before submitting a check"
+				hint="How you rate confidence before submitting a check (practice problems keep buttons for now)"
 				testid="row-confidence-control"
 			>
 				<ThinSelect
@@ -531,7 +531,7 @@ export function AppearanceSection({
 						if (isConfidenceControl(v)) void onSectionChange({ ...appearance, confidenceControl: v });
 					}}
 				>
-					<option value="slider">Slider (0–100%)</option>
+					<option value="slider">Slider (5–100%)</option>
 					<option value="buttons">Buttons</option>
 				</ThinSelect>
 			</SettingsRow>

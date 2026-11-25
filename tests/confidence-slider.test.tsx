@@ -29,10 +29,13 @@ Object.assign(globalThis, {
 
 const { createRoot } = await import("react-dom/client");
 const { renderToStaticMarkup } = await import("react-dom/server");
-const { CONFIDENCE_STOPS, resolveTheme } = await import("../src/core/index.ts");
+const { CONFIDENCE_STOPS, parseExplainInput, resolveTheme } = await import("../src/core/index.ts");
+const { placementGraderPrompt } = await import("../src/agent/subagents/placement-grader.ts");
 const { AppearanceProvider, resolveAppearance, useAppearance } = await import("../components/settings/appearance.tsx");
 const { CONFIDENCE_COLORS, confidenceColor, confidenceRailStyle } = await import("../components/confidence-rail.tsx");
+const { clampConfidenceStep, CONFIDENCE_SLIDER_MIN } = await import("../components/confidence-slider.tsx");
 const { QuestionDock } = await import("../components/question-dock.tsx");
+const { PracticeDock } = await import("../components/practice-dock.tsx");
 const { AnsweredCard } = await import("../components/answered-card.tsx");
 const { SketchView } = await import("../components/sketch/sketch-view.tsx");
 const { writeInk } = await import("../components/sketch/ink-memory.ts");
@@ -83,8 +86,12 @@ describe("QuestionDock confidence slider mode (default)", () => {
 		host.remove();
 	});
 
-	it("defaults to slider mode, blocks submit while unset, steps by 5 via input and keyboard, and submits exact 0–100 value", async () => {
+	it("defaults to slider mode, enforces minimum 5 (reserving 0 for I don't know), blocks submit while unset, steps by 5, and submits exact value (Item 10)", async () => {
 		assert.equal(resolveAppearance(undefined).confidenceControl, "slider");
+		assert.equal(CONFIDENCE_SLIDER_MIN, 5);
+		assert.equal(clampConfidenceStep(0), 5);
+		assert.equal(clampConfidenceStep(2), 5);
+
 		const answers: QuestionAnswerData[] = [];
 		await act(async () =>
 			root.render(
@@ -105,7 +112,8 @@ describe("QuestionDock confidence slider mode (default)", () => {
 		const submitBtn = host.querySelector<HTMLButtonElement>('button[type="submit"]')!;
 		assert.ok(slider, "slider renders by default");
 		assert.equal(host.querySelector('[data-testid="confidence-buttons"]'), null, "buttons not rendered in slider mode");
-		assert.equal(slider.getAttribute("min"), "0");
+		assert.equal(slider.getAttribute("min"), "5");
+		assert.equal(slider.getAttribute("aria-valuemin"), "5");
 		assert.equal(slider.getAttribute("max"), "100");
 		assert.equal(slider.getAttribute("step"), "5");
 		assert.equal(readout.textContent, "—", "starts unset");
@@ -131,17 +139,27 @@ describe("QuestionDock confidence slider mode (default)", () => {
 		assert.equal(readout.textContent, "65%");
 		assert.equal(submitBtn.disabled, false, "submit enabled once both pick and confidence are set");
 
-		// Home → 0%, End → 100%, then set back to 65% via range change
+		// Home → 5% (never 0%), ArrowLeft at 5% stays 5%, End → 100%, then set back to 65% via range change
 		await act(async () => {
 			slider.dispatchEvent(Object.assign(new window.Event("keydown", { bubbles: true, cancelable: true }), { key: "Home" }));
 		});
-		assert.equal(readout.textContent, "0%");
+		assert.equal(readout.textContent, "5%");
+		await act(async () => {
+			slider.dispatchEvent(Object.assign(new window.Event("keydown", { bubbles: true, cancelable: true }), { key: "ArrowLeft" }));
+		});
+		assert.equal(readout.textContent, "5%");
 		await act(async () => {
 			slider.dispatchEvent(Object.assign(new window.Event("keydown", { bubbles: true, cancelable: true }), { key: "End" }));
 		});
 		assert.equal(readout.textContent, "100%");
 		await act(async () => setRangeValue(slider, 65));
 		assert.equal(readout.textContent, "65%");
+
+		// Keys 1-5 must NOT auto-submit in slider mode
+		await act(async () => {
+			document.dispatchEvent(Object.assign(new window.Event("keydown", { bubbles: true, cancelable: true }), { key: "3" }));
+		});
+		assert.equal(answers.length, 0);
 
 		// Submit sends exact 65
 		assert.ok(submitBtn.closest("form"));
@@ -159,13 +177,13 @@ describe("QuestionDock confidence slider mode (default)", () => {
 		assert.match(cardHtml, /65%/);
 	});
 
-	it("allows I don't know without setting confidence and blocks placement recall until confidence is set", async () => {
+	it("supports pressing 0 for I don't know in slider mode as well as clicking the button (Item 10)", async () => {
 		const answers: QuestionAnswerData[] = [];
 		await act(async () =>
 			root.render(
 				<QuestionDock
 					toolName="quiz"
-					toolCallId="slider-dk"
+					toolCallId="slider-dk-key"
 					input={QUIZ_INPUT}
 					expanded
 					dictationClaim={false}
@@ -174,44 +192,160 @@ describe("QuestionDock confidence slider mode (default)", () => {
 				/>,
 			),
 		);
-		const dk = host.querySelector<HTMLButtonElement>('[data-testid="dont-know-button"]')!;
-		assert.equal(dk.disabled, false);
-		await act(async () => dk.click());
+		// Key 0 submits "I don't know" in slider mode
+		await act(async () => {
+			document.dispatchEvent(Object.assign(new window.Event("keydown", { bubbles: true, cancelable: true }), { key: "0" }));
+		});
 		assert.equal(answers.length, 1);
 		assert.equal(answers[0]!.dontKnow, true);
 		assert.equal(answers[0]!.confidence, undefined);
 
-		// Placement recall with skill requires confidence before submit
-		const recallAnswers: QuestionAnswerData[] = [];
-		await act(async () =>
-			root.render(
-				<QuestionDock
-					toolName="recall"
-					toolCallId="placement-recall-1"
-					input={{ question: "State the chain rule.", correctAnswer: "(f(g(x)))' = f'(g(x))g'(x)", skill: "chain-rule" } as never}
-					expanded
-					dictationClaim={false}
-					onExpand={() => {}}
-					onSubmit={(a) => { recallAnswers.push(a); }}
-				/>,
-			),
-		);
-		const slider = host.querySelector<HTMLInputElement>('[data-testid="confidence-slider"]')!;
-		const submitBtn = host.querySelector<HTMLButtonElement>('button[type="submit"]')!;
-		const editor = host.querySelector<HTMLElement>('[data-testid="answer-field"] [data-file-path-input]')!;
-		assert.ok(slider);
-		await act(async () => {
-			editor.textContent = "f'(g(x)) * g'(x)";
-			editor.dispatchEvent(new window.Event("input", { bubbles: true }));
+		// Clicking the button also works without setting confidence
+		const dk = host.querySelector<HTMLButtonElement>('[data-testid="dont-know-button"]')!;
+		assert.equal(dk.disabled, false);
+		await act(async () => dk.click());
+		assert.equal(answers.length, 2);
+		assert.equal(answers[1]!.dontKnow, true);
+		assert.equal(answers[1]!.confidence, undefined);
+	});
+
+	it("keeps placement recall unchanged from main in both slider and buttons modes: no skill kept, no confidence control, no confidence sent to grader (Item 3)", async () => {
+		const rawRecall = {
+			question: "State the chain rule.",
+			correctAnswer: "(f(g(x)))' = f'(g(x))g'(x)",
+			skill: "chain-rule",
+			type: "recall",
+		};
+		const parsed = parseExplainInput(rawRecall);
+		assert.ok(parsed);
+		assert.equal("skill" in parsed ? (parsed as Record<string, unknown>).skill : undefined, undefined, "parseExplainInput must strip skill just like main");
+
+		for (const mode of ["slider", "buttons"] as const) {
+			const recallAnswers: QuestionAnswerData[] = [];
+			await act(async () =>
+				root.render(
+					<AppearanceProvider initialAppearance={{ confidenceControl: mode }} initialTheme={resolveTheme(undefined)}>
+						<QuestionDock
+							toolName="recall"
+							toolCallId={`placement-recall-${mode}`}
+							input={rawRecall as never}
+							expanded
+							dictationClaim={false}
+							onExpand={() => {}}
+							onSubmit={(a) => { recallAnswers.push(a); }}
+						/>
+					</AppearanceProvider>,
+				),
+			);
+			assert.equal(host.querySelector('[data-testid="confidence-slider"]'), null, `no confidence slider on recall in ${mode} mode`);
+			assert.equal(host.querySelector('[data-testid="confidence-buttons"]'), null, `no confidence buttons on recall in ${mode} mode`);
+			assert.equal(host.querySelector('[data-testid="confidence-row"]'), null, `no confidence row on recall in ${mode} mode`);
+
+			const submitBtn = host.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+			const editor = host.querySelector<HTMLElement>('[data-testid="answer-field"] [data-file-path-input]')!;
+			await act(async () => {
+				editor.textContent = "f'(g(x)) * g'(x)";
+				editor.dispatchEvent(new window.Event("input", { bubbles: true }));
+			});
+			assert.equal(submitBtn.disabled, false, `placement recall submits without confidence in ${mode} mode`);
+			await act(async () => {
+				submitBtn.closest("form")!.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }));
+			});
+			assert.equal(recallAnswers.length, 1);
+			assert.equal(recallAnswers[0]!.confidence, undefined);
+
+			const graderText = placementGraderPrompt({
+				skill: { id: "chain-rule", name: "Chain rule" },
+				toolName: "recall",
+				question: rawRecall.question,
+				correctAnswer: rawRecall.correctAnswer,
+				...(recallAnswers[0]!.confidence !== undefined ? { confidence: recallAnswers[0]!.confidence } : {}),
+				...(recallAnswers[0]!.text ? { text: recallAnswers[0]!.text } : {}),
+			});
+			assert.ok(!graderText.includes("Stated confidence"), `grader prompt must not receive confidence in ${mode} mode`);
+		}
+	});
+
+	it("submits photo answer with I don't know cleanly in both buttons and slider modes (Item 10)", async () => {
+		const canvasProto = Object.getPrototypeOf(document.createElement("canvas")) as Record<string, unknown>;
+		const prevBitmap = (globalThis as Record<string, unknown>).createImageBitmap;
+		const prevGetContext = canvasProto.getContext;
+		const prevToBlob = canvasProto.toBlob;
+		const prevCreateUrl = URL.createObjectURL;
+		const prevRevokeUrl = URL.revokeObjectURL;
+		const prevFileReader = (globalThis as Record<string, unknown>).FileReader;
+
+		(globalThis as Record<string, unknown>).createImageBitmap = async () => ({
+			width: 800,
+			height: 600,
+			close() {},
 		});
-		assert.equal(submitBtn.disabled, true, "placement recall stays blocked until confidence is set");
-		await act(async () => setRangeValue(slider, 85));
-		assert.equal(submitBtn.disabled, false);
-		await act(async () => {
-			submitBtn.closest("form")!.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }));
+		canvasProto.getContext = () => ({
+			drawImage() {},
 		});
-		assert.equal(recallAnswers.length, 1);
-		assert.equal(recallAnswers[0]!.confidence, 85);
+		canvasProto.toBlob = (cb: (b: Blob | null) => void) => {
+			cb(new Blob(["jpeg-bytes"], { type: "image/jpeg" }));
+		};
+		URL.createObjectURL = () => "blob:mock-photo";
+		URL.revokeObjectURL = () => {};
+		(globalThis as Record<string, unknown>).FileReader = class MockFileReader {
+			result: string | null = null;
+			onload: (() => void) | null = null;
+			onerror: (() => void) | null = null;
+			readAsDataURL() {
+				this.result = "data:image/jpeg;base64,/9j/4AAQ";
+				queueMicrotask(() => this.onload?.());
+			}
+		};
+
+		try {
+			for (const mode of ["buttons", "slider"] as const) {
+				const received: Array<{ answer: QuestionAnswerData; sketch?: SketchPayload }> = [];
+				await act(async () =>
+					root.render(
+						<AppearanceProvider initialAppearance={{ confidenceControl: mode }} initialTheme={resolveTheme(undefined)}>
+							<QuestionDock
+								toolName="quiz"
+								toolCallId={`photo-dk-${mode}`}
+								input={QUIZ_INPUT}
+								expanded
+								dictationClaim={false}
+								onExpand={() => {}}
+								onSubmit={(a, sketch) => { received.push({ answer: a, sketch }); }}
+							/>
+						</AppearanceProvider>,
+					),
+				);
+
+				const fileInput = host.querySelector<HTMLInputElement>('[data-testid="camera-input"]')!;
+				assert.ok(fileInput, "camera file input exists");
+				const fakeFile = new File(["img"], "work.jpg", { type: "image/jpeg" });
+				Object.defineProperty(fileInput, "files", { configurable: true, value: [fakeFile] });
+				await act(async () => {
+					fileInput.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+					await new Promise((r) => setTimeout(r, 20));
+				});
+
+				const dk = host.querySelector<HTMLButtonElement>('[data-testid="dont-know-button"]')!;
+				await act(async () => {
+					dk.click();
+					await new Promise((r) => setTimeout(r, 10));
+				});
+
+				assert.equal(received.length, 1, `photo + I don't know must submit in ${mode} mode`);
+				assert.equal(received[0]!.answer.dontKnow, true);
+				assert.equal(received[0]!.answer.confidence, undefined);
+				assert.ok(received[0]!.answer.sketch, "answer carries sketch ref for photo");
+				assert.equal(received[0]!.sketch?.producer, "photo");
+			}
+		} finally {
+			(globalThis as Record<string, unknown>).createImageBitmap = prevBitmap;
+			canvasProto.getContext = prevGetContext;
+			canvasProto.toBlob = prevToBlob;
+			URL.createObjectURL = prevCreateUrl;
+			URL.revokeObjectURL = prevRevokeUrl;
+			(globalThis as Record<string, unknown>).FileReader = prevFileReader;
+		}
 	});
 
 	it("keeps written explain questions free of confidence slider and preserves wordingOnly hiding", async () => {
@@ -280,7 +414,36 @@ describe("QuestionDock confidence slider mode (default)", () => {
 		assert.ok(host.querySelector('button[type="submit"]'));
 	});
 
-	it("supports sketch submission in slider mode with exact 0–100 confidence", async () => {
+	it("keeps practice problems on confidence buttons even when slider mode is active (Item 13)", async () => {
+		await act(async () =>
+			root.render(
+				<InteractionLayersProvider>
+					<AppearanceProvider initialAppearance={{ confidenceControl: "slider" }} initialTheme={resolveTheme(undefined)}>
+						<PracticeDock
+							problemCallId="prac-1"
+							input={{ statement: "Solve $2x = 6$.", title: "Linear equation" } as never}
+							expanded
+							onExpand={() => {}}
+							onSubmit={async () => true}
+						/>
+					</AppearanceProvider>
+				</InteractionLayersProvider>,
+			),
+		);
+		const editor = host.querySelector<HTMLElement>('[data-file-path-input]')!;
+		assert.ok(editor);
+		await act(async () => {
+			editor.textContent = "x = 3";
+			editor.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+		});
+		const submitBtn = host.querySelector<HTMLButtonElement>('[data-testid="practice-send"]')!;
+		assert.ok(submitBtn);
+		await act(async () => submitBtn.click());
+		assert.ok(host.querySelector('[data-testid="practice-confidence-row"]'), "practice problem uses button stops row");
+		assert.equal(host.querySelector('[data-testid="confidence-slider"]'), null, "practice problem does not render slider");
+	});
+
+	it("supports sketch submission in slider mode with exact 5–100 confidence", async () => {
 		const inkKey = "sketch-slider-test";
 		writeInk(inkKey, {
 			strokes: [{ points: [10, 10, 0.5, 90, 50, 0.6], size: 4 }],
@@ -313,6 +476,7 @@ describe("QuestionDock confidence slider mode (default)", () => {
 		const slider = document.body.querySelector<HTMLInputElement>('[data-testid="sketch-confidence-slider"]')!;
 		const confirm = document.body.querySelector<HTMLButtonElement>('[data-testid="sketch-confidence-submit"]')!;
 		assert.ok(slider, "sketch toolbar shows confidence slider");
+		assert.equal(slider.getAttribute("min"), "5");
 		assert.equal(confirm.disabled, true, "sketch submit waits until confidence is set");
 
 		await act(async () => setRangeValue(slider, 75));

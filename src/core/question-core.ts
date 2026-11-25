@@ -440,7 +440,6 @@ export const explainDisplayInputSchema = Type.Object({
 	...explainInputBase.properties,
 	type: Type.Optional(Type.String()),
 	lead: Type.Optional(Type.String()),
-	skill: Type.Optional(Type.String()),
 });
 
 /** The explain authoring contract: the commitment must exist. Empty

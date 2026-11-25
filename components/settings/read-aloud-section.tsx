@@ -80,7 +80,7 @@ export function ReadAloudSection({
 		? "System speech synthesis is unavailable in this browser"
 		: voices.length === 0
 			? "No system speech voices detected — using system default"
-			: "System default matches the lesson's language automatically";
+			: "A chosen voice is used when its language matches the lesson; otherwise a voice matching the lesson language is preferred";
 
 	return (
 		<SettingsGroup label="Read aloud" testid="group-read-aloud">

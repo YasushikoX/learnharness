@@ -166,6 +166,10 @@ describe("Settings UI for read-aloud and confidenceControl", () => {
 
 		await act(async () => changeSelect(voiceSelect, "v-nb"));
 		assert.equal(updates[2]!.readAloudVoice, "v-nb");
+
+		// Item 11: voice setting explains that a chosen voice is used when its language matches the lesson
+		const voiceRow = host.querySelector<HTMLElement>('[data-testid="row-read-aloud-voice"]')!;
+		assert.match(voiceRow.textContent ?? "", /matches the lesson/i);
 	});
 
 	it("AppearanceSection renders Confidence input defaulting to slider and switches to buttons", async () => {
@@ -191,6 +195,12 @@ describe("Settings UI for read-aloud and confidenceControl", () => {
 		);
 		const select = host.querySelector<HTMLSelectElement>('[data-testid="select-confidence-control"]')!;
 		assert.equal(select.value, "slider");
+		// Item 10: slider option advertises 5–100% (reserving 0 for I don't know)
+		const sliderOpt = select.querySelector<HTMLOptionElement>('option[value="slider"]')!;
+		assert.match(sliderOpt.textContent ?? "", /5–100%/);
+		// Item 13: help text explains practice problems keep buttons for now
+		const confRow = host.querySelector<HTMLElement>('[data-testid="row-confidence-control"]')!;
+		assert.match(confRow.textContent ?? "", /practice problems keep buttons/i);
 		await act(async () => changeSelect(select, "buttons"));
 		assert.equal(saved[0]!.confidenceControl, "buttons");
 	});

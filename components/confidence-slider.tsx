@@ -8,31 +8,34 @@ import {
 	type ConfidenceControl,
 	type QuestionFormDraft,
 } from "@/src/core";
-import { ConfidenceButtons } from "@/components/confidence-buttons";
 import { confidenceColor, confidenceRailStyle } from "@/components/confidence-rail";
 
+export const CONFIDENCE_SLIDER_MIN = 5;
+export const CONFIDENCE_SLIDER_MAX = 100;
 export const CONFIDENCE_STEP = 5;
 export const CONFIDENCE_DEFAULT_START = 50;
 
-/** Clamp any numeric input onto the 0–100 confidence scale in steps of 5. */
+/** Clamp any numeric value to the 5–100 slider scale in steps of 5 (0 stays reserved for "I don't know"). */
 export function clampConfidenceStep(value: number): number {
 	if (!Number.isFinite(value)) return CONFIDENCE_DEFAULT_START;
-	const stepped = Math.round(value / CONFIDENCE_STEP) * CONFIDENCE_STEP;
-	return Math.max(0, Math.min(100, stepped));
+	const clamped = Math.min(CONFIDENCE_SLIDER_MAX, Math.max(CONFIDENCE_SLIDER_MIN, value));
+	return Math.min(CONFIDENCE_SLIDER_MAX, Math.max(CONFIDENCE_SLIDER_MIN, Math.round(clamped / CONFIDENCE_STEP) * CONFIDENCE_STEP));
 }
 
-/** Restore a draft's confidence value (supports both continuous 0–100 and legacy stop index). */
-export function initialConfidenceFromDraft(draft?: QuestionFormDraft): number | null {
-	if (typeof draft?.confidence === "number" && Number.isFinite(draft.confidence)) {
-		return Math.max(0, Math.min(100, Math.round(draft.confidence)));
+/** Recover initial numeric confidence (5–100, or null) from a saved QuestionFormDraft. */
+export function initialConfidenceFromDraft(draft: QuestionFormDraft | undefined): number | null {
+	if (!draft) return null;
+	if (typeof draft.confidence === "number" && Number.isFinite(draft.confidence)) {
+		return clampConfidenceStep(draft.confidence);
 	}
-	if (typeof draft?.confidenceIndex === "number") {
-		return CONFIDENCE_STOPS[draft.confidenceIndex] ?? null;
+	if (draft.confidenceIndex !== null && draft.confidenceIndex !== undefined) {
+		const stop = CONFIDENCE_STOPS[draft.confidenceIndex];
+		return stop !== undefined && stop > 0 ? stop : null;
 	}
 	return null;
 }
 
-/** Matching stop index for a confidence value, or null when unset or between stops. */
+/** Exact index into CONFIDENCE_STOPS for a numeric value, or null for non-stop slider values. */
 export function confidenceIndexFor(value: number | null): number | null {
 	if (value === null) return null;
 	const idx = CONFIDENCE_STOPS.indexOf(value);
@@ -41,7 +44,7 @@ export function confidenceIndexFor(value: number | null): number | null {
 
 /**
  * Pure keyboard step helper shared by ConfidenceSlider and QuestionDock.
- * Returns the next confidence value (0–100) for arrow/Home/End keys, or null if unhandled.
+ * Returns the next confidence value for arrow/Home/End keys, or null if unhandled.
  */
 export function stepConfidenceKey(
 	mode: ConfidenceControl,
@@ -62,8 +65,8 @@ export function stepConfidenceKey(
 		return CONFIDENCE_STOPS[nextIdx] ?? 50;
 	}
 
-	if (key === "Home") return 0;
-	if (key === "End") return 100;
+	if (key === "Home") return CONFIDENCE_SLIDER_MIN;
+	if (key === "End") return CONFIDENCE_SLIDER_MAX;
 	const delta = key === "ArrowRight" || key === "ArrowUp"
 		? CONFIDENCE_STEP
 		: key === "ArrowLeft" || key === "ArrowDown"
@@ -75,12 +78,16 @@ export function stepConfidenceKey(
 }
 
 export interface ConfidenceSliderProps {
-	/** Current confidence (0–100), or null while unset. */
+	/** Current confidence (5–100), or null while unset. */
 	value: number | null;
 	onChange: (value: number) => void;
 	disabled?: boolean;
-	/** Optional leading slot (e.g. "I don't know" button in QuestionDock). */
+	/** Optional leading slot (e.g. custom control). */
 	leading?: ReactNode;
+	/** Optional "I don't know" button handler rendered in the leading slot. */
+	onDontKnow?: () => void;
+	/** Disables the built-in "I don't know" button when `onDontKnow` is supplied. */
+	dontKnowDisabled?: boolean;
 	/** Show a quiet hint while unset. */
 	showUnsetHint?: boolean;
 	testid?: string;
@@ -88,15 +95,17 @@ export interface ConfidenceSliderProps {
 }
 
 /**
- * Dynamic 0–100 confidence slider (steps of 5) sharing ConfidenceRail's paint
- * and geometry law. Starts unset (null) until the learner drags, clicks, or
- * steps it with the keyboard.
+ * Dynamic 5–100 confidence slider (steps of 5) sharing ConfidenceRail's paint
+ * and geometry law. 0% stays reserved for "I don't know". Starts unset (null)
+ * until the learner drags, clicks, or steps it with the keyboard.
  */
 export function ConfidenceSlider({
 	value,
 	onChange,
 	disabled = false,
 	leading,
+	onDontKnow,
+	dontKnowDisabled = false,
 	showUnsetHint = false,
 	testid = "confidence-slider",
 	className,
@@ -114,18 +123,30 @@ export function ConfidenceSlider({
 		onChange(next);
 	};
 
+	const leadingSlot = leading ?? (onDontKnow ? (
+		<button
+			type="button"
+			disabled={dontKnowDisabled}
+			onClick={onDontKnow}
+			data-testid="dont-know-button"
+			className="lh-touch h-9 shrink-0 rounded-[6px] border border-dashed border-border/70 bg-transparent px-3 text-[11px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+		>
+			I don&apos;t know
+		</button>
+	) : null);
+
 	return (
 		<div
 			data-testid="confidence-slider-row"
 			className={cn("flex w-full flex-wrap items-center gap-x-3 gap-y-1.5", className)}
 		>
-			{leading}
+			{leadingSlot}
 			<div className="flex min-w-[12rem] flex-1 items-center gap-2.5">
 				<span className="shrink-0 text-[11px] font-medium text-muted-foreground">
 					Confidence
 				</span>
 				<div className="relative flex h-9 min-w-0 flex-1 items-center">
-					{/* Rail inset half a 16px disc per side so 0% and 100% align with the rail ends. */}
+					{/* Rail inset half a 16px disc per side so ends align with the rail. */}
 					<div
 						aria-hidden
 						data-testid="confidence-slider-rail"
@@ -134,14 +155,14 @@ export function ConfidenceSlider({
 					/>
 					<input
 						type="range"
-						min={0}
-						max={100}
+						min={CONFIDENCE_SLIDER_MIN}
+						max={CONFIDENCE_SLIDER_MAX}
 						step={CONFIDENCE_STEP}
 						value={visualPct}
 						disabled={disabled}
 						aria-label="Confidence"
-						aria-valuemin={0}
-						aria-valuemax={100}
+						aria-valuemin={CONFIDENCE_SLIDER_MIN}
+						aria-valuemax={CONFIDENCE_SLIDER_MAX}
 						aria-valuenow={value ?? undefined}
 						aria-valuetext={value === null ? "Not set" : `${value}%`}
 						data-testid={testid}
@@ -187,70 +208,5 @@ export function ConfidenceSlider({
 				)}
 			</div>
 		</div>
-	);
-}
-
-/**
- * Unified dock confidence row: renders either the 0–100 ConfidenceSlider or
- * the five ConfidenceButtons, keeping the shared "I don't know" control.
- */
-export function QuestionConfidenceRow({
-	mode,
-	value,
-	onSliderChange,
-	onButtonPick,
-	onDontKnow,
-	buttonsDisabled,
-	sliderDisabled,
-	dontKnowDisabled,
-}: {
-	mode: ConfidenceControl;
-	value: number | null;
-	onSliderChange: (value: number) => void;
-	onButtonPick: (stopIndex: number) => void;
-	onDontKnow: () => void;
-	buttonsDisabled?: boolean;
-	sliderDisabled?: boolean;
-	dontKnowDisabled?: boolean;
-}) {
-	if (mode === "buttons") {
-		return (
-			<ConfidenceButtons
-				onPick={onButtonPick}
-				disabled={buttonsDisabled}
-				highlight={confidenceIndexFor(value)}
-				leading={
-					<button
-						type="button"
-						disabled={dontKnowDisabled}
-						onClick={onDontKnow}
-						data-testid="dont-know-button"
-						className="lh-touch h-10 min-w-0 flex-[1.8] truncate rounded-[6px] border border-dashed border-border/70 bg-transparent px-0 text-[11px] tracking-tighter text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-					>
-						I don't know
-					</button>
-				}
-			/>
-		);
-	}
-
-	return (
-		<ConfidenceSlider
-			value={value}
-			onChange={onSliderChange}
-			disabled={sliderDisabled}
-			showUnsetHint
-			leading={
-				<button
-					type="button"
-					disabled={dontKnowDisabled}
-					onClick={onDontKnow}
-					data-testid="dont-know-button"
-					className="lh-touch h-9 shrink-0 rounded-[6px] border border-dashed border-border/70 bg-transparent px-3 text-[11px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-				>
-					I don't know
-				</button>
-			}
-		/>
 	);
 }
