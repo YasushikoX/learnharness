@@ -145,7 +145,8 @@ export function DistributionStrip({
 						disabled={counts[b] === 0}
 						onClick={() => onPick(active === b ? null : b)}
 						className={cn(
-							"lh-touch flex h-6 items-center gap-1.5 rounded-sm px-2 text-xs whitespace-nowrap outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised hover:text-foreground focus-visible:ring-2 focus-visible:ring-focus disabled:pointer-events-none disabled:opacity-45",
+							"lh-touch flex h-6 items-center gap-1.5 rounded-sm px-2 text-xs whitespace-nowrap outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised hover:text-foreground focus-visible:ring-2 focus-visible:ring-focus disabled:pointer-events-none",
+							// A zero count is a fact, not a disabled control: muted ink at full opacity (UI round 2).
 							active === b ? "bg-raised text-foreground" : "text-muted-foreground",
 						)}
 					>
@@ -190,12 +191,13 @@ export function DueTimeline({
 					disabled={counts[b] === 0}
 					onClick={() => onPick(active === b ? null : b)}
 					className={cn(
-						"lh-touch min-w-0 rounded-md px-2 py-1.5 text-left outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised focus-visible:ring-2 focus-visible:ring-focus disabled:pointer-events-none disabled:opacity-45",
+						"lh-touch min-w-0 rounded-md px-2 py-1.5 text-left outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised focus-visible:ring-2 focus-visible:ring-focus disabled:pointer-events-none",
 						active === b && "bg-raised",
 					)}
 				>
 					<span className="block truncate whitespace-nowrap text-xs text-muted-foreground">{DUE_BUCKET_LABEL[b]}</span>
-					<span className="block text-xl font-semibold tabular-nums" style={b === "now" && counts.now > 0 ? { color: DUE_COLOR } : undefined}>
+					{/* Zero: muted ink at full opacity, not a faded disabled control (UI round 2). */}
+					<span className={cn("block text-xl font-semibold tabular-nums", counts[b] === 0 && "text-muted-foreground")} style={b === "now" && counts.now > 0 ? { color: DUE_COLOR } : undefined}>
 						{counts[b]}
 					</span>
 					<span aria-hidden className="mt-1 block h-1 rounded-full bg-secondary">

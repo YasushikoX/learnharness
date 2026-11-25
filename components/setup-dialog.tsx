@@ -595,7 +595,7 @@ function OpenSetupDialog({ onClose, onDone }: SetupDialogProps) {
 												aria-expanded={openMenu?.slot === slot && openMenu.kind === "thinking"}
 												disabled={!entry}
 												onClick={() => setOpenMenu(openMenu?.slot === slot && openMenu.kind === "thinking" ? null : { slot, kind: "thinking" })}
-												className="flex h-8 w-28 items-center gap-1.5 rounded-md border border-input bg-card px-2.5 text-sm text-foreground transition-colors hover:bg-raised disabled:cursor-not-allowed disabled:opacity-45"
+												className="flex h-8 w-28 items-center gap-1.5 rounded-md border border-input bg-card px-2.5 text-sm text-foreground transition-colors hover:bg-raised disabled:cursor-not-allowed disabled:text-muted-foreground"
 											>
 												<span className="min-w-0 flex-1 truncate text-left">
 													{entry ? (level ? THINKING_LABEL[level] ?? level : "…") : "—"}
