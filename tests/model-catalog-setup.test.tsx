@@ -35,7 +35,7 @@ const a: ModelCatalogEntry = { id: "vendor/model:free", name: "Model free", prov
 const b: ModelCatalogEntry = { ...a, id: "claude-opus-5-5", name: "Claude Opus 5.5", supportedLevels: ["off", "medium"] };
 function catalog(connected = true): ModelCatalogResponse {
 	return {
-		models: connected ? [a, b] : [], defaults: null,
+		models: connected ? [a, b] : [], imageModels: connected ? [{ id: "image-one", name: "Image One", provider: provider.id, output: ["image"] }] : [], defaults: null,
 		rolePins: { researcher: null, demoBuilder: null, visualMaker: null, extractor: null, auditor: null, planner: null, pdfReader: null, coursePlanner: null, checker: null, grader: null, sideQuestion: null },
 		slots: { strong: { model: { provider: a.provider, id: a.id }, thinkingLevel: "low" }, cheap: { model: { provider: a.provider, id: a.id }, thinkingLevel: "high" }, vision: { model: { provider: a.provider, id: a.id }, thinkingLevel: "low" } },
 		providers: [{ ...provider, keyPresent: connected }],
@@ -203,6 +203,19 @@ test("Agent opens with cached thinking metadata; refresh and disconnect never cl
 	await act(async () => notifySettingsSaved("keys")); await answer(2, catalog(false));
 	assert.equal(element("slot-thinking-strong").textContent, "low");
 	await click("thinking-option-xhigh"); assert.equal(changed?.strong?.thinkingLevel, "xhigh"); assert.equal(changed?.strong?.model?.id, a.id);
+});
+
+test("Agent selects and clears an optional image generator without changing chat slots", async () => {
+	installFetch(); await warm();
+	const models: ModelsSettings = { strong: { model: { provider: a.provider, id: a.id }, thinkingLevel: "low" } };
+	const writes: ModelsSettings[] = [];
+	await render(<><Reader /><AgentSection agent={undefined} models={models} graph={undefined} compaction={undefined} onSectionChange={() => true} onModelsChange={(next) => writes.push(next)} onCompactionChange={() => true} /></>);
+	await click("slot-model-image");
+	await click("image-model-option-image-one");
+	assert.deepEqual(writes[0], { ...models, image: { provider: a.provider, id: "image-one" } });
+	await click("slot-model-image");
+	await click("image-model-clear");
+	assert.deepEqual(writes[1], models);
 });
 
 test("saved completeness follows ordinary repairs and survives temporary connection invalidation", async () => {

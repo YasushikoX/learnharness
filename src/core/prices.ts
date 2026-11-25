@@ -94,7 +94,15 @@ export function jobCost(job: Pick<JobRecord, "usage">, price: CallPricer): numbe
 	const usage = job.usage;
 	if (!usage || isSubscriptionModel(usage.model)) return null;
 	if (usage.calls && usage.calls.length === usage.steps) {
-		return turnCost({ model: usage.model, steps: usage.calls }, price);
+		let total = 0;
+		for (const call of usage.calls) {
+			const model = call.model ?? usage.model;
+			if (isSubscriptionModel(model)) return null;
+			const cost = price(call, model);
+			if (cost === null) return null;
+			total += cost;
+		}
+		return total;
 	}
 	// An old one-call job is fully reconstructible from its total. For a
 	// multi-call job, the server resolver decides whether aggregate pricing

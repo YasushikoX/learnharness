@@ -17,7 +17,7 @@
  * set; nothing here changes.
  */
 
-import { clampThinkingLevel, getSupportedThinkingLevels, type Api, type Model } from "@earendil-works/pi-ai";
+import { clampThinkingLevel, getSupportedThinkingLevels, type Api, type ImageApi, type ImageModel, type Model } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { piModels } from "../agent/models.ts";
@@ -45,6 +45,7 @@ import type { ChatSettings } from "../core/contracts/chat.ts";
 import type {
 	CatalogDefaults,
 	CatalogProvider,
+	ImageModelCatalogEntry,
 	ModelCatalogEntry,
 	ModelCatalogResponse,
 	RolePins,
@@ -193,6 +194,10 @@ export function toModelDto(model: Model<Api>): ModelDto {
 	};
 }
 
+export function toImageModelDto(model: ImageModel<ImageApi>): ImageModelCatalogEntry {
+	return { id: model.id, name: model.name, provider: model.provider, output: [...model.output] };
+}
+
 /** The live-limits index (context-meter amendment, owner 2026-09-23):
  *  provider:id → contextWindow from pi's catalog, over the SAME keyed
  *  providers the picker federates. Native CLI aliases are excluded:
@@ -227,8 +232,15 @@ export function modelCatalog(): ModelCatalogResponse {
 		.map(toModelDto)
 		.sort((a, b) => (a.provider === b.provider ? a.id.localeCompare(b.id) : a.provider.localeCompare(b.provider)))
 		.concat([...chatGPTModels(), ...nativeSubscriptionModels()].map(toModelDto));
+	const imageModels = piModels()
+		.getProviders()
+		.filter((p) => keyed.has(p.id))
+		.flatMap((p) => piModels().getModelsOfType("image", p.id))
+		.map(toImageModelDto)
+		.sort((a, b) => (a.provider === b.provider ? a.id.localeCompare(b.id) : a.provider.localeCompare(b.provider)));
 	return {
 		models,
+		imageModels,
 		defaults: catalogDefaults(),
 		rolePins: catalogRolePins(),
 		slots: catalogSlots(),
@@ -281,6 +293,13 @@ export function validateModelsSettings(settings: ModelsSettings, stored?: Models
 		const verdict = validateSlotSpec(name, slot);
 		if (!verdict.ok) return verdict;
 	}
+	if (settings.image) {
+		const previous = stored?.image;
+		const unchanged = previous?.provider === settings.image.provider && previous.id === settings.image.id;
+		if (!unchanged && !piModels().getModelOfType("image", settings.image.provider, settings.image.id)) {
+			return { ok: false, error: `No image model "${settings.image.id}" in the ${settings.image.provider} catalog` };
+		}
+	}
 	return { ok: true };
 }
 
@@ -321,7 +340,7 @@ function clampLevelFor(provider: string, id: string, level: ThinkingLevel): Thin
  *  a model on every slot write — owner, 2026-09-22). Pure: catalog in,
  *  clamped section out; the route applies it after validation. */
 export function clampModelsLevels(settings: ModelsSettings): ModelsSettings {
-	const out: ModelsSettings = {};
+	const out: ModelsSettings = { ...(settings.image ? { image: settings.image } : {}) };
 	for (const name of MODEL_SLOTS) {
 		const slot = settings[name];
 		if (!slot?.model) continue;

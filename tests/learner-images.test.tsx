@@ -41,7 +41,7 @@ import type { ImageSnapshot } from "../src/core/contracts.ts";
 import { jobTools } from "../src/agent/tools/jobs.ts";
 import { LEARNER_IMAGE_HREF, runVisualMaker } from "../src/agent/subagents/visual-maker.ts";
 import { headlessOverride, realHeadless, type HeadlessApi } from "../src/agent/subagents/headless.ts";
-import { createJobRunner, visualModelOverride } from "../src/agent/subagents/runner.ts";
+import { createJobRunner, visualModelOverride, type JobRunnerDeps } from "../src/agent/subagents/runner.ts";
 import { isSubagentFailure, type JobRecord, type SteerMessage, type VisualResult } from "../src/core/contracts.ts";
 import type { JobStore } from "../src/core/ports.ts";
 import type { PiEngine } from "../src/agent/models.ts";
@@ -296,6 +296,16 @@ describe("visual with an image: dispatch", () => {
 		assert.equal(created.length, 1);
 		assert.deepEqual(spawned, [{ brief: "Circle the left half.", image: p }]);
 	});
+
+	it("dispatches generated imagery but rejects mixing it with learner sources", async () => {
+		const { tools, created, spawned } = fakeJobs();
+		await tools.visual!.execute("call-generated", { brief: "Label the two regions.", generate: "Two abstract colored regions" });
+		assert.deepEqual(spawned, [{ brief: "Label the two regions.", generate: "Two abstract colored regions" }]);
+		const p = file("generate-conflict.png", raster(8, 8));
+		await assert.rejects(tools.visual!.execute("call-conflict-image", { brief: "b", generate: "picture", image: p }), /Pass generate by itself/);
+		await assert.rejects(tools.visual!.execute("call-conflict-pdf", { brief: "b", generate: "picture", pdf: { path: "notes.pdf", page: 1 } }), /Pass generate by itself/);
+		assert.equal(created.length, 1);
+	});
 });
 
 describe("visual maker with a learner image (fake model + fake headless)", () => {
@@ -378,11 +388,12 @@ describe("native render of an embedded learner image (real resvg)", () => {
 });
 
 describe("visual job runner with an image", () => {
-	function testRunner() {
+	function testRunner(overrides: Partial<JobRunnerDeps> = {}) {
 		const steers: SteerMessage[] = [];
 		const runner = createJobRunner({
 			chatStore,
 			jobStore,
+			...overrides,
 			deliver: async (steer) => {
 				steers.push(steer);
 				const jobId = (steer.details as { jobId: string }).jobId;
@@ -396,7 +407,7 @@ describe("visual job runner with an image", () => {
 		return { steers, runner };
 	}
 
-	function visualChat(title: string, input: { brief: string; image: string }) {
+	function visualChat(title: string, input: { brief: string; image?: string; generate?: string }) {
 		const chat = chatStore.createChat(title);
 		createdChats.push(chat.id);
 		chatStore.saveMessages(chat.id, [
@@ -454,6 +465,42 @@ describe("visual job runner with an image", () => {
 		assert.equal(chatStore.getChat(job.chatId)?.imageSnapshots?.[image.snapshotId]?.data, image.data);
 		assert.equal(steers.length, 1);
 		assert.match(steers[0]!.content as string, /^Annotated image job_\S+ is drawn and verified\. It is NOT shown to the learner yet/);
+	});
+
+	it("generates a raster, sends it through the visual maker, and preserves provenance and usage", async () => {
+		const p = file("generated-base.png", raster(40, 30));
+		const generatedImage = await loadLearnerImage(p);
+		const job = visualChat("Test: generated visual runner", { brief: "Label the yellow half.", generate: "A two-color abstract illustration" });
+		headlessOverride.current = realHeadless;
+		visualModelOverride.current = scripted([
+			fauxAssistantMessage([fauxToolCall("write_svg", { svg: MARKED_SVG }, { id: "w1" }), fauxToolCall("render_svg", {}, { id: "r1" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxText("Labeled it.")]),
+		]).engine;
+		let seenPrompt = "";
+		let seenSelection: unknown;
+		const usage = { input: 4, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 9, cost: { input: 0, output: 0.2, cacheRead: 0, cacheWrite: 0, total: 0.2 } };
+		const { steers, runner } = testRunner({
+			imageModel: () => ({ provider: "openrouter", id: "image-fixture" }),
+			generateImage: async (prompt, selection) => {
+				seenPrompt = prompt;
+				seenSelection = selection;
+				return { image: generatedImage, generated: { provider: selection!.provider, model: selection!.id, prompt }, usage };
+			},
+		});
+		try {
+			await runner.runJob(job.id);
+		} finally {
+			headlessOverride.current = undefined;
+			visualModelOverride.current = undefined;
+		}
+		assert.equal(seenPrompt, "A two-color abstract illustration");
+		assert.deepEqual(seenSelection, { provider: "openrouter", id: "image-fixture" });
+		const result = jobStore.getJob(job.id)!.result as VisualResult;
+		assert.deepEqual(result.image?.generated, { provider: "openrouter", model: "image-fixture", prompt: "A two-color abstract illustration" });
+		assert.equal(chatStore.getChat(job.chatId)?.imageSnapshots?.[generatedImage.snapshotId]?.data, generatedImage.data);
+		assert.equal(jobStore.getJob(job.id)!.usage?.calls?.[0]?.model, "openrouter:image-fixture");
+		assert.equal(jobStore.getJob(job.id)!.usage?.calls?.[1]?.model, "faux:faux-1");
+		assert.match(steers[0]!.content as string, /^Generated visual job_\S+ is drawn and verified/);
 	});
 
 	it("an image gone by run time delivers a FAILED steer", async () => {

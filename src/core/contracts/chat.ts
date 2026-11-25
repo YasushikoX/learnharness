@@ -258,6 +258,8 @@ export interface SideChatThread {
 /** Persisted token accounting for one model call. Undefined means the
  * provider did not report that field; absence must not be interpreted as zero. */
 export interface CallUsage {
+	/** Actual provider:id when a job combines multiple model types. */
+	model?: string;
 	/** Pi-normalized fresh input tokens; cache buckets are disjoint. */
 	inputTokens: number | undefined;
 	outputTokens: number | undefined;

@@ -125,6 +125,7 @@ export function accumulateJobUsage(
 	const add = (a: number | undefined, b: number | undefined): number | undefined =>
 		a === undefined && b === undefined ? undefined : (a ?? 0) + (b ?? 0);
 	const call: CallUsage = {
+		model,
 		inputTokens: step.inputTokens,
 		outputTokens: step.outputTokens,
 		cacheReadTokens: step.inputTokenDetails?.cacheReadTokens,
@@ -237,12 +238,20 @@ export interface DemoResult {
 	notes?: string;
 }
 
+export interface GeneratedVisualProvenance {
+	provider: string;
+	model: string;
+	prompt: string;
+}
+
 export interface VisualToolInput {
 	/** Precise brief for ONE visual (what it must show, exactly). */
 	brief: string;
 	/** A learner image file to annotate (issue #363): the maker draws its
 	 *  marks on top of it instead of authoring a figure from scratch. */
 	image?: string;
+	/** Prompt for an illustrative generated raster base. Never set with image or pdf. */
+	generate?: string;
 	/** A page of the learner's PDF: the maker crops the figure the brief
 	 *  names from it and annotates the crop. Never set with image. */
 	pdf?: { path: string; page: number };
@@ -253,11 +262,17 @@ export interface VisualResult {
 	 *  Annotation SVGs retain a learner-image placeholder; image identifies the session snapshot. */
 	svg: string;
 	notes?: string;
-	/** Present when the figure annotates a learner image: its absolute
-	 *  path. Photos never invert, so the card hides the switch. From a PDF,
-	 *  path is the PDF, page is 1-based, and crop (page fractions from the
-	 *  top-left) is absent when the whole page was annotated. */
-	image?: { path: string; snapshotId: string; page?: number; crop?: { x: number; y: number; width: number; height: number } };
+	/** Present for an image-backed visual. For learner images, path is the
+	 *  absolute source path. From a PDF, path is the PDF, page is 1-based, and
+	 *  crop is absent when the whole page was annotated. Generated illustrations
+	 *  use a display label for path and carry their model and prompt separately. */
+	image?: {
+		path: string;
+		snapshotId: string;
+		page?: number;
+		crop?: { x: number; y: number; width: number; height: number };
+		generated?: GeneratedVisualProvenance;
+	};
 }
 
 /** The pdf-reader (sources v0, 2026-09): reads a learner-provided PDF on
@@ -401,7 +416,7 @@ function steerText(kind: JobKind, result: JobResult, jobId: string): string {
 			(result as DemoResult).notes ?? "(none)"
 		}.\nWhen you show it, reference its controls by name and point the learner at what to try.`;
 	if ((result as VisualResult).image)
-		return `Annotated image ${jobId} is drawn and verified. ${notShown} Maker notes: ${
+		return `${(result as VisualResult).image?.generated ? "Generated visual" : "Annotated image"} ${jobId} is drawn and verified. ${notShown} Maker notes: ${
 			(result as VisualResult).notes ?? "(none)"
 		}.\nReference its marks by name when you show it.`;
 	return `Figure ${jobId} is drawn and verified. ${notShown} Maker notes: ${

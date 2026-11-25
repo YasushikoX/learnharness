@@ -123,6 +123,7 @@ describe("the dictation keyless seam (owner dictation trio)", () => {
 /** A minimal catalog double — only the two halves the strong-keyless guard
  *  reads: the strong pin and the present-key providers list. */
 const catalog = (strongProvider: string | null, ...keyedProviders: string[]): ModelCatalogResponse => ({
+	imageModels: [],
 	models: [],
 	defaults: null,
 	rolePins: {

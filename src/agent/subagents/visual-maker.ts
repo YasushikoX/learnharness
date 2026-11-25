@@ -8,7 +8,7 @@ import { piEngineFor, type PiEngine, type ThinkingLevel } from "../models.ts";
 import { providerEventObserver, type ProviderEventObserver } from "../provider-events.ts";
 import { backgroundCaptureStream, createBackgroundCapture, type BackgroundCapture } from "../background-capture.ts";
 import { createWorkerRequestScope } from "../worker-request-admission.ts";
-import type { VisualResult } from "../../core/contracts.ts";
+import type { GeneratedVisualProvenance, VisualResult } from "../../core/contracts.ts";
 import type { LearnerImage } from "../tools/learner-image.ts";
 import type { PdfFigureImage, PdfFigureSource } from "../tools/pdf-figure.ts";
 import { embedLearnerImage, LEARNER_IMAGE_HREF } from "../../core/learner-image-svg.ts";
@@ -52,6 +52,8 @@ export interface VisualMakerInput {
 	brief: string;
 	/** The learner image to annotate, already bounded for storage. */
 	image?: LearnerImage;
+	/** Present when image is generated rather than supplied by the learner. */
+	generated?: GeneratedVisualProvenance;
 	/** A page of the learner's PDF to crop a figure from and annotate. */
 	pdf?: PdfFigureSource;
 }
@@ -79,9 +81,9 @@ export interface VisualMakerOptions {
 }
 
 const INSTRUCTIONS = `You are a visual maker — a diagram author + renderer for precise, spatial figures. You
-receive a brief describing ONE idea that needs exact placement (coordinate geometry, number lines,
-vectors, function plots, physical layouts — things auto-layout diagrams cannot express), and you return
-ONE clean, correct SVG. You never see the lesson; the brief is everything you know.
+receive a brief describing ONE idea for any subject — scientific illustration, a map, timeline,
+comparison, sequence, coordinate geometry, function plot, or physical layout — and you return ONE clean,
+correct static SVG. You never see the lesson; the brief is everything you know.
 
 You do NOT decide what idea to show — the teacher already decided. Your job is faithful, precise
 composition, and above everything CORRECTNESS: the picture must not assert anything false. A right-angle
@@ -136,6 +138,12 @@ figure is that picture with marks on it, not a new drawing:
 - Never hide what the brief is about under a label or a fill.
 - If a feature the brief names is not in the picture, never guess where it is: leave it unmarked and say
   so in your notes.`;
+
+const GENERATED_IMAGE_INSTRUCTIONS = `COMPOSING WITH A GENERATED ILLUSTRATION — the picture is a generated raster base for appearance,
+not evidence. Treat every factual claim as coming from the brief, not from pixels the generator invented:
+- Do not copy labels, arrows, counts, scales, or other claims from the generated picture into the figure.
+- Add the brief's exact labels and marks as deterministic SVG, and inspect their placement on the final render.
+- If the generated appearance conflicts with the brief or cannot support an accurate composition, say so and do not guess.`;
 
 const PDF_INSTRUCTIONS = `FINDING THE FIGURE ON A PDF PAGE — the picture you were given is one whole page of the learner's PDF
 (often a lecture slide), and the brief names one figure on it:
@@ -229,13 +237,13 @@ export async function runVisualMaker(input: VisualMakerInput, opts: VisualMakerO
 	const systemPrompt = pdf
 		? `${INSTRUCTIONS}\n\n${IMAGE_INSTRUCTIONS}\n\n${PDF_INSTRUCTIONS}`
 		: learnerImage
-			? `${INSTRUCTIONS}\n\n${IMAGE_INSTRUCTIONS}`
+			? `${INSTRUCTIONS}\n\n${IMAGE_INSTRUCTIONS}${input.generated ? `\n\n${GENERATED_IMAGE_INSTRUCTIONS}` : ""}`
 			: INSTRUCTIONS;
 	const prompt = [
 		pdf
 			? "Brief for ONE annotated figure from the learner's PDF (from the teacher, verbatim — it is everything you know):"
 			: learnerImage
-				? "Brief for ONE annotated image (from the teacher, verbatim — it is everything you know):"
+				? `Brief for ONE ${input.generated ? "generated visual" : "annotated image"} (from the teacher, verbatim — it is everything you know):`
 				: "Brief for ONE precise figure (from the teacher, verbatim — it is everything you know):",
 		brief,
 		"",
@@ -245,7 +253,7 @@ export async function runVisualMaker(input: VisualMakerInput, opts: VisualMakerO
 				]
 			: learnerImage
 				? [
-						`The learner's image follows: ${learnerImage.width}×${learnerImage.height} px. Place it with <image href="${LEARNER_IMAGE_HREF}" … width="${learnerImage.width}" height="${learnerImage.height}"/>.`,
+						`The ${input.generated ? "generated illustration" : "learner's image"} follows: ${learnerImage.width}×${learnerImage.height} px. Place it with <image href="${LEARNER_IMAGE_HREF}" … width="${learnerImage.width}" height="${learnerImage.height}"/>.`,
 					]
 				: []),
 		"Author the SVG, render it, look at it, iterate until correct, then finish with your notes.",

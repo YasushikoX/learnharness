@@ -247,6 +247,8 @@ export interface ModelsSettings {
 	strong?: ModelSlot;
 	cheap?: ModelSlot;
 	vision?: ModelSlot;
+	/** Optional image generator. Unlike chat slots, this has no thinking or cache settings. */
+	image?: { provider: string; id: string };
 }
 
 // ─── Model profiles ──────────────────────────────────────────────────────────
@@ -850,6 +852,13 @@ function sanitizeModels(raw: Record<string, unknown>): ModelsSettings {
 			if (CACHE_RETENTIONS.includes(retention as CacheRetention)) cleaned.cacheRetention = retention as CacheRetention;
 		}
 		if (Object.keys(cleaned).length) out[slot] = cleaned;
+	}
+	const image = raw.image;
+	if (image && typeof image === "object" && !Array.isArray(image)) {
+		const value = image as Record<string, unknown>;
+		if (typeof value.provider === "string" && value.provider.trim() && typeof value.id === "string" && value.id.trim()) {
+			out.image = { provider: value.provider, id: value.id };
+		}
 	}
 	return out;
 }

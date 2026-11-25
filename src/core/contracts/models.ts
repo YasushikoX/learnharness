@@ -46,9 +46,19 @@ export type RolePins = Record<
  * configured entries include optional thinking and cache-retention preferences. */
 export type SlotPins = Record<ModelSlotName, (ModelSlot & { model: { provider: string; id: string } }) | null>;
 
+/** Client-safe image-generator choice for Settings. */
+export interface ImageModelCatalogEntry {
+	id: string;
+	name: string;
+	provider: string;
+	output: ("text" | "image")[];
+}
+
 /** GET /api/models response. */
 export interface ModelCatalogResponse {
 	models: ModelCatalogEntry[];
+	/** Image generators, separate from chat models including image-input models. */
+	imageModels: ImageModelCatalogEntry[];
 	/** Strong-slot conversation default, or null when no default model is
 	 * configured. A session's explicit model choice resolves separately. */
 	defaults: CatalogDefaults | null;

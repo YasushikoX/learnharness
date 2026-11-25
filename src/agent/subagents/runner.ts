@@ -35,6 +35,7 @@ import { runResearcherAgent } from "./researcher.ts";
 import { runVisualMaker } from "./visual-maker.ts";
 import { loadLearnerImage, type LearnerImage } from "../tools/learner-image.ts";
 import { loadPdfFigureSource, type PdfFigureSource } from "../tools/pdf-figure.ts";
+import { generateVisualImage, type GeneratedVisualImage, type ImageModelSelection } from "../image-generation.ts";
 
 /**
  * The background job runner (contracts.ts "THE ASYNC PROTOCOL" §2–3), created
@@ -97,6 +98,10 @@ export interface JobRunnerDeps {
 	 *  Injected because the agent layer may not read the key store; absent
 	 *  in tests that inject engines directly (test engines never owe a key). */
 	providerKeyMissing?: (provider: string, tier: ModelSlotName) => ProviderKeyMissing | null;
+	/** Explicit optional generator choice, resolved fresh for each visual job. */
+	imageModel?: () => ImageModelSelection | undefined;
+	/** Provider seam, replaceable by deterministic tests. */
+	generateImage?: typeof generateVisualImage;
 }
 
 export interface JobRunner {
@@ -137,6 +142,12 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 	 * then writes through the job store so the poll sees progress). */
 	const usageTotals = new Map<string, JobUsage>();
 
+	function recordUsage(jobId: string, model: string, step: UsageStepLike): void {
+		const next = accumulateJobUsage(usageTotals.get(jobId), model, step);
+		usageTotals.set(jobId, next);
+		jobStore.updateJob(jobId, { usage: next });
+	}
+
 	function makeLoopContext(jobId: string, engine: PiEngine): LoopContext {
 		const chatId = jobStore.getJob(jobId)?.chatId;
 		// Provider-qualified stamp: the engine's actual model — the only
@@ -150,11 +161,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 		return {
 			abortSignal: controller.signal,
 			chatId,
-			onUsage: (step) => {
-				const next = accumulateJobUsage(usageTotals.get(jobId), model, step);
-				usageTotals.set(jobId, next);
-				jobStore.updateJob(jobId, { usage: next }); // merge patch — status untouched
-			},
+			onUsage: (step) => recordUsage(jobId, model, step),
 		};
 	}
 
@@ -462,11 +469,21 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 		const brief = typeof input?.brief === "string" ? input.brief : "";
 		const imagePath = typeof input?.image === "string" ? input.image : undefined;
 		const pdfInput = input?.pdf && typeof input.pdf.path === "string" && typeof input.pdf.page === "number" ? input.pdf : undefined;
+		const generate = typeof input?.generate === "string" && input.generate.trim() ? input.generate.trim() : undefined;
 
 		try {
 			// Annotation (issue #363): the learner image is read once, here,
 			// and rides into the maker bounded for storage.
 			let image: LearnerImage | undefined;
+			let generated: GeneratedVisualImage["generated"] | undefined;
+			if (generate) {
+				jobStore.updateJob(jobId, { activity: "generating image" });
+				const selection = deps.imageModel?.();
+				const output = await (deps.generateImage ?? generateVisualImage)(generate, selection, { signal: loop.abortSignal });
+				image = output.image;
+				generated = output.generated;
+				if (output.usage) recordUsage(jobId, `${selection?.provider ?? output.generated.provider}:${selection?.id ?? output.generated.model}`, piUsageToStep(output.usage));
+			}
 			if (imagePath !== undefined) {
 				jobStore.updateJob(jobId, { activity: "loading image" });
 				image = await loadLearnerImage(imagePath, loop.abortSignal);
@@ -483,7 +500,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 				}
 				jobStore.updateJob(jobId, { activity: pdf ? "finding figure" : image ? "annotating image" : "drawing figure" });
 				result = await runVisualMaker(
-					{ brief, image, pdf },
+					{ brief, image, generated, pdf },
 					{
 						engine: model,
 						abortSignal: loop.abortSignal,
@@ -494,6 +511,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 					},
 				);
 				annotated = image ?? (result.image ? pdf?.imageFor(result.image.snapshotId) : undefined);
+				if (generated && result.image) result = { ...result, image: { ...result.image, generated } };
 			} finally {
 				// Release source PDF bytes before saving/delivering the artifact.
 				if (pdf) await pdf.close();

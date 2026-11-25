@@ -1,5 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ModelProfile, ModelsSettings, ProfilesSettings, UserSettings } from "./settings.ts";
+import { MODEL_SLOTS, type ModelProfile, type ModelsSettings, type ProfilesSettings, type UserSettings } from "./settings.ts";
 
 /**
  * Model profiles (fork addition, 2026-11): named sets of the three model slots
@@ -114,7 +114,11 @@ export function profileList(record: UserSettings | null): { name: string; builti
 /** The providers a profile names (slots + roles). */
 export function profileProviders(profile: ModelProfile): string[] {
 	const out = new Set<string>();
-	for (const slot of Object.values(profile.models ?? {})) if (slot?.model) out.add(slot.model.provider);
+	for (const slot of MODEL_SLOTS) {
+		const model = profile.models?.[slot]?.model;
+		if (model) out.add(model.provider);
+	}
+	if (profile.models?.image) out.add(profile.models.image.provider);
 	for (const role of Object.values(profile.roles ?? {})) if (role?.model) out.add(role.model.provider);
 	return [...out];
 }
