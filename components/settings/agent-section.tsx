@@ -42,7 +42,7 @@
  * Absent key = enabled in the schema; the UI writes explicit booleans for
  * all four (simpler to reason about, sanitize-equivalent).
  *
- * Prompts: GET /api/settings/prompts segments — Teacher, Prober, Practice,
+ * Prompts: GET /api/settings/prompts segments — Teacher, Prober, Practice, Placement,
  * then Shared LAST. The server returns each agent's actual segments,
  * including its shared subset; sectionedSegments deduplicates shared
  * chunks and derives per-fragment usage from membership in those lists.
@@ -191,7 +191,7 @@ interface SegmentInfo {
 	shared: boolean;
 }
 
-type PromptView = Record<"teacher" | "prober" | "practice", SegmentInfo[]>;
+type PromptView = Record<"teacher" | "prober" | "practice" | "placement", SegmentInfo[]>;
 type PromptRow = SegmentInfo & { usageHint?: string };
 
 /** Compose: one tool toggled, the rest of the section carried verbatim.
@@ -338,6 +338,7 @@ export function sectionedSegments(view: PromptView): PromptSection[] {
 		{ id: "teacher", label: "Teacher" },
 		{ id: "prober", label: "Prober" },
 		{ id: "practice", label: "Practice" },
+		{ id: "placement", label: "Placement" },
 	] as const;
 	const shared = new Map<string, SegmentInfo>();
 	for (const { id } of agents) {
@@ -590,7 +591,7 @@ export function AgentSection({
 				// Only the acknowledged version changes; don't clear/dim the list
 				// while its ordinary canonical refresh catches up.
 				const update = (segments: SegmentInfo[]) => segments.map(s => s.path === path ? { ...s, enabled: on } : s);
-				setPrompts(view => view && { teacher: update(view.teacher), prober: update(view.prober), practice: update(view.practice) });
+				setPrompts(view => view && { teacher: update(view.teacher), prober: update(view.prober), practice: update(view.practice), placement: update(view.placement) });
 			} else setSwitchError(path);
 			switchingPrompt.current = false;
 			void readPrompts(saved);
@@ -1248,7 +1249,7 @@ export function AgentSection({
 				</div>}
 				{prompts && (
 					<div className="flex flex-col gap-4">
-						{/* Teacher, Prober, Practice, Shared — shared chunks once,
+						{/* Teacher, Prober, Practice, Placement, Shared — shared chunks once,
 						    each agent's own section in prompt-assembly order. */}
 						{sectionedSegments(prompts).map((section) => (
 							<div key={section.id} data-testid={`prompt-section-${section.id}`}>

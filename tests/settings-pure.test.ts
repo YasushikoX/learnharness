@@ -401,11 +401,25 @@ describe("sectionedSegments — actual per-agent prompt membership", () => {
 			{ path: "teacher/05-method.md", sourceText: "t1", overrideText: null, enabled: false, shared: false },
 			{ path: "teacher/10-planning.md", sourceText: "t2", overrideText: null, enabled: false, shared: false },
 		],
+		placement: [
+			{ path: "placement/00-base.md", sourceText: "pl1", overrideText: null, enabled: false, shared: false },
+			{ path: "shared/20-question-tools.md", sourceText: "q", overrideText: null, enabled: false, shared: true },
+		],
 	};
 
-	it("the approved order: Teacher, Prober, Practice, Shared — Shared last", () => {
+	it("the approved order: Teacher, Prober, Practice, Placement, Shared — Shared last", () => {
 		const ids = sectionedSegments(view).map((s) => s.id);
-		assert.deepEqual(ids, ["teacher", "prober", "practice", "shared"]);
+		assert.deepEqual(ids, ["teacher", "prober", "practice", "placement", "shared"]);
+	});
+
+	// Review finding 5: the runtime composes placement/00-base.md, so the editor must list it and count Placement as a
+	// consumer of the shared fragments it composes.
+	it("Placement gets its own section and appears in the shared-fragment usage labels", () => {
+		const placement = sectionedSegments(view).find((s) => s.id === "placement")!;
+		assert.equal(placement.label, "Placement");
+		assert.deepEqual(placement.segments.map((s) => s.path), ["placement/00-base.md"]);
+		const questionTools = sectionedSegments(view).at(-1)!.segments.find((s) => s.path === "shared/20-question-tools.md")!;
+		assert.equal(questionTools.usageHint, "Used by Teacher and Placement");
 	});
 
 	it("shared chunks appear exactly ONCE across all sections (no duplication)", () => {
@@ -417,8 +431,8 @@ describe("sectionedSegments — actual per-agent prompt membership", () => {
 	});
 
 	it("the Shared section holds the shared chunks in assembly order; the agents' sections hold their own", () => {
-		const [teacher, prober, practice, shared] = sectionedSegments(view);
-		assert.ok(teacher && prober && practice && shared, "all four sections present");
+		const [teacher, prober, practice, placement, shared] = sectionedSegments(view);
+		assert.ok(teacher && prober && practice && placement && shared, "all five sections present");
 		assert.deepEqual(teacher.segments.map((s) => s.path), ["teacher/05-method.md", "teacher/10-planning.md"]);
 		assert.deepEqual(prober.segments.map((s) => s.path), ["prober/10-probe-doctrine.md"]);
 		// assembly order: the base file first, then the shared fragments
@@ -436,11 +450,11 @@ describe("sectionedSegments — actual per-agent prompt membership", () => {
 		assert.equal(shared.segments[2]!.enabled, true, "in-use state is not replaced by usage");
 		// A synthetic new path/membership proves there is no duplicated allowlist.
 		const fragment = { path: "shared/99-new.md", sourceText: "new", overrideText: null, enabled: false, shared: true };
-		const changed = { teacher: [fragment], prober: [fragment], practice: [fragment] };
+		const changed = { teacher: [fragment], prober: [fragment], practice: [fragment], placement: [] as typeof fragment[] };
 		assert.equal(sectionedSegments(changed).at(-1)!.segments[0]!.usageHint, "Used by Teacher, Prober and Practice");
 		changed.practice = [];
 		assert.equal(sectionedSegments(changed).at(-1)!.segments[0]!.usageHint, "Used by Teacher and Prober");
-		assert.equal(sectionedSegments({ teacher: [], prober: [], practice: [fragment] }).at(-1)!.segments[0]!.usageHint, "Used by Practice");
+		assert.equal(sectionedSegments({ teacher: [], prober: [], practice: [fragment], placement: [] }).at(-1)!.segments[0]!.usageHint, "Used by Practice");
 	});
 
 });

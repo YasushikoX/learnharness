@@ -41,7 +41,7 @@ it("edits one segment with recoverable Settings writes and refreshes without Pro
 	const deferredReads: { signal?: AbortSignal | null; resolve: (response: ReturnType<typeof replyJson>) => void }[] = [];
 	const promptView = () => replyJson({ teacher: [], prober: [], practice: [
 		{ path, sourceText, overrideText, enabled: !!agent.prompts?.[path] && overrideText !== null, shared: false },
-	] });
+	], placement: [] });
 	const globals = {
 		React, window: dom.window, document: dom.document, Element: dom.window.Element,
 		HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true,
