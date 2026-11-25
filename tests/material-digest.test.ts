@@ -51,6 +51,7 @@ import {
 	ID_MAX_CHARS,
 	mergeGlossary,
 	normalizeName,
+	pluralSingulars,
 	relaxedKey,
 	termId,
 	type GlossarySource,
@@ -1179,6 +1180,77 @@ describe("mergeGlossary: exact ids, occurrences, suggested duplicates", () => {
 		assert.deepEqual(findTermCandidates(own, "v").map((c) => c.entry.id), ["t_v", "t_velocity", "t_voltage"]);
 		assert.equal(relaxedKey("COVID-19"), relaxedKey("covid 19"));
 		assert.notEqual(relaxedKey("C++"), relaxedKey("C"));
+	});
+
+	// Review 4, concerns: "Ohm's law" / "Ohm’s law" and "resistor" / "resistors" were not suggested; OLS and ols beside
+	// "ordinary least squares" (alias OLS) gave three overlapping pairs instead of one group.
+	it("review 4: typographic apostrophes share a relaxed key, simple plurals are suggested, and overlapping pairs form one group", () => {
+		const rsquo = String.fromCharCode(0x2019);
+		const ldquo = String.fromCharCode(0x201c);
+		const rdquo = String.fromCharCode(0x201d);
+		const prime = String.fromCharCode(0x2032);
+		assert.equal(relaxedKey(`Ohm${rsquo}s law`), relaxedKey("Ohm's law"));
+		assert.equal(relaxedKey(`${ldquo}big O${rdquo}`), relaxedKey('"big O"'));
+		assert.notEqual(relaxedKey(`f${prime}(x)`), relaxedKey("f'(x)"), "a prime is not an apostrophe");
+		assert.notEqual(termId(`Ohm${rsquo}s law`), termId("Ohm's law"), "identity is unchanged");
+
+		const g = mergeGlossary([
+			source("circuits-1", [docTerm("Ohm's law", 1, "core"), docTerm("resistor", 2, "core"), docTerm("matrix", 3, "core"), docTerm("bus", 3, "supporting"), docTerm("probability", 3, "core")]),
+			source("circuits-2", [docTerm(`Ohm${rsquo}s law`, 1, "core"), docTerm("resistors", 4, "supporting"), docTerm("matrices", 5, "core"), docTerm("buses", 5, "supporting"), docTerm("probabilities", 6, "core")]),
+			source("geometry", [docTerm("vertex", 1, "core"), docTerm("vertices", 2, "core"), docTerm("switch", 3, "core"), docTerm("switches", 4, "core")]),
+		]);
+		assert.equal(ids(g).length, 14, "nothing merged");
+		assert.deepEqual(g.suggestedDuplicates, [
+			{ ids: ["t_Ohm~27~s_law", `t_Ohm${rsquo}s_law`], reasons: ["similar_name"] },
+			{ ids: ["t_bus", "t_buses"], reasons: ["plural"] },
+			{ ids: ["t_matrices", "t_matrix"], reasons: ["plural"] },
+			{ ids: ["t_probabilities", "t_probability"], reasons: ["plural"] },
+			{ ids: ["t_resistor", "t_resistors"], reasons: ["plural"] },
+			{ ids: ["t_switch", "t_switches"], reasons: ["plural"] },
+			{ ids: ["t_vertex", "t_vertices"], reasons: ["plural"] },
+		]);
+		// lookup finds both spellings of the apostrophe, and answers neither alone
+		assert.deepEqual(findTermCandidates(g, `ohm${rsquo}s law`).map((c) => c.entry.id), ["t_Ohm~27~s_law", `t_Ohm${rsquo}s_law`]);
+		assert.equal(findTerm(g, "Ohm's law"), undefined);
+
+		// conservative: acronyms, -ss, -us, -is, short stems and the uncovered plurals are not suggested
+		const quiet = mergeGlossary([
+			source("q", [
+				docTerm("CMOS", 1, "core"), docTerm("CMO", 1, "core"), docTerm("class", 1, "core"), docTerm("clas", 1, "core"), docTerm("status", 1, "core"), docTerm("statu", 1, "core"),
+				docTerm("analysis", 1, "core"), docTerm("analyses", 1, "core"), docTerm("Cs", 1, "core"), docTerm("C", 1, "core"), docTerm("leaf", 1, "core"), docTerm("leaves", 1, "core"),
+				docTerm("criterion", 1, "core"), docTerm("criteria", 1, "core"), docTerm("bas", 1, "core"), docTerm("ba", 1, "core"),
+			]),
+		]);
+		assert.deepEqual(quiet.suggestedDuplicates, []);
+		assert.deepEqual(pluralSingulars("resistors"), ["resistor"]);
+		assert.ok(pluralSingulars("matrices").includes("matrix") && pluralSingulars("vertices").includes("vertex"));
+		assert.deepEqual(pluralSingulars("GPUs"), [], "an upper-case letter before the ending: not read as a plural");
+		assert.deepEqual(pluralSingulars("low-pass filters"), ["lowpassfilter"]);
+
+		// overlapping pairs: one group per connected set, with every reason
+		const ols = mergeGlossary([source("s", [docTerm("ordinary least squares", 1, "core", { aliases: ["OLS"] }), docTerm("OLS", 2, "core"), docTerm("ols", 3, "supporting")])]);
+		assert.deepEqual(ols.suggestedDuplicates, [{ ids: ["t_OLS", "t_ols", "t_ordinary_least_squares"], reasons: ["alias", "similar_name"] }]);
+		const chain = mergeGlossary([source("c", [docTerm("resistor", 1, "core"), docTerm("Resistors", 2, "core"), docTerm("resistors", 3, "core"), docTerm("capacitor", 4, "core")])]);
+		assert.deepEqual(chain.suggestedDuplicates, [{ ids: ["t_Resistors", "t_resistor", "t_resistors"], reasons: ["plural", "similar_name"] }]);
+		for (const g2 of [g, quiet, ols, chain]) {
+			const seen = g2.suggestedDuplicates.flatMap((x) => x.ids);
+			assert.equal(new Set(seen).size, seen.length, "no entry is in two groups");
+		}
+	});
+
+	// Review 4, concerns: resolveSources serialised every digest with stableJson, even when its sourceHash appeared once.
+	it("review 4: a sourceHash that appears once is never serialised; two copies still are compared", () => {
+		let reads = 0;
+		const probed = (hash: string): GlossarySource => {
+			const t = docTerm("Alpha", 1, "core") as DigestTerm & { probe?: number };
+			Object.defineProperty(t, "probe", { enumerable: true, get: () => ++reads });
+			return source(hash, [t]);
+		};
+		const single = mergeGlossary([probed("a"), probed("b"), source("c", [docTerm("Beta", 1, "core")])]);
+		assert.equal(reads, 0, "no serialisation for single sources");
+		assert.equal(single.terms["t_Alpha"]!.citations.length, 2);
+		mergeGlossary([probed("same"), probed("same")]);
+		assert.ok(reads > 0, "copies of one source are still compared by content");
 	});
 
 	it("a digest term without a visible name is refused, not dropped", () => {
