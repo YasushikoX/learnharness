@@ -21,7 +21,7 @@ import { AUTH_FILE } from "../../config.ts";
 import type { AuthStore } from "../core/ports.ts";
 import { CUSTOM_PROVIDER } from "../core/auth-keys.ts";
 import { CUSTOM_AUTH_BINDING, parseCustomAuthBinding, type CustomAuthBinding } from "../core/custom-provider-auth.ts";
-import { DOCLING_API_KEY, DOCLING_AUTH_BINDING } from "../core/pdf-converter.ts";
+import { CONVERTER_CREDENTIALS, DOCLING_API_KEY, DOCLING_AUTH_BINDING } from "../core/pdf-converter.ts";
 import { writeFileAtomicSync } from "./atomic-write.ts";
 
 /** The flat string→string map, or {} for absent/corrupt/non-object. */
@@ -83,6 +83,7 @@ function readCustomMap(): Record<string, unknown> {
 function assertOrdinaryVar(name: string): void {
 	if (name === CUSTOM_AUTH_BINDING || name === CUSTOM_PROVIDER.envVar) throw new Error("Use the custom endpoint editor");
 	if (name === DOCLING_AUTH_BINDING || name === DOCLING_API_KEY) throw new Error("Use the Docling credential writer");
+	if (name === CONVERTER_CREDENTIALS) throw new Error("Use the PDF converter credential writer");
 }
 /** One immutable file snapshot. Keyless callers never invoke fileKey(). */
 export function readCustomAuth() {
@@ -117,5 +118,30 @@ export function writeDoclingAuth(baseUrl: string, apiKey: string | undefined): v
 		map[DOCLING_AUTH_BINDING] = baseUrl;
 		map[DOCLING_API_KEY] = apiKey;
 	}
+	writeMap(map);
+}
+
+/** Profile converter keys (fork addition, 2026-11-25): one JSON string entry, `{ [converterId]: { baseUrl, apiKey } }`. Strict: a damaged record is never overwritten. */
+export type ConverterCredentials = Record<string, { baseUrl: string; apiKey: string }>;
+
+export function readConverterCredentials(): ConverterCredentials {
+	const raw = readCustomMap()[CONVERTER_CREDENTIALS];
+	if (raw === undefined) return {};
+	let parsed: unknown;
+	try { parsed = typeof raw === "string" ? JSON.parse(raw) : undefined; } catch { parsed = undefined; }
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid PDF converter credential record");
+	const out: ConverterCredentials = Object.create(null) as ConverterCredentials;
+	for (const [id, entry] of Object.entries(parsed)) {
+		const e = entry as { baseUrl?: unknown; apiKey?: unknown } | null;
+		if (!e || typeof e.baseUrl !== "string" || typeof e.apiKey !== "string") throw new Error("Invalid PDF converter credential record");
+		out[id] = { baseUrl: e.baseUrl, apiKey: e.apiKey };
+	}
+	return out;
+}
+
+export function writeConverterCredentials(credentials: ConverterCredentials): void {
+	const map = readCustomMap();
+	if (Object.keys(credentials).length === 0) delete map[CONVERTER_CREDENTIALS];
+	else map[CONVERTER_CREDENTIALS] = JSON.stringify(credentials);
 	writeMap(map);
 }

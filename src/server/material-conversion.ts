@@ -13,7 +13,8 @@ import type { PdfConversionSettings } from "../core/settings.ts";
 import type { MaterialStore } from "../core/ports.ts";
 import { openPdfBytes } from "../agent/subagents/pdf-ops.ts";
 import { writeFileAtomicSync } from "../store/atomic-write.ts";
-import { readDoclingCredential } from "./converters/auth.ts";
+import { readConverterCredential } from "./converters/credentials.ts";
+import { loadCustomProfile } from "./converters/custom-profiles.ts";
 import { normaliseConversion, type FailedPage } from "./converters/normalise.ts";
 import { convertWithFallback, resolvePdfConverter, type RegistryConversion } from "./converters/registry.ts";
 
@@ -129,7 +130,7 @@ function materialError(
 	if (error instanceof ConverterError) {
 		if (error.kind === "no_text" && ranWith === "pdfjs") {
 			if (fallbackFrom) {
-				const name = fallbackFrom.converterId === "docling" ? "Docling" : fallbackFrom.converterId;
+				const name = fallbackFrom.converterId === "docling" ? "Docling" : (fallbackFrom.label ?? fallbackFrom.converterId);
 				return {
 					kind: "no_text",
 					message: `${name} could not be reached (${fallbackFrom.reason}), and the built-in reader (pdfjs) found no extractable text, so this PDF looks scanned. Retry the conversion once ${name} is reachable to read it with OCR.`,
@@ -165,7 +166,7 @@ export async function convertMaterialPdf(ownerId: string, material: LessonMateri
 		return { status: "interrupted", error, warnings: [] };
 	}
 
-	const resolved = resolvePdfConverter(opts.settings, (id, baseUrl) => (id === "docling" ? readDoclingCredential(baseUrl) : undefined));
+	const resolved = resolvePdfConverter(opts.settings, readConverterCredential, loadCustomProfile);
 	const converter = resolved.converter;
 	const options = converter.options ?? {};
 	const existing = opts.force ? undefined : readSidecar(sidecarPath);
