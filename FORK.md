@@ -23,8 +23,8 @@ Status as of 2026-11-25. "Landed" means merged to `main` with tests passing; "In
 | Explained visuals | Every figure carries a "what to look at" note and every simulator a "what to try" | Planned |
 | Reply reliability | Stream keepalive, a visible notice with Continue when a reply is cut off, Retry after a dropped stream, a per-turn timing log | In review (`wp/1-stream-reliability`) |
 | Conversation-switch speed | Caches the per-class evidence scan, removes the repeated full-transcript downloads on every switch (settings-only reads instead) and serialises settings saves. Data per switch drops from about 3 MB to about 25 KB; the visible delay is mostly rendering and is far smaller in a production build than in dev mode | Landed 2026-11-25 |
-| Read-aloud | A Play/Stop control beside each question using system voices | In fix round 2 after a second review (`wp/7-read-aloud-confidence`) |
-| Confidence slider | The 0–100 confidence slider back as a setting | In fix round 2 after a second review (`wp/7-read-aloud-confidence`) |
+| Read-aloud | A Play/Stop control beside each question using system voices | Landed 2026-11-25 |
+| Confidence slider | The 0–100 confidence slider back as a setting | Landed 2026-11-25 |
 
 ## How it is built
 
