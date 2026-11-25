@@ -16,17 +16,16 @@
 import { useRef, useState } from "react";
 import { CheckIcon, DownloadIcon, Trash2Icon, UploadIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { exportThemeFile, type AppearanceSettings, type Theme } from "@/src/core";
+import { Button } from "@/components/ui/button";
+import { DEFAULT_THEME_ID, WARM_BRASS_THEME_ID, exportThemeFile, type AppearanceSettings, type Theme } from "@/src/core";
 
-/** The selected card's frame: a 2px gap in the dialog surface, then a 1px
- *  ring in the theme accent (the check by the name does the rest). */
-const SELECTED_FRAME = "shadow-[0_0_0_2px_var(--card),0_0_0_3px_var(--lh-accent)]";
+const FIRST_THEMES = ["light", DEFAULT_THEME_ID, WARM_BRASS_THEME_ID];
 
 function Dot({ color, edge }: { color: string; edge?: string }) {
 	return (
 		<span
 			aria-hidden
-			className="size-3 rounded-full"
+			className="size-3 rounded-full max-sm:size-2"
 			style={{ background: color, ...(edge ? { border: `1px solid ${edge}` } : {}) }}
 		/>
 	);
@@ -38,13 +37,13 @@ function Preview({ theme }: { theme: Theme }) {
 	return (
 		<span
 			aria-hidden
-			className="flex h-11 items-center justify-between rounded-md border px-3"
+			className="flex h-10 w-full items-center justify-between gap-2 rounded-md border px-2.5"
 			style={{ background: c.background, borderColor: c.border }}
 		>
 			<span className="font-prose text-xl font-semibold" style={{ color: c.text }}>
 				Aa <i className="font-normal" style={{ color: c.accent }}>ai</i>
 			</span>
-			<span className="flex gap-1.5">
+			<span className="flex gap-1">
 				<Dot color={c.surface} edge={c.border} />
 				<Dot color={c.accent} />
 				<Dot color={c.error} />
@@ -88,6 +87,10 @@ export function ThemeCards({
 	const fileRef = useRef<HTMLInputElement>(null);
 	const [importError, setImportError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
+	const orderedThemes = [
+		...FIRST_THEMES.flatMap(id => themes.filter(theme => theme.id === id)),
+		...themes.filter(theme => !FIRST_THEMES.includes(theme.id)),
+	];
 
 	const importFile = async (file: File) => {
 		setImportError(null);
@@ -124,79 +127,79 @@ export function ThemeCards({
 	};
 
 	return (
-		<div data-testid="row-theme" className="flex flex-col gap-3 py-1">
-			<div className="flex items-end justify-between gap-4">
-				<span className="min-w-0">
-					<span className="block font-prose text-(length:--lh-prose-size)">Theme</span>
-					<span data-testid="theme-hint" className="block text-xs text-muted-foreground">
-						{active.name} · {active.mode} · sets every color below
+		<div data-testid="row-theme" className="flex flex-col gap-3">
+			<div className="flex flex-wrap items-center justify-between gap-3">
+				<div className="min-w-0">
+					<h3 className="lh-section-title">Theme</h3>
+					<span data-testid="theme-hint" className="block text-sm/5 text-muted-foreground">
+						{active.name} selected
 					</span>
-				</span>
-				<button
+				</div>
+				<Button
 					type="button"
+					variant="outline"
 					data-testid="theme-export"
 					onClick={() => downloadJson(`${active.id}.json`, exportThemeFile(active, appearance))}
-					className="flex h-7 shrink-0 items-center gap-2 rounded-sm border border-border bg-background px-2 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50"
 				>
-					<DownloadIcon className="size-3.5" />
+					<DownloadIcon aria-hidden strokeWidth={1.75} />
 					Export JSON
-				</button>
+				</Button>
 			</div>
-			<div className="grid grid-cols-3 gap-3">
-				{themes.map((theme) => {
+			<div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+				{orderedThemes.map((theme) => {
 					const selected = theme.id === active.id;
 					return (
 						<div key={theme.id} className="relative min-w-0">
-							<button
+							<Button
 								type="button"
+								variant="ghost"
 								data-testid={`theme-card-${theme.id}`}
 								aria-pressed={selected}
 								onClick={() => onSelect(theme.id)}
 								className={cn(
-									"flex w-full flex-col gap-2.5 rounded-lg border border-border bg-background p-3 text-left transition-colors",
-									selected ? SELECTED_FRAME : "hover:border-muted-foreground/50",
+									"h-full w-full flex-col items-stretch justify-start gap-2 rounded-lg border border-border bg-card p-2 text-left",
+									selected && "ring-2 ring-(--lh-accent)",
 								)}
 							>
 								<Preview theme={theme} />
-								<span className={cn("flex items-center justify-between gap-2", !theme.builtin && "pr-6")}>
-									<span className="flex min-w-0 items-center gap-1.5 font-prose text-base">
-										{selected && <CheckIcon className="size-3.5 shrink-0" strokeWidth={2.5} />}
+								<span className={cn("flex min-h-6 items-center justify-between gap-2", !theme.builtin && "pr-8")}>
+									<span className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+										{selected && <CheckIcon aria-hidden className="size-3.5 text-ring" strokeWidth={2} />}
 										<span className="truncate">{theme.name}</span>
 									</span>
-									<span className="shrink-0 rounded-sm border border-border px-1.5 text-xs text-muted-foreground">
+									<span className="shrink-0 text-xs font-normal text-muted-foreground max-sm:hidden">
 										{theme.builtin ? theme.mode : "custom"}
 									</span>
 								</span>
-							</button>
+							</Button>
 							{!theme.builtin && (
-								<button
+								<Button
 									type="button"
+									variant="ghost"
+									size="icon"
 									aria-label={`Remove ${theme.name}`}
 									data-testid={`theme-remove-${theme.id}`}
 									onClick={() => void remove(theme)}
-									className="absolute right-3 bottom-3 flex size-5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-error"
+									className="absolute right-1 bottom-1 text-destructive"
 								>
-									<Trash2Icon className="size-3.5" />
-								</button>
+									<Trash2Icon aria-hidden strokeWidth={1.75} />
+								</Button>
 							)}
 						</div>
 					);
 				})}
-				<button
-					type="button"
-					data-testid="theme-import"
-					disabled={busy}
-					onClick={() => fileRef.current?.click()}
-					className="flex min-h-27 flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-muted-foreground/50 p-3 text-center font-ui text-xs text-muted-foreground transition-colors hover:text-foreground"
-				>
-					<UploadIcon className="size-4" />
-					<span>Import JSON</span>
-					{importError ? (
-						<span data-testid="theme-import-error" className="text-error">{importError}</span>
-					) : (
-						<span className="text-muted-foreground">name · mode · colors</span>
-					)}
-				</button>
+				<div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-border bg-card p-2">
+					<Button
+						type="button"
+						variant="outline"
+						data-testid="theme-import"
+						disabled={busy}
+						onClick={() => fileRef.current?.click()}
+					>
+						<UploadIcon aria-hidden strokeWidth={1.75} /> Import JSON
+					</Button>
+					{importError && <p role="alert" data-testid="theme-import-error" className="break-all text-center text-xs text-error">{importError}</p>}
+				</div>
 				<input
 					ref={fileRef}
 					type="file"

@@ -63,7 +63,7 @@ describe("the answered card's key points", () => {
 		const answer = buildAnswer({ ...qd(), question: "Why?", committedAnswer: "Because." }, { text: "x" }, "explain");
 		const html = renderToStaticMarkup(<AnsweredCard answer={answer} input={oldArgs} />);
 		assert.doesNotMatch(html, /answered-key-points/);
-		assert.match(html, /The answer: /);
+		assert.match(html, /The answer</);
 	});
 
 	it("the pending card never shows them", () => {

@@ -4,6 +4,14 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { CONFIDENCE_LEVELS } from "@/src/core";
 import { CONFIDENCE_COLORS } from "@/components/confidence-rail";
+import { buttonVariants } from "@/components/ui/button";
+
+/** The "I don't know" button that leads the confidence buttons (UI round 1b): a secondary button the levels' height,
+ *  no dashed box. */
+export const DONT_KNOW_LEADING = cn(
+	buttonVariants({ variant: "secondary" }),
+	"lh-touch h-9 min-w-0 flex-[1.8] truncate px-0 text-xs text-muted-foreground hover:text-foreground",
+);
 
 /**
  * The confidence buttons (owner, 2026-10-28; Anki style): the learner picks an answer, then presses how sure they are, and
@@ -42,9 +50,9 @@ export function ConfidenceButtons({
 					title={`${level.stop}% sure`}
 					style={{ color: CONFIDENCE_COLORS[level.index], borderColor: highlight === level.index ? CONFIDENCE_COLORS[level.index] : undefined }}
 					className={cn(
-						"lh-touch flex h-10 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-md border border-border/70 bg-transparent px-0 text-xs font-medium transition-colors",
-						"hover:bg-accent/60 disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:bg-transparent",
-						highlight === level.index && "bg-accent/60",
+						"lh-touch flex h-9 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-md border border-input bg-transparent px-0 text-xs font-medium transition-colors duration-(--lh-duration-hover) ease-(--lh-ease)",
+						"hover:bg-raised disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:bg-transparent",
+						highlight === level.index && "bg-raised",
 					)}
 				>
 					<span className="max-w-full truncate leading-none">{level.label}</span>

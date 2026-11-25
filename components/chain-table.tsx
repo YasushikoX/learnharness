@@ -5,7 +5,7 @@
  * every reasoning chain of the graph in one FULL-BLEED surface — the blur
  * + translucent background IS the surface, no inner card. The top bar is
  * THE shared TopBar (standardization ruling: one element, every surface —
- * h-15, lh-drag with carve-outs, select-none, sidebar reopen, traffic-
+ * h-12, lh-drag with carve-outs, select-none, sidebar reopen, traffic-
  * light gutter; born from this overlay's hand-rolled bar breaking every
  * rule at once). The overlay (z-40) covers home's floating header while
  * open, so the TopBar's own SidebarToggle is the reopen path.

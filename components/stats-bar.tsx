@@ -101,6 +101,8 @@ export function StatsBar({
 	const providers = pricing?.subscriptionProviders ?? subscriptionLabels(turns.map((turn) => turn.model));
 	const cliBilled = turns.some((turn) => turn.model.startsWith(`${CLAUDE_CODE_PROVIDER}:`));
 	const costLabel = planCostLabel(pricedCount > 0 ? cost : null, cliBilled ? [...providers, "CLI"] : providers);
+	const contextKnown = contextTokens !== null;
+	const costKnown = costLabel !== "—";
 
 	return (
 		<div
@@ -122,7 +124,7 @@ export function StatsBar({
 			{leadingSlot}
 			{/* The left side: the session-data summary — only once a session
 			    exists (turns). Pre-chat renders nothing (see the header). */}
-			{(chatId || turns.length > 0) && (
+			{(chatId || turns.length > 0) && (contextKnown || costKnown) && (
 			<div ref={barRef} className="relative">
 				{/* No tooltip — the numbers describe themselves and the popover
 			    speaks on click (owner, subtlety round 2026-09-25). */}
@@ -133,11 +135,14 @@ export function StatsBar({
 				data-testid="stats-summary"
 				className="flex items-center gap-1.5 tabular-nums transition-colors hover:text-foreground"
 			>
-				<span data-testid="stats-context">
-					{contextLabel}
-				</span>
-				<span aria-hidden>·</span>
-				<span data-testid="stats-cost">{costLabel}</span>
+				{/* UI round 2: an unknown part is left out ("? / 200k · —" was noise); the popover still lists both. */}
+				{contextKnown && (
+					<span data-testid="stats-context">
+						{contextLabel}
+					</span>
+				)}
+				{contextKnown && costKnown && <span aria-hidden>·</span>}
+				{costKnown && <span data-testid="stats-cost">{costLabel}</span>}
 			</button>
 				{open && (
 					<div

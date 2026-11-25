@@ -61,7 +61,7 @@ export function UnderstandingBar({
 			aria-valuenow={skill.understanding}
 			data-testid="skill-bar"
 			data-due={due ? "true" : undefined}
-			className={cn("relative mt-1.5 block h-1.5 w-full rounded-full bg-border/50", className)}
+			className={cn("relative mt-1.5 block h-1.5 w-full rounded-full bg-border", className)}
 			style={{
 				...(due ? { outline: `1px dashed ${DUE_COLOR}`, outlineOffset: 2 } : {}),
 				...(locked
@@ -95,11 +95,13 @@ export function DueChip() {
 }
 
 /** Representative ramp step of a band, for the strip. */
+// UI round 2: the strip's bands sit on the palette's warning → success at a lower chroma (pulled toward the muted ink),
+// instead of the saturated orange and mustard of the understanding scale.
 const BAND_COLOR: Record<SkillBand, string> = {
 	new: "var(--border)",
-	low: "var(--lh-understanding-2)",
-	mid: "var(--lh-understanding-5)",
-	known: "var(--lh-understanding-8)",
+	low: "color-mix(in oklab, var(--lh-warning) 70%, var(--muted-foreground))",
+	mid: "color-mix(in oklab, color-mix(in oklab, var(--lh-warning), var(--lh-success)) 65%, var(--muted-foreground))",
+	known: "color-mix(in oklab, var(--lh-success) 70%, var(--muted-foreground))",
 };
 
 /** How the course's skills spread over the understanding bands: one bar with each band's count printed on its segment,
@@ -120,7 +122,7 @@ export function DistributionStrip({
 	const total = skills.length;
 	return (
 		<div data-testid="skill-strip">
-			<div className="flex h-6 gap-0.5 overflow-hidden rounded-md" aria-hidden>
+			<div className="flex h-6 gap-0.5 overflow-hidden rounded-sm" aria-hidden>
 				{SKILL_BANDS.filter((b) => counts[b] > 0).map((b) => (
 					<button
 						key={b}
@@ -134,7 +136,8 @@ export function DistributionStrip({
 					</button>
 				))}
 			</div>
-			<div className="mt-2 flex flex-wrap items-center gap-x-1 gap-y-1">
+			{/* The legend (UI round 1b): small 24px chips, one style, no outlines; the picked one takes the raised fill. */}
+			<div className="mt-2 -ml-2 flex flex-wrap items-center gap-x-1 gap-y-1">
 				{SKILL_BANDS.map((b) => (
 					<button
 						key={b}
@@ -144,11 +147,12 @@ export function DistributionStrip({
 						disabled={counts[b] === 0}
 						onClick={() => onPick(active === b ? null : b)}
 						className={cn(
-							"lh-touch flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-40",
-							active === b ? "border-foreground/50 text-foreground" : "border-transparent text-muted-foreground",
+							"lh-touch flex h-6 items-center gap-1.5 rounded-sm px-2 text-xs whitespace-nowrap outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised hover:text-foreground focus-visible:ring-2 focus-visible:ring-focus disabled:pointer-events-none",
+							// A zero count is a fact, not a disabled control: muted ink at full opacity (UI round 2).
+							active === b ? "bg-raised text-foreground" : "text-muted-foreground",
 						)}
 					>
-						<span aria-hidden className="size-2 rounded-sm" style={{ backgroundColor: BAND_COLOR[b] }} />
+						<span aria-hidden className="size-2 rounded-full" style={{ backgroundColor: BAND_COLOR[b] }} />
 						{SKILL_BAND_LABEL[b]} · {counts[b]}
 					</button>
 				))}
@@ -178,7 +182,8 @@ export function DueTimeline({
 	const counts = bucketCounts(skills, now);
 	const max = Math.max(1, ...DUE_BUCKETS.map((b) => counts[b]));
 	return (
-		<div className="grid grid-cols-4 gap-2" data-testid="due-timeline">
+		// No boxes (UI round 1b, SPEC §7): four quiet cells on the section's hairline, a fill only on hover or when picked.
+		<div className="-mx-2 grid grid-cols-4 gap-1" data-testid="due-timeline">
 			{DUE_BUCKETS.map((b) => (
 				<button
 					key={b}
@@ -188,15 +193,16 @@ export function DueTimeline({
 					disabled={counts[b] === 0}
 					onClick={() => onPick(active === b ? null : b)}
 					className={cn(
-						"lh-touch min-w-0 rounded-lg border px-3 py-2 text-left transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-40",
-						active === b ? "border-foreground/50" : "border-border/60",
+						"lh-touch min-w-0 rounded-md px-2 py-1.5 text-left outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised focus-visible:ring-2 focus-visible:ring-focus disabled:pointer-events-none",
+						active === b && "bg-raised",
 					)}
 				>
-					<span className="block text-xs text-muted-foreground">{DUE_BUCKET_LABEL[b]}</span>
-					<span className="block text-2xl font-semibold leading-tight tabular-nums" style={b === "now" && counts.now > 0 ? { color: DUE_COLOR } : undefined}>
+					<span className="block truncate whitespace-nowrap text-xs text-muted-foreground">{DUE_BUCKET_LABEL[b]}</span>
+					{/* Zero: muted ink at full opacity, not a faded disabled control (UI round 2). */}
+					<span className={cn("block text-xl font-semibold tabular-nums", counts[b] === 0 && "text-muted-foreground")} style={b === "now" && counts.now > 0 ? { color: DUE_COLOR } : undefined}>
 						{counts[b]}
 					</span>
-					<span aria-hidden className="mt-1.5 block h-1 rounded-full bg-border/40">
+					<span aria-hidden className="mt-1 block h-1 rounded-full bg-secondary">
 						<span
 							className="block h-full rounded-full"
 							style={{ width: `${(counts[b] / max) * 100}%`, backgroundColor: b === "now" ? DUE_COLOR : "var(--muted-foreground)" }}

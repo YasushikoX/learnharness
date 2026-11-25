@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactElement, type ReactNode } from "react";
 import { HostDialog } from "./host-dialog";
+import { buttonVariants } from "@/components/ui/button";
 import { courseLossWarning, useCourseLoss, type CourseLoss } from "@/components/delete-session-dialog";
 import type { SourceEntry, SourceFolder } from "@/src/core";
 
@@ -24,7 +25,7 @@ export function DeleteSourceBody({ sources, folders, deleteSessions, onDeleteSes
 			Removes these sources’ contributions to propositions and reasoning chains. Knowledge supported by other sources survives; knowledge supported only by these sources is removed.
 		</p>}
 		<p className="mt-2 text-xs text-muted-foreground">Imported source records are removed, but original files on disk are never changed. Selected folders are removed only when empty; folders needed by kept sessions remain.</p>
-		{chats.length > 0 && <label className="mt-4 flex cursor-pointer items-start gap-2.5 rounded-lg border border-border/60 px-4 py-3">
+		{chats.length > 0 && <label className="mt-4 flex cursor-pointer items-start gap-2.5 rounded-lg border border-border px-4 py-3">
 			<input type="checkbox" data-testid="delete-source-sessions" checked={deleteSessions} disabled={busy}
 				onChange={(e) => onDeleteSessions(e.target.checked)} className="mt-0.5 size-4 shrink-0 accent-primary" />
 			<span className="min-w-0"><span className="block text-sm">Also delete the {chats.length} selected {chats.length === 1 ? "session" : "sessions"}</span>
@@ -34,8 +35,8 @@ export function DeleteSourceBody({ sources, folders, deleteSessions, onDeleteSes
 		{warning && <p data-testid="delete-course-loss" role={checking ? "status" : "alert"} className={checking ? "mt-2 text-xs text-muted-foreground" : "mt-2 text-sm text-destructive"}>{warning}</p>}
 		{failure && <p role="alert" data-testid="source-delete-failure" className="mt-3 text-xs text-foreground">{failure}</p>}
 		<div className="mt-4 flex justify-end gap-2">
-			<button type="button" data-testid="source-delete-cancel" disabled={busy} onClick={onClose} className="lh-touch rounded-sm px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40">Cancel</button>
-			<button type="button" data-testid="source-delete-confirm" disabled={busy || checking} onClick={onRun} className="lh-touch rounded-sm border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-40">{busy ? "Deleting…" : failure ? "Try again" : "Delete"}</button>
+			<button type="button" data-testid="source-delete-cancel" disabled={busy} onClick={onClose} className={buttonVariants({ variant: "ghost", className: "lh-touch" })}>Cancel</button>
+			<button type="button" data-testid="source-delete-confirm" disabled={busy || checking} onClick={onRun} className={buttonVariants({ variant: "destructiveSolid", className: "lh-touch" })}>{busy ? "Deleting…" : failure ? "Try again" : "Delete"}</button>
 		</div>
 	</div>;
 	return renderFrame ? renderFrame(frame) : frame;

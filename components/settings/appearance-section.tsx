@@ -36,6 +36,7 @@ import {
 	DEFAULT_THEME_ID,
 	EXTRACTION_CHUNK_TOKENS_FLOOR,
 	isConfidenceControl,
+	FACTORY_SETTINGS,
 	TRANSCRIPT_WIDTH_MAX_REM,
 	TRANSCRIPT_WIDTH_MIN_REM,
 	TRANSCRIPT_WIDTH_STEP_REM,
@@ -51,25 +52,26 @@ import { Hint } from "@/components/ui/hint";
 import { BUNDLED_READING_FONTS, useAppearance } from "./appearance.tsx";
 import { FontMenuList } from "./model-menu";
 import { ThemeCards } from "./theme-cards.tsx";
-import { CommitInput, SettingsMenuTrigger, SettingsRow, ThinSelect, Toggle } from "./controls.tsx";
+import { CommitInput, SettingsGroup, SettingsList, SettingsMenuTrigger, SettingsRow, ThinSelect, Toggle } from "./controls.tsx";
+import { Button } from "@/components/ui/button";
 import { NativeInkRow } from "./native-ink-row.tsx";
 
-/** The slider position past the last width step: Full (no cap). */
-const TRANSCRIPT_FULL_POSITION = TRANSCRIPT_WIDTH_MAX_REM + TRANSCRIPT_WIDTH_STEP_REM;
-
-/** The transcript width's label: px at the root's 16px rem, or Full.
+/** The transcript width's label: px at the root's 16px rem. Unset (null)
+ *  is the reading column, which is the narrowest step (UI round 1: the
+ *  default is a centred reading measure, no longer full width).
  *  Exported for tests. */
 export function transcriptWidthLabel(rem: number | null): string {
-	return rem === null ? "Full" : `${rem * 16}px`;
+	return `${(rem ?? TRANSCRIPT_WIDTH_MIN_REM) * 16}px`;
 }
 
 /**
- * Transcript width: a slider whose last position is Full. The thumb moves
- * a local draft while dragging; the section PUT happens once, on the
- * native `change` (release / keyboard step) — not one write per tick.
+ * Transcript width: a slider from the reading column (unset) up to the
+ * widest cap. The thumb moves a local draft while dragging; the section
+ * PUT happens once, on the native `change` (release / keyboard step) —
+ * not one write per tick. Releasing on the first step clears the setting.
  */
 function TranscriptWidthSlider({ value, onCommit }: { value: number | null; onCommit: (rem: number | null) => void }) {
-	const position = value ?? TRANSCRIPT_FULL_POSITION;
+	const position = value ?? TRANSCRIPT_WIDTH_MIN_REM;
 	const [draft, setDraft] = useState(position);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const commitRef = useRef(onCommit);
@@ -80,14 +82,14 @@ function TranscriptWidthSlider({ value, onCommit }: { value: number | null; onCo
 		if (!input) return;
 		const onChange = () => {
 			const next = Number(input.value);
-			commitRef.current(next >= TRANSCRIPT_FULL_POSITION ? null : next);
+			commitRef.current(next <= TRANSCRIPT_WIDTH_MIN_REM ? null : next);
 		};
 		input.addEventListener("change", onChange);
 		return () => input.removeEventListener("change", onChange);
 	}, []);
-	const draftRem = draft >= TRANSCRIPT_FULL_POSITION ? null : draft;
+	const draftRem = draft <= TRANSCRIPT_WIDTH_MIN_REM ? null : draft;
 	return (
-		<span className="flex items-center gap-2">
+		<span className="flex min-h-8 w-56 max-w-full items-center gap-2">
 			<input
 				ref={inputRef}
 				type="range"
@@ -95,11 +97,11 @@ function TranscriptWidthSlider({ value, onCommit }: { value: number | null; onCo
 				aria-valuetext={transcriptWidthLabel(draftRem)}
 				data-testid="input-transcript-width"
 				min={TRANSCRIPT_WIDTH_MIN_REM}
-				max={TRANSCRIPT_FULL_POSITION}
+				max={TRANSCRIPT_WIDTH_MAX_REM}
 				step={TRANSCRIPT_WIDTH_STEP_REM}
 				value={draft}
 				onChange={(e) => setDraft(Number(e.target.value))}
-				className="h-1.5 w-40 accent-primary"
+				className="h-1.5 min-w-0 flex-1 accent-primary"
 			/>
 			<span data-testid="transcript-width-value" className="w-12 text-right text-xs tabular-nums text-muted-foreground">{transcriptWidthLabel(draftRem)}</span>
 		</span>
@@ -226,7 +228,7 @@ function ColorOverrideRow({
 	const { label, note } = COLOR_LABELS[colorKey];
 	const empty = `Empty = ${themeColor}`;
 	return (
-		<SettingsRow label={label} hint={note ? `${note} · ${empty}` : empty} testid={`row-color-${colorKey}`}>
+		<SettingsRow label={label} hint={note ? `${note} · ${empty}` : empty} testid={`row-color-${colorKey}`} className="[&>span:first-child]:basis-24">
 			<span className="flex items-center gap-2">
 				<span
 					aria-hidden
@@ -240,6 +242,7 @@ function ColorOverrideRow({
 					ariaLabel={`${label.toLowerCase()} hex`}
 					testid={LEGACY_TESTIDS[colorKey] ?? `input-color-${colorKey}`}
 					onCommit={onCommit}
+					className="w-28"
 				/>
 			</span>
 		</SettingsRow>
@@ -353,24 +356,22 @@ export function AppearanceSection({
 					if (removed.id === activeTheme.id) onSectionChange({ ...appearance, theme: DEFAULT_THEME_ID });
 				}}
 			/>
-			<div data-testid="group-colors" className="mt-5 flex flex-col gap-2">
-				<div className="flex items-end justify-between gap-4">
-					<p className="text-sm font-medium text-muted-foreground">
-						Colors{" "}
-						<span className="text-xs font-normal text-muted-foreground">
-							· overrides on top of the theme, kept when you switch
-						</span>
-					</p>
-					<button
+			<div data-testid="group-colors" className="flex flex-col gap-2">
+				<div className="flex flex-wrap items-center justify-between gap-2">
+					<div>
+						<h3 className="lh-section-title">Colors</h3>
+						<p className="text-sm/5 text-muted-foreground">Overrides are kept when you switch themes.</p>
+					</div>
+					<Button
 						type="button"
+						variant="destructive"
 						data-testid="colors-reset"
 						onClick={() => onSectionChange(clearColorOverrides(appearance))}
-						className="h-6 shrink-0 rounded-sm px-2 font-ui text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 					>
 						Reset all
-					</button>
+					</Button>
 				</div>
-				<div className="grid grid-cols-2 gap-x-10 gap-y-2">
+				<SettingsList className="lh-settings-colors sm:grid sm:grid-cols-2">
 					{THEME_COLOR_KEYS.map((key) => (
 						<ColorOverrideRow
 							key={key}
@@ -381,161 +382,162 @@ export function AppearanceSection({
 							onCommit={(v) => onSectionChange(composeColorOverride(appearance, key, v))}
 						/>
 					))}
-				</div>
+				</SettingsList>
 			</div>
-			<p className="mt-5 mb-2 text-sm font-medium text-muted-foreground">Typography</p>
-			<SettingsRow
-				label="Reading font"
-				hint={`Empty = ${DEFAULT_READING_FONT}`}
-				testid="row-font"
-			>
-				<span ref={fontMenuOpen ? menuAnchorRef : undefined} className="relative flex items-center gap-2">
-					{/* The shared Agent/Appearance collapsed-menu trigger.
-					    The tooltip rides the CLOSED button ONLY
-					    (owner ruling 2026-09-26: never while
-					    the dropdown is out — it popped over the open
-					    menu when the wrap covered the whole anchor
-					    span). */}
-					{(() => {
-						const triggerButton = (
-							<SettingsMenuTrigger
-								value={appearance?.fontFamily || DEFAULT_READING_FONT}
-								aria-label="Reading font"
-								aria-expanded={fontMenuOpen}
-								data-testid="font-trigger"
-								onClick={openFontMenu}
-								className="min-w-20"
-							/>
-						);
-						return fontMenuOpen ? (
-							triggerButton
-						) : (
-							<Hint label="Choose from your installed fonts" side="left">
-								{triggerButton}
-							</Hint>
-						);
-					})()}
-					{fontMenuOpen && (
-						<MenuShell
-							preferredSide="down"
-							anchorTestid="font-trigger"
-							testid="font-menu"
-							onClose={() => { setFontMenuOpen(false); return "closed"; }}
-							menuClass="flex w-[18rem] flex-col gap-0.5 lh-menu"
-						>
-							<FontMenuList
-								families={localFonts === undefined ? undefined : (localFonts ?? [...CURATED_FALLBACK_FONTS])}
-								effectiveFamily={appearance?.fontFamily ?? null}
-								onPick={pickFont}
-								footer={
-									localFonts === undefined
-										? undefined
-										: localFonts === null
-											? enumEmpty
-												? "Common families — installed fonts could not be read"
-												: "Common families — your installed list needs the desktop app"
-											: "Your installed fonts"
-								}
-							/>
-						</MenuShell>
-					)}
-				</span>
-			</SettingsRow>
-			<SettingsRow label="Reading font size" hint={`${resolved.proseFontSize}px`} testid="row-prose-size">
-				<CommitInput
-					type="number"
-					value={String(appearance?.proseFontSize ?? "")}
-					placeholder="16"
-					ariaLabel="prose font size"
-					testid="input-prose-size"
-					onCommit={(v) => {
-						// Empty = factory default (owner, fix wave): omit the key so the record
-						// UNSETS and the field stays empty (absence, not null, is the
-						// unset for numbers). Number("") is 0, so the old clamp wrote 12.
-						if (v === "") {
-							return onSectionChange({ ...appearance, proseFontSize: undefined });
-						}
-						const n = Number(v);
-						if (!Number.isFinite(n)) return false; // bad input: no write, factory stays
-						return onSectionChange({ ...appearance, proseFontSize: Math.min(24, Math.max(12, Math.round(n))) });
-					}}
-				/>
-			</SettingsRow>
-			<SettingsRow label="Code ligatures" testid="row-code-ligatures">
-				<Toggle
-					checked={resolved.codeLigatures}
-					label="Code ligatures"
-					onChange={(on) => onSectionChange({ ...appearance, codeLigatures: on })}
-				/>
-			</SettingsRow>
-			<SettingsRow label="Session names in serif" testid="row-session-serif">
-				<Toggle
-					checked={resolved.sessionNameSerif}
-					label="session names serif"
-					onChange={(on) => onSectionChange({ ...appearance, sessionNameSerif: on })}
-				/>
-			</SettingsRow>
-			<NativeInkRow />
-			<SettingsRow label="Compact session list" testid="row-compact-session-list">
-				<Toggle
-					checked={resolved.compactSessionList}
-					label="Compact session list"
-					onChange={(on) => onSectionChange({ ...appearance, compactSessionList: on })}
-				/>
-			</SettingsRow>
-			<SettingsRow label="Heading weight" hint={`${resolved.mdRendering.headingWeight}`} testid="row-heading-weight">
-				<CommitInput
-					type="number"
-					value={String(md?.headingWeight ?? "")}
-					placeholder="900"
-					ariaLabel="heading weight"
-					testid="input-heading-weight"
-					onCommit={(v) => {
-						// Empty = factory default (owner, fix wave): Number("") is 0, so
-						// Absence is the unset representation — the old clamp wrote 100.
-						if (v === "") {
-							return onSectionChange({ ...appearance, mdRendering: { ...md, headingWeight: undefined } });
-						}
-						const n = Number(v);
-						if (!Number.isFinite(n)) return false;
-						return onSectionChange({
-							...appearance,
-							mdRendering: { ...md, headingWeight: Math.min(900, Math.max(100, Math.round(n))) },
-						});
-					}}
-				/>
-			</SettingsRow>
-			<SettingsRow label="Transcript width" testid="row-transcript-width">
-				<TranscriptWidthSlider
-					value={resolved.transcriptMaxWidth}
-					// Full = absence (the unset representation for numbers).
-					onCommit={(rem) => { void onSectionChange({ ...appearance, transcriptMaxWidth: rem ?? undefined }); }}
-				/>
-			</SettingsRow>
-			<SettingsRow label="Adapt question layout" testid="row-adaptive-questions">
-				<Toggle
-					checked={resolved.adaptiveQuestions}
-					label="Adapt question layout"
-					onChange={(on) => onSectionChange({ ...appearance, adaptiveQuestions: on })}
-				/>
-			</SettingsRow>
-			<SettingsRow
-				label="Confidence input"
-				hint="How you rate confidence before submitting a check (practice problems keep buttons for now)"
-				testid="row-confidence-control"
-			>
-				<ThinSelect
-					value={resolved.confidenceControl}
-					ariaLabel="confidence input"
-					testid="select-confidence-control"
-					onChange={(v) => {
-						if (isConfidenceControl(v)) void onSectionChange({ ...appearance, confidenceControl: v });
-					}}
+			<SettingsGroup label="Typography">
+				<SettingsRow
+					label="Reading font"
+					hint={`Empty = ${DEFAULT_READING_FONT}`}
+					testid="row-font"
 				>
-					<option value="slider">Slider (5–100%)</option>
-					<option value="buttons">Buttons</option>
-				</ThinSelect>
-			</SettingsRow>
+					<span ref={fontMenuOpen ? menuAnchorRef : undefined} className="relative flex min-w-0 max-w-full items-center gap-2">
+						{/* The shared Agent/Appearance collapsed-menu trigger.
+						    The tooltip rides the CLOSED button ONLY
+						    (owner ruling 2026-09-26: never while
+						    the dropdown is out — it popped over the open
+						    menu when the wrap covered the whole anchor
+						    span). */}
+						{(() => {
+							const triggerButton = (
+								<SettingsMenuTrigger
+									value={appearance?.fontFamily || DEFAULT_READING_FONT}
+									aria-label="Reading font"
+									aria-expanded={fontMenuOpen}
+									data-testid="font-trigger"
+									onClick={openFontMenu}
+									className="min-w-20"
+								/>
+							);
+							return fontMenuOpen ? (
+								triggerButton
+							) : (
+								<Hint label="Choose from your installed fonts" side="left">
+									{triggerButton}
+								</Hint>
+							);
+						})()}
+						{fontMenuOpen && (
+							<MenuShell
+								preferredSide="down"
+								anchorTestid="font-trigger"
+								testid="font-menu"
+								onClose={() => { setFontMenuOpen(false); return "closed"; }}
+								menuClass="flex w-[18rem] flex-col gap-0.5 lh-menu"
+							>
+								<FontMenuList
+									families={localFonts === undefined ? undefined : (localFonts ?? [...CURATED_FALLBACK_FONTS])}
+									effectiveFamily={appearance?.fontFamily ?? null}
+									onPick={pickFont}
+									footer={
+										localFonts === undefined
+											? undefined
+											: localFonts === null
+												? enumEmpty
+													? "Common families — installed fonts could not be read"
+													: "Common families — your installed list needs the desktop app"
+												: "Your installed fonts"
+									}
+								/>
+							</MenuShell>
+						)}
+					</span>
+				</SettingsRow>
+				<SettingsRow label="Reading font size" hint={`${resolved.proseFontSize}px`} testid="row-prose-size">
+					<CommitInput
+						type="number"
+						value={String(appearance?.proseFontSize ?? "")}
+						placeholder={String(FACTORY_SETTINGS.appearance.proseFontSize)}
+						ariaLabel="prose font size"
+						testid="input-prose-size"
+						onCommit={(v) => {
+							// Empty = factory default (owner, fix wave): omit the key so the record
+							// UNSETS and the field stays empty (absence, not null, is the
+							// unset for numbers). Number("") is 0, so the old clamp wrote 12.
+							if (v === "") {
+								return onSectionChange({ ...appearance, proseFontSize: undefined });
+							}
+							const n = Number(v);
+							if (!Number.isFinite(n)) return false; // bad input: no write, factory stays
+							return onSectionChange({ ...appearance, proseFontSize: Math.min(24, Math.max(12, Math.round(n))) });
+						}}
+					/>
+				</SettingsRow>
+				<SettingsRow label="Code ligatures" testid="row-code-ligatures">
+					<Toggle
+						checked={resolved.codeLigatures}
+						label="Code ligatures"
+						onChange={(on) => onSectionChange({ ...appearance, codeLigatures: on })}
+					/>
+				</SettingsRow>
+				<SettingsRow label="Session names in serif" testid="row-session-serif">
+					<Toggle
+						checked={resolved.sessionNameSerif}
+						label="session names serif"
+						onChange={(on) => onSectionChange({ ...appearance, sessionNameSerif: on })}
+					/>
+				</SettingsRow>
+				<NativeInkRow />
+				<SettingsRow label="Compact session list" testid="row-compact-session-list">
+					<Toggle
+						checked={resolved.compactSessionList}
+						label="Compact session list"
+						onChange={(on) => onSectionChange({ ...appearance, compactSessionList: on })}
+					/>
+				</SettingsRow>
+				<SettingsRow label="Heading weight" hint={`${resolved.mdRendering.headingWeight}`} testid="row-heading-weight">
+					<CommitInput
+						type="number"
+						value={String(md?.headingWeight ?? "")}
+						placeholder="900"
+						ariaLabel="heading weight"
+						testid="input-heading-weight"
+						onCommit={(v) => {
+							// Empty = factory default (owner, fix wave): Number("") is 0, so
+							// Absence is the unset representation — the old clamp wrote 100.
+							if (v === "") {
+								return onSectionChange({ ...appearance, mdRendering: { ...md, headingWeight: undefined } });
+							}
+							const n = Number(v);
+							if (!Number.isFinite(n)) return false;
+							return onSectionChange({
+								...appearance,
+								mdRendering: { ...md, headingWeight: Math.min(900, Math.max(100, Math.round(n))) },
+							});
+						}}
+					/>
+				</SettingsRow>
+				<SettingsRow label="Transcript width" testid="row-transcript-width">
+					<TranscriptWidthSlider
+						value={resolved.transcriptMaxWidth}
+						// Full = absence (the unset representation for numbers).
+						onCommit={(rem) => { void onSectionChange({ ...appearance, transcriptMaxWidth: rem ?? undefined }); }}
+					/>
+				</SettingsRow>
+				<SettingsRow label="Adapt question layout" testid="row-adaptive-questions">
+					<Toggle
+						checked={resolved.adaptiveQuestions}
+						label="Adapt question layout"
+						onChange={(on) => onSectionChange({ ...appearance, adaptiveQuestions: on })}
+					/>
+				</SettingsRow>
+				<SettingsRow
+					label="Confidence input"
+					hint="How you rate confidence before submitting a check (practice problems keep buttons for now)"
+					testid="row-confidence-control"
+				>
+					<ThinSelect
+						value={resolved.confidenceControl}
+						ariaLabel="confidence input"
+						testid="select-confidence-control"
+						onChange={(v) => {
+							if (isConfidenceControl(v)) void onSectionChange({ ...appearance, confidenceControl: v });
+						}}
+					>
+						<option value="slider">Slider (5–100%)</option>
+						<option value="buttons">Buttons</option>
+					</ThinSelect>
+				</SettingsRow>
+			</SettingsGroup>
 		</>
 	);
 }

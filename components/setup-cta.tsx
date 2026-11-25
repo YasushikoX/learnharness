@@ -16,6 +16,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { buttonVariants } from "@/components/ui/button";
 import { CUSTOM_PROVIDER, MODEL_SLOTS, type AuthKeyStatus, type ModelCatalogResponse } from "@/src/core";
 import { classifyKeys, type ProviderKeyInfo } from "@/components/settings/keys-section";
 import { useModelCatalog } from "@/components/model-catalog";
@@ -84,7 +85,7 @@ export function ZeroKeysPill({ onOpen, inline = false }: { onOpen: () => void; i
 			type="button"
 			data-testid="setup-cta-keys"
 			onClick={onOpen}
-			className="rounded-sm border border-border bg-card px-3 py-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 hover:bg-accent cursor-pointer"
+			className={buttonVariants({ variant: "outline", size: "sm" })}
 		>
 			Add a provider key
 		</button>

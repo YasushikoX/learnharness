@@ -3,7 +3,7 @@
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { HostDialog } from "@/components/host-dialog";
 import type { CloseOutcome } from "@/components/interaction-layers";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { PromptText } from "./prompt-text";
 import { SettingsSegmentedControl } from "./controls";
 
@@ -101,32 +101,32 @@ export function PromptSegmentDialog({ name, source, override, mode, returnFocusF
 
 	return <HostDialog open onClose={requestClose} returnFocusFallback={returnFocusFallback} aria-labelledby={titleId} aria-describedby={nameId}
 		backdropProps={{ className: "fixed inset-0 flex items-center justify-center lh-scrim" }}
-		frame={<div aria-busy={busy !== null} data-testid="prompt-segment-dialog" className="settings-dialog-pop mx-4 flex h-[720px] max-h-[90dvh] w-full max-w-4xl flex-col overflow-hidden lh-dialog" />}>
-		<header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+		frame={<div aria-busy={busy !== null} data-testid="prompt-segment-dialog" className="lh-dialog mx-4 flex h-[720px] max-h-[90dvh] w-full max-w-[768px] flex-col overflow-hidden" />}>
+		<header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-6 py-4 max-sm:px-4">
 			<div className="min-w-0">
-				<h2 id={titleId} className="text-sm font-semibold">{title}</h2>
-				<p id={nameId} className="mt-0.5 font-prose text-(length:--lh-prose-size) text-muted-foreground">{name}</p>
+				<h2 id={titleId} className="lh-section-title">{title}</h2>
+				<p id={nameId} className="text-sm/5 text-muted-foreground">{name}</p>
 			</div>
 			<SettingsSegmentedControl label="Prompt display" disabled={confirmDiscard}
 				options={[{ value: "markdown", label: "Markdown" }, { value: "preview", label: "Preview" }]}
 				value={preview ? "preview" : "markdown"} onChange={next => setPreview(next === "preview")} />
 		</header>
-		<div className="flex min-h-0 flex-1 flex-col px-4 pt-4" inert={confirmDiscard}>
+		<div className="flex min-h-0 flex-1 flex-col px-6 py-4 max-sm:px-4" inert={confirmDiscard}>
 			<PromptText text={text} preview={preview} fieldRef={field} onChange={editing ? setText : undefined} busy={busy !== null} />
 		</div>
-		<footer className="flex shrink-0 flex-col gap-2 px-4 py-3">
+		<footer className="flex shrink-0 flex-col gap-2 border-t border-border px-6 py-4 max-sm:px-4">
 			{error && <p role="alert" className="text-xs text-error">{error}</p>}
 			{confirmDiscard ? <div className="flex flex-wrap items-center justify-between gap-2">
 				<p role="status" className="text-xs">Discard unsaved changes?</p>
 				<div className="ml-auto flex gap-2">
-					<Button ref={keepEditing} type="button" variant="outline" size="sm" onClick={resumeEditing}>Keep editing</Button>
-					<Button type="button" variant="destructive" size="sm" onClick={onClose}>Discard changes</Button>
+					<Button ref={keepEditing} type="button" variant="outline" onClick={resumeEditing}>Keep editing</Button>
+					<Button type="button" variant="destructive" onClick={onClose}>Discard changes</Button>
 				</div>
 			</div> : <div className="flex flex-wrap items-center justify-between gap-2">
-				{editing && savedText !== null && <button type="button" className={buttonVariants({ variant: "destructive", size: "sm" })} disabled={busy !== null || dirty} onClick={() => void remove()}>{busy === "delete" ? "Deleting…" : "Delete override"}</button>}
+				{editing && savedText !== null && <Button type="button" variant="destructive" disabled={busy !== null || dirty} onClick={() => void remove()}>{busy === "delete" ? "Deleting…" : "Delete override"}</Button>}
 				<div className="ml-auto flex gap-2">
-					<Button ref={closeButton} type="button" variant="ghost" size="sm" disabled={busy !== null} onClick={requestClose}>Close</Button>
-					{editing && <Button type="button" size="sm" disabled={busy !== null || (!dirty && !activationFailed)} onClick={() => void save()}>
+					<Button ref={closeButton} type="button" variant="ghost" disabled={busy !== null} onClick={requestClose}>Close</Button>
+					{editing && <Button type="button" disabled={busy !== null || (!dirty && !activationFailed)} onClick={() => void save()}>
 						{busy === "save" ? "Saving…" : activationFailed && !dirty ? "Retry activation" : "Save and activate"}
 					</Button>}
 				</div>

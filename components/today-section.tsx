@@ -136,15 +136,16 @@ export function TodaySection() {
 				data-drawer-close
 				data-testid="today-link"
 				aria-current={active ? "page" : undefined}
+				// A 32px nav row (UI round 1b, SPEC §7 "Sidebar"): 16px icon, the raised fill when hovered or current.
 				className={cn(
-					"lh-touch flex w-full items-center gap-2 rounded-lg px-2 py-1 text-sm font-medium transition-colors hover:bg-accent",
-					active ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
+					"lh-touch flex h-8 w-full items-center gap-2 rounded-md px-2 text-sm font-medium outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised focus-visible:ring-2 focus-visible:ring-focus",
+					active ? "bg-raised text-foreground" : "text-muted-foreground hover:text-foreground",
 				)}
 			>
-				<CalendarCheckIcon className="size-3.5" />
+				<CalendarCheckIcon className="size-4" strokeWidth={1.75} />
 				Today
 				<span className="font-normal tabular-nums text-muted-foreground">{count}</span>
-				<ChevronRightIcon className="ml-auto size-3.5" />
+				<ChevronRightIcon className="ml-auto size-3.5" strokeWidth={1.75} />
 			</Link>
 		</div>
 	);

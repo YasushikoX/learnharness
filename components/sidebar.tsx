@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { MenuShell } from "@/components/menu-shell";
 import { DeleteFolderDialog, DeleteSessionDialog, folderDeleteCopy, type DeleteDialogCopy } from "@/components/delete-session-dialog";
 import type { ChatDeleteMode, ThemeMode } from "@/src/core";
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, DumbbellIcon, FolderPlusIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, DumbbellIcon, FolderPlusIcon, MoreHorizontalIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
 import { ActivitySection } from "@/components/activity-dock";
 import { CoursesSection } from "@/components/courses-section";
 import { TodaySection } from "@/components/today-section";
@@ -366,10 +366,13 @@ export function SessionRow({
 	courseTitle,
 	depth = 0,
 	compact = false,
+	menuOpen = false,
 }: {
 	chat: ChatListItem;
 	compact?: boolean;
 	active: boolean;
+	/** This row's menu is open: the row keeps its fill and its "…" trigger. */
+	menuOpen?: boolean;
 	onOpen: () => void;
 	/** The session's course (fork addition — docs/courses.md §6): its
 	 *  title leads the meta line. Absent for other sessions, or when the
@@ -384,38 +387,58 @@ export function SessionRow({
 	onContextMenu?: (e: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
 	return (
-		<button
-			type="button"
-			onClick={onOpen}
-			onContextMenu={onContextMenu}
-			data-drawer-close
-			data-testid={kbdSelected ? "session-row-kbd" : "session-row"}
-			data-session-id={chat.id}
-			className={cn(
-				"relative flex w-full items-center gap-2 pr-3 text-left hover:bg-accent",
-				compact ? SIDEBAR_COMPACT_ROW : "py-2 touch:py-2.5",
-				active && "bg-accent",
-				kbdSelected && !active && "bg-accent/60 ring-1 ring-inset ring-border",
-			)}
-			style={{ paddingLeft: sidebarRowBox(depth).paddingLeft }}
-		>
-			<SessionStatus busy={chat.busy || chat.compacting} />
-			<span className="min-w-0 flex-1">
-				<span className={cn("block truncate", sidebarNameFont(compact))}>{chat.title}</span>
-				{!compact && (
-					<span className="block truncate text-xs text-muted-foreground">
-						{courseTitle ? `${courseTitle} · ${sessionMeta(chat)}` : sessionMeta(chat)}
-					</span>
+		// UI round 1b (SPEC §7 "Sidebar"): an inset row (radius 8, the raised fill when hovered or current, instant as
+		// before), title 13px (400: weight is not a second "active" channel, owner round 5) over 12px muted meta, 6px
+		// apart. The "…" trigger sits at the row's right end, shown on hover, on keyboard focus and while its menu is
+		// open; the menu anchors to it (right-click too), never mid-row.
+		<div className="group/session relative" data-menu-open={menuOpen || undefined}>
+			<button
+				type="button"
+				onClick={onOpen}
+				onContextMenu={onContextMenu}
+				data-drawer-close
+				data-testid={kbdSelected ? "session-row-kbd" : "session-row"}
+				data-session-id={chat.id}
+				className={cn(
+					"relative flex w-full items-center gap-2 rounded-md pr-2 text-left outline-none hover:bg-raised focus-visible:ring-2 focus-visible:ring-focus",
+					onContextMenu && "group-hover/session:pr-9 group-data-[menu-open]/session:pr-9",
+					compact ? SIDEBAR_COMPACT_ROW : "py-2 touch:py-2.5",
+					(active || menuOpen) && "bg-raised",
+					kbdSelected && !active && "bg-raised/60 ring-1 ring-inset ring-border",
 				)}
-			</span>
-			{/* The dumbbell rides the FAR RIGHT (owner round 6, 2026-10-05) —
-			    was left of the name; right-aligned keeps the titles flush with
-			    the teaching rows and reads cleaner. */}
-			{(chat.kind ?? "teach") === "practice" && (
-				<DumbbellIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Practice session" />
+				style={{ paddingLeft: sidebarRowBox(depth).paddingLeft }}
+			>
+				<SessionStatus busy={chat.busy || chat.compacting} />
+				<span className="flex min-w-0 flex-1 flex-col gap-1.5">
+					<span className={cn("block truncate", sidebarNameFont(compact), !compact && "text-[13px] leading-[18px]")}>{chat.title}</span>
+					{!compact && (
+						<span className="block truncate text-xs leading-4 text-muted-foreground">
+							{courseTitle ? `${courseTitle} · ${sessionMeta(chat)}` : sessionMeta(chat)}
+						</span>
+					)}
+				</span>
+				{/* The dumbbell rides the FAR RIGHT (owner round 6, 2026-10-05); the "…" trigger takes its place on hover. */}
+				{(chat.kind ?? "teach") === "practice" && (
+					<DumbbellIcon className={cn("size-3.5 shrink-0 text-muted-foreground", onContextMenu && "group-hover/session:hidden group-data-[menu-open]/session:hidden")} aria-label="Practice session" />
+				)}
+				{chat.finished && <CheckIcon className={cn("size-3.5 shrink-0 text-muted-foreground", onContextMenu && "group-hover/session:hidden group-data-[menu-open]/session:hidden")} aria-label="Finished" data-testid="session-finished" />}
+			</button>
+			{onContextMenu && (
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon-xs"
+					aria-label={`Actions for ${chat.title}`}
+					aria-haspopup="menu"
+					aria-expanded={menuOpen}
+					data-testid="session-menu-trigger"
+					onClick={onContextMenu}
+					className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground opacity-0 hover:bg-raised-strong hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/session:pointer-events-auto group-hover/session:opacity-100 group-data-[menu-open]/session:pointer-events-auto group-data-[menu-open]/session:opacity-100"
+				>
+					<MoreHorizontalIcon className="size-4" strokeWidth={1.75} />
+				</Button>
 			)}
-			{chat.finished && <CheckIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Finished" data-testid="session-finished" />}
-		</button>
+		</div>
 	);
 }
 
@@ -437,7 +460,7 @@ export function RenameRow({ chat, onCommit, onCancel, depth = 0, compact = false
 	return (
 		<div
 			data-testid="session-rename-row"
-			className={cn("relative flex w-full items-center bg-accent pr-3", compact ? SIDEBAR_COMPACT_ROW : "py-2")}
+			className={cn("relative flex w-full items-center rounded-md bg-raised pr-2", compact ? SIDEBAR_COMPACT_ROW : "py-2")}
 			style={{ paddingLeft: sidebarRowBox(depth).paddingLeft }}
 		>
 			{/* NOTHING MOVES (owner, polish round): an idle row renders no
@@ -601,7 +624,7 @@ function SessionsSidebar() {
 					toggleFinished();
 				}
 			}}
-			className="lh-touch mb-0.5 mt-1 flex w-full cursor-pointer items-center gap-1.5 rounded-lg px-1 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+			className="lh-touch mt-1 flex h-8 w-full cursor-pointer items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-focus"
 		>
 			<CheckIcon className="size-3" />
 			Finished
@@ -726,6 +749,7 @@ function SessionsSidebar() {
 	   shell measures it on its first (hidden) pass. */
 	const [ctxChatId, setCtxChatId] = useState<string | null>(null);
 	const ctxAnchorRef = useRef<HTMLElement | null>(null);
+	const ctxRowRef = useRef<HTMLElement | null>(null);
 	const [renamingId, setRenamingId] = useState<string | null>(null);
 	const [deleting, setDeleting] = useState<ChatListItem | null>(null);
 	/** The session row whose swipe actions are open (one at a time). */
@@ -737,10 +761,36 @@ function SessionsSidebar() {
 	const ctxOpenedAtRef = useRef(0);
 	const openContext = (e: React.MouseEvent<HTMLButtonElement>, chat: ChatListItem) => {
 		e.preventDefault(); // suppress the native menu
+		// The row's "…" trigger toggles its own menu.
+		if (e.type === "click" && ctxChatId === chat.id) {
+			setCtxChatId(null);
+			return;
+		}
 		ctxOpenedAtRef.current = performance.now();
-		ctxAnchorRef.current = e.currentTarget;
+		// Anchor to the row's "…" trigger (UI round 1b, SPEC §8 "session menu anchored mid-row"), the row itself as
+		// the fallback; the anchor is assigned before the state flip so the shell measures it on its first pass.
+		const trigger = e.currentTarget.parentElement?.querySelector<HTMLElement>('[data-testid="session-menu-trigger"]');
+		ctxAnchorRef.current = trigger ?? e.currentTarget;
+		ctxRowRef.current = e.currentTarget.parentElement ?? e.currentTarget;
 		setCtxFolderId(null);
 		setCtxChatId(chat.id);
+	};
+
+	// Where the session menu opens (UI round 2): NEXT TO the row's "…" trigger, its top on the row's top, so it never
+	// slices its own row and no row text shows beside it. Without room to the right (a phone's drawer) it opens below
+	// the whole row instead, right-aligned to the trigger.
+	const sessionMenuAnchorRect = () => {
+		const trigger = ctxAnchorRef.current;
+		if (!trigger || typeof window === "undefined") return null;
+		const t = trigger.getBoundingClientRect();
+		const row = (ctxRowRef.current ?? trigger).getBoundingClientRect();
+		const MENU_W = 208; // the menu's w-52
+		if (t.right + 4 + MENU_W <= window.innerWidth - 8) {
+			// The shell right-aligns to `right`: a virtual box exactly the menu's width just past the trigger.
+			const x = t.right + 4;
+			return { left: x, right: x + MENU_W, top: row.top - 4, bottom: row.top - 4 };
+		}
+		return { left: row.left, right: t.right, top: row.top, bottom: row.bottom };
 	};
 
 	// The menu contract (agent-section's): any pointerdown outside the menu
@@ -962,6 +1012,7 @@ function SessionsSidebar() {
 								router.push(`/chat/${c.id}`);
 							}}
 							onContextMenu={(e) => openContext(e, c)}
+							menuOpen={ctxChatId === c.id}
 							courseTitle={c.course ? courses.find((k) => k.id === c.course!.courseId)?.title : undefined}
 						/>
 					</SwipeRow>
@@ -1027,10 +1078,10 @@ function SessionsSidebar() {
 				className={cn(
 					overlay
 						? cn(
-								"fixed inset-y-0 left-0 z-[45] w-72 max-w-[85vw] overflow-hidden transition-transform duration-200",
+								"fixed inset-y-0 left-0 z-[45] w-[260px] max-w-[85vw] overflow-hidden transition-transform duration-200",
 								open ? "translate-x-0 shadow-xl" : "-translate-x-full",
 							)
-						: cn("sidebar-motion shrink-0 overflow-hidden duration-200", open ? "w-72" : "w-0"),
+						: cn("sidebar-motion shrink-0 overflow-hidden duration-200", open ? "w-[260px]" : "w-0"),
 				)}
 				aria-hidden={!open}
 				inert={overlay && !open}
@@ -1040,12 +1091,12 @@ function SessionsSidebar() {
 					if (overlay && (e.target as Element).closest("[data-drawer-close], a[href]")) close();
 				}}
 			>
-				<div className="flex h-full w-72 max-w-[85vw] flex-col border-r bg-background pb-[var(--lh-safe-bottom)] pl-[var(--lh-safe-left)] pt-[var(--lh-safe-top)]">
+				<div className="flex h-full w-[260px] max-w-[85vw] flex-col border-r bg-sidebar-fill pb-[var(--lh-safe-bottom)] pl-[var(--lh-safe-left)] pt-[var(--lh-safe-top)]">
 				{/* LH wordmark — the owner's header; close toggle sits at the edge.
 				    Merged chrome (2026-09-17): in Electron this band is the
 				    window's drag surface and starts after the traffic lights
 				    (.lh-lights-gutter); in the browser those classes are inert. */}
-				<div className="lh-drag lh-lights-gutter flex items-center justify-between px-4 py-3">
+				<div className="lh-drag lh-lights-gutter flex h-12 shrink-0 items-center justify-between px-3">
 					{/* The owner's mark (2026-09-17) replaces the "LH" text — still the
 					    home link, still vertically centered by the band's items-center.
 					    The 92px .lh-lights-gutter keeps it clear of the traffic lights
@@ -1084,28 +1135,30 @@ function SessionsSidebar() {
 
 				{/* Core doors always lead explicit plugin sidebar placements. */}
 				<PluginSidebarActions>
-					<button
+					<Button
 						type="button"
+						variant="secondary"
 						data-testid="new-session"
 						data-drawer-close
 						onClick={() => void newSession()}
-						className="lh-touch lh-press flex w-full items-center gap-2 rounded-md bg-accent px-2.5 py-1.5 touch:px-3 touch:py-2.5 text-sm font-medium text-foreground hover:bg-accent/70"
+						className="lh-touch w-full"
 					>
-						<PlusIcon className="size-3.5 touch:size-4" />
+						<PlusIcon className="size-4" />
 						Teaching
 						<span className="sr-only">create a new teaching session</span>
-					</button>
-					<button
+					</Button>
+					<Button
 						type="button"
+						variant="secondary"
 						data-testid="new-session-practice"
 						data-drawer-close
 						onClick={() => router.push("/chat/new?mode=practice")}
-						className="lh-touch lh-press flex w-full items-center gap-2 rounded-md bg-accent px-2.5 py-1.5 touch:px-3 touch:py-2.5 text-sm font-medium text-foreground hover:bg-accent/70"
+						className="lh-touch w-full"
 					>
-						<DumbbellIcon className="size-3.5 touch:size-4" />
+						<DumbbellIcon className="size-4" />
 						Practice
 						<span className="sr-only">create a new practice session</span>
-					</button>
+					</Button>
 				</PluginSidebarActions>
 
 				{/* Today (fork addition, 2026-11-13): the next step, above the courses it comes from. */}
@@ -1115,7 +1168,7 @@ function SessionsSidebar() {
 				    sessions, which they are made of. */}
 				<CoursesSection onCourses={setCourses} query={query} />
 
-				<div className="mx-3 mb-1 flex items-center gap-1.5">
+				<div className="mx-3 mb-2 flex flex-col gap-2">
 					<Hint label="Search sessions" action="sessions-search" side="bottom">
 					<span className="relative min-w-0 flex-1">
 						<Input
@@ -1170,11 +1223,12 @@ function SessionsSidebar() {
 							}}
 							placeholder="Search…"
 							aria-label="Search sessions"
-							className="lh-touch h-6 touch:h-8 rounded-full border-transparent bg-accent/60 pl-6 touch:pl-8 text-xs placeholder:text-muted-foreground"
+							className="lh-touch h-[30px] w-full rounded-md border-input bg-card pl-8 text-[13px] placeholder:text-muted-foreground"
 						/>
-						<SearchIcon className="pointer-events-none absolute left-1.5 touch:left-3 top-1/2 size-3 touch:size-3.5 -translate-y-1/2 text-muted-foreground" />
+						<SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
 					</span>
 					</Hint>
+					<div className="flex items-center gap-2">
 
 				{/* The three-way filter, HEADING THE LIST (owner round 8b,
 				    2026-10-05): it scopes what the list shows. Order: Teaching /
@@ -1183,7 +1237,9 @@ function SessionsSidebar() {
 				    Persisted client-side. Since 2026-11-16 (owner, tablet pass) a
 				    small segmented control on the search's row, the selected
 				    segment a quiet tone instead of the gold pill. */}
-				<div className="flex shrink-0 items-center rounded-lg bg-accent/40 p-0.5" role="group" aria-label="Show sessions" data-testid="session-kind-filter">
+				{/* UI round 1b: the app's one segmented grammar (Settings' SettingsSegmentedControl): a 28px raised track,
+				    6px-radius segments, the selected one on the surface fill with a hairline. */}
+				<div className="flex h-7 min-w-0 flex-1 items-center rounded-md bg-raised p-0.5" role="group" aria-label="Show sessions" data-testid="session-kind-filter">
 					{(["teach", "practice", "all"] as const).map((f) => (
 						<button
 							key={f}
@@ -1193,8 +1249,8 @@ function SessionsSidebar() {
 							aria-label={f === "teach" ? "Teaching" : f === "all" ? "All" : "Practice"}
 							onClick={() => setFilter(f)}
 							className={cn(
-								"lh-touch lh-press rounded-md px-1.5 py-1 text-xs transition-colors",
-								kindFilter === f ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+								"lh-touch h-6 min-w-0 flex-1 rounded-sm px-1 text-[13px] font-medium leading-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease)",
+								kindFilter === f ? "bg-card text-foreground shadow-[0_0_0_1px_var(--border),0_1px_2px_rgb(0_0_0/0.08)] dark:bg-raised-strong" : "text-muted-foreground hover:text-foreground",
 							)}
 						>
 							{f === "teach" ? "Teach" : f === "all" ? "All" : "Practice"}
@@ -1203,20 +1259,24 @@ function SessionsSidebar() {
 				</div>
 					{organization && (
 						<Hint label="Add folder" side="bottom">
-							<button
+							<Button
 								type="button"
+								variant="ghost"
+								size="icon-sm"
 								aria-label="Add folder"
 								data-testid="sidebar-add-folder"
 								onClick={() => setCreatingFolder({ parentId: null })}
-								className="lh-touch flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+								className="lh-touch shrink-0 text-muted-foreground hover:text-foreground"
 							>
-								<FolderPlusIcon className="size-3.5" />
-							</button>
+								<FolderPlusIcon className="size-4" />
+							</Button>
 						</Hint>
 					)}
 				</div>
 
-				{folderFailure && (
+				</div>
+
+					{folderFailure && (
 					<div role="alert" data-testid="sidebar-folder-error" className="mx-3 mt-2 flex items-start gap-2 text-xs text-error">
 						<span className="min-w-0 flex-1">{folderFailure}</span>
 						<button type="button" onClick={clearFolderFailure} className="shrink-0 text-muted-foreground hover:text-foreground">Dismiss</button>
@@ -1227,7 +1287,7 @@ function SessionsSidebar() {
 				    highlights run to the edge; it shows while scrolling/hovering. */}
 				<OverlayScrollArea scrollRef={listRef} data-testid="session-list" className="flex flex-col" {...folderDrop.containerProps}>
 					{(creatingFolder?.parentId === null || (rows !== null && rows.length > 0)) && (
-						<div data-testid="session-rows">
+						<div data-testid="session-rows" className="px-3">
 							{creatingFolder?.parentId === null && (
 								<NewFolderRow depth={0} compact={compactSessionList} onDone={() => setCreatingFolder(null)}
 									onCreate={(name) => changeFolders({ action: "create-folder", name, parentId: null })} />
@@ -1237,15 +1297,15 @@ function SessionsSidebar() {
 					)}
 					{/* The finished group (fork): unfiled finished sessions, collapsed at the bottom of the list. */}
 					{rows !== null && finishedCount > 0 && (
-						<div data-testid="finished-group">
-							<div className="px-2">{finishedHeader}</div>
+						<div data-testid="finished-group" className="px-3">
+							{finishedHeader}
 							{finishedExpanded && finishedMatched?.map((c) => renderSessionRow(c, 0))}
 						</div>
 					)}
 					{rows === null ? (
-						<div className="px-4 py-4 text-xs text-muted-foreground">Loading…</div>
+						<div className="px-5 py-4 text-xs text-muted-foreground">Loading…</div>
 					) : rows.length === 0 && finishedCount === 0 && (
-						<div className="px-4 py-4 text-xs text-muted-foreground">
+						<div className="px-5 py-4 text-xs text-muted-foreground">
 							{query.trim() ? "No sessions match." : "No sessions yet."}
 						</div>
 					)}
@@ -1269,16 +1329,20 @@ function SessionsSidebar() {
 					<ActivitySection
 						trailing={
 							<Hint label="Settings" action="open-settings" side="right">
-								<button
+								{/* A 32px ghost icon button (UI round 1b): at 260px the row cannot hold both labels without cutting
+								    "Background agents"; the tooltip and the accessible name still say Settings. */}
+								<Button
 									type="button"
+									variant="ghost"
+									size="icon"
 									onClick={() => openSettings()}
 									data-testid="settings-entry"
 									data-drawer-close
-									className="lh-touch flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+									className="lh-touch text-muted-foreground hover:text-foreground"
 								>
-									<SettingsIcon className="size-3.5" />
-									Settings
-								</button>
+									<SettingsIcon className="size-4" strokeWidth={1.75} />
+									<span className="sr-only">Settings</span>
+								</Button>
 							</Hint>
 						}
 					/>
@@ -1291,6 +1355,7 @@ function SessionsSidebar() {
 				{ctxChatId !== null && (
 					<MenuShell onClose={() => { setCtxChatId(null); return "closed"; }}
 						anchorRef={ctxAnchorRef}
+						getAnchorRect={sessionMenuAnchorRect}
 						testid="session-context-menu"
 						preferredSide="down"
 						menuClass="flex w-52 flex-col gap-0.5 lh-menu"

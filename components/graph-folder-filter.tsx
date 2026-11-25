@@ -9,6 +9,7 @@ import { INTERACTION_LAYER_Z_BASE } from "@/components/host-dialog";
 import { Hint } from "@/components/ui/hint";
 import { TreeCheckbox } from "@/components/tree-presentation";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 /**
  * The graph's folder filter (approved plan): VIEW ONLY. Ticked folders of the
@@ -114,8 +115,8 @@ export function GraphFolderFilterControl({ organization, listed, selected, onCha
 	return (
 		<div ref={rootRef} className="lh-no-drag relative" onKeyDown={walk}>
 			<Hint label={activeCount > 0 ? "Graph filtered by folder" : "Show folders"} side="bottom">
-				<button
-					type="button"
+				<Button
+					type="button" variant="ghost"
 					ref={triggerRef}
 					aria-expanded={open}
 					aria-label={soleName !== null ? `Folder filter: ${soleName}` : activeCount > 0 ? `Folder filter: ${activeCount} selected` : "Folder filter"}
@@ -126,30 +127,30 @@ export function GraphFolderFilterControl({ organization, listed, selected, onCha
 						setOpen(!open);
 					}}
 					className={cn(
-						"flex h-9 items-center gap-1.5 rounded-xl transition-colors hover:bg-accent",
+						"gap-1.5 font-normal",
 						activeCount > 0
-							? "border border-primary/60 bg-card/85 px-2.5 text-foreground shadow-lg backdrop-blur"
-							: cn("w-[38px] justify-center", open ? "text-foreground" : "text-muted-foreground hover:text-foreground"),
+							? "border border-input bg-card px-2.5 text-foreground"
+							: cn("w-8 px-0", open ? "text-foreground" : "text-muted-foreground hover:text-foreground"),
 					)}
 				>
 					<FunnelIcon aria-hidden="true" className={cn("size-4 shrink-0", activeCount > 0 && "text-primary")} />
 					{soleName !== null
 						? <span data-testid="graph-folder-filter-name" className="max-w-40 truncate text-xs">{soleName}</span>
 						: activeCount > 0 && <span className="text-xs tabular-nums">{activeCount}</span>}
-				</button>
+				</Button>
 			</Hint>
 			{open && (
 				<div ref={panelRef} role="group" aria-label="Show folders" tabIndex={-1} data-testid="graph-folder-filter-panel" style={{ zIndex: INTERACTION_LAYER_Z_BASE + popupLayer.order }}
-					className="absolute left-0 top-full mt-2 flex max-h-[60vh] w-64 flex-col rounded-xl border bg-card/85 p-2 shadow-lg backdrop-blur">
-					<div className="mb-1 flex items-center justify-between gap-2 px-2">
+					className="lh-popover absolute left-0 top-full mt-2 flex max-h-[60vh] w-64 flex-col p-1">
+					<div className="mb-1 flex h-7 items-center justify-between gap-2 px-2">
 						<span className="lh-eyebrow text-muted-foreground">Show folders</span>
 						{activeCount > 0 && (
-							<button type="button" data-testid="graph-folder-filter-clear" data-folder-filter-control onClick={() => {
+							<Button type="button" variant="ghost" size="xs" data-testid="graph-folder-filter-clear" data-folder-filter-control onClick={() => {
 								// This button disappears once cleared; keep focus inside the popup.
 								(panelRef.current?.querySelector<HTMLElement>("input[data-folder-filter-control]") ?? panelRef.current)?.focus();
 								onChange(new Set());
 							}}
-								className="text-xs text-muted-foreground transition-colors hover:text-foreground">Show all</button>
+								className="-mr-1 font-normal text-muted-foreground hover:text-foreground">Show all</Button>
 						)}
 					</div>
 					<div className="overflow-y-auto">

@@ -81,7 +81,7 @@ describe("SettingsDialog (the designed surface, SSR)", () => {
 			assert.equal(icons.length, 1);
 			const icon = icons[0]!;
 			assert.ok(icon.classList.contains(`lucide-${iconName}`), `${id}: agreed icon`);
-			assert.ok(icon.classList.contains("size-3.5"));
+			assert.ok(icon.classList.contains("size-4"));
 			assert.ok(icon.classList.contains("shrink-0"));
 			assert.equal(icon.getAttribute("aria-hidden"), "true");
 			assert.equal(icon.getAttribute("focusable"), "false");
@@ -144,11 +144,11 @@ describe("Providers settings-label typography", () => {
 		assert.ok(tagOf(html, "dictation-language").includes("text-sm"));
 	});
 
-	it("only Providers subscription labels use sans; setup labels retain their compact mono styling", () => {
+	it("Providers subscription labels use the shared Settings row; setup labels stay compact", () => {
 		const settings = renderToStaticMarkup(<SubscriptionConnections />);
 		const setup = renderToStaticMarkup(<SubscriptionConnections setup />);
 		for (const label of ["ChatGPT", "GitHub Copilot", "Grok"]) {
-			assert.ok(settings.includes(`<span class="font-prose text-(length:--lh-prose-size) text-foreground">${label}</span>`), `${label}: settings sans label`);
+			assert.ok(settings.includes(`<span class="block text-base font-medium">${label}</span>`), `${label}: settings row label`);
 			assert.ok(setup.includes(`<span class="font-ui text-xs text-foreground">${label}</span>`), `${label}: unchanged setup label`);
 		}
 		assert.equal((settings.match(/>Connect<\/button>/g) ?? []).length, 3);
@@ -401,7 +401,7 @@ describe("AppearanceSection (thin SSR)", () => {
 			assert.ok(tagOf(html, `theme-card-${t.id}`).includes('aria-pressed="false"'), t.id);
 		}
 		assert.equal((html.match(/lucide-check/g) ?? []).length, 1, "one check, on the selected card");
-		assert.match(html, /Catppuccin Latte · light · sets every color below/);
+		assert.match(html, /Catppuccin Latte selected/);
 		assert.ok(html.includes('data-testid="theme-import"'));
 		assert.ok(html.includes('data-testid="theme-export"'));
 		assert.ok(!html.includes("theme-remove-"), "presets cannot be removed");

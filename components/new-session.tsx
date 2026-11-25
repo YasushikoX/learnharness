@@ -1,6 +1,7 @@
 "use client";
 
 import { uploadDraftMaterials } from "@/components/materials-client";
+import { buttonVariants } from "@/components/ui/button";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { SurfaceRegion, usePageSurfaceBoundary, useSurfaceChromeStyle } from "./plugin-surfaces";
@@ -206,15 +207,17 @@ export function DraftShell({
 					<div className="pointer-events-none sticky bottom-0 mt-auto w-full">
 						<Conversation className="h-full min-w-0 flex-1" initial="instant">
 							<ConversationContent className="min-h-full gap-0 p-0">
-								<ConversationEmptyState title={emptyTitle} description={emptyDescription}>
+								<ConversationEmptyState title={emptyTitle} description={emptyDescription} className={setup ? "px-0" : undefined}>
 									{setup ? (
-										<>
-											<div className="space-y-1">
-												<h3 className="font-medium text-sm">{emptyTitle}</h3>
-												<p className="text-muted-foreground text-sm">{emptyDescription}</p>
+										// UI round 2: one composition: the title at the page-H1 scale, the setup card and the composer
+										// below on one shared column (the dock's own width and gutters), one left edge.
+										<div className={`${DOCK} flex flex-col gap-6 text-left`}>
+											<div className="flex flex-col gap-1">
+												<h1 className="lh-page-title">{emptyTitle}</h1>
+												<p className="text-body text-muted-foreground">{emptyDescription}</p>
 											</div>
-											<div className="pointer-events-auto mt-2 flex w-full justify-center">{setup}</div>
-										</>
+											<div className="pointer-events-auto w-full">{setup}</div>
+										</div>
 									) : undefined}
 								</ConversationEmptyState>
 							</ConversationContent>
@@ -454,7 +457,7 @@ overlay={
 								type="button"
 								data-testid="setup-cta"
 								onClick={() => setSetupOpen(true)}
-								className="rounded-sm border border-border bg-card px-3 py-1.5 font-ui text-xs text-foreground transition-colors hover:border-muted-foreground/50 hover:bg-accent cursor-pointer"
+								className={buttonVariants({ variant: "outline", size: "sm" })}
 							>
 								Set up your models
 							</button>

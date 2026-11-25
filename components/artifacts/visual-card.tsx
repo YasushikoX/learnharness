@@ -3,6 +3,7 @@
 import { useContext, useState } from "react";
 import { ChatActionsContext } from "@/components/chat";
 import { DownloadIcon, MaximizeIcon } from "lucide-react";
+import { buttonVariants } from "@/components/ui/button";
 import { InvertDiscIcon } from "@/components/artifacts/invert-disc";
 import { Toggle } from "@/components/settings/controls";
 import { useSessionMermaid } from "@/components/session-overlay";
@@ -146,7 +147,7 @@ export function VisualOutputCard({
 				<div className="flex min-w-0 items-baseline gap-2">
 					<span className="shrink-0 lh-eyebrow text-muted-foreground">Figure</span>
 					{caption && (
-						<span className="text-sm text-muted-foreground" data-testid="figure-caption">
+						<span className="font-sans text-sm leading-5 text-muted-foreground" data-testid="figure-caption">
 							{caption}
 						</span>
 					)}
@@ -169,7 +170,7 @@ export function VisualOutputCard({
 						title="Download as SVG"
 						onClick={() => downloadFile("figure.svg", svg, "image/svg+xml")}
 						data-testid="visual-download"
-						className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+						className={buttonVariants({ variant: "ghost", size: "icon-sm", className: "text-muted-foreground hover:text-foreground" })}
 					>
 						<DownloadIcon className="size-3.5" />
 					</button>
@@ -180,7 +181,7 @@ export function VisualOutputCard({
 							title="Open fullscreen"
 							onClick={() => overlay.openFigure(svg, shownInverted)}
 							data-testid="visual-open"
-							className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+							className={buttonVariants({ variant: "ghost", size: "icon-sm", className: "text-muted-foreground hover:text-foreground" })}
 						>
 							<MaximizeIcon className="size-3.5" />
 						</button>

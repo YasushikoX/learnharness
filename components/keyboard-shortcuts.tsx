@@ -194,7 +194,7 @@ function CheatSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
 			/>}
 		>
 				<div className="mb-4 flex items-baseline justify-between">
-					<span id={headingId} role="heading" aria-level={2} className="text-sm font-medium text-card-foreground">Keyboard shortcuts</span>
+					<span id={headingId} role="heading" aria-level={2} className="text-[15px] font-semibold leading-5 text-card-foreground">Keyboard shortcuts</span>
 					<span className="text-xs text-muted-foreground">Esc to close</span>
 				</div>
 				{scopes.map((scope) => {

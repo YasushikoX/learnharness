@@ -5,6 +5,7 @@ import { ChevronRightIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { RichText } from "@/components/rich-text";
 import { COURSE_MODE_LABEL, type CourseContextDetails } from "@/src/core";
+import { Button } from "@/components/ui/button";
 
 /**
  * The graph-context card (owner, 2026-10-04): the session's map pick —
@@ -38,11 +39,12 @@ export function GraphContextCard({ data }: { data: GraphContextData }) {
 	const noun = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 	return (
 		<div data-testid="graph-context-card" className="my-1">
-			<button
+			<Button
 				type="button"
+				variant="ghost"
 				data-testid="graph-context-toggle"
 				onClick={() => setOpen((v) => !v)}
-				className="flex w-full cursor-pointer items-center gap-2 rounded-lg border border-dashed border-border/70 px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
+				className="h-auto w-full justify-start rounded-xl border border-border bg-card px-3 py-2 text-left text-xs font-normal text-muted-foreground hover:text-foreground"
 			>
 				<ChevronRightIcon aria-hidden="true" className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")} />
 				<span className="font-medium">{course ? `${course.title} · ${COURSE_MODE_LABEL[course.mode]}` : "Graph context"}</span>
@@ -51,9 +53,9 @@ export function GraphContextCard({ data }: { data: GraphContextData }) {
 					{noun(propositions.length, "proposition", "propositions")}
 					{chains.length > 0 ? ` · ${noun(chains.length, "chain", "chains")}` : ""}
 				</span>
-			</button>
+			</Button>
 			{open && (
-				<div data-testid="graph-context-body" className="mt-1 space-y-1 rounded-lg border border-dashed border-border/70 px-4 py-3 text-xs">
+				<div data-testid="graph-context-body" className="mt-1 space-y-2 rounded-xl border border-border bg-card px-4 py-3 text-xs">
 					{course?.skills.map((s) => (
 						<div key={s.id} data-testid={`graph-context-skill-${s.id}`}>
 							<RichText className={cn(ITEM_TYPE, "font-medium text-foreground")}>{s.name}</RichText>

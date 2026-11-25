@@ -284,7 +284,7 @@ export function DeleteSessionBody({
 			onClick={(e) => e.stopPropagation()}
 			className="w-[32rem] max-w-[calc(100vw-2rem)] lh-dialog p-6"
 		>
-			<h2 className="text-sm font-semibold text-destructive">{copy.heading}</h2>
+			<h2 className="text-[15px] font-semibold leading-5 text-destructive">{copy.heading}</h2>
 			{/* The session name below the title in JetBrains Mono (owner,
 			    2026-09-24): no code-block chrome — the font already says
 			    code. Owner, 2026-10-13 polish: normal text-sm size (was

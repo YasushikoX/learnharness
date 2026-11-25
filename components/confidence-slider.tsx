@@ -2,6 +2,7 @@
 
 import type { KeyboardEvent, ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { buttonVariants } from "@/components/ui/button";
 import {
 	CONFIDENCE_LEVELS,
 	CONFIDENCE_STOPS,
@@ -135,7 +136,7 @@ export function ConfidenceSlider({
 			disabled={dontKnowDisabled}
 			onClick={onDontKnow}
 			data-testid="dont-know-button"
-			className="lh-touch h-9 shrink-0 rounded-md border border-dashed border-border/70 bg-transparent px-3 text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+			className={cn(buttonVariants({ variant: "secondary", size: "sm" }), "lh-touch text-muted-foreground hover:text-foreground")}
 		>
 			I don&apos;t know
 		</button>
@@ -156,8 +157,9 @@ export function ConfidenceSlider({
 					<div
 						aria-hidden
 						data-testid="confidence-slider-rail"
-						className="mx-2 h-1.5 w-full rounded-full border border-border"
-						style={confidenceRailStyle(value, CONFIDENCE_SLIDER_MIN)}
+						className="mx-2 h-1.5 w-full rounded-full border border-input"
+						// UI round 2: a visible track in both themes (the page colour vanished into the dock's surface).
+						style={{ ...confidenceRailStyle(value, CONFIDENCE_SLIDER_MIN), backgroundColor: "var(--lh-raised-strong)" }}
 					/>
 					<input
 						type="range"
@@ -187,11 +189,12 @@ export function ConfidenceSlider({
 						style={{
 							left: `calc(8px + (100% - 16px) * ${sliderFraction(visualPct)})`,
 							borderColor: activeColor,
-							backgroundColor: activeColor ?? "var(--background)",
+							backgroundColor: activeColor ?? "var(--card)",
 						}}
 						className={cn(
 							"pointer-events-none absolute top-1/2 size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 shadow-xs transition-[transform,box-shadow]",
-							value === null && "border-dashed border-muted-foreground/70",
+							// Unset: a solid neutral thumb (surface fill, muted ring) that reads on the track in both themes.
+							value === null && "border-muted-foreground",
 							"peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-background",
 							disabled && "opacity-50",
 						)}
@@ -208,7 +211,7 @@ export function ConfidenceSlider({
 					{value === null ? "—" : `${value}%`}
 				</span>
 				{showUnsetHint && value === null && (
-					<span className="hidden text-xs text-muted-foreground sm:inline">
+					<span className="hidden whitespace-nowrap text-xs text-muted-foreground sm:inline">
 						set before submitting
 					</span>
 				)}

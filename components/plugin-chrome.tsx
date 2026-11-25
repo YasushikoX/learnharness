@@ -9,6 +9,8 @@ import { useSidebar } from "@/components/sidebar";
 import { useInteractionLayers } from "@/components/interaction-layers";
 import { MenuShell } from "@/components/menu-shell";
 import { Hint } from "@/components/ui/hint";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export interface PlacedPluginAction {
 	key: string;
@@ -69,7 +71,8 @@ function ActionButton({ item, context, captureContext, className, iconOnly = fal
 
 const SIDEBAR_CONTEXT = { placement: "sidebar", surface: "sidebar" } as const;
 const GRAPH_CONTEXT = { placement: "graph", surface: "graph" } as const;
-const SIDEBAR_BUTTON = "flex min-w-0 w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground";
+// UI round 1b: plugin doors match the core Teaching / Practice pair (secondary, 32px).
+const SIDEBAR_BUTTON = cn(buttonVariants({ variant: "secondary" }), "lh-touch w-full min-w-0 justify-start overflow-hidden");
 const TOP_BUTTON = "flex h-9 min-w-0 max-w-48 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground";
 
 /** Core teaching/practice children lead the same row-major grid as placed actions. */
@@ -201,7 +204,7 @@ export function PluginTopBarActions({ context, captureContext }: { context: Extr
 			menuClass="lh-no-drag w-64 lh-menu">
 			<div role="menu" aria-label="More plugin actions">
 			{excess.map(item => <ActionButton key={item.key} item={item} context={context} captureContext={captureContext} menuItem onRun={() => setMenuOpen(false)}
-				className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground" />)}
+				className="lh-menu-item w-full min-w-0 text-foreground" />)}
 			</div>
 		</MenuShell>}
 	</div>;

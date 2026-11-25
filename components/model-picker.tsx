@@ -294,7 +294,7 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 					aria-expanded={open === "model"}
 					// Chrome look (owner, fix wave round 3): matches the graph view's floating top-right buttons
 					// (import notes, gear, coverage) — blurred, fuller opacity, shadowed.
-					className="lh-touch flex h-7 items-center gap-1.5 rounded-md border border-input bg-card px-2.5 font-mono text-xs whitespace-nowrap transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised"
+					className="lh-touch flex h-7 items-center gap-1.5 rounded-sm px-2 text-xs whitespace-nowrap transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised"
 				>
 					<span className="text-card-foreground">{effectiveId ? prettyModel(effectiveId) : "—"}</span>
 					{/* a session still loading has no model yet: one dash, not a pair */}

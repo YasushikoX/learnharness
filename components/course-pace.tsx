@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { PACES, isPace, paceInfo, type Pace } from "@/src/core";
+import { ThinSelect } from "@/components/settings/controls";
 
 /**
  * A course's default pace (fork addition, 2026-11-09), beside its time note.
@@ -41,24 +42,56 @@ export function CoursePace({
 		}
 	};
 
+	// A course-settings row (UI round 1b, SPEC §7 "Settings"): label and description left, the one select style right.
 	return (
-		<label className="mb-3 flex flex-col gap-1 text-xs text-muted-foreground" data-testid="course-pace">
-			Pace — how fast this course's lessons go. A Learn start can still pick its own.
-			<select
-				data-testid="course-pace-select"
-				aria-label="course default pace"
-				value={pace ?? ""}
-				onChange={(e) => void save(e.target.value)}
-				className="rounded-md border bg-background px-2 py-1.5 text-sm text-foreground outline-none"
-			>
-				<option value="">{`Global default${globalPace ? ` (${paceInfo(globalPace).label})` : ""}`}</option>
-				{PACES.map((p) => (
-					<option key={p.id} value={p.id}>
-						{p.label}
-					</option>
-				))}
-			</select>
-			{error && <span role="alert" className="text-destructive">{error}</span>}
-		</label>
+		<CourseSettingRow
+			testid="course-pace"
+			label="Pace"
+			description="How fast this course's lessons go. A Learn start can still pick its own."
+			note={error && <span role="alert" className="text-destructive">{error}</span>}
+		>
+			<span className="w-44 max-sm:w-full [&>span]:w-full">
+				<ThinSelect testid="course-pace-select" ariaLabel="course default pace" value={pace ?? ""} onChange={(v) => void save(v)}>
+					<option value="">{`Global default${globalPace ? ` (${paceInfo(globalPace).label})` : ""}`}</option>
+					{PACES.map((p) => (
+						<option key={p.id} value={p.id}>
+							{p.label}
+						</option>
+					))}
+				</ThinSelect>
+			</span>
+		</CourseSettingRow>
+	);
+}
+
+/**
+ * One row of the course settings (UI round 1b, SPEC §7 "Settings"): the label (14/500) and a 13px muted description on
+ * the left, the controls right-aligned on the same line; under 640px the controls drop below. `note` is a line under the
+ * row (an error, what the last weighing found).
+ */
+export function CourseSettingRow({
+	label,
+	description,
+	note,
+	testid,
+	children,
+}: {
+	label: string;
+	description?: React.ReactNode;
+	note?: React.ReactNode;
+	testid?: string;
+	children?: React.ReactNode;
+}) {
+	return (
+		<section data-testid={testid} className="py-3">
+			<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+				<div className="min-w-0">
+					<div className="text-body font-medium text-foreground">{label}</div>
+					{description && <div className="mt-0.5 text-sm text-muted-foreground">{description}</div>}
+				</div>
+				{children && <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">{children}</div>}
+			</div>
+			{note && <div className="mt-1.5 text-meta">{note}</div>}
+		</section>
 	);
 }

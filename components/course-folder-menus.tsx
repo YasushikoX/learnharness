@@ -4,6 +4,9 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { CheckIcon, ChevronRightIcon } from "lucide-react";
 import { FOLDER_NAME_MAX, folderKey } from "@/src/core";
 import { MenuShell } from "./menu-shell.tsx";
+import { buttonVariants } from "./ui/button.tsx";
+import { FIELD_CLASS } from "./ui/input.tsx";
+import { cn } from "../lib/utils.ts";
 
 /**
  * The menus of the sidebar's course folders (owner, 2026-11-14): the menu on a course row (Rename, Folder, Delete — the
@@ -142,15 +145,15 @@ function NewFolderField({ onCommit }: { onCommit: (name: string) => void }) {
 						commit();
 					}
 				}}
-				className="lh-input w-full min-w-0 border-0 border-b border-border bg-transparent px-0 text-foreground outline-none"
+				className={cn(FIELD_CLASS, "h-7 w-full min-w-0 px-2 text-sm")}
 			/>
-			<span className="text-muted-foreground">Folders sort highest name first: name them so the newest is on top.</span>
+			<span className="text-xs text-muted-foreground">Folders sort highest name first: name them so the newest is on top.</span>
 			<button
 				type="button"
 				data-testid="new-folder-commit"
 				onClick={commit}
 				disabled={draft.trim() === ""}
-				className="self-end rounded-lg px-2.5 py-1.5 text-foreground transition-colors hover:bg-accent disabled:opacity-40 [@media(pointer:coarse)]:min-h-11"
+				className={buttonVariants({ variant: "secondary", size: "sm", className: "lh-touch self-end" })}
 			>
 				Create
 			</button>

@@ -86,7 +86,7 @@ export function SwipeRow({
 	const position = drag ?? (open ? revealWidth : 0);
 
 	return (
-		<div ref={containerRef} data-testid="swipe-row" data-swipe-row="" className="relative overflow-hidden rounded-lg">
+		<div ref={containerRef} data-testid="swipe-row" data-swipe-row="" className="relative overflow-hidden rounded-md">
 			{/* The actions live in a strip exactly as wide as the row has slid, so nothing of them can show beside or under a closed
 			    row (a swipe the other way moves nothing, and the strip stays zero wide); it follows the row back on release. */}
 			<div
@@ -125,7 +125,8 @@ export function SwipeRow({
 			</div>
 			<div
 				ref={slider}
-				className={cn("relative bg-background", drag === null && "transition-transform duration-200")}
+				// The sidebar's own fill (UI round 1b: the sidebar is --lh-sidebar now), so a resting row shows no box.
+				className={cn("relative bg-sidebar-fill", drag === null && "transition-transform duration-200")}
 				style={{ transform: position === 0 ? undefined : `translateX(${position}px)` }}
 			>
 				{children}

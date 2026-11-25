@@ -9,7 +9,8 @@ import { ClarifyWording } from "@/components/clarify-wording";
 import { Button } from "@/components/ui/button";
 import { PhotoError, preparePhoto, releasePhoto, type PreparedPhoto } from "@/components/photo-answer";
 import { useCamera } from "@/components/use-camera";
-import { ConfidenceButtons } from "@/components/confidence-buttons";
+import { ConfidenceButtons, DONT_KNOW_LEADING } from "@/components/confidence-buttons";
+import { DockActions, DockToolLabel } from "@/components/question-actions";
 import { finishDictation, isDictationActive, joinDictation, useDictationTarget } from "@/components/dictation";
 import { enterSends, useEnterSubmits } from "@/components/enter-submits";
 import { useOptionalInteractionLayers } from "./interaction-layers";
@@ -288,7 +289,7 @@ export function PracticeDock({
 
 	/* ── the expanded form ── */
 	return (
-		<div ref={element => { rootRef.current = element; }} data-testid="practice-dock" data-problem={problemCallId}>
+		<div ref={element => { rootRef.current = element; }} data-testid="practice-dock" data-problem={problemCallId} className="@container/dock">
 			{!expanded && bar}
 			<div hidden={!expanded}>
 			{/* The agent's half: the 'Problem' eyebrow (mirroring the quiz
@@ -297,15 +298,15 @@ export function PracticeDock({
 			    (--dock-max-h; the old fixed 40vh cut long problems short). */}
 			<div data-dock-scroll-area="" className="max-h-[var(--dock-max-h,40vh)] overflow-y-auto px-4 pt-3 pb-2">
 				<div className="mb-1 lh-eyebrow text-muted-foreground">Problem</div>
-				<ClarifyWording messageId={messageId} callId={problemCallId} dock className="lh-prose text-[15px]">
+				<ClarifyWording messageId={messageId} callId={problemCallId} dock className="lh-prose">
 					<ToolContentResponse>{input.statement}</ToolContentResponse>
 				</ClarifyWording>
 			</div>
 
 			{hintCtl.offered && (hintCtl.lines.length > 0 || hintCtl.error) && (
-				<div className={cn("space-y-1.5 border-t border-border/60 px-4 py-2.5 text-sm", wordingOnly && "hidden")} data-testid="hint-list">
+				<div className={cn("space-y-1.5 border-t border-border px-4 py-3 text-sm", wordingOnly && "hidden")} data-testid="hint-list">
 					{hintCtl.lines.map((line, i) => (
-						<div key={i} className="flex gap-2 text-foreground/80">
+						<div key={i} className="flex gap-2 text-foreground">
 							<span className="shrink-0 pt-0.5 lh-eyebrow text-muted-foreground">Hint {i + 1}</span>
 							<div className="min-w-0 flex-1">
 								<ToolContentResponse>{line.text}</ToolContentResponse>
@@ -326,10 +327,10 @@ export function PracticeDock({
 			    Shift+Enter makes a newline — less to decide about. */}
 			<div
 				data-testid="practice-thinking-field"
-				className={cn("m-1.5 rounded-md border border-border/70 bg-background/60 transition-colors focus-within:border-primary/50", wordingOnly && "hidden")}
+				className={cn("border-t border-border", wordingOnly && "hidden")}
 			>
-				<div className="px-2.5 pt-2 lh-eyebrow text-muted-foreground">
-					YOUR THINKING
+				<div className="px-4 pt-3 lh-eyebrow text-muted-foreground">
+					Your thinking
 				</div>
 				<PathInput
 					value={thinking}
@@ -358,11 +359,11 @@ export function PracticeDock({
 					}}
 					placeholder="Work here, think out loud."
 					className={cn(
-						"field-sizing-content lh-input max-h-64 min-h-16 w-full resize-none bg-transparent px-2.5 pb-2 outline-none placeholder:text-muted-foreground",
+						"field-sizing-content lh-input max-h-64 min-h-16 w-full resize-none bg-transparent px-4 py-1.5 outline-none placeholder:text-muted-foreground",
 					)}
 				/>
 				{photo && (
-					<div className="px-2.5 pb-1.5">
+					<div className="px-4 pb-2">
 						<span data-testid="practice-photo-chip" className="inline-flex items-center gap-1.5 rounded-full border bg-muted/50 py-0.5 pr-1 pl-1 text-xs text-muted-foreground">
 							{/* eslint-disable-next-line @next/next/no-img-element -- a blob: URL of the photo just taken */}
 							<img src={photo.previewUrl} alt="" className="size-5 rounded-full object-cover" />
@@ -381,7 +382,7 @@ export function PracticeDock({
 					</div>
 				)}
 				{attach && !photo && (
-					<div className="px-2.5 pb-1.5">
+					<div className="px-4 pb-2">
 						<span
 							data-testid="practice-sketch-chip"
 							className="inline-flex items-center gap-1 rounded-full border bg-muted/50 py-0.5 pr-1 pl-2 text-xs text-muted-foreground"
@@ -411,11 +412,10 @@ export function PracticeDock({
 					</div>
 				)}
 				{/* The submit row (owner round 4, 2026-10-05): IDENTICAL to the
-				    question dock's — hint left, the SAME Button (h-9, px-3.5),
-				    one p-1 row. Corner radii concentric: shell 16 − m-1.5 (6) =
-				    field 10 − p-1 (4) = button 6. */}
+				    question dock's (UI round 1b: question-actions.tsx — tools
+				    left, one primary Submit right, no inner box). */}
 				{asking ? (
-					<div className="p-1" data-testid="practice-confidence-row">
+					<div className="px-4 pt-1 pb-4" data-testid="practice-confidence-row">
 						<ConfidenceButtons
 							onPick={(index) => send({ confidence: CONFIDENCE_STOPS[index] })}
 							disabled={compactionRunning}
@@ -426,7 +426,7 @@ export function PracticeDock({
 									disabled={compactionRunning}
 									onClick={() => send({ dontKnow: true })}
 									data-testid="practice-dont-know"
-									className="lh-touch h-10 min-w-0 flex-[1.8] truncate rounded-md border border-dashed border-border/70 bg-transparent px-0 text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+									className={DONT_KNOW_LEADING}
 								>
 									I don't know
 								</button>
@@ -434,61 +434,74 @@ export function PracticeDock({
 						/>
 					</div>
 				) : (
-					<div className="flex items-center gap-2 p-1">
-						{!customInput && sketchAvailable && camera.available && (
-							<Button
-								type="button"
-								variant="secondary"
-								data-testid="practice-add-photo"
-								onClick={camera.open}
-								className="lh-press h-9 gap-1.5 rounded-md px-4 text-sm"
-							>
-								<CameraIcon className="size-4" />
-								Camera
-							</Button>
+					<>
+						{sketchError && !compactionRunning && (
+							<p role="alert" data-testid="practice-sketch-error" className="px-4 pb-1 text-xs text-destructive">{sketchError}</p>
 						)}
-						{!customInput && sketchAvailable && (
-							<Button
-								type="button"
-								variant="secondary"
-								data-testid="practice-open-sketch"
-								onClick={() => {
-									setDetached(false);
-									setSketching(true);
-								}}
-								className="lh-press h-9 gap-1.5 rounded-md px-4 text-sm"
-							>
-								<PenLineIcon className="size-4" />
-								Open in sketch
-							</Button>
-						)}
-						{hintCtl.offered && (
-							<Button
-								type="button"
-								variant="secondary"
-								data-testid="practice-hint"
-								data-nudge={hintCtl.nudge && hintCtl.lines.length === 0 ? "true" : undefined}
-								disabled={hintCtl.disabled}
-								onClick={hintCtl.ask}
-								className={cn("lh-press h-9 gap-1.5 rounded-md px-4 text-sm", hintCtl.nudge && hintCtl.lines.length === 0 && "ring-2 ring-primary/50")}
-							>
-								<LightbulbIcon className="size-4" />
-								{hintLabel(hintCtl)}
-							</Button>
-						)}
-						<span aria-hidden className="pl-1.5 text-xs text-muted-foreground">
-							{compactionRunning ? "compacting session…" : (sketchError ?? <span className="lh-enter-hint [@media(pointer:coarse)]:hidden">↵ submits · ⇧↵ newline</span>)}
-						</span>
-						<Button
-							type="button"
-							data-testid="practice-send"
-							disabled={(customInput ? !customInput.ready : (!thinking.trim() && !photo && !hasPendingInput)) || compactionRunning || preparing}
-							onClick={() => submit()}
-							className="ml-auto h-9 rounded-md px-3.5 text-sm font-medium"
-						>
-							{customInput ? "Submit" : "Submit thinking"}
-						</Button>
-					</div>
+						<DockActions
+							tools={(hintCtl.offered || (!customInput && sketchAvailable)) && <>
+								{!customInput && sketchAvailable && camera.available && (
+									<Button
+										type="button"
+										variant="secondary"
+										size="sm"
+										data-testid="practice-add-photo"
+										aria-label="Camera"
+										onClick={camera.open}
+										className="lh-press"
+									>
+										<CameraIcon />
+										<DockToolLabel>Camera</DockToolLabel>
+									</Button>
+								)}
+								{!customInput && sketchAvailable && (
+									<Button
+										type="button"
+										variant="secondary"
+										size="sm"
+										data-testid="practice-open-sketch"
+										aria-label="Open in sketch"
+										onClick={() => {
+											setDetached(false);
+											setSketching(true);
+										}}
+										className="lh-press"
+									>
+										<PenLineIcon />
+										<DockToolLabel>Open in sketch</DockToolLabel>
+									</Button>
+								)}
+								{hintCtl.offered && (
+									<Button
+										type="button"
+										variant="secondary"
+										size="sm"
+										data-testid="practice-hint"
+										data-nudge={hintCtl.nudge && hintCtl.lines.length === 0 ? "true" : undefined}
+										aria-label={hintLabel(hintCtl)}
+										disabled={hintCtl.disabled}
+										onClick={hintCtl.ask}
+										className={cn("lh-press", hintCtl.nudge && hintCtl.lines.length === 0 && "ring-2 ring-primary/50")}
+									>
+										<LightbulbIcon />
+										<DockToolLabel>{hintLabel(hintCtl)}</DockToolLabel>
+									</Button>
+								)}
+							</>}
+							hint={compactionRunning ? "compacting session…" : <span className="lh-enter-hint [@media(pointer:coarse)]:hidden">↵ submits · ⇧↵ newline</span>}
+							trailing={
+								<Button
+									type="button"
+									size="lg"
+									data-testid="practice-send"
+									disabled={(customInput ? !customInput.ready : (!thinking.trim() && !photo && !hasPendingInput)) || compactionRunning || preparing}
+									onClick={() => submit()}
+								>
+									{customInput ? "Submit" : "Submit thinking"}
+								</Button>
+							}
+						/>
+					</>
 				)}
 			</div>
 			{camera.node}

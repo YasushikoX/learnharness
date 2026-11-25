@@ -461,7 +461,8 @@ describe("the exam plan on the page", () => {
 		);
 		assert.match(html, /data-testid="course-exam-countdown"[^>]*>[\s\S]*?29 d[\s\S]*?12 Dec 2026/);
 		assert.match(html, /27 skills left/);
-		assert.match(html, /needs 1 lesson\/day · your pace 1\.2\/day · on track/);
+		// UI round 1b: a no-break space before each middot (\s matches it), so the line never wraps onto a leading "·"
+		assert.match(html, /needs 1 lesson\/day\s· your pace 1\.2\/day\s· on track/);
 		assert.match(html, /Review · 4</);
 		assert.match(html, /Learn today[\s\S]*Taylor series/);
 		assert.match(html, /w3/);
@@ -486,7 +487,8 @@ describe("the exam plan on the page", () => {
 
 	it("shows how many skills fade before the exam and a retest row only when something is to check (owner, 2026-11-16)", () => {
 		const html = renderToStaticMarkup(<examUi.ExamPlanSection {...props({ plan: { ...basePlan, reviewFading: 3, retestCount: 5 }, onRetest: () => {} })} />);
-		assert.match(html, /data-testid="course-review-fading"[^>]*>· 3 fading before the exam/);
+		// UI round 1b: a meta line under the review, so it never wraps with a leading middot
+		assert.match(html, /data-testid="course-review-fading"[^>]*>3 fading before the exam/);
 		assert.match(html, /data-testid="course-next-retest"[\s\S]*Retest what I know · 5 to check[\s\S]*>Retest</);
 		const quiet = renderToStaticMarkup(<examUi.ExamPlanSection {...props({ plan: { ...basePlan, retestCount: 0 }, onRetest: () => {} })} />);
 		assert.ok(!quiet.includes("course-next-retest") && !quiet.includes("course-review-fading"));

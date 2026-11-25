@@ -172,7 +172,7 @@ describe("render smoke tests", () => {
 		// The learner's voice: a labeled "Your thinking" composer-twin lives
 		// INSIDE the dock — never called optional, inviting the dump.
 		assert.ok(html.includes('data-testid="thinking-field"'), "thinking field present");
-		assert.match(html, /YOUR THINKING/, "labeled as the learner's voice (all caps, owner round 3)");
+		assert.match(html, /Your thinking/, "labeled as the learner's voice (all caps, owner round 3)");
 		assert.match(html, /Why this answer\? Whatever comes to mind/, "placeholder invites, not apologizes (owner, placeholder round 2026-10-07)");
 		assert.ok(!html.includes("optional"), "the field is never called optional");
 		assert.ok(!html.includes("Submit answer"), "a quiz is submitted by its confidence buttons (owner, 2026-10-28)");
@@ -224,7 +224,7 @@ describe("render smoke tests", () => {
 		assert.ok(html.includes('role="radio"'), "Other row keeps the option role");
 		assert.match(html, /aria-checked="false"/, "circle starts unfilled");
 		assert.ok(html.includes('data-testid="thinking-field"'), "thinking field coexists with Other");
-		assert.match(html, /YOUR THINKING/, "ask select-mode also gets the learner's voice");
+		assert.match(html, /Your thinking/, "ask select-mode also gets the learner's voice");
 	});
 
 	it("multi-select ask renders checkbox rows and the select-all hint", () => {
@@ -327,7 +327,7 @@ describe("render smoke tests", () => {
 		const answer = buildAnswer(askQD(), { other: "Fairly confident — but shaky on applications" });
 		const html = renderToStaticMarkup(<AnsweredCard answer={answer} />);
 		assert.ok(html.includes('data-testid="answered-other"'), "the Other answer is an option row");
-		assert.match(html, /border-primary bg-accent/, "styled like its selected siblings");
+		assert.match(html, /border-primary bg-primary\/\[0\.07\]/, "styled like its selected siblings (UI round 1b: light accent fill)");
 		assert.match(html, /shaky on applications/, "the typed words render");
 		// Inside the options container — same list, not a loose quote outside it.
 		assert.ok(
@@ -343,7 +343,7 @@ describe("render smoke tests", () => {
 		});
 		const html = renderToStaticMarkup(<AnsweredCard answer={answer} />);
 		assert.ok(html.includes('data-testid="your-thinking"'), "the thinking row exists");
-		assert.match(html, /YOUR THINKING/, "labeled as the learner's voice (all caps, owner round 3)");
+		assert.match(html, /Your thinking/, "labeled as the learner's voice (all caps, owner round 3)");
 		// COLLAPSED ARRIVAL (owner round 2, 2026-10-05): the SSR output is the
 		// trigger row only — the thinking text is one click away, never loud.
 		assert.ok(html.includes('data-testid="your-thinking-trigger"'), "the trigger row");
@@ -352,11 +352,10 @@ describe("render smoke tests", () => {
 		// accent lift read too light — rail only, heights match everywhere.
 		const yourRow = html.slice(html.indexOf('data-testid="your-thinking"'));
 		assert.ok(!yourRow.slice(0, 400).includes("bg-card") && !yourRow.slice(0, 400).includes("bg-accent"), "no band inside the card");
-		// THE RAIL GROUPS (owner correction): the label sits INSIDE the rail —
-		// ownership readable from the rail alone, collapsed or expanded.
-		const railAt = html.indexOf("border-l-[calc(3ch-14px)]");
+		// UI round 1b: inside the card the row is a section over a hairline (no box in a box); the label sits in it.
+		const sectionAt = html.indexOf("border-t border-border pt-3", html.indexOf('data-testid="your-thinking"') - 400);
 		const trigAt = html.indexOf("your-thinking-trigger");
-		assert.ok(railAt !== -1 && railAt < trigAt, "the rail opens before the label (same quote)");
+		assert.ok(sectionAt !== -1 && sectionAt < trigAt, "the section opens before the label");
 		assert.ok(!html.includes("brightness isn&#x27;t distance"), "the text is hidden until expanded");
 		assert.ok(!html.includes("Note:"), "no longer a muted 'Note:' footnote");
 		// The thinking sits ABOVE the verdict's explanation — the dialogue of
@@ -616,7 +615,7 @@ describe("AnsweredCard: the explain variant", () => {
 	it("reveals the single committed answer (reasoning inside it) with NO verdict chips", () => {
 		const html = renderToStaticMarkup(<AnsweredCard answer={buildAnswer(explainQD(), { text: "Something about relativity?" })} />);
 		assert.match(html, /Explain/, "labeled as the explain kind");
-		assert.match(html, /The answer:/);
+		assert.match(html, /The answer</);
 		assert.match(html, /luminiferous aether/);
 		assert.match(html, /fringe shift/);
 		assert.ok(!html.includes("Why:"), "no separate explanation field — one committed answer (owner 2026-09-27)");
@@ -765,7 +764,7 @@ describe("predict vs check rendering", () => {
 		const cardAt = html.indexOf("answered-card");
 		assert.ok(blockAt !== -1, "the lifted block renders");
 		assert.ok(blockAt < cardAt, "it sits ABOVE the answered card");
-		assert.ok(html.includes("YOUR THINKING"), "the plain label");
+		assert.ok(html.includes("Your thinking"), "the plain label");
 		assert.ok(!html.includes("Your thinking while reading"), "the old verbose label is gone");
 		assert.ok(!html.includes("your-reading-thinking"), "the in-card inset is gone");
 		// EXPANDED ARRIVAL (owner round two, 2026-10-07): transcript rows

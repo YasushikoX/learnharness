@@ -14,6 +14,7 @@
 import { useState } from "react";
 import { XIcon } from "lucide-react";
 import { useUpdateState } from "@/components/settings/update-settings.tsx";
+import { Button } from "@/components/ui/button";
 
 export default function UpdateBanner() {
 	const { state: ready } = useUpdateState();
@@ -24,27 +25,29 @@ export default function UpdateBanner() {
 			data-testid="update-banner"
 			// positioned by the layout's notice stack (fork: shared with the
 			// upstream release notice)
-			className="pointer-events-auto flex items-center gap-3 rounded-lg border border-border bg-popover px-4 py-3 shadow-lg"
+			className="pointer-events-auto flex items-center gap-2 lh-popover p-3 pl-4 text-sm"
 		>
 			<div className="text-sm">
 				<span className="font-medium">LearnHarness {ready.version ?? "update"} is ready</span>
 				<span className="text-muted-foreground"> — restart to finish installing.</span>
 			</div>
-			<button
+			<Button
 				type="button"
 				onClick={() => window.lh?.installUpdate?.()}
-				className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent/80"
+				size="sm"
 			>
 				Restart
-			</button>
-			<button
+			</Button>
+			<Button
 				type="button"
 				aria-label="Dismiss update notification"
 				onClick={() => setDismissedVersion(ready.version)}
-				className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+				variant="ghost"
+				size="icon-sm"
+				className="text-muted-foreground hover:text-foreground"
 			>
 				<XIcon className="size-4" aria-hidden="true" />
-			</button>
+			</Button>
 		</div>
 	);
 }

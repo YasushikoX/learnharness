@@ -35,7 +35,7 @@ test("cache hit rate appears only inside expanded session stats, follows the ses
 	try {
 		await act(async () => render([turn(900)]));
 		const collapsedSummary = summary().textContent;
-		assert.equal(collapsedSummary, "42k·—");
+		assert.equal(collapsedSummary, "42k", "an unknown cost is left out of the bar (UI round 2)");
 		assert.equal(cacheRow(), null);
 		assert(!host.textContent?.includes("Cache hit rate"), "no new chip in the collapsed bar");
 
