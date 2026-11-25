@@ -373,12 +373,12 @@
 }
 
 /* Type roles that need more than a size (SPEC §1). */
+/* UI round 2: the card-kind label is a 12px sentence-case muted label (was 11px uppercase with tracking: a lesson
+   could show a dozen shouting labels at once). The class name stays; colour comes from the call site. */
 .lh-eyebrow {
-	font-size: 11px;
+	font-size: 12px;
 	line-height: 16px;
-	font-weight: 600;
-	letter-spacing: 0.04em;
-	text-transform: uppercase;
+	font-weight: 500;
 }
 .lh-page-title {
 	font-family: var(--font-title);
