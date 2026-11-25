@@ -63,6 +63,7 @@ describe("SettingsDialog (the designed surface, SSR)", () => {
 			["graph", "Graph", "waypoints"],
 			["keyboard", "Keyboard", "keyboard"],
 			["sync", "Sync", "refresh-cw"],
+			["pdf", "PDF conversion", "file-text"],
 			["learner", "Learner", "graduation-cap"],
 			["general", "General", "settings"],
 			["core-plugins", "Core plugins", "plug"],

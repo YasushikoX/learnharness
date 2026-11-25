@@ -595,7 +595,12 @@ export interface PdfConversionSettings {
 		ocr?: boolean;
 		formulaEnrichment?: boolean;
 	};
+	/** Profile converters (presets and `custom:<id>`), by converter id: the base URL when not the profile's default. */
+	services?: Record<string, { baseUrl?: string }>;
 }
+
+/** A converter id a profile converter can have in `services` (a preset id or `custom:<id>`). */
+export const PROFILE_CONVERTER_ID = /^(?:custom:)?[a-z0-9][a-z0-9-]{0,47}$/;
 
 function sanitizePdfConversion(raw: Record<string, unknown>): PdfConversionSettings {
 	const out: PdfConversionSettings = {};
@@ -610,6 +615,15 @@ function sanitizePdfConversion(raw: Record<string, unknown>): PdfConversionSetti
 		if (typeof docling.ocr === "boolean") cleaned.ocr = docling.ocr;
 		if (typeof docling.formulaEnrichment === "boolean") cleaned.formulaEnrichment = docling.formulaEnrichment;
 		out.docling = cleaned;
+	}
+	if (raw.services !== null && typeof raw.services === "object" && !Array.isArray(raw.services)) {
+		const services: NonNullable<PdfConversionSettings["services"]> = {};
+		for (const [id, entry] of Object.entries(raw.services as Record<string, unknown>)) {
+			if (!PROFILE_CONVERTER_ID.test(id) || entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+			const baseUrl = typeof (entry as { baseUrl?: unknown }).baseUrl === "string" ? normalizeBaseUrl((entry as { baseUrl: string }).baseUrl) : "";
+			Object.defineProperty(services, id, { value: baseUrl ? { baseUrl } : {}, enumerable: true, configurable: true, writable: true });
+		}
+		out.services = services;
 	}
 	return out;
 }

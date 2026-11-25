@@ -1,7 +1,10 @@
 import { ConverterError, type ConvertContext, type ConvertInput, type ConvertResult, type PdfConverter } from "../../core/pdf-converter.ts";
 import type { PdfConversionSettings } from "../../core/settings.ts";
+import { customProfileIdOf, type HttpConverterProfile } from "../../core/http-converter-spec.ts";
 import { createDoclingConverter } from "./docling.ts";
+import { createHttpConverter } from "./http-declarative.ts";
 import { pdfjsConverter } from "./pdfjs.ts";
+import { PRESET_PROFILES } from "./presets.ts";
 
 /**
  * The PDF converter registry (fork addition, 2026-11-24). A converter is
@@ -15,6 +18,12 @@ import { pdfjsConverter } from "./pdfjs.ts";
  * Every other failure (auth, rate limit, bad response, the service's own
  * failure) is the material's conversionError, with no fallback.
  *
+ * Profile converters (fork addition, 2026-11-25): each bundled preset
+ * (presets.ts) is registered here like Docling; a user's own profile is
+ * `custom:<id>`, loaded and validated on every resolve through the
+ * CustomProfileLoader its caller passes in (a missing or invalid file falls
+ * back to pdfjs with a warning, like an unknown id).
+ *
  * No store import here (settings-body.ts imports this module, and test
  * files import that before isolating their data folder): a converter's key
  * arrives through the CredentialReader its caller passes in.
@@ -22,6 +31,9 @@ import { pdfjsConverter } from "./pdfjs.ts";
 
 /** A converter's key for a base URL, from the credential store (converters/auth.ts), or undefined. */
 export type CredentialReader = (converterId: string, baseUrl: string) => string | undefined;
+
+/** A user's own profile by its id (custom-profiles.ts), validated on every call. */
+export type CustomProfileLoader = (profileId: string) => { ok: true; profile: HttpConverterProfile } | { ok: false; error: string };
 
 export interface PdfConverterFactory {
 	id: string;
@@ -40,7 +52,7 @@ export interface RegistryConversion extends ConvertResult {
 	/** The converter that produced the pages (pdfjs after a fallback). */
 	converterId: string;
 	/** Set when the configured converter failed with unreachable/timeout and fell back to pdfjs. */
-	fallbackFrom?: { converterId: string; reason: string };
+	fallbackFrom?: { converterId: string; reason: string; label?: string };
 }
 
 const factories = new Map<string, PdfConverterFactory>();
@@ -54,8 +66,16 @@ export function registeredPdfConverterIds(): string[] {
 	return [...factories.keys()];
 }
 
+/** A built-in or preset id, or any well-formed `custom:<id>` (whether its file exists is checked when it is used). */
 export function isRegisteredPdfConverter(id: string): boolean {
-	return factories.has(id);
+	return factories.has(id) || customProfileIdOf(id) !== undefined;
+}
+
+/** A profile converter for the settings: the base URL from `services` (else the profile's default), its key from the store. */
+export function createProfileConverter(converterId: string, profile: HttpConverterProfile, settings: PdfConversionSettings, readCredential: CredentialReader): PdfConverter {
+	const baseUrl = settings.services?.[converterId]?.baseUrl || profile.defaultBaseUrl;
+	if (!baseUrl) throw new ConverterError("not_configured", `${profile.name} is selected but no service URL is configured`, false);
+	return createHttpConverter({ converterId, profile, baseUrl, apiKey: readCredential(converterId, baseUrl) });
 }
 
 registerPdfConverter({ id: pdfjsConverter.id, create: () => pdfjsConverter });
@@ -72,10 +92,26 @@ registerPdfConverter({
 		});
 	},
 });
+for (const preset of PRESET_PROFILES) {
+	registerPdfConverter({ id: preset.id, create: (settings, readCredential) => createProfileConverter(preset.id, preset, settings, readCredential) });
+}
 
 /** The converter the settings select, built once. Never throws for configuration: it falls back to pdfjs with a warning. */
-export function resolvePdfConverter(settings: PdfConversionSettings | undefined, readCredential: CredentialReader): ResolvedPdfConverter {
+export function resolvePdfConverter(settings: PdfConversionSettings | undefined, readCredential: CredentialReader, loadCustomProfile?: CustomProfileLoader): ResolvedPdfConverter {
 	const requestedId = settings?.converter ?? pdfjsConverter.id;
+	const customId = customProfileIdOf(requestedId);
+	if (customId !== undefined) {
+		const loaded = loadCustomProfile ? loadCustomProfile(customId) : { ok: false as const, error: "custom profiles are not available here" };
+		if (!loaded.ok) {
+			return { converter: pdfjsConverter, requestedId, warnings: [`Your PDF converter profile "${customId}" could not be used (${loaded.error}); the built-in reader (pdfjs) was used instead.`] };
+		}
+		try {
+			return { converter: createProfileConverter(requestedId, loaded.profile, settings ?? {}, readCredential), requestedId, warnings: [] };
+		} catch (error) {
+			if (!(error instanceof ConverterError) || error.kind !== "not_configured") throw error;
+			return { converter: pdfjsConverter, requestedId, warnings: [`${error.message}; the built-in reader (pdfjs) was used instead.`] };
+		}
+	}
 	const factory = factories.get(requestedId);
 	if (!factory) {
 		return { converter: pdfjsConverter, requestedId, warnings: [`The PDF converter "${requestedId}" in the settings is not available; the built-in reader (pdfjs) was used instead.`] };
@@ -100,10 +136,10 @@ export async function convertWithFallback(resolved: ResolvedPdfConverter, input:
 		return {
 			...result,
 			converterId: pdfjsConverter.id,
-			fallbackFrom: { converterId: selected.id, reason: error.message },
+			fallbackFrom: { converterId: selected.id, reason: error.message, ...(selected.label ? { label: selected.label } : {}) },
 			warnings: [
 				...resolved.warnings,
-				`${selected.id === "docling" ? "Docling" : selected.id} failed (${error.message}); the built-in reader (pdfjs) was used instead.`,
+				`${selected.id === "docling" ? "Docling" : (selected.label ?? selected.id)} failed (${error.message}); the built-in reader (pdfjs) was used instead.`,
 				...(result.warnings ?? []),
 			],
 		};

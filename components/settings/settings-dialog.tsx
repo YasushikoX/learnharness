@@ -37,7 +37,7 @@ import {
 	type ReactNode,
 	type RefObject,
 } from "react";
-import { BotIcon, GraduationCapIcon, KeyIcon, KeyboardIcon, MicIcon, PaletteIcon, PlugIcon, PuzzleIcon, RefreshCwIcon, SettingsIcon, WaypointsIcon, type LucideIcon } from "lucide-react";
+import { BotIcon, FileTextIcon, GraduationCapIcon, KeyIcon, KeyboardIcon, MicIcon, PaletteIcon, PlugIcon, PuzzleIcon, RefreshCwIcon, SettingsIcon, WaypointsIcon, type LucideIcon } from "lucide-react";
 import { HostDialog } from "@/components/host-dialog";
 import { useInteractionLayers, type CloseOutcome, type CloseReason } from "@/components/interaction-layers";
 import {
@@ -56,6 +56,7 @@ import { MENU_CLOSE_EVENT, MENU_OPEN_EVENT } from "@/components/menu-shell";
 import { notifySettingsSaved } from "@/components/settings-signal";
 import { KeysSection } from "./keys-section.tsx";
 import { SyncSection } from "./sync-section.tsx";
+import { ConvertersSection } from "./converters-section.tsx";
 import { Hint } from "@/components/ui/hint";
 import { AppearanceSection, GraphSection } from "./appearance-section.tsx";
 import { KeyboardSection } from "./keyboard-section.tsx";
@@ -76,6 +77,7 @@ const SECTIONS = [
 	{ id: "graph", label: "Graph", icon: WaypointsIcon, summary: "Extraction and rendering" },
 	{ id: "keyboard", label: "Keyboard", icon: KeyboardIcon, hint: "Stored on this device", summary: "Shortcuts, stored on this device" },
 	{ id: "sync", label: "Sync", icon: RefreshCwIcon, summary: "Keep devices in step through a private GitHub repo" },
+	{ id: "pdf", label: "PDF conversion", icon: FileTextIcon, summary: "How uploaded PDFs become text: built-in reader, Docling or another service" },
 	{ id: "learner", label: "Learner", icon: GraduationCapIcon, summary: "How you learn best and your mistake patterns" },
 	{ id: "general", label: "General", icon: SettingsIcon, summary: "Updates and default lesson language" },
 ] as const;
@@ -630,6 +632,11 @@ export function SettingsDialogBody({
 							{active === "sync" && (
 								<SettingsSection title="Sync" testid="section-sync">
 									<SyncSection />
+								</SettingsSection>
+							)}
+							{active === "pdf" && (
+								<SettingsSection title="PDF conversion" testid="section-pdf">
+									<ConvertersSection />
 								</SettingsSection>
 							)}
 							{active === "keys" && (

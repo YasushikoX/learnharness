@@ -72,6 +72,7 @@ export { addLinkMaterial, addUploadedMaterial, listMaterials, removeMaterial, re
 // The class glossary from the materials' digests (fork addition, 2026-11-25; server/material-indexing.ts).
 export { courseGlossary, type CourseGlossary, type CourseGlossaryCitation, type CourseGlossaryEntry, type CourseGlossaryGap, type GlossaryMaterialRef } from "./material-indexing.ts";
 export { configureDocling } from "./converters/auth.ts";
+export { configureConverter, convertersOverview, deleteConverterProfile, importConverterProfile, parseConfigureBody, testConverter } from "./converters/settings-service.ts";
 // Lecture notes (fork addition, 2026-11-19 — docs/courses.md "Lecture notes").
 export {
 	createLectureNote,
