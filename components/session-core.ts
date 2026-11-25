@@ -139,6 +139,13 @@ function replyTextSize(messages: readonly LhMessage[]): number {
 	return chars;
 }
 
+/** Follow-ups 1, finding 4: with a partial reply the record lacks (detachedTail), a record that ends on the learner's input
+ *  means the server lost the turn (a restart): nothing was saved after the input, and nothing failed. */
+function endsOnLearnerInput(messages: readonly LhMessage[]): boolean {
+	const last = messages.at(-1);
+	return last?.role === "user" || (last?.role === "toolResult" && !last.isError);
+}
+
 /** Mark transport failures without confusing JSON/application bugs with drops. */
 class StreamReadError extends Error {
 	constructor(cause: unknown) {
@@ -253,7 +260,7 @@ export interface SessionState {
 	/** Local submission with optional grading/processing, awaiting its POST response. */
 	evaluating: boolean;
 	activity: "thinking" | "checker" | "grader" | "processing" | null;
-	cutOffReply: { hasText: boolean; blockedByCompaction?: true } | undefined;
+	cutOffReply: { hasText: boolean; blockedByCompaction?: true; afterContinue?: true } | undefined;
 	/** The failure shown cannot be retried because a compaction landed after it; the banner says so. */
 	retryBlocked: boolean;
 	droppedStream: boolean;
@@ -358,6 +365,8 @@ export class SessionModel {
 	private detachedTail: { messages: LhMessage[]; chars: number } | null = null;
 	/** Request/loop failures are transient; provider failures derive from messages. */
 	private errorValue: { message: string } | null = null;
+	/** The refusal of a send made by the dropped banner's Retry; errorValue is it while identical (follow-ups 1, finding 2). */
+	private recoveryError: { message: string } | null = null;
 	/** The server-retained failure (record turnError) last adopted; errorValue is it while identical. */
 	private retainedError: { message: string } | null = null;
 	/** Dismissing a banner must not authorize an automatic replacement turn. */
@@ -544,8 +553,15 @@ export class SessionModel {
 			if (!this.appendMessages(record.messages, record.pluginQuestionAvailability, true, record.pluginProblemAvailability)) return undefined;
 			this.canonicalAcknowledged = Math.max(this.canonicalAcknowledged, ticket);
 		} else if (mode === "replace") {
-			const recovered = this.droppedStream && !options.allowInFlight && record.turnInFlight === false && !record.turnError && !failedResponseAtEnd(record.messages);
-			if (recovered) this.clearDroppedStream();
+			// Follow-ups 1: any read while no stream is live may resolve a drop (finding 1: the settle read after a full replay
+			// failed), but never a lost turn's (finding 4), and a refused recovery's banner goes with it (finding 2).
+			const live = this.statusValue === "submitted" || this.statusValue === "streaming";
+			const recovered = this.droppedStream && !live && record.turnInFlight === false && !record.turnError && !failedResponseAtEnd(record.messages) &&
+				!(this.detachedTail && endsOnLearnerInput(record.messages));
+			if (recovered) {
+				this.clearDroppedStream();
+				if (this.errorValue !== null && this.errorValue === this.recoveryError) this.errorValue = null;
+			}
 			this.canonicalAcknowledged = Math.max(this.canonicalAcknowledged, ticket);
 			this.replaceMessages(record.messages, record.turnError, record.pluginQuestionAvailability, record.pluginProblemAvailability);
 			if (recovered) {
@@ -877,7 +893,9 @@ export class SessionModel {
 						// attached) and the record is truth. A reply that landed leaves no drop behind; a failure
 						// keeps the dropped state only while the learner has seen more than was saved.
 						const failed = (this.errorValue !== null && this.errorValue.message !== STREAM_DROPPED) || failedResponseAtEnd(this.base) !== undefined;
-						if (failed && this.detachedTail) this.droppedStream = true;
+						// Follow-ups 1, finding 4: the server lost the turn (a restart). Keep the partial and the dropped banner, whose
+						// Retry runs the turn again.
+						if ((failed || endsOnLearnerInput(this.base)) && this.detachedTail) this.droppedStream = true;
 						else this.clearDroppedStream();
 					}
 					if (this.consumeAbort === controller && this.statusValue !== "error") this.setStatus("ready");
@@ -1002,6 +1020,10 @@ export class SessionModel {
 		const owner = this.consumeAbort;
 		const connection = this.connectionGeneration;
 		const current = () => owner === this.consumeAbort && connection === this.connectionGeneration;
+		const resend = async (input: ChatInput) => {
+			await this.send(input);
+			if (this.statusValue === "error" && this.errorValue !== null) this.recoveryError = this.errorValue;
+		};
 		this.retryingStream = true;
 		this.onChange?.();
 		try {
@@ -1031,7 +1053,16 @@ export class SessionModel {
 				this.replaceMessages(record.messages, record.turnError, record.pluginQuestionAvailability, record.pluginProblemAvailability);
 				this.reconciliationValue = "ready";
 				this.setStatus("error");
-				await this.send({ type: "retry", failedHead });
+				await resend({ type: "retry", failedHead });
+				return;
+			}
+			if (this.detachedTail && !record.turnError && endsOnLearnerInput(record.messages)) {
+				// Follow-ups 1, finding 4: the server lost the turn, so there is no failure to retry. `continue` runs the turn
+				// again from the saved input, as the continuation fold does; the learner's input is not sent again.
+				this.replaceMessages(record.messages, record.turnError, record.pluginQuestionAvailability, record.pluginProblemAvailability);
+				this.reconciliationValue = "ready";
+				this.setStatus("error");
+				await resend({ type: "continue" });
 				return;
 			}
 			this.clearDroppedStream();

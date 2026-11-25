@@ -26,11 +26,13 @@ import {
 	canIndexMaterial,
 	dropStaleIndex,
 	indexPdfMaterial,
+	keptOrNone,
 	pendingIndexingError,
 	profileFromDigest,
 	retryPdfIndexing,
 	rewritePdfProfile,
 	rewriteRefusal,
+	unfinishedIndexingError,
 	type IndexMaterialOptions,
 } from "./material-indexing.ts";
 import { hasProfile } from "../agent/subagents/material-digest.ts";
@@ -253,8 +255,10 @@ export function retryMaterialConversion(ownerId: string, id: string): Result<Les
 			if (!now.profile) stores.materialStore.update(ownerId, id, { status: "error", error: err instanceof Error ? err.message : String(err) });
 			return;
 		}
-		// without a profile the material is being read again (a turn waits for it; a restart resumes it)
+		// without a profile the material is being read again (a turn waits for it; a restart resumes it); with one it stays
+		// ready, and nothing resumes a quit during this indexing, so the note says it has not finished (review 5, finding 2)
 		if (!now.profile) stores.materialStore.update(ownerId, id, { status: "reading" });
+		else stores.materialStore.update(ownerId, id, { indexingError: unfinishedIndexingError(keptOrNone(now)) });
 		await indexAndProfile(ownerId, current(ownerId, id) ?? now, engine, signal, key, "when_missing");
 	})()
 		.catch(() => {})

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { after, it } from "node:test";
 import type { Agent, AgentEvent, AgentTool } from "@earendil-works/pi-agent-core";
 import { createFauxCore, fauxAssistantMessage, fauxText, fauxThinking, fauxToolCall, type FauxResponseStep, type Message } from "@earendil-works/pi-ai";
@@ -10,7 +12,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 import type { ChatInput } from "../src/core/input-events.ts";
 import type { LhMessage } from "../src/core/native-messages.ts";
-import type { TurnTimelineLine } from "../src/server/turn-timeline.ts";
+import type { TurnTimelineLine, TurnTimelineStartLine } from "../src/server/turn-timeline.ts";
 
 assert.equal(process.env.NODE_ENV, "test");
 const scratch = mkdtempSync(join(tmpdir(), "lh-stream-reliability-"));
@@ -19,6 +21,7 @@ process.env.LH_AUTH_FILE = join(scratch, "auth.json");
 process.env.OPENROUTER_API_KEY = "test-key-presence-gate";
 writeFileSync(process.env.LH_AUTH_FILE, "{}");
 after(() => rmSync(scratch, { recursive: true, force: true }));
+const TIMELINE_SCRIPT = fileURLToPath(new URL("../scripts/turn-timeline.mjs", import.meta.url));
 
 const { MODEL_TEXT_PAUSE_MS, SessionModel, sseEvents } = await import("../components/session-core.ts");
 const { CutOffReplyNotice } = await import("../components/turn-error.tsx");
@@ -30,7 +33,7 @@ const { runningTurn, settledTurnResponse } = await import("../src/server/turn-ru
 const { runPiTurn, piTurnResponse, TURN_KEEPALIVE, TURN_KEEPALIVE_MS } = await import("../src/server/pi/ui-stream.ts");
 const { createTurnTimelineWriter, observeAnswerKey, observeTurnActivity, TurnTimeline } = await import("../src/server/turn-timeline.ts");
 const { chatStore } = await import("../src/store/chats.ts");
-const { newUserMessage } = await import("../src/core/native-messages.ts");
+const { newAnswerResult, newUserMessage } = await import("../src/core/native-messages.ts");
 const { buildAnswer, normalizeOptions } = await import("../src/core/question-core.ts");
 const { GET: readChat } = await import("../app/api/chats/[id]/route.ts");
 
@@ -348,6 +351,7 @@ it("replays held checker and grader status on the existing line and writes a con
 		refusalBudgetPasses: { prose: 1 },
 		// A view leaving never ends a turn: it settled cleanly, and the departure is counted.
 		stopReason: "length", streamEnd: "completed", errorKind: null, clientDrops: 1, visibleTextChars: 13, thinkingChars: 15,
+		cliEnding: null, // a faux message: not from the claude CLI
 	});
 	assert.equal(lines.length, 1);
 	assert.doesNotMatch(JSON.stringify(line), /private|visible words/);
@@ -374,6 +378,67 @@ it("counts a timeline write failure without breaking settlement", async () => {
 	await writer.flush();
 	assert.equal(saved, true);
 	assert.equal(writer.failures, 1);
+});
+
+it("follow-ups 1, timeline: a turn writes a content-free start line, and the summary lists turns that started and never finished", async t => {
+	const lines: TurnTimelineLine[] = [];
+	const starts: TurnTimelineStartLine[] = [];
+	let now = 0;
+	const timeline = new TurnTimeline(identity, line => lines.push(line), () => now, line => starts.push(line));
+	timeline.begin();
+	timeline.begin();
+	assert.deepEqual(starts, [{ kind: "start", ...identity, startedAt: starts[0]?.startedAt }]);
+	assert.equal(lines.length, 0, "the full line still waits for the end");
+	now = 7;
+	timeline.event({ type: "turn_start" });
+	now = 9;
+	timeline.finish(false);
+	assert.equal(lines.length, 1);
+	assert.equal(starts.length, 1);
+	const [finished] = lines;
+	assert.ok(finished);
+
+	// On disk the start and the finish of one turn may sit on either side of a rotation; both files are read.
+	const dir = mkdtempSync(join(scratch, "timeline-"));
+	const file = join(dir, "turns.jsonl");
+	const start = (turnId: string, minutesAgo: number): TurnTimelineStartLine => ({ ...starts[0]!, turnId, startedAt: new Date(Date.now() - minutesAgo * 60_000).toISOString() });
+	const startBytes = Buffer.byteLength(JSON.stringify(start("turn-a", 5)) + "\n");
+	const finishBytes = Buffer.byteLength(JSON.stringify({ ...finished, turnId: "turn-a" }) + "\n");
+	const maxBytes = 2 * startBytes + finishBytes - 1;
+	const writer = createTurnTimelineWriter(file, maxBytes);
+	writer.append(start("turn-a", 5));
+	writer.append(start("turn-b", 90)); // hung, then the app was quit
+	writer.append({ ...finished, turnId: "turn-a" }); // rotates: both starts move to turns.jsonl.1
+	writer.append({ ...finished, turnId: "x".repeat(maxBytes) }); // too long: a counted write failure
+	writer.append(start("turn-c", 0)); // still running
+	await writer.flush();
+	assert.equal(writer.failures, 1);
+	assert.equal((await readFile(file + ".1", "utf8")).trim().split("\n").length, 2);
+	const summary = (path: string) => JSON.parse(execFileSync(process.execPath, [TIMELINE_SCRIPT, path], { encoding: "utf8" }));
+	const report = summary(file);
+	assert.equal(report.turns, 1);
+	assert.equal(report.timelineWriteFailures, 1);
+	assert.deepEqual(report.turnsStartedNeverFinished.turns.map((turn: { turnId: string; startedMinutesAgo: number }) => [turn.turnId, turn.startedMinutesAgo]), [["turn-b", 90], ["turn-c", 0]]);
+	assert.equal(report.turnsStartedNeverFinished.count, 2);
+	assert.equal(report.slowestTurns[0].firstEventMs, 7);
+	assert.equal(report.slowestTurns[0].cliEnding, null);
+	assert.doesNotMatch(await readFile(file + ".1", "utf8"), /prompt|answer|text/i);
+
+	// A log written before start lines existed (no `kind`, no cliEnding) still reads, with nothing unfinished.
+	const old = join(dir, "old.jsonl");
+	const { cliEnding: _cliEnding, ...oldLine } = finished;
+	writeFileSync(old, JSON.stringify({ ...oldLine, turnId: "old-1" }) + "\n" + JSON.stringify({ ...oldLine, turnId: "old-2" }) + "\n");
+	const oldReport = summary(old);
+	assert.equal(oldReport.turns, 2);
+	assert.equal(oldReport.unreadableLines, 0);
+	assert.equal(oldReport.turnsStartedNeverFinished.count, 0);
+	assert.equal(oldReport.timelineWriteFailures, 0);
+
+	// The chat route begins the timeline of every claimed turn.
+	const begin = t.mock.method(TurnTimeline.prototype, "begin");
+	const l = lesson([fauxAssistantMessage("A short reply.")], undefined, { seed: [{ ...newUserMessage("Hello."), id: "hello" }, { ...fauxAssistantMessage("Hi."), id: "hi" }] });
+	assert.equal(await l.session.send({ type: "text", text: "Teach me the planets." }), true);
+	assert.equal(begin.mock.callCount(), 1);
 });
 
 // ─── Review 1 fixes (wp1-review-1.md): one regression test per item, and one end-to-end test per recovery path that
@@ -450,6 +515,56 @@ it("end to end, Continue: a send_to_user cut-off continues; seen once, stored on
 	assert.equal(occurrences(next, "Your previous reply was cut off"), 1, "the answered Continue instruction stays between the two halves");
 	assert.equal(visibleTexts(l.session).filter(text => text === "Part two after continuation.").length, 1);
 	l.assertOneAnswer(2);
+});
+
+it("follow-ups 1, item 6: a kept cut-off of thinking alone (after send_to_user prose) never reaches the model as a thinking-only turn", async () => {
+	const l = lesson([
+		say("Part one before the cut.", "say-1"),
+		cutOff(),
+		fauxAssistantMessage("Part two after continuation."),
+		fauxAssistantMessage("The next answer."),
+	], undefined, { tools: { send_to_user: sendToUserTool } });
+	await l.session.send(answer);
+	const kept = l.saved().find(message => message.role === "assistant" && message.stopReason === "length");
+	assert.ok(kept?.role === "assistant" && kept.lhCutoffHasText === true && kept.content.every(block => block.type === "thinking"), "the kept cut-off holds thinking only");
+	await l.session.recoverReply();
+	await l.session.send({ type: "text", text: "What comes next?" });
+	const thinkingOnly = (messages: Message[]) => messages.filter(message => message.role === "assistant" && message.content.every(block => block.type === "thinking")).length;
+	assert.equal(l.contexts.length, 4);
+	for (const context of l.contexts.slice(2)) {
+		assert.equal(thinkingOnly(context), 0);
+		assert.doesNotMatch(JSON.stringify(context), /Fixture-only private thought/);
+		assert.equal(occurrences(JSON.stringify(context), "Part one before the cut."), 1);
+	}
+	assert.equal(occurrences(JSON.stringify(l.contexts[2]), "Your previous reply was cut off"), 1, "Continue still asks for the rest");
+	assert.ok(l.saved().some(message => message.id === kept.id), "the cut-off stays in the record");
+	l.assertOneAnswer(2);
+});
+
+it("follow-ups 1, item 7: a Continue cut off before it added text says so, and its Retry re-runs the continuation; an empty cut-off right after a reply is refused", async () => {
+	const l = lesson([fauxAssistantMessage("Part one of the reply", { stopReason: "length" }), cutOff(), fauxAssistantMessage("Part two of the reply.")]);
+	await l.session.send(answer);
+	assert.equal(l.session.getState().cutOffReply?.hasText, true);
+	await l.session.recoverReply();
+	const cutoff = l.session.getState().cutOffReply;
+	assert.deepEqual({ hasText: cutoff?.hasText, afterContinue: cutoff?.afterContinue }, { hasText: false, afterContinue: true });
+	const notice = renderToStaticMarkup(<CutOffReplyNotice hasText={false} afterContinue disabled={false} recover={() => {}} />);
+	assert.match(notice, /The continuation was cut off before it added any text\.<\/span>.*>Retry</);
+	assert.doesNotMatch(notice, /before any text appeared/);
+	assert.match(renderToStaticMarkup(<CutOffReplyNotice hasText={false} disabled={false} recover={() => {}} />), /before any text appeared/, "a first reply keeps its wording");
+	await l.session.recoverReply();
+	assert.deepEqual(l.requests.map(input => input.type), ["answer", "continue-reply", "continue-reply"]);
+	for (const part of ["Part one of the reply", "Part two of the reply."]) assert.equal(visibleTexts(l.session).filter(text => text === part).length, 1, part);
+	assert.equal(l.session.getState().cutOffReply, undefined);
+	l.assertOneAnswer();
+
+	const learner: LhMessage = { ...newUserMessage("Teach me the planets."), id: "learner" };
+	const reply: LhMessage = { ...fauxAssistantMessage("A complete reply."), id: "reply" };
+	const empty: LhMessage = { ...cutOff(), id: "empty" };
+	assert.equal(cutOffReplyAtEnd([learner, empty])?.afterContinue, undefined);
+	assert.doesNotThrow(() => requireCutOffReply([learner, empty], "empty"));
+	assert.throws(() => requireCutOffReply([learner, reply, empty], "empty"), /no input to retry from/);
+	assert.throws(() => requireCutOffReply([empty], "empty"), /no input to retry from/);
 });
 
 it("end to end, Retry for an empty cut-off: the cut-off stays stored but never reaches the model again", async () => {
@@ -608,6 +723,130 @@ it("item 4: a retained failure before a compaction cannot be retried, and the ba
 	assert.equal(new SessionModel({ chatId: "a", initialMessages: [learner, provider, compaction], fetch }).getState().retryBlocked, true);
 	assert.equal(new SessionModel({ chatId: "b", initialMessages: [learner, compaction, provider], fetch }).getState().retryBlocked, false);
 	assert.equal(new SessionModel({ chatId: "c", initialMessages: [compaction, learner], initialError: "Network failure", fetch }).getState().retryBlocked, false);
+});
+
+// ─── Follow-ups 1 (wp1-review-2.md, open follow-ups 1, 2 and 4) ──────────────────────────────────────────────────────
+// After any order of drop, reattach, settle, Retry and sync the learner sees exactly one of: the reply with no banner; a
+// failure with a working Retry; the dropped banner with a working Retry.
+
+/** A session against a scripted server: `record()` answers every record GET (a Response is sent as is), `views` each
+ *  /stream attach in order, `post` every POST. */
+function scriptedSession(chatId: string, initial: LhMessage[], record: () => object | Response, views: (() => Response)[], post: (input: ChatInput) => Response = () => Response.json({ ok: true })) {
+	const posts: ChatInput[] = [];
+	let view = 0;
+	const session = new SessionModel({
+		chatId, initialMessages: initial,
+		fetch: async (url, init) => {
+			if (String(url) === "/api/chat") {
+				const input = JSON.parse(String(init?.body)).input as ChatInput;
+				posts.push(input);
+				return post(input);
+			}
+			if (String(url).endsWith("/stream")) return views[view++]?.() ?? new Response("no view scripted", { status: 500 });
+			const value = record();
+			return value instanceof Response ? value : Response.json(value);
+		},
+	});
+	return { session, posts };
+}
+const learnerAsk: LhMessage = { ...newUserMessage("Teach me the planets."), id: "learner" };
+const dropMidReply = () => new Response(TURN_KEEPALIVE + streamFrame({ type: "message_start", message: draft }));
+const fullReplay = (reply: object) => () => new Response(streamFrame({ type: "agent_start" }) + streamFrame({ type: "message_start", message: reply }) +
+	streamFrame({ type: "message_end", message: reply }) + streamFrame({ type: "agent_end", messages: [] }) + "data: [DONE]\n\n");
+const banner = (session: InstanceType<typeof SessionModel>) => {
+	const state = session.getState();
+	return { status: state.status, droppedStream: state.droppedStream, error: state.error?.message ?? null };
+};
+
+it("follow-ups 1, finding 1: a reply that fully arrived while the settle read failed loses its drop banner at the next successful sync", async () => {
+	const reply = { ...fauxAssistantMessage("The whole reply, longer than the part seen before the drop."), id: "reply" };
+	let record: object | Response = { messages: [learnerAsk], turnInFlight: true };
+	const { session } = scriptedSession("finding-1", [learnerAsk], () => record, [dropMidReply, () => {
+		record = new Response("unavailable", { status: 503 }); // the settle read after [DONE] fails
+		return fullReplay(reply)();
+	}]);
+	await session.resumeStream(false);
+	assert.equal(session.getState().reconciliation, "failed");
+	assert.equal(visibleTexts(session).filter(text => text === "The whole reply, longer than the part seen before the drop.").length, 1);
+
+	record = { messages: [learnerAsk, reply], turnInFlight: false };
+	assert.equal(await session.reconcile(), true, "Retry syncing");
+	assert.deepEqual(banner(session), { status: "ready", droppedStream: false, error: null });
+	assert.equal(visibleTexts(session).filter(text => text === "The whole reply, longer than the part seen before the drop.").length, 1);
+	assert.doesNotMatch(JSON.stringify(session.getState().messages), /The first half of the reply/);
+});
+
+it("follow-ups 1, finding 2: a Retry refused because another tab retried first leaves no banner once the record recovers", async () => {
+	const failed = { ...fauxAssistantMessage("The first half of the reply", { stopReason: "error", errorMessage: "scripted connection failure" }), id: "failed" } as LhMessage;
+	const retried = { ...fauxAssistantMessage("The other tab's reply."), id: "retried" } as LhMessage;
+	let record: object = { messages: [learnerAsk], turnInFlight: true };
+	const { session, posts } = scriptedSession("finding-2", [learnerAsk], () => record, [dropMidReply, () => {
+		record = { messages: [learnerAsk, failed], turnInFlight: false }; // the server turn failed meanwhile
+		return new Response(streamFrame({ type: "agent_start" }));
+	}], () => {
+		record = { messages: [learnerAsk, failed, retried], turnInFlight: false }; // tab B's Retry landed first
+		return Response.json({ error: "The session changed before Retry. Refresh the session." }, { status: 400 });
+	});
+	await session.resumeStream(false);
+	assert.equal(session.getState().droppedStream, true);
+	await session.recoverReply();
+	assert.deepEqual(posts, [{ type: "retry", failedHead: "failed" }]);
+	assert.match(session.getState().error?.message ?? "", /session changed before Retry/);
+
+	await session.readRecord(); // the page's sync after record-changed
+	assert.deepEqual(banner(session), { status: "ready", droppedStream: false, error: null });
+	assert.equal(visibleTexts(session).filter(text => text === "The other tab's reply.").length, 1);
+	assert.equal(posts.length, 1, "nothing was sent again");
+});
+
+it("follow-ups 1, finding 4: when the server lost the turn (a restart) the partial stays under the dropped banner, and its Retry sends the turn again", async () => {
+	const reply = { ...fauxAssistantMessage("The reply after the restart, longer than the lost part."), id: "after-restart" };
+	let record: object | Response = { messages: [learnerAsk], turnInFlight: true };
+	const { session, posts } = scriptedSession("finding-4", [learnerAsk], () => record, [dropMidReply, () => {
+		record = { messages: [learnerAsk], turnInFlight: false }; // the restarted server has no turn and no reply
+		return settledTurnResponse();
+	}, () => {
+		record = { messages: [learnerAsk, reply], turnInFlight: false }; // the turn sent again settles
+		return fullReplay(reply)();
+	}], () => {
+		record = { messages: [learnerAsk], turnInFlight: true };
+		return Response.json({ ok: true });
+	});
+	await session.resumeStream(false);
+	assert.deepEqual(banner(session), { status: "ready", droppedStream: true, error: "The connection dropped before the turn completed." });
+	assert.match(JSON.stringify(session.getState().messages), /The first half of the reply/);
+
+	await session.readRecord(); // a later sync keeps it: the record still holds no reply
+	assert.equal(session.getState().droppedStream, true);
+	assert.match(JSON.stringify(session.getState().messages), /The first half of the reply/);
+	assert.deepEqual(posts, [], "no automatic retry");
+
+	const saved = record;
+	record = new Response("offline", { status: 503 });
+	await session.recoverReply(); // offline: the same banner and its Retry stay
+	assert.deepEqual(banner(session), { status: "ready", droppedStream: true, error: "The connection dropped before the turn completed." });
+	assert.match(JSON.stringify(session.getState().messages), /The first half of the reply/);
+	record = saved;
+	await session.recoverReply();
+	assert.deepEqual(posts, [{ type: "continue" }], "the turn runs again from the saved input; the input is not sent again");
+	assert.deepEqual(banner(session), { status: "ready", droppedStream: false, error: null });
+	assert.equal(visibleTexts(session).filter(text => text === "The reply after the restart, longer than the lost part.").length, 1);
+	assert.doesNotMatch(JSON.stringify(session.getState().messages), /The first half of the reply/);
+});
+
+it("follow-ups 1, finding 4: the server runs a continue on a record that ends on the learner's input, with one saved input", async () => {
+	for (const seed of [
+		[{ ...newUserMessage("Teach me the planets."), id: "ask" }],
+		[{ ...newUserMessage("Teach me the planets."), id: "ask" }, { ...fauxAssistantMessage([fauxToolCall("quiz", quiz, { id: answer.toolCallId })], { stopReason: "toolUse" }), id: "question" },
+			{ ...newAnswerResult(answer.toolCallId, "quiz", answer.answer), id: "saved-answer" }],
+	] as LhMessage[][]) {
+		const l = lesson([fauxAssistantMessage("The reply after the restart.")], undefined, { seed });
+		assert.equal(await l.session.send({ type: "continue" }), true);
+		assert.equal(visibleTexts(l.session).filter(text => text === "The reply after the restart.").length, 1);
+		assert.equal(l.saved().filter(message => message.role === "user").length, 1);
+		assert.equal(l.saved().filter(message => message.role === "toolResult").length, seed.length - 1 ? 1 : 0);
+		assert.equal(l.session.getState().error, null);
+	}
 });
 
 it("item 5: a cut-off with an unanswered question call has the malformed-question recovery only", () => {

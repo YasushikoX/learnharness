@@ -792,6 +792,31 @@ describe("review 4, finding 1: a conversion run leaves no stale index, whichever
 		assert.deepEqual(glossary.indexed.map((x) => x.id), [m.id]);
 	});
 
+	it("review 5, finding 2: a re-index after a conversion retry that keeps the old profile leaves a note if the app quits during it", async () => {
+		const course = courseStore.createCourse("Retry OCR, quit while indexing");
+		const m = await upload(course.id, "scan-quit.pdf", SCANNED);
+		assert.equal(m.profile, OLD_PROFILE);
+		replacePdf(course.id, m, SINGLE);
+		let release!: () => void;
+		let during: LessonMaterial | undefined;
+		script = { ...DEFAULT_SCRIPT, gate: new Promise<void>((r) => (release = r)), onIndexCall: () => (during ??= find(course.id, m.id)) };
+		assert.ok(service.retryMaterialConversion(course.id, m.id).ok);
+		await until(() => during !== undefined);
+		// What the record on disk says if the app quits now: still ready with the old profile, and a note with the Retry wording.
+		assert.equal(during!.status, "ready");
+		assert.equal(during!.profile, OLD_PROFILE);
+		assert.equal(during!.indexingError?.kind, "pending");
+		assert.match(during!.indexingError?.message ?? "", /has not finished \(if the app stopped while it ran, it was interrupted\), so the material keeps the profile it had\. Retry the indexing to try again\./);
+		assert.ok(exists(course.id, m, indexing.MATERIAL_INDEXING_STARTED));
+		assert.match(materialStatusLine({ ...during!, indexingProgress: undefined }), /has not finished/, "after a restart (no run, no progress) the row shows the note");
+		release();
+		await idle();
+		const after = find(course.id, m.id);
+		assert.equal(after.indexingError, undefined, "the completed index replaces the note");
+		assert.equal(after.profile, DIGEST_PROFILE);
+		assertIndexInvariant(course.id, m.id, "re-indexed after a conversion retry");
+	});
+
 	// The other writer of content.md: the conversion inside a read that restarts (status reading after an app restart).
 	it("a restarted read that re-converts changed content drops the stale digest too, also without a vision model", async () => {
 		const owner = lesson("Restart converts");

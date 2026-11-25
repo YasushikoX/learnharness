@@ -528,6 +528,14 @@ export function emptyCutOffIds(messages: readonly LhMessage[]): Set<string> {
 	return ids;
 }
 
+/** A kept cut-off that holds nothing but thinking (lhCutoffHasText: earlier send_to_user prose in its turn). Sent, it would
+ *  be an assistant turn of thinking alone: pi-ai serialises it as is, the Anthropic API has no documented acceptance of
+ *  that, and OpenAI-style APIs reject reasoning with no following item. Follow-ups 1: never sent, like an empty cut-off;
+ *  it stays in the record, and its Continue still works (the visible part is the earlier prose). */
+function thinkingOnlyCutOff(message: LhMessage): boolean {
+	return message.role === "assistant" && message.stopReason === "length" && message.content.every(block => block.type === "thinking");
+}
+
 /** The learner's explicit move-on signal (owner round 16): appended by
  *  the next input (the composer band's chip, or Enter on an empty
  *  composer during the between-problems pause). The content is the
@@ -1006,7 +1014,7 @@ export function toLlmMessages(messages: readonly AgentMessage[], opts: ToLlmOpti
 	for (let i = leading ? Math.max(start, 1) : start; i < messages.length; i++) {
 		const m = messages[i]!;
 		const role = (m as { role?: string }).role;
-		if (emptyCutOffs.has((m as LhMessage).id)) continue;
+		if (emptyCutOffs.has((m as LhMessage).id) || thinkingOnlyCutOff(m as LhMessage)) continue;
 		if (role === "custom") {
 			const marker = m as LhMarkerMessage;
 			// UI-only markers: plan blocks, and problem dismissals (the

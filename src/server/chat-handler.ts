@@ -600,6 +600,7 @@ export async function handleChatInput(
 				if (!claim) return Response.json({ error: "A turn is already running for this session" }, { status: 409 });
 				preparation = claim;
 				turnClaimed = true;
+				startTimeline().begin(); // a claimed turn always reaches finish() below unless the process dies
 				const outcome = await startTimeline().run(() => observeTurnActivity(activity, () => work(claim.signal)));
 				// No captured history may be written after asynchronous plugin processing.
 				const current = stores.chatStore.getChat(chatId);
@@ -677,6 +678,7 @@ export async function handleChatInput(
 
 	turnClaimed = true;
 	const activeTimeline = startTimeline();
+	activeTimeline.begin();
 
 	// Placement grading (fork addition, 2026-11-24): grade no-sketch placement answers
 	// inside the turn lock right before write-ahead persistence and append the live DAG frontier status.

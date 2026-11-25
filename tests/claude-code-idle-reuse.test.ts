@@ -120,3 +120,52 @@ test("a delta that is not user messages only (an assistant message in it) is rep
 	assert.equal(spawned.length, 2);
 	assert.equal(spawned[0]!.killed, true);
 });
+
+test("follow-ups 1: a late result for the previous prompt does not settle the next turn; that turn's own result does", async (t) => {
+	// The CLI writes one `result` per prompt, in order. Here the first prompt's result is held back until the second prompt
+	// is written, and the second answer never gets a message_stop: only its own result may settle it, with its own text.
+	const spawned: Array<{ killed: boolean }> = [];
+	const runClaude: RunClaude = () => {
+		const stdin = new PassThrough();
+		const stdout = new PassThrough();
+		const record = { killed: false };
+		spawned.push(record);
+		const child = new EventEmitter() as EventEmitter & Record<string, unknown>;
+		Object.assign(child, { stdin, stdout, stderr: new PassThrough(), kill: () => { record.killed = true; setImmediate(() => child.emit("close", null)); return true; } });
+		t.after(() => (child.kill as () => boolean)());
+		const write = (value: unknown) => stdout.write(`${JSON.stringify(value)}\n`);
+		const event = (e: unknown) => write({ type: "stream_event", event: e });
+		const text = (value: string) => {
+			event({ type: "message_start", message: { usage: {} } });
+			event({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+			event({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: value } });
+		};
+		let prompts = 0;
+		createInterface({ input: stdin }).on("line", (line) => {
+			const message = JSON.parse(line) as { type: string; request_id?: string; request?: { subtype?: string } };
+			if (message.type === "control_request") {
+				if (message.request?.subtype === "initialize") write({ type: "control_response", response: { request_id: message.request_id, subtype: "success" } });
+				return;
+			}
+			if (++prompts === 1) {
+				text("first answer");
+				event({ type: "content_block_stop", index: 0 });
+				event({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: {} });
+				event({ type: "message_stop" });
+				return;
+			}
+			write({ type: "result", subtype: "success", is_error: false }); // the first prompt's, late
+			text("second answer");
+			write({ type: "result", subtype: "success", is_error: false });
+		});
+		return child as never;
+	};
+	const stream = createClaudeCodeStreamFunction(runClaude);
+	const first = await turn(stream, [user("hello")]);
+	const second = await turn(stream, [user("hello"), first, user("next", 5)]);
+	assert.equal(spawned.length, 1, "the second prompt went to the idle process");
+	assert.equal(second.content.map((b) => (b.type === "text" ? b.text : "")).join(""), "second answer");
+	assert.equal(second.stopReason, "stop");
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(spawned[0]!.killed, true, "a turn settled by its result is never reused");
+});

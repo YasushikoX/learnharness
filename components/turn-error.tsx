@@ -31,11 +31,11 @@ export function cutOffRecoveryDisabled(s: { localStream: boolean; turnInFlight: 
 	return s.localStream || s.turnInFlight || s.reconciliation === "syncing" || s.compacting || s.retryingStream;
 }
 
-export function CutOffReplyNotice({ hasText, blockedByCompaction = false, disabled, recover }: { hasText: boolean; blockedByCompaction?: boolean; disabled: boolean; recover: () => void }) {
+export function CutOffReplyNotice({ hasText, blockedByCompaction = false, afterContinue = false, disabled, recover }: { hasText: boolean; blockedByCompaction?: boolean; afterContinue?: boolean; disabled: boolean; recover: () => void }) {
 	return (
 		<div role="status" className="flex items-center justify-between gap-3 rounded-lg border bg-muted/40 px-3 py-2 text-sm">
 			<span>
-				{hasText ? "The tutor’s reply was cut off." : "The tutor’s reply was cut off before any text appeared."}
+				{hasText ? "The tutor’s reply was cut off." : afterContinue ? "The continuation was cut off before it added any text." : "The tutor’s reply was cut off before any text appeared."}
 				{blockedByCompaction && <RetryUnavailableNote />}
 			</span>
 			{!blockedByCompaction && (

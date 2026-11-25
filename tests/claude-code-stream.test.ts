@@ -35,7 +35,7 @@ import { Type } from "typebox";
 
 import { parseCliLine } from "../src/agent/claude-code/cli-events.ts";
 import { isNarrationBlock } from "../src/agent/narration-guard.ts";
-import { ClaudeCodeError } from "../src/agent/claude-code/constants.ts";
+import { ClaudeCodeError, cliEndingOf } from "../src/agent/claude-code/constants.ts";
 import { LIVE_PROCESS_IDLE_TIMEOUT_MS, liveProcessIdleTimeoutMs } from "../src/agent/claude-code/live-processes.ts";
 import { CLAUDE_CODE_MODELS, createClaudeCodeProvider } from "../src/agent/claude-code/provider.ts";
 import { authEnvRecord } from "../src/core/auth-env.ts";
@@ -1047,13 +1047,153 @@ test("parseCliLine reads a signature delta and ignores one without a signature",
 	assert.equal(delta({ type: "signature_delta", signature: 5 }), null);
 });
 
-test("parseCliLine ignores non-JSON, system, rate-limit and successful result lines", () => {
+test("parseCliLine ignores non-JSON, system, rate-limit and non-error assistant lines and reads a successful result's stop reason only", () => {
 	assert.equal(parseCliLine("not json"), null);
 	assert.equal(parseCliLine("null"), null);
 	assert.equal(parseCliLine('{"type":"system","subtype":"init"}'), null);
+	assert.equal(parseCliLine('{"type":"system","subtype":"thinking_tokens"}'), null);
 	assert.equal(parseCliLine('{"type":"rate_limit_event"}'), null);
-	assert.equal(parseCliLine('{"type":"result","is_error":false,"result":"hello there"}'), null);
+	// Follow-ups 1: a successful result is parsed (stream.ts decides whether it ends anything), without its text.
+	assert.deepEqual(parseCliLine('{"type":"result","subtype":"success","is_error":false,"result":"hello there","stop_reason":"end_turn"}'), { type: "resultSuccess", stopReason: "end_turn" });
+	assert.deepEqual(parseCliLine('{"type":"result","is_error":false,"result":"hello there"}'), { type: "resultSuccess", stopReason: null });
 	assert.equal(parseCliLine('{"type":"assistant","error":null,"message":{"content":[{"type":"text","text":"hello there"}]}}'), null);
+});
+
+// ─── Follow-ups 1: how the claude CLI ends a turn ──────────────────────────────────────────────────────────────────
+// The sequences of line types the real CLI (2.1.330, `--model opus`, the app's own arguments, no tools) wrote on
+// 2026-11-25, rebuilt with minimal fields and no captured text: effort low, and effort high with thinking (the
+// thinking-only `system/thinking_tokens` progress lines included). Both end message_stop, then a successful result, and
+// the CLI then waits on stdin for the next prompt.
+const cliSystem = (subtype: string) => JSON.stringify({ type: "system", subtype });
+const cliAssistant = (types: string[]) => JSON.stringify({ type: "assistant", message: { content: types.map(type => ({ type })) } });
+const cliResult = (stopReason?: string) => JSON.stringify({ type: "result", subtype: "success", is_error: false, ...(stopReason ? { stop_reason: stopReason } : {}) });
+const CAPTURED_ENDINGS: Record<string, string[]> = {
+	"effort low": [
+		cliSystem("ui_invalidate"), cliSystem("init"), cliSystem("status"),
+		streamEvent({ type: "message_start", message: { usage: {} } }),
+		streamEvent({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }),
+		streamEvent({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } }),
+		cliAssistant(["text"]),
+		streamEvent({ type: "content_block_stop", index: 0 }),
+		streamEvent({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: {} }),
+		streamEvent({ type: "message_stop" }),
+		cliResult("end_turn"),
+	],
+	"effort high, thinking omitted": [
+		cliSystem("ui_invalidate"), cliSystem("init"), cliSystem("status"),
+		streamEvent({ type: "message_start", message: { usage: {} } }),
+		streamEvent({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }),
+		cliSystem("thinking_tokens"),
+		streamEvent({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "" } }),
+		cliSystem("thinking_tokens"),
+		streamEvent({ type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig" } }),
+		cliAssistant(["thinking"]),
+		streamEvent({ type: "content_block_stop", index: 0 }),
+		streamEvent({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } }),
+		streamEvent({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "ok" } }),
+		cliAssistant(["text"]),
+		streamEvent({ type: "content_block_stop", index: 1 }),
+		streamEvent({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: {} }),
+		streamEvent({ type: "message_stop" }),
+		cliResult("end_turn"),
+	],
+};
+for (const [name, lines] of Object.entries(CAPTURED_ENDINGS)) {
+	test(`the real CLI's ending (${name}) ends the app's turn at message_stop`, async (t) => {
+		const { events, calls } = await runScenario(t, [...lines, HOLD], { reasoning: "high" });
+		const done = getLastEvent(events);
+		assert.ok(done.type === "done");
+		assert.equal(done.message.stopReason, "stop");
+		assert.equal(getText(done.message), "ok");
+		assert.equal(cliEndingOf(done.message), "message-stop");
+		await assertCleanedUp(getOnlyCall(calls));
+	});
+}
+
+test("a successful result with no message_stop settles the turn with the text that arrived, and the timeline names that ending", async (t) => {
+	const lines = [
+		streamEvent({ type: "message_start", message: { usage: {} } }),
+		streamEvent({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }),
+		streamEvent({ type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig" } }),
+		streamEvent({ type: "content_block_stop", index: 0 }),
+		streamEvent({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } }),
+		streamEvent({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "part of the reply" } }),
+		cliAssistant(["thinking", "text"]),
+		cliResult("end_turn"),
+		HOLD,
+	];
+	const { runClaude, calls } = createFakeRun(t, lines);
+	const agent = new Agent({ initialState: { messages: [HI], model: getModel(), thinkingLevel: "high" }, streamFn: createClaudeCodeStreamFunction(runClaude) });
+	let line: TurnTimelineLine | undefined;
+	let saved: LhMessage[] = [];
+	const timeline = new TurnTimeline({ chatId: SESSION_ID, turnId: "test", provider: "claude-code", model: "opus", thinking: true }, result => { line = result; });
+	const turn = runPiTurn({ agent, timeline, onFinish(messages) {
+		saved = messages.map((message, index) => ({ ...message, id: `saved-${index}` })) as LhMessage[];
+	} });
+	const session = new SessionModel({
+		chatId: SESSION_ID, initialMessages: [], fetch: async url => String(url).endsWith("/stream") ? new Response(turn.subscribe()) : Response.json({ messages: saved }),
+	});
+	await session.resumeStream(false);
+	const final = saved.at(-1);
+	assert.ok(final?.role === "assistant");
+	assert.equal(final.stopReason, "stop");
+	assert.equal(getText(final), "part of the reply");
+	assert.equal(session.getState().error, null);
+	assert.equal(line?.cliEnding, "result-without-stream-end");
+	assert.equal(line?.streamEnd, "completed");
+	assert.doesNotMatch(JSON.stringify(saved), /result-without-stream-end/, "the ending is diagnostics only, never saved");
+	await assertCleanedUp(getOnlyCall(calls));
+});
+
+test("a successful result with no message_stop keeps a max_tokens stop reason: the cut-off notice, not a complete reply", async (t) => {
+	const { events } = await runScenario(t, [
+		streamEvent({ type: "message_start", message: { usage: {} } }),
+		streamEvent({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }),
+		streamEvent({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "partial" } }),
+		streamEvent({ type: "message_delta", delta: { stop_reason: "max_tokens" }, usage: {} }),
+		cliResult(),
+		HOLD,
+	]);
+	const done = getLastEvent(events);
+	assert.ok(done.type === "done");
+	assert.equal(done.message.stopReason, "length");
+	assert.equal(cliEndingOf(done.message), "result-without-stream-end");
+});
+
+test("a successful result with no message_stop and no text, or before its tool calls ran, fails the turn so Retry is offered", async (t) => {
+	const thinkingOnly = [
+		streamEvent({ type: "message_start", message: { usage: {} } }),
+		streamEvent({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }),
+		streamEvent({ type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig" } }),
+		cliResult("end_turn"),
+		HOLD,
+	];
+	const empty = await runScenario(t, thinkingOnly);
+	assert.equal(getErrorMessage(empty.events), "claude CLI ended the turn without streaming a reply");
+	const error = getLastEvent(empty.events);
+	assert.ok(error.type === "error");
+	assert.equal(cliEndingOf(error.error), "result-without-stream-end");
+	await assertCleanedUp(getOnlyCall(empty.calls));
+
+	const read: ToolUse = { id: "toolu_result_before_call", name: "read", arguments: { path: "a" } };
+	const tools = await runScenario(t, [...toToolUseMessage([read]), cliResult("tool_use"), HOLD]);
+	assert.equal(getErrorMessage(tools.events), "claude CLI ended the turn without running its tool calls");
+	assert.equal(tools.events.some((event) => event.type === "toolcall_end"), false);
+	await assertCleanedUp(getOnlyCall(tools.calls));
+});
+
+test("each other ending is named: assistant error, result error, process exit", async (t) => {
+	const cases: [string[], string][] = [
+		[[JSON.stringify({ type: "assistant", error: "rate_limit", message: { content: [] } }), HOLD], "assistant-error"],
+		[[JSON.stringify({ type: "result", subtype: "error_during_execution", is_error: true }), HOLD], "result-error"],
+		[[streamEvent({ type: "message_start", message: { usage: {} } }), exitWith(1, "")], "process-exit"],
+	];
+	for (const [lines, ending] of cases) {
+		const { events } = await runScenario(t, lines);
+		const error = getLastEvent(events);
+		assert.ok(error.type === "error");
+		assert.equal(cliEndingOf(error.error), ending);
+	}
 });
 
 test("trailing toolResults matching a live process continue it: held calls answered, new assistant message streamed, no new spawn", async (t) => {
