@@ -8,13 +8,13 @@ It is not affiliated with or endorsed by either upstream project. It publishes n
 
 ## Changes in this fork
 
-Status as of 2026-11-24. "Landed" means merged to `main` with tests passing; "In review" means written on a branch and under review; "Planned" means designed but not started. This table is updated as work lands.
+Status as of 2026-11-25. "Landed" means merged to `main` with tests passing; "In review" means written on a branch and under review; "Planned" means designed but not started. This table is updated as work lands.
 
 | Change | What it does | Status |
 |---|---|---|
 | Merge upstream v0.7.0 | Brings in upstream's session folders, faster transcript opening, editable agent prompts and provider fixes, keeping all of Tobias's features. Deleting a session or folder now warns when it would take course progress with it | Landed 2026-11-24 |
-| Whole-document indexing | Splits a converted document into bounded batches and indexes all of it (summary, vocabulary with definitions and pages, concepts, figures) instead of skimming; builds a class glossary | In review, third round (`wp/3b-material-digest`) |
-| PDF converter options | A converter interface with built-in choices: the built-in reader (no setup, also the fallback), a self-hosted Docling service, and Mistral OCR. Every converter yields the same page-marked Markdown, with page numbering owned by the app | Planned |
+| Whole-document indexing | Splits a converted document into bounded batches and indexes all of it (summary, vocabulary with definitions and pages, concepts, figures) instead of skimming; builds a class glossary | In review (`wp/3b-material-digest`) |
+| PDF converter options | A converter interface with built-in choices: the built-in reader (no setup, also the fallback), a self-hosted Docling service, and Mistral OCR. Every converter yields the same page-marked Markdown, with page numbering owned by the app | In review: interface, built-in reader and Docling done (`wp/3a1-pdf-converters`); Mistral OCR planned |
 | Bring your own PDF service | A service that is not built in is described by a small JSON profile (request, optional polling, where the text is in the reply) that the app interprets; no downloaded or generated code runs, and keys stay in the local credential store | Planned |
 | AI-drafted connector | "Draft with AI" writes that profile from the service's documentation in one model call, tests it on a bundled two-page PDF and shows the result for approval before it can be enabled | Planned |
 | Ask mode | A third entry point on a class next to Learn and Practice: general questions answered from the class material with page citations, with no effect on grades or mastery | Planned |
@@ -22,9 +22,9 @@ Status as of 2026-11-24. "Landed" means merged to `main` with tests passing; "In
 | Written answers and harder questions | Written answers by default for concept checks, graded against key points committed in advance; multiple choice kept for predictions and placement | Planned |
 | Explained visuals | Every figure carries a "what to look at" note and every simulator a "what to try" | Planned |
 | Reply reliability | Stream keepalive, a visible notice with Continue when a reply is cut off, Retry after a dropped stream, a per-turn timing log | Planned |
-| Conversation-switch speed | Caches the per-class evidence scan and removes duplicate chat loads | Planned |
-| Read-aloud | A Play/Stop control beside each question using system voices | Planned |
-| Confidence slider | The 0–100 confidence slider back as a setting | Planned |
+| Conversation-switch speed | Caches the per-class evidence scan and removes duplicate chat loads | In review (`wp/2-switch-speed`) |
+| Read-aloud | A Play/Stop control beside each question using system voices | In review (`wp/7-read-aloud-confidence`) |
+| Confidence slider | The 0–100 confidence slider back as a setting | In review (`wp/7-read-aloud-confidence`) |
 
 ## How it is built
 
