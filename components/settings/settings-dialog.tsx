@@ -24,6 +24,7 @@
 import { LanguageSection } from "@/components/settings/language-section";
 import { PracticeSection } from "@/components/settings/practice-section";
 import { PaceSection } from "@/components/settings/pace-section";
+import { ReadAloudSection } from "@/components/settings/read-aloud-section";
 import { LearnerSection } from "@/components/settings/learner-section";
 import {
 	createContext,
@@ -617,6 +618,10 @@ export function SettingsDialogBody({
 										onChange={(next) => void write("general", next)}
 									/>
 									<PracticeSection
+										general={record.general}
+										onChange={(next) => void write("general", next)}
+									/>
+									<ReadAloudSection
 										general={record.general}
 										onChange={(next) => void write("general", next)}
 									/>

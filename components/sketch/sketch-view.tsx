@@ -19,7 +19,7 @@ import { useNativeInk } from "@/components/sketch/use-native-ink";
 import { loadEraser, loadPen, loadToolbar, saveEraser, savePen, saveToolbar, SKETCH_COLORS, SKETCH_WIDTHS, type EraserSettings, type PenSettings, type ToolbarPrefs } from "@/components/sketch/pen-settings";
 import { afterHydrate, applyOp, hasNewInk, pagePayload, readInk, revertOp, sendPage, thawInk, useInk, useInkSaveFailed, useKept, writeInk, type InkOp, type InkState } from "@/components/sketch/ink-memory";
 import { cn } from "@/lib/utils";
-import { boundsOf, pasteCopies, restyleStroke, SketchPayloadError, sketchStrokeCut, titleShowsDate, transformStroke, translation, type Affine, type SketchPayload, type SketchStroke } from "@/src/core";
+import { boundsOf, pasteCopies, restyleStroke, SketchPayloadError, sketchStrokeCut, titleShowsDate, transformStroke, translation, type Affine, type ConfidenceControl, type SketchPayload, type SketchStroke } from "@/src/core";
 import { useInteractionLayer } from "../interaction-layers";
 
 /**
@@ -50,7 +50,7 @@ export interface SketchViewProps {
 	inkKey: string;
 	/** The sketch is ready; the caller finishes dictation and sends, and
 	 *  resolves to whether the server accepted it. */
-	onSubmit: (sketch: SketchPayload, confidenceIndex?: number, onAccepted?: () => void) => Promise<boolean>;
+	onSubmit: (sketch: SketchPayload, confidenceIndex?: number, onAccepted?: () => void, confidenceValue?: number) => Promise<boolean>;
 	onClose: () => void;
 	/** Cancel a live dictation run (the page's Esc behaviour). */
 	onCancelDictation?: () => void;
@@ -65,9 +65,13 @@ export interface SketchViewProps {
 	/** Why the dock would refuse this submit (a pick or confidence is
 	 *  missing) — disables Submit and shows as its hint. */
 	blocked?: string;
-	/** A quiz answer is being given (owner, 2026-10-28): Submit then expands in place into the confidence buttons, and the
-	 *  one pressed is handed to `onSubmit` as an index into CONFIDENCE_STOPS. */
+	/** A quiz answer is being given (owner, 2026-10-28): Submit then expands in place into the confidence control, and the
+	 *  chosen confidence is handed to `onSubmit`. */
 	confidenceLevels?: boolean;
+	/** Which confidence control to render when `confidenceLevels` is true (default "buttons"). */
+	confidenceMode?: ConfidenceControl;
+	/** Optional pre-selected confidence (0–100) from the dock slider. */
+	initialConfidence?: number | null;
 	/** The Hint button\'s controller (owner, 2026-11-17 — use-hints.ts), owned by the dock so a hint taken in either place shows in both.
 	 *  Absent where the question or problem offers no hint. */
 	hint?: HintControl;
@@ -110,6 +114,8 @@ export function SketchView({
 	choices,
 	blocked,
 	confidenceLevels = false,
+	confidenceMode = "buttons",
+	initialConfidence = null,
 	hint,
 	onSteer,
 	note,
@@ -313,13 +319,13 @@ export function SketchView({
 			record(state, applyOp(state.strokes, op), op);
 			setSelection(new Set(added));
 		});
-	// Submit has been pressed on a quiz answer: the confidence buttons stand in for it until one is pressed
+	// Submit has been pressed on a quiz answer: the confidence control stands in for it until submitted
 	const [asking, setAsking] = useState(false);
-	const submit = (confidenceIndex?: number) => {
+	const submit = (confidenceIndex?: number, confidenceValue?: number) => {
 		const state = readInk(inkKey);
 		const unsent = state.strokes;
 		if (disabled || blocked || keptStatus === "loading" || !hasNewInk(state)) return;
-		if (confidenceLevels && confidenceIndex === undefined) {
+		if (confidenceLevels && confidenceIndex === undefined && confidenceValue === undefined) {
 			setAsking(true);
 			return;
 		}
@@ -336,7 +342,7 @@ export function SketchView({
 		// The ink folds into the kept page only once the server has the
 		// sketch (a 409/500/400 keeps it for a retry); anything drawn since
 		// stays unsent.
-		void sendPage(inkKey, payload, unsent, (accepted) => onSubmit(payload, confidenceIndex, accepted));
+		void sendPage(inkKey, payload, unsent, (accepted) => onSubmit(payload, confidenceIndex, accepted, confidenceValue));
 	};
 
 	// PC shortcuts (M13f): E toggles the eraser, 1-5 pick the ink, G changes the paper
@@ -483,6 +489,9 @@ export function SketchView({
 				onSubmit={() => submit()}
 				onSubmitBlocked={setNoted}
 				onConfidence={(index) => submit(index)}
+				confidenceMode={confidenceMode}
+				initialConfidence={initialConfidence}
+				onConfidenceValue={(value) => submit(undefined, value)}
 				hint={hint}
 				onSteer={onSteer}
 				noteMode={note !== undefined}

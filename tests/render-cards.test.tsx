@@ -69,6 +69,7 @@ function renderDock(props: {
 	toolCallId: string;
 	input: never;
 	onSubmit?: () => void;
+	confidenceControl?: "slider" | "buttons";
 }) {
 	// expanded=true renders the full form (the collapsed bar is covered by the
 	// QuestionDockBar test below). No scroll context needed — the DockOverlay
@@ -164,7 +165,7 @@ describe("DispatchCard — the BYOK refusal tone (owner, 2026-09-22)", () => {
 
 describe("render smoke tests", () => {
 	it("QuizCard renders question, options, and the 'I don't know' button", () => {
-		const html = renderDock({ toolName: "quiz", toolCallId: "q1", input: quizInput as never });
+		const html = renderDock({ toolName: "quiz", toolCallId: "q1", input: quizInput as never, confidenceControl: "buttons" });
 		assert.match(html, /Which planet is closest to the sun\?/);
 		assert.match(html, /Mercury/);
 		assert.match(html, /I don&#x27;t know|I don't know/);
@@ -183,7 +184,7 @@ describe("render smoke tests", () => {
 	});
 
 	it("QuizCard's confidence is five buttons that wait for a pick, with no default (owner, 2026-10-28)", () => {
-		const html = renderDock({ toolName: "quiz", toolCallId: "q1", input: quizInput as never });
+		const html = renderDock({ toolName: "quiz", toolCallId: "q1", input: quizInput as never, confidenceControl: "buttons" });
 		for (const label of ["Guess", "Unsure", "Likely", "Sure", "Certain"]) assert.ok(html.includes(`>${label}<`), label);
 		for (const stop of [30, 50, 70, 90, 100]) {
 			assert.match(html, new RegExp(`<button[^>]*disabled=""[^>]*data-testid="confidence-btn-${stop}"`), `${stop} waits for an answer`);
@@ -514,7 +515,7 @@ changed and the final volume must be calculated from the combined gas law.`,
 	it("after the reveal, the teach check renders the full form (probe default, unchanged)", () => {
 		// Post-click: expanded=true — exactly today's dock. The probe auto-open
 		// path renders the identical form; this is also the regression pin for it.
-		const html = renderDock({ toolName: "quiz", toolCallId: "t1", input: quizInput as never });
+		const html = renderDock({ toolName: "quiz", toolCallId: "t1", input: quizInput as never, confidenceControl: "buttons" });
 		assert.ok(html.includes('data-testid="question-dock"'), "the form is the dock's content once expanded");
 		assert.ok(html.includes('data-testid="confidence-buttons"'), "a quiz submits through its confidence buttons");
 	});

@@ -2478,6 +2478,7 @@ export function Chat({
 					readingThinkingRevision={readingThinkingSeed.revision}
 					onReadingThinking={(value) => { applyReadingThinking(value); if (pendingPlugin) pluginQuestionDraft(pendingPlugin).readingThinking = value; }}
 					phase={phases.at(-1) ?? "probe"}
+					language={sessionLanguage}
 					turns={turns}
 					contextTokens={contextTokens}
 					cliContextWindow={cliContextWindowOf(nativeMessages)}
@@ -2814,6 +2815,7 @@ export function DockOverlay({
 	readingThinkingRevision,
 	onReadingThinking,
 	phase,
+	language,
 	turns,
 	contextTokens,
 	cliContextWindow,
@@ -2882,6 +2884,8 @@ export function DockOverlay({
 	onReadingThinking: (v: string) => void;
 	/** Session phase at the pending question — scales the thinking field. */
 	phase: Phase3;
+	/** Active lesson language, for question read-aloud voice selection. */
+	language?: LessonLanguage;
 	/** The session's usage log — the stats bar beneath the composer folds it. */
 	turns: TurnUsage[];
 	contextTokens: number | null;
@@ -3424,6 +3428,8 @@ export function DockOverlay({
 									sketchAvailable={sketchAvailable}
 									layoutRequest={layoutRequest}
 									onLayout={setQuestionLayout}
+									language={language}
+									chatId={chatId}
 								/>
 							) : pluginPractice ? (
 								<PluginProblemDock {...pluginPractice} viewReader={customViewReader} expanded={expanded} onExpand={() => { setExpanded(true); void suppressFoldDuringReveal(); }} />
