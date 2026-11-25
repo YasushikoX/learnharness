@@ -669,7 +669,8 @@ class ClaudeProcess implements LiveProcess {
 		if (this.contextProbe?.handle(JSON.parse(line))) return;
 		// Fork (follow-ups 1): recorded only, the turn carries on exactly as before (parseCliLine ignores this line below). A
 		// successful result normally follows message_stop on an idle process; here the turn is still open or its tool calls held.
-		if ((!this.turn.finished || !this.idle) && isSuccessfulResultLine(line)) this.turn.observe("result-before-stream-end");
+		// (the substring test keeps the second JSON.parse off every ordinary stream line)
+		if ((!this.turn.finished || !this.idle) && line.includes('"result"') && isSuccessfulResultLine(line)) this.turn.observe("result-before-stream-end");
 		const event = parseCliLine(line);
 		if (!event) return;
 		if (event.type === "toolResults") {
