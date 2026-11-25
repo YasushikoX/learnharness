@@ -1100,7 +1100,7 @@ export function useDictation({ append, chatId, initialSession, destination = "pr
 }
 
 /**
- * The stats-bar dictation slot (owner placement, round 1): the row's middle
+ * The composer edge's dictation slot (owner placement, round 1): the row's middle
  * is one strip that is always the full free width —
  *
  *   idle      a wide, quiet "Dictate" button (mic + label, grayed out — the

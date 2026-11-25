@@ -32,11 +32,12 @@ import { InteractionLayerOwner, useInteractionLayer, useInteractionLayers, type 
  *    menus' discipline (the settings dialog's inner content scroll
  *    included).
  *
- * Sites (model menus first, owner 2026-09-22; the graph popovers and the
- * stats-bar summary popover stay bespoke — seams stay open for later
- * adoption): the settings Agent section's slot + search-engine menus, the
- * Keys section's Add-provider menu, the composer's model/thinking menus
- * (model-picker.tsx), and the SetupDialog's slot pickers — portaling THOSE
+ * Sites (model menus first, owner 2026-09-22; the graph popovers stay
+ * bespoke — seams stay open for later adoption): the settings Agent
+ * section's slot + search-engine menus, the Keys section's Add-provider
+ * menu, the composer's model/thinking menus (model-picker.tsx), the
+ * session-stats summary popover (stats-bar.tsx, since it moved into the
+ * composer toolbar, 2026-11-25), and the SetupDialog's slot pickers — portaling THOSE
  * out of the dialog's overflow-hidden frame so they extend beyond the
  * dialog exactly like the settings menus (owner, chunk B item 7).
  *

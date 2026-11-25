@@ -21,10 +21,14 @@ import { ChainTableOverlay } from "@/components/chain-table.tsx";
 import { ComposerActions, NodePickerControl } from "@/components/composer-actions";
 import { OPENING_PROMPT_FAILURE } from "@/components/opening-prompt";
 import { SessionStarter } from "@/components/start-session";
-import type { ChatSettings, GraphSnapshot } from "@/src/core";
+import type { ChatSettings, GraphSnapshot, TurnUsage } from "@/src/core";
+import { ComposerToolbarSession } from "@/components/composer-edge";
 import { DEFAULT_PACE, isPace, type Pace } from "@/src/core";
 import { SessionSetup } from "@/components/session-setup";
 import { notifySettingsSaved } from "@/components/settings-signal";
+
+/** No session yet: the toolbar's stats cluster shows the model only. */
+const NO_TURNS: TurnUsage[] = [];
 
 /** The draft's pick set (owner round 10): the SAME shape the home pick
  *  bar lifts — resolved nodes as the learner SAW them at pick time. */
@@ -232,6 +236,9 @@ export function DraftShell({
 									setup={setupCta}
 								/>
 								{startError && <p role="alert" className="pointer-events-auto mb-2 text-sm text-destructive">{OPENING_PROMPT_FAILURE}</p>}
+								{/* The model control rides the composer toolbar, left of the mic (owner 2026-11-25); no
+								    session yet, so no numbers — the control binds the strong slot. */}
+								<ComposerToolbarSession.Provider value={<StatsBar turns={NO_TURNS} />}>
 								<div data-attachment-composer="" className="pointer-events-auto overflow-hidden rounded-2xl border border-input bg-card shadow-lg transition-[border-color,box-shadow] duration-(--lh-duration-hover) ease-(--lh-ease) focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20">
 									<Composer
 										busy={busy}
@@ -252,7 +259,7 @@ export function DraftShell({
 										edge={{ mic: <DictationBar dictation={dictation} compact /> }}
 									/>
 								</div>
-								<StatsBar turns={[]} />
+								</ComposerToolbarSession.Provider>
 							</div>
 						</div>
 					</div>

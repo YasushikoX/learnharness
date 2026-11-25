@@ -12,6 +12,7 @@ import { useInteractionLayers } from "@/components/interaction-layers";
 import { isInputShortcutScopeEligible } from "@/components/plugin-input-focus";
 import { Hint } from "@/components/ui/hint";
 import { cn } from "@/lib/utils";
+import { CONTROL_CLASS } from "@/components/control-variant";
 import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
 import { chatSettingsGeneration, fetchChatSettings, updateChatSettings, useChatSettingsSeed } from "@/components/chat-settings-client";
 import { useModelCatalog } from "@/components/model-catalog";
@@ -42,7 +43,23 @@ export function catalogLimits(catalog: Pick<ModelCatalogResponse, "models">): Ma
  * changing the new-session default. Unpicked reads "—" (the
  * no-factory-fallback language: the UI never presents a default model).
  */
-export function ModelControl({ chatId, onModelChange }: { chatId?: string; onModelChange?: (model: string | undefined) => void }) {
+export function ModelControl({ chatId, onModelChange, variant }: { chatId?: string; onModelChange?: (model: string | undefined) => void; variant?: ModelControlVariant }) {
+	return <ModelControlView selection={useModelSelection(chatId, onModelChange)} variant={variant} />;
+}
+
+/** The control's state, split from its UI (model in the composer toolbar,
+ *  owner 2026-11-25): the session view keeps ONE selection alive for as
+ *  long as it is open — the context limit and the sketch-answer gate read
+ *  it — while the visible control mounts wherever a composer toolbar is
+ *  (the composer, or the edge under a question/practice dock), and nowhere
+ *  while a plugin owns the dock. */
+export type ModelSelection = ReturnType<typeof useModelSelection>;
+
+/** `edge`: the composer toolbar's quiet 28px control (SPEC §3); `bar`: the
+ *  standalone look (the default, for direct uses outside a toolbar). */
+export type ModelControlVariant = "bar" | "edge";
+
+export function useModelSelection(chatId?: string, onModelChange?: (model: string | undefined) => void) {
 	const { catalog, refresh } = useModelCatalog();
 	const seed = useChatSettingsSeed(chatId);
 	const [models, setModels] = useState<ModelsSettings | undefined>(() => seed?.models);
@@ -51,10 +68,10 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	const [session, setSession] = useState<{ settings?: ChatSettings } | undefined>(() =>
 		chatId && seed ? { settings: seed.settings } : undefined,
 	);
-	const [open, setOpen] = useState<"model" | null>(null);
-	const [error, setError] = useState<string | null>(null);
-	const containerRef = useRef<HTMLDivElement>(null);
-	const interactions = useInteractionLayers();
+	// The report reads the caller's callback through a ref: hosts pass inline
+	// lambdas, and the report must fire on a model change, not on every render.
+	const onModelChangeRef = useRef(onModelChange);
+	onModelChangeRef.current = onModelChange;
 
 	// The record read — BOTH mount and the cross-surface signal land
 	// here (fix wave: another surface's models write re-reads into the
@@ -109,9 +126,10 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 		: strong;
 	const effectiveId = override?.model?.id;
 	const effectiveProvider = override?.model?.provider;
+	const model = effectiveProvider && effectiveId ? `${effectiveProvider}:${effectiveId}` : undefined;
 	useEffect(() => {
-		onModelChange?.(effectiveProvider && effectiveId ? `${effectiveProvider}:${effectiveId}` : undefined);
-	}, [effectiveProvider, effectiveId, onModelChange]);
+		onModelChangeRef.current?.(model);
+	}, [model]);
 	const storedLevel = override?.thinkingLevel;
 	const entry = catalog?.models.find(
 		(m) => m.id === effectiveId && m.provider === effectiveProvider,
@@ -122,6 +140,95 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// — because that is exactly what the engine build would run. Display-
 	// only: the record stays unset until a fresh pick populates it.
 	const effectiveLevel = storedLevel ?? (entry ? defaultOrderLevel(levels) : undefined);
+
+	// One write seam: composeSlotModel preserves the cheap/vision siblings
+	// (replace-whole-section discipline) and the per-field independence of
+	// model + thinkingLevel within the strong slot.
+	// Both write seams resolve to the error to show, or null once saved.
+	const save = useCallback(
+		async (next: ModelsSettings): Promise<string | null> => {
+			try {
+				const res = await fetch("/api/settings/models", {
+					method: "PUT",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(next),
+				});
+				if (!res.ok) {
+					const body = (await res.json().catch(() => ({}))) as { error?: string };
+					return body.error ?? `settings rejected (${res.status})`;
+				}
+				// Server truth, never the request body (fix wave): a pick
+				// that rides an unsupported level lands CLAMPED in the record
+				// — the pill must show the stored value in this interaction.
+				const stored = (
+					(await res.json().catch(() => null)) as { settings?: UserSettings } | null
+				)?.settings?.models;
+				setModels(stored ?? next);
+				notifySettingsSaved("models");
+				return null;
+			} catch {
+				return "Could not reach the server — try again.";
+			}
+		},
+		[],
+	);
+
+	// The session write seam (chat mode): PUT the per-chat settings route
+	// — validated + level-clamped server-side; the response is the stored
+	// truth (a pick riding an unsupported level lands CLAMPED — the pill
+	// shows the stored value). updateChatSettings broadcasts "lesson" once
+	// its save queue drains, so the lesson's other controls re-read too.
+	const saveChat = useCallback(
+		async (patch: (current: ChatSettings) => ChatSettings): Promise<string | null> => {
+			if (!chatId) return null;
+			const res = await updateChatSettings(chatId, patch);
+			if (!res.ok) return res.networkError ? "Could not reach the server — try again." : (res.error ?? `settings rejected (${res.status})`);
+			setSession({ settings: res.settings });
+			return null;
+		},
+		[chatId],
+	);
+
+	// One apply seam over both write paths: a pick names provider + id +
+	// level; chat mode re-reads fresh session settings immediately before the
+	// replace-whole PUT so other fields (language, pace, difficulty) ride along
+	// without stale overwrites; draft mode composes the strong slot.
+	const apply = useCallback(
+		(provider: string, id: string, level: ThinkingLevel | undefined): Promise<string | null> => {
+			if (chatId) {
+				return saveChat((current) => {
+					const { thinkingLevel: _oldLevel, ...rest } = current;
+					return {
+						...rest,
+						model: { provider, id },
+						...(level !== undefined ? { thinkingLevel: level } : {}),
+					};
+				});
+			}
+			// composeSlotModel's empty-string convention: no level = unset.
+			return save(composeSlotModel(models, "strong", provider, id, level ?? ""));
+		},
+		[chatId, models, save, saveChat],
+	);
+
+	return { chatId, catalog, refresh, loading: !!chatId && !session, model, effectiveId, effectiveProvider, effectiveLevel, storedLevel, levels, apply };
+}
+
+export function ModelControlView({ selection, variant = "bar" }: { selection: ModelSelection; variant?: ModelControlVariant }) {
+	const { chatId, catalog, refresh, loading, effectiveId, effectiveProvider, effectiveLevel, storedLevel, levels } = selection;
+	const [open, setOpen] = useState<"model" | null>(null);
+	const [error, setError] = useState<string | null>(null);
+	const containerRef = useRef<HTMLDivElement>(null);
+	const interactions = useInteractionLayers();
+	const selectionApply = selection.apply;
+	// A write closes the menu on success and shows its error otherwise.
+	const apply = useCallback((provider: string, id: string, level: ThinkingLevel | undefined) => {
+		setError(null);
+		void selectionApply(provider, id, level).then((failure) => {
+			if (failure === null) setOpen(null);
+			else setError(failure);
+		});
+	}, [selectionApply]);
 
 	// The intuitive dropdown contract (owner, stats-control round 1): any
 	// click outside the open menu — or an Esc keypress — closes it. The
@@ -148,86 +255,11 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 		};
 	}, [open, interactions]);
 
-	// One write seam: composeSlotModel preserves the cheap/vision siblings
-	// (replace-whole-section discipline) and the per-field independence of
-	// model + thinkingLevel within the strong slot.
-	const save = useCallback(
-		async (next: ModelsSettings) => {
-			setError(null);
-			try {
-				const res = await fetch("/api/settings/models", {
-					method: "PUT",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify(next),
-				});
-				if (!res.ok) {
-					const body = (await res.json().catch(() => ({}))) as { error?: string };
-					setError(body.error ?? `settings rejected (${res.status})`);
-					return;
-				}
-				// Server truth, never the request body (fix wave): a pick
-				// that rides an unsupported level lands CLAMPED in the record
-				// — the pill must show the stored value in this interaction.
-				const stored = (
-					(await res.json().catch(() => null)) as { settings?: UserSettings } | null
-				)?.settings?.models;
-				setModels(stored ?? next);
-				setOpen(null);
-				notifySettingsSaved("models");
-			} catch {
-				setError("Could not reach the server — try again.");
-			}
-		},
-		[],
-	);
-
-	// The session write seam (chat mode): PUT the per-chat settings route
-	// — validated + level-clamped server-side; the response is the stored
-	// truth (a pick riding an unsupported level lands CLAMPED — the pill
-	// shows the stored value). updateChatSettings broadcasts "lesson" once
-	// its save queue drains, so the lesson's other controls re-read too.
-	const saveChat = useCallback(
-		async (patch: (current: ChatSettings) => ChatSettings) => {
-			if (!chatId) return;
-			setError(null);
-			const res = await updateChatSettings(chatId, patch);
-			if (!res.ok) {
-				setError(res.networkError ? "Could not reach the server — try again." : (res.error ?? `settings rejected (${res.status})`));
-				return;
-			}
-			setSession({ settings: res.settings });
-			setOpen(null);
-		},
-		[chatId],
-	);
-
-	// One apply seam over both write paths: a pick names provider + id +
-	// level; chat mode re-reads fresh session settings immediately before the
-	// replace-whole PUT so other fields (language, pace, difficulty) ride along
-	// without stale overwrites; draft mode composes the strong slot.
-	const apply = useCallback(
-		(provider: string, id: string, level: ThinkingLevel | undefined) => {
-			if (chatId) {
-				void saveChat((current) => {
-					const { thinkingLevel: _oldLevel, ...rest } = current;
-					return {
-						...rest,
-						model: { provider, id },
-						...(level !== undefined ? { thinkingLevel: level } : {}),
-					};
-				});
-			} else {
-				// composeSlotModel's empty-string convention: no level = unset.
-				void save(composeSlotModel(models, "strong", provider, id, level ?? ""));
-			}
-		},
-		[chatId, models, save, saveChat],
-	);
-
 	// Shortcut seams (keyboard wave A): ⌘K opens the model menu (the
 	// universal command convention); Shift+Tab cycles the thinking level
 	// up the ladder (wrapping) — the owner's replacement for browser
-	// tab-focus. Both work from any focus, including mid-typing.
+	// tab-focus. Both work from any focus, including mid-typing, while the
+	// control is visible (the scope check; a plugin dock hides it).
 	useEffect(() => {
 		const onOpenPicker = () => {
 			if (!isInputShortcutScopeEligible(containerRef.current, interactions)) return;
@@ -278,30 +310,34 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	};
 
 	return (
-		<div ref={containerRef} className="relative flex items-center gap-1.5" data-testid="model-control">
+		<div ref={containerRef} className={cn("relative flex items-center gap-1.5", variant === "edge" && "min-w-0 shrink")} data-testid="model-control">
 			<Hint
 				// ONE control for the model AND its effort (owner, 2026-10-27: the two pills took three lines under
 				// the chat box on a phone). The effort is changed inside the menu. ⌘K opens it (registry,
 				// override-aware); ⇧⇥ still cycles the level from any focus.
 				label="Model and effort"
 				action="open-model-picker"
-				side="bottom"
+				side={variant === "edge" ? "top" : "bottom"}
 			>
 				<button
 					type="button"
 					data-testid="stats-model"
 					onClick={openMenu}
 					aria-expanded={open === "model"}
-					// Chrome look (owner, fix wave round 3): matches the graph view's floating top-right buttons
-					// (import notes, gear, coverage) — blurred, fuller opacity, shadowed.
-					className="lh-touch flex h-7 items-center gap-1.5 rounded-sm px-2 text-xs whitespace-nowrap transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised"
+					className={variant === "edge"
+						// The composer toolbar (owner 2026-11-25: "left of the microphone"): the 28px edge control of
+						// Sources and the language, sans; a long model id truncates instead of pushing the row.
+						? cn(CONTROL_CLASS.edge, "min-w-0 max-w-full font-sans whitespace-nowrap", open === "model" && "bg-raised text-foreground")
+						// Chrome look (owner, fix wave round 3): matches the graph view's floating top-right buttons
+						// (import notes, gear, coverage) — blurred, fuller opacity, shadowed.
+						: "lh-touch flex h-7 items-center gap-1.5 rounded-sm px-2 text-xs whitespace-nowrap transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised"}
 				>
-					<span className="text-card-foreground">{effectiveId ? prettyModel(effectiveId) : "—"}</span>
+					<span className={variant === "edge" ? "min-w-0 truncate" : "text-card-foreground"}>{effectiveId ? prettyModel(effectiveId) : "—"}</span>
 					{/* a session still loading has no model yet: one dash, not a pair */}
-					{!(chatId && !session) && (
+					{!loading && (
 						<>
 							<span aria-hidden className="text-muted-foreground">·</span>
-							<span className="text-muted-foreground">
+							<span className="shrink-0 text-muted-foreground">
 								{effectiveLevel === undefined ? "—" : (THINKING_LABEL[effectiveLevel] ?? effectiveLevel)}
 							</span>
 						</>
