@@ -79,6 +79,18 @@ describe("folder Delete with course progress", () => {
 			"1 of these 3 sessions is a course session, from “Calculus”. Deleting it also deletes the course progress it recorded: the 1 skill it taught or checked loses that progress, whichever you choose below.");
 		assert.match(courseLossWarning(known({ sessions: 2, courses: [{ id: "c1", title: "Calculus", sessions: 2 }], skills: 2 }), 2)!, /^Both sessions are course sessions, from “Calculus”\./);
 		assert.match(courseLossWarning(known({ sessions: 3, courses: [{ id: "gone", title: null, sessions: 3 }], skills: 4 }), 3)!, /^All 3 sessions are course sessions, from a deleted course\./);
+		assert.match(
+			courseLossWarning(known({ sessions: 3, courses: [{ id: "g1", title: null, sessions: 1 }, { id: "g2", title: null, sessions: 2 }], skills: 4 }), 3)!,
+			/^All 3 sessions are course sessions, from 2 deleted courses\./,
+		);
+		assert.match(
+			courseLossWarning(known({ sessions: 2, courses: [calc, { id: "g1", title: null, sessions: 1 }], skills: 2 }), 2)!,
+			/^Both sessions are course sessions, from “Calculus” and a deleted course\./,
+		);
+		assert.match(
+			courseLossWarning(known({ sessions: 3, courses: [{ id: "g1", title: null, sessions: 1 }, calc, { id: "g2", title: null, sessions: 1 }], skills: 3 }), 3)!,
+			/^All 3 sessions are course sessions, from “Calculus” and 2 deleted courses\./,
+		);
 		assert.equal(courseLossWarning(known({ sessions: 0, courses: [], skills: 0 }), 3), null);
 		assert.match(courseLossWarning({ status: "unknown" }, 3)!, /If any came from a course, the skills they taught or checked lose that progress\./);
 	});
@@ -92,7 +104,9 @@ describe("Sources view Delete with “Also delete the sessions”", () => {
 	it("warns once the sessions are to be deleted; unchecked keeps the sessions and their progress", () => {
 		const loss = known({ sessions: 1, courses: [calc], skills: 1 });
 		assert.doesNotMatch(render(false, loss), /delete-course-loss/);
-		assert.match(text(render(true, loss)), /This is a course session from “Calculus”\. Deleting it also deletes the course progress it recorded/);
+		const checkedText = text(render(true, loss));
+		assert.ok(checkedText.includes("This is a course session from “Calculus”. Deleting it also deletes the course progress it recorded: the 1 skill it taught or checked loses that progress."));
+		assert.ok(!checkedText.includes("whichever you choose below"), "Sources dialog has no mode choice below; unchecking avoids the loss");
 		assert.match(render(true, { status: "checking" }), /data-testid="source-delete-confirm" disabled=""/);
 		assert.doesNotMatch(render(false, { status: "checking" }), /data-testid="source-delete-confirm" disabled=""/);
 	});
@@ -125,5 +139,117 @@ describe("useCourseLoss", () => {
 			assert.deepEqual(seen[before], { status: "checking" }, "a new deletion never shows the previous answer");
 			assert.deepEqual(seen.at(-1), { status: "unknown" });
 		} finally { await act(async () => root.unmount()); }
+	});
+
+	function deferred<T>() {
+		let resolve!: (value: T) => void;
+		const promise = new Promise<T>((r) => { resolve = r; });
+		return { promise, resolve };
+	}
+
+	async function mountProbe(responder: (ids: string[]) => Promise<Response>) {
+		const dom = parseHTML("<html><body></body></html>");
+		const requests: string[][] = [];
+		Object.assign(globalThis, {
+			window: dom.window, document: dom.document, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true,
+			fetch: async (_url: string, init: RequestInit) => {
+				const ids = (JSON.parse(String(init.body)) as { chatIds: string[] }).chatIds;
+				requests.push(ids);
+				return responder(ids);
+			},
+		});
+		const seen: (CourseLoss | undefined)[] = [];
+		function Probe({ ids }: { ids: string[] | null }) { seen.push(useCourseLoss(ids)); return null; }
+		const host = document.createElement("div");
+		const root = createRoot(host);
+		return {
+			seen,
+			requests,
+			render: (ids: string[] | null) => act(async () => root.render(<Probe ids={ids} />)),
+			unmount: () => act(async () => root.unmount()),
+		};
+	}
+
+	it("reopening the same session starts at checking and waits for a fresh server answer", async () => {
+		const pending: ReturnType<typeof deferred<Response>>[] = [];
+		const p = await mountProbe(() => { const d = deferred<Response>(); pending.push(d); return d.promise; });
+		try {
+			await p.render(["a"]);
+			assert.deepEqual(p.seen.at(-1), { status: "checking" });
+			await act(async () => pending[0]!.resolve(Response.json({ sessions: 0, courses: [], skills: 0 })));
+			assert.deepEqual(p.seen.at(-1), known({ sessions: 0, courses: [], skills: 0 }));
+
+			// Re-rendering with a new array containing the same ids keeps the answer and does not re-fetch.
+			await p.render(["a"]);
+			assert.equal(p.requests.length, 1);
+			assert.deepEqual(p.seen.at(-1), known({ sessions: 0, courses: [], skills: 0 }));
+
+			// Close, then reopen after the session gained course progress: must check again, never flashing the stale 0.
+			await p.render(null);
+			assert.equal(p.seen.at(-1), undefined);
+			const beforeReopen = p.seen.length;
+			await p.render(["a"]);
+			assert.equal(p.requests.length, 2);
+			assert.ok(p.seen.slice(beforeReopen).every((s) => s?.status === "checking"), "reopen never shows the stale 0-loss answer");
+
+			await act(async () => pending[1]!.resolve(Response.json({ sessions: 1, courses: [calc], skills: 2 })));
+			assert.deepEqual(p.seen.at(-1), known({ sessions: 1, courses: [calc], skills: 2 }));
+		} finally { await p.unmount(); }
+	});
+
+	it("switching A -> B -> A stays checking while B is in flight and ignores late responses from earlier requests", async () => {
+		const pending: ReturnType<typeof deferred<Response>>[] = [];
+		const p = await mountProbe(() => { const d = deferred<Response>(); pending.push(d); return d.promise; });
+		try {
+			// Case 1: A first request still in flight -> B still in flight -> back to A; both earlier responses arrive late.
+			await p.render(["a"]);
+			await p.render(["b"]);
+			const beforeBackToA = p.seen.length;
+			await p.render(["a"]);
+			assert.equal(p.requests.length, 3);
+			assert.ok(p.seen.slice(beforeBackToA).every((s) => s?.status === "checking"));
+
+			// First A response arrives late — must be ignored.
+			await act(async () => pending[0]!.resolve(Response.json({ sessions: 0, courses: [], skills: 0 })));
+			assert.deepEqual(p.seen.at(-1), { status: "checking" }, "late response for earlier A is ignored");
+
+			// B response arrives late — must be ignored.
+			await act(async () => pending[1]!.resolve(Response.json({ sessions: 1, courses: [{ id: "c2", title: "Physics", sessions: 1 }], skills: 1 })));
+			assert.deepEqual(p.seen.at(-1), { status: "checking" }, "late response for B is ignored");
+
+			// Fresh A response settles the current open.
+			await act(async () => pending[2]!.resolve(Response.json({ sessions: 1, courses: [calc], skills: 2 })));
+			assert.deepEqual(p.seen.at(-1), known({ sessions: 1, courses: [calc], skills: 2 }));
+
+			// Case 2: A already resolved -> B still in flight -> back to A must NOT reuse the cached A answer.
+			await p.render(["b"]);
+			const beforeSecondReturn = p.seen.length;
+			await p.render(["a"]);
+			assert.equal(p.requests.length, 5);
+			assert.ok(p.seen.slice(beforeSecondReturn).every((s) => s?.status === "checking"), "returning to A never flashes the cached A answer");
+			await act(async () => pending[3]!.resolve(Response.json({ sessions: 1, courses: [{ id: "c2", title: "Physics", sessions: 1 }], skills: 1 })));
+			assert.deepEqual(p.seen.at(-1), { status: "checking" });
+			await act(async () => pending[4]!.resolve(Response.json({ sessions: 0, courses: [], skills: 0 })));
+			assert.deepEqual(p.seen.at(-1), known({ sessions: 0, courses: [], skills: 0 }));
+		} finally { await p.unmount(); }
+	});
+
+	it("reopening after a failed request starts at checking instead of showing stale unknown", async () => {
+		const pending: ReturnType<typeof deferred<Response>>[] = [];
+		const p = await mountProbe(() => { const d = deferred<Response>(); pending.push(d); return d.promise; });
+		try {
+			await p.render(["a"]);
+			await act(async () => pending[0]!.resolve(new Response("{}", { status: 500 })));
+			assert.deepEqual(p.seen.at(-1), { status: "unknown" });
+
+			await p.render(null);
+			const beforeReopen = p.seen.length;
+			await p.render(["a"]);
+			assert.equal(p.requests.length, 2);
+			assert.ok(p.seen.slice(beforeReopen).every((s) => s?.status === "checking"), "reopen after failure never shows stale unknown");
+
+			await act(async () => pending[1]!.resolve(Response.json({ sessions: 1, courses: [calc], skills: 1 })));
+			assert.deepEqual(p.seen.at(-1), known({ sessions: 1, courses: [calc], skills: 1 }));
+		} finally { await p.unmount(); }
 	});
 });
