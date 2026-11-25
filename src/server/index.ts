@@ -74,6 +74,19 @@ export { courseGlossary, type CourseGlossary, type CourseGlossaryCitation, type 
 export { configureDocling } from "./converters/auth.ts";
 export { configureConverter, convertersOverview, deleteConverterProfile, importConverterProfile, parseConfigureBody, pdfConversionUrlChange, testConverter } from "./converters/settings-service.ts";
 export { noteAppRequest } from "./converters/self-origin.ts";
+// "Draft with AI": converter profiles drafted from a service's documentation (fork addition, 2026-11-25).
+export {
+	approveConverterDraft,
+	configureConverterDraft,
+	createConverterDraft,
+	discardConverterDraft,
+	draftsOverview,
+	fixConverterDraft,
+	parseApproveDraftBody,
+	parseConfigureDraftBody,
+	parseCreateDraftBody,
+	testConverterDraft,
+} from "./converters/drafts.ts";
 export { CustomBodyLimitError, readBoundedJson } from "./custom-provider-body.ts";
 // Lecture notes (fork addition, 2026-11-19 — docs/courses.md "Lecture notes").
 export {
