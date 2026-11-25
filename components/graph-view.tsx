@@ -970,7 +970,8 @@ export function GraphChromeRow({
 						side="bottom"
 					>
 					<div className="relative min-w-0">
-						<SearchIcon className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+						{/* z-10: the field's backdrop blur makes it a stacking context that would paint over the icon. */}
+						<SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
 						<input
 							ref={searchInputRef}
 							value={query}

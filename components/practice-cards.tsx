@@ -486,7 +486,7 @@ export function ThinkingCard({ data, chatId, reading }: { data: PracticeThinking
 	// 50%-italic quote block on expand. Legacy records' commit flag is
 	// deliberately unread (one lane now). A TRANSCRIPT row (owner round,
 	// 2026-10-07): full-width band + rail, arriving expanded.
-	const label = data.dontKnow ? "YOUR THINKING · I DON'T KNOW" : data.confidence !== undefined ? `YOUR THINKING · ${data.confidence}%` : "YOUR THINKING";
+	const label = data.dontKnow ? "Your thinking · I don't know" : data.confidence !== undefined ? `Your thinking · ${data.confidence}%` : "Your thinking";
 	const block = data.text.trim() || data.images?.length ? <ThinkingBlock testId="thinking-card" label={label} text={data.text} images={data.images} defaultOpen /> : null;
 	if (!data.sketch || !chatId) return block;
 	// A sketch submission (Android plan M1): the page under the words —

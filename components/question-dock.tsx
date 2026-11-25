@@ -1285,7 +1285,7 @@ function QuestionDockForm({
 				    Submit right. */}
 				<div data-testid={qd.mode === "text" ? "answer-field" : "thinking-field"}>
 					<div className="px-4 pt-3 lh-eyebrow text-muted-foreground">
-						{qd.mode === "text" ? "Your answer" : "YOUR THINKING"}
+						{qd.mode === "text" ? "Your answer" : "Your thinking"}
 					</div>
 					{/* A course lesson's FINAL PROBLEM (or a recall) says what it is: one quiet line. */}
 					{explainGiveUp && finalNote && (
