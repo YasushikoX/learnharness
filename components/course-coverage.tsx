@@ -16,13 +16,16 @@ import { SECTION_HEAD } from "@/components/section-heads";
  *   - SkillTerms: in a skill's detail, "terms: 9 of 11 introduced, 6 checked", which opens the list with each term's
  *     state, definition and page.
  *   - CoverageSummary: class-wide, "N new terms are not assigned to a skill" and "N terms are no longer in the material"
- *     with their actions, and "Map the class's terms" for a class approved without a mapping.
+ *     with their actions, and "Map the class's terms" (it only adds assignments for terms with no decision).
+ *   - Suggestions: a mapping pass's proposed exclusions and links, each accepted or dismissed one by one (the pass never
+ *     applies them itself), and the earlier decisions an approval could not keep.
  * Labels go through core/lesson-labels.ts in the class's language.
  */
 
 export interface CoverageActions {
 	edit: (target: "approved" | "draft", edit: CoverageEdit) => void;
-	map: () => void;
+	/** "Map the class's terms" on the approved map, or on the pending draft. */
+	map: (target?: "approved" | "draft") => void;
 	approveLeaving: () => void;
 }
 
@@ -99,6 +102,71 @@ function AssignExclude({ target, entryKey, skills }: { target: "approved" | "dra
 	);
 }
 
+/** A mapping pass's proposals awaiting the student: each exclusion and each link accepted or dismissed one by one. */
+function Suggestions({ target, suggested }: { target: "approved" | "draft"; suggested: NonNullable<CourseCoverageView["suggested"]> }) {
+	const ctx = useContext(CoverageContext);
+	if (!ctx || (suggested.excluded.length === 0 && suggested.links.length === 0)) return null;
+	const L = lessonLabels(ctx.view.language).coverage;
+	return (
+		<div className="space-y-1.5 rounded-lg border border-border/60 px-3 py-2" data-testid={`coverage-suggested-${target}`}>
+			<div className={SECTION_HEAD}>{L.suggestionsHeading}</div>
+			{suggested.excluded.map((x) => (
+				<div key={`x-${x.key}`} className="flex flex-wrap items-center gap-1.5" data-testid={`suggested-exclude-${x.key}`}>
+					<span className="font-medium text-foreground">{x.name}</span>
+					<span className="text-muted-foreground">— {L.suggestExclude(x.reason)}</span>
+					{ctx.actions && (
+						<>
+							<button type="button" className={BTN} disabled={ctx.busy} data-testid={`suggested-exclude-accept-${x.key}`} onClick={() => ctx.actions!.edit(target, { action: "exclude", key: x.key, reason: x.reason })}>
+								{L.accept}
+							</button>
+							<button type="button" className={BTN} disabled={ctx.busy} onClick={() => ctx.actions!.edit(target, { action: "dismiss", key: x.key })}>
+								{L.dismiss}
+							</button>
+						</>
+					)}
+				</div>
+			))}
+			{suggested.links.map((g) => (
+				<div key={`l-${g.keys.join("~")}`} className="flex flex-wrap items-center gap-1.5" data-testid={`suggested-link-${g.keys.join("~")}`}>
+					<span className="text-foreground">{g.names.join(" = ")}</span>
+					{ctx.actions && (
+						<>
+							<button type="button" className={BTN} disabled={ctx.busy} data-testid={`suggested-link-accept-${g.keys.join("~")}`} onClick={() => ctx.actions!.edit(target, { action: "link", keys: g.keys })}>
+								{L.sameThing}
+							</button>
+							<button type="button" className={BTN} disabled={ctx.busy} onClick={() => ctx.actions!.edit(target, { action: "dismiss", keys: g.keys })}>
+								{L.dismiss}
+							</button>
+						</>
+					)}
+				</div>
+			))}
+		</div>
+	);
+}
+
+/** The earlier decisions an approval (or the draft) could not keep, with why. */
+function Displaced({ items, target }: { items: NonNullable<CourseCoverageView["displaced"]>; target?: "approved" }) {
+	const ctx = useContext(CoverageContext);
+	if (!ctx || items.length === 0) return null;
+	const L = lessonLabels(ctx.view.language).coverage;
+	return (
+		<div className="space-y-1 text-muted-foreground" data-testid="coverage-displaced">
+			<div className={SECTION_HEAD}>{L.displacedHeading}</div>
+			{items.map((d) => (
+				<p key={`${d.key}-${d.reason}`} data-testid={`displaced-${d.key}`}>
+					<span className="font-medium text-foreground">{d.name}</span> — {d.reason}
+				</p>
+			))}
+			{target && ctx.actions && (
+				<button type="button" className={BTN} disabled={ctx.busy} data-testid="coverage-displaced-ok" onClick={() => ctx.actions!.edit(target, { action: "clear-displaced" })}>
+					{L.displacedOk}
+				</button>
+			)}
+		</div>
+	);
+}
+
 /** A draft skill's terms, as small names under it on the approval screen. */
 export function DraftTerms({ draftKey }: { draftKey: string }) {
 	const ctx = useContext(CoverageContext);
@@ -121,6 +189,19 @@ export function DraftCoverageReview() {
 	const skills = ctx.draftNames ?? new Map<string, string>();
 	return (
 		<div className="mb-4 space-y-3 text-xs" data-testid="draft-coverage">
+			{draft.empty && (
+				<p className="text-muted-foreground" data-testid="draft-coverage-empty">
+					{L.draftEmpty}{" "}
+					{ctx.actions && !ctx.view.mapping && (
+						<button type="button" className={BTN} disabled={ctx.busy} data-testid="draft-coverage-map" onClick={() => ctx.actions!.map("draft")}>
+							{L.mapTerms}
+						</button>
+					)}
+				</p>
+			)}
+			{ctx.view.mapping && <p className="text-muted-foreground">{L.mapping}</p>}
+			{draft.displaced && <Displaced items={draft.displaced} />}
+			{draft.suggested && <Suggestions target="draft" suggested={draft.suggested} />}
 			{draft.incomplete.length > 0 && <p className="text-muted-foreground">{L.incompleteLine(draft.incomplete.join(", "))}</p>}
 			{draft.dropped.length > 0 && (
 				<p className="text-muted-foreground" data-testid="draft-dropped">
@@ -178,7 +259,8 @@ export function DraftCoverageReview() {
 	);
 }
 
-const stateLabel = (t: CoverageTermView, L: ReturnType<typeof lessonLabels>["coverage"]) => (t.state === "checked" ? L.stateChecked : t.state === "introduced" ? L.stateIntroduced : L.stateNew);
+const stateLabel = (t: CoverageTermView, L: ReturnType<typeof lessonLabels>["coverage"]) =>
+	t.state === "checked" ? L.stateChecked : t.state === "asked" ? L.stateAsked : t.state === "introduced" ? L.stateIntroduced : L.stateNew;
 
 /** A skill's terms in its detail: the counts, then the list. */
 export function SkillTerms({ skillId }: { skillId: string }) {
@@ -203,6 +285,7 @@ export function SkillTerms({ skillId }: { skillId: string }) {
 									<span className={cn("ml-1.5 rounded-full border px-1.5 text-[10px]", t.state === "checked" ? "border-foreground/40 text-foreground" : "border-border text-muted-foreground")} data-testid={`term-state-${t.key}`}>
 										{stateLabel(t, L)}
 										{t.level ? ` · ${t.level}` : ""}
+										{t.deferredCount ? ` · ${L.deferredCount(t.deferredCount)}` : ""}
 									</span>
 								}
 							/>
@@ -223,16 +306,19 @@ export function CoverageSummary() {
 	const L = lessonLabels(view.language).coverage;
 	if (view.status === "none" && !view.mapping && !view.error) return null;
 	const unassigned = view.status === "mapped" ? view.unassigned : [];
-	if (view.status === "mapped" && unassigned.length === 0 && view.flagged.length === 0 && !view.mapping && !view.error && view.incomplete.length === 0) return null;
+	const pending = !!view.suggested || (view.displaced?.length ?? 0) > 0;
+	if (view.status === "mapped" && unassigned.length === 0 && view.flagged.length === 0 && !view.mapping && !view.error && view.incomplete.length === 0 && !pending) return null;
 	return (
 		<section className="space-y-2 text-xs" data-testid="course-coverage">
 			{view.mapping && <p className="text-muted-foreground">{L.mapping}</p>}
 			{view.error && <p className="text-destructive" data-testid="coverage-error">{view.error}</p>}
-			{view.status === "unmapped" && !view.mapping && ctx.actions && (
-				<button type="button" className={BTN} disabled={ctx.busy} data-testid="coverage-map" onClick={() => ctx.actions!.map()}>
+			{(view.status === "unmapped" || unassigned.length > 0) && !view.mapping && ctx.actions && (
+				<button type="button" className={BTN} disabled={ctx.busy} data-testid="coverage-map" onClick={() => ctx.actions!.map("approved")}>
 					{L.mapTerms}
 				</button>
 			)}
+			{view.displaced && <Displaced items={view.displaced} target="approved" />}
+			{view.suggested && <Suggestions target="approved" suggested={view.suggested} />}
 			{view.incomplete.length > 0 && <p className="text-muted-foreground">{L.incompleteLine(view.incomplete.join(", "))}</p>}
 			{(unassigned.length > 0 || view.flagged.length > 0) && (
 				<button type="button" className="flex items-center gap-1 text-muted-foreground hover:text-foreground" aria-expanded={open} data-testid="coverage-toggle" onClick={() => setOpen((o) => !o)}>

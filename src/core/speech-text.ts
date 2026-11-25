@@ -1689,13 +1689,11 @@ function collectBlocksFromHast(root: Root, language: LessonLanguage): string[] {
 }
 
 /**
- * Parse and sanitise displayed Markdown through the same CommonMark/GFM/math
- * + raw HTML + HAST sanitisation pipeline as `ToolContentResponse`, converting
- * only visible content into clean speakable prose. Pure, no DOM.
+ * The parse stage on its own: displayed Markdown through the same CommonMark/GFM/math + raw HTML + HAST sanitisation
+ * pipeline as `ToolContentResponse`, as the sanitised HAST the screen is built from. No speech vocabulary here, so other
+ * readers of "what is on screen" (core/visible-text.ts, the vocabulary ledger) share it. Pure, no DOM.
  */
-export function markdownToSpeech(markdown: string, language: LessonLanguage = DEFAULT_LESSON_LANGUAGE): string {
-	if (!markdown.trim()) return "";
-
+export function displayedMarkdownHast(markdown: string): Root {
 	const needsMathPrepass = markdown.includes("\\") || (markdown.includes("$") && /[\b\t\n\v\f\r]/.test(markdown));
 	const prepared = (needsMathPrepass ? transformMathDelimiters(repairMathForDisplay(markdown)) : markdown).replace(/\r\n?/g, "\n");
 	const mdast = fromMarkdown(prepared, {
@@ -1703,9 +1701,18 @@ export function markdownToSpeech(markdown: string, language: LessonLanguage = DE
 		mdastExtensions: MDAST_EXTENSIONS,
 	});
 	const rawHast = raw(toHast(mdast, { allowDangerousHtml: true }) as Root) as Root;
-	const cleanHast = sanitize(rawHast, SPEECH_SANITIZE_SCHEMA) as Root;
+	return sanitize(rawHast, SPEECH_SANITIZE_SCHEMA) as Root;
+}
 
-	const blocks = collectBlocksFromHast(cleanHast, language);
+/**
+ * Parse and sanitise displayed Markdown through the same CommonMark/GFM/math
+ * + raw HTML + HAST sanitisation pipeline as `ToolContentResponse`, converting
+ * only visible content into clean speakable prose. Pure, no DOM.
+ */
+export function markdownToSpeech(markdown: string, language: LessonLanguage = DEFAULT_LESSON_LANGUAGE): string {
+	if (!markdown.trim()) return "";
+
+	const blocks = collectBlocksFromHast(displayedMarkdownHast(markdown), language);
 	return blocks
 		.map((b, idx) => (idx < blocks.length - 1 && !/[.!?:]$/.test(b) ? `${b}.` : b))
 		.join(" ");

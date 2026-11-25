@@ -15,7 +15,7 @@ import { SketchReadingBody } from "@/components/artifacts/read-sketch-card";
 import { SketchThumbnail } from "@/components/sketch/sketch-thumbnail";
 import { AnsweredKeyPoints } from "@/components/answered-key-points";
 import type { ArtifactPartProps, QuestionAnswerData } from "@/src/core";
-import { answeredOptionLetters, answerForPresentation, parseAskInput, parseQuizInput } from "@/src/core";
+import { answeredCardContent, answeredOptionLetters, parseAskInput, parseQuizInput } from "@/src/core";
 import { useAppearance } from "@/components/settings/appearance";
 import { questionCardLabel, questionCardStandIn } from "@/components/question-dock";
 import {
@@ -49,7 +49,9 @@ function scrollParent(el: HTMLElement): HTMLElement | null {
 export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, messageId, callId, toolCallId: givenToolCallId, keyPointsMet }: { answer: QuestionAnswerData; input?: unknown; chatId?: string; reading?: ArtifactPartProps["part"]; messageId?: string; callId?: string; toolCallId?: string; /** The tutor's verdict per key point (WP6, core/question-quality.ts keyPointMarksOf). */ keyPointsMet?: ReadonlySet<number> }) {
 	// The question's call id: upstream names it `toolCallId` (the layout cache), the fork `callId` (the wording's threads).
 	const toolCallId = givenToolCallId ?? callId;
-	const answer = answerForPresentation(savedAnswer, input);
+	// What the card shows is decided in core/learner-seen.ts, where the vocabulary ledger reads the same decision (WP5).
+	const content = answeredCardContent(savedAnswer, input);
+	const answer = content.answer;
 	const optionLetters = answeredOptionLetters(savedAnswer, input);
 	const [whyOpen, setWhyOpen] = useState(false); // the tucked explanation (predictions, owner 2026-10-03)
 
@@ -134,11 +136,11 @@ export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, mess
 		? { gridTemplateColumns: `minmax(0, 1fr) calc(${columns.answer}px - ${ANSWER_COLUMN_INSET_CSS})`, columnGap: COLUMN_GAP_CSS }
 		: undefined;
 
-	if (answer.dismissed) {
+	if (content.dismissed) {
 		return (
 			<div className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">
-				<span className="font-medium">{answer.questionText}</span> — {answer.steer ? "set aside" : "skipped"}
-				{answer.steer && <p data-testid="answered-steer" className="mt-1.5 whitespace-pre-wrap text-foreground/80">You told the tutor: {answer.steer}</p>}
+				<span className="font-medium">{content.questionText}</span> — {content.steer ? "set aside" : "skipped"}
+				{content.steer && <p data-testid="answered-steer" className="mt-1.5 whitespace-pre-wrap text-foreground/80">You told the tutor: {content.steer}</p>}
 			</div>
 		);
 	}
@@ -153,13 +155,12 @@ export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, mess
 	// arguments, so every existing transcript shows them too. The lean
 	// snapshot (what the model sees, compactAnswerForModel) is untouched;
 	// any parse failure or absent input renders exactly the older card.
-	const askInput = answer.kind === "ask" ? parseAskInput(input) : undefined;
-	const parsedDetails = askInput?.details ?? (answer.kind === "quiz" ? parseQuizInput(input)?.details : undefined);
-	const descByIndex = new Map((askInput?.options ?? []).map((o, i) => [i + 1, o.description]));
+	const parsedDetails = content.details;
+	const descByIndex = content.optionDescriptions;
 
 	return (
 		// one figure scope for the whole card (figures, 2026-10-26)
-		<FigureScope texts={[answer.questionText, parsedDetails, answer.explanation, ...(answer.options ?? []).map((o) => o.label)]}>
+		<FigureScope texts={[content.questionText, parsedDetails, content.tuckedExplanation, ...(answer.options ?? []).map((o) => o.label)]}>
 		{/* The reading channel LIFTED (owner round, 2026-10-05): thoughts
 		    captured while reading are chronologically PRIOR to the question —
 		    rendered as its own user-side block ABOVE the card, the unified
@@ -205,7 +206,7 @@ export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, mess
 			{/* The wording stays markable after the answer (owner, 2026-11-06): threads asked while it sat in the dock hang here. */}
 			<ClarifyWording messageId={messageId} callId={toolCallId}>
 				<div ref={questionTextRef} className="mb-3 font-medium">
-					<ToolContentResponse>{answer.questionText}</ToolContentResponse>
+					<ToolContentResponse>{content.questionText}</ToolContentResponse>
 				</div>
 				{parsedDetails && (
 					// The details line, same paint as the pending dock (owner,
@@ -328,7 +329,7 @@ export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, mess
 			{/* px-3→removed: card p-4 + box px-3 double-inset sat the "Why" label deeper
 			    than the option box edges (owner, round 3). Sides flush with everything
 			    else; py-2 stays for vertical air. */}
-			{isQuiz && answer.explanation && (
+			{isQuiz && content.tuckedExplanation && (
 				/* The TUCKED explanation — ALL questions (owner, 2026-10-07): the
 				   verdict shows, the explanation sits collapsed behind the Why
 				   toggle — viewable, never center stage. Identical to the
@@ -346,7 +347,7 @@ export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, mess
 							<span className="font-medium text-muted-foreground">Why: </span>
 							{/* Keep the first paragraph beside the label, not every paragraph:
 							   later paragraphs must retain their recovered document structure. */}
-							<ToolContentResponse className="inline [&>p:first-child]:inline [&>p:first-child]:m-0">{answer.explanation}</ToolContentResponse>
+							<ToolContentResponse className="inline [&>p:first-child]:inline [&>p:first-child]:m-0">{content.tuckedExplanation}</ToolContentResponse>
 						</div>
 					)}
 				</div>
@@ -355,13 +356,13 @@ export function AnsweredCard({ answer: savedAnswer, input, chatId, reading, mess
 			{/* The explain reveal (owner ruling 2026-09-27): the committed answer
 			    — one field, reasoning included — shown on submit; no verdict,
 			    the model's next reply IS the grading. */}
-			{isExplain && answer.committed && (
+			{isExplain && content.committed && (
 				<div className="mt-3 rounded-lg bg-muted py-2 text-sm text-muted-foreground">
 					<span className="font-medium text-foreground">The answer: </span>
-					<ToolContentResponse className="inline [&>p:first-child]:inline [&>p:first-child]:m-0">{answer.committed}</ToolContentResponse>
+					<ToolContentResponse className="inline [&>p:first-child]:inline [&>p:first-child]:m-0">{content.committed}</ToolContentResponse>
 				</div>
 			)}
-			{isExplain && <AnsweredKeyPoints points={answer.keyPoints} met={keyPointsMet} />}
+			{isExplain && <AnsweredKeyPoints points={content.keyPoints} met={keyPointsMet} />}
 		</div>
 		</FigureScope>
 	);

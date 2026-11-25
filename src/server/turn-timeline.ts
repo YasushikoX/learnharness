@@ -113,7 +113,7 @@ export class TurnTimeline {
 	private readonly processingSpans: Span[] = [];
 	private readonly gateRefusals = new Map<string, number>();
 	private readonly refusalBudgetPasses = new Map<string, number>();
-	private knownConceptIds?: ReadonlySet<string>;
+	private knownConceptIds?: { has: (id: string) => boolean };
 	private conceptIds?: { tagged: number; unknown: number };
 	private onActivity?: (activity: TurnActivity | null) => void;
 
@@ -160,8 +160,10 @@ export class TurnTimeline {
 
 	dropped() { this.clientDrops++; }
 
-	/** Count the concept ids of this turn's quiz/explain calls against the class's coverage items (WP5). */
-	watchConceptIds(known: ReadonlySet<string>) {
+	/** Count the concept ids of this turn's quiz/explain calls against the class's coverage items (WP5): `known` is the
+	 *  ledger's own reader (core/coverage-ledger.ts resolveConceptId), so an id counts as unknown exactly when the ledger
+	 *  ignores it. */
+	watchConceptIds(known: { has: (id: string) => boolean }) {
 		this.knownConceptIds = known;
 		this.conceptIds = { tagged: 0, unknown: 0 };
 	}

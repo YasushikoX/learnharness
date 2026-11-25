@@ -35,7 +35,11 @@ sketches/<chat-id>/<sketch-id>/
                           a sketch only by its ID (see "Sketches" below)
 courses/<course-id>.json  A course: title, status, the approved skill IDs, a pending draft,
                           and optionally `coverage`: the class glossary's core terms mapped
-                          to skills or excluded (docs/courses.md "Vocabulary coverage").
+                          to skills or excluded, with a mapping pass's pending suggestions
+                          and what the last approval could not keep (docs/courses.md
+                          "Vocabulary coverage"; JSON null there is an explicit deletion).
+                          A course session's chat link may carry `vocabulary`: the item
+                          keys that session was listed when it started
                           How well a skill is known is NOT stored: it is folded from the
                           practice sessions whose record carries `course` (problem `skills`
                           tags + conclude outcomes; box 3+ of 5 = known)

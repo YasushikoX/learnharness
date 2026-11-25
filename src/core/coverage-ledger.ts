@@ -1,101 +1,68 @@
 /**
- * The vocabulary coverage LEDGER (WP5, 2026-11-25; spec: docs/courses.md "Vocabulary coverage"). PURE, browser-safe.
+ * The vocabulary coverage LEDGER (WP5, 2026-11-25, reworked after review 1; spec: docs/courses.md "Vocabulary
+ * coverage"). PURE, browser-safe.
  *
  * Nothing here is stored: what each coverage item (core/coverage-items.ts) has had in the class's sessions is DERIVED
  * from the transcripts, like skill evidence (server/courses.ts courseEvidence), and cached per chat file by the server.
+ * The guiding rule: a false "introduced" is the costly error (a term is skipped silently); a false "new" costs one
+ * repeated mention. Every uncertain case below resolves to "not introduced".
  *
  *   INTRODUCED: the entry's name or one of its aliases appeared in text the learner actually saw in a session of the
  *     class, and that name is unambiguous in the class (findTermCandidates gives exactly one entry, or every candidate is
- *     in one link group). An item that was CHECKED counts as introduced too.
- *   CHECKED: the learner answered a `quiz` or `explain` whose `conceptIds` holds the item's key (or a key linked with it).
- *     The best `level` reached is kept, and whether any such answer was graded right.
+ *     in one link group). Nothing else introduces: a question's tag never does.
+ *   CHECKED: the learner answered (not dismissed, not refused, not skipped) a `quiz` or `explain` whose `conceptIds`
+ *     resolves to the item (resolveConceptId). The best `level` reached is kept, and whether any such answer was graded
+ *     right. Independent of introduced: a question tagged with a term it never names leaves the term CHECKED and NOT
+ *     introduced ("asked about, never named"), which the prompt, the page and the finish gate show as such.
  *
- * WHAT THE LEARNER SAW is what the transcript view renders (core/view.ts projectView, the one definition of it): the
- * tutor's text parts (prose, `send_to_user`, a posed question's `lead`), the posed questions' displayed fields (question,
- * details, options; an explain's key points and a quiz's explanation only once answered), a shown figure's caption,
- * `lookAt` and `tryThis`, and a practice problem's statement. Never thinking, tool arguments the view does not show,
- * hidden key points before the answer, system prompts, context markers or material excerpts fed to the model, and never
- * the learner's own messages.
+ * WHAT THE LEARNER SAW is core/learner-seen.ts (one definition, shared with the cards that render it), read over the
+ * transcript view (core/view.ts projectView). The answers are read through the same view, so an answer pairs with the
+ * question occurrence it answers (the view's most-recent-call rule), never with a legacy duplicate of its call id.
  *
- * MATCHING RULES (docs/courses.md has them as a table):
+ * MATCHING RULES (docs/courses.md has them as a table), on the visible text (core/visible-text.ts):
  *   - Exact spelling, on word boundaries: a name matches where it starts at a word start and the next character is not a
- *     letter, digit or mark ("ring" is not in "string" or "rings"). Text and names are compared after normalizeName's
- *     invisible-character, NFC and space folding and after typographic quotes are read as plain ones (plainQuotes).
+ *     letter, digit or mark ("ring" is not in "string", "rings" or "ring2"), also when the name ends in punctuation
+ *     ("C++" is not in "C++foo"). Texts and names are compared after normalizeName's invisible-character, NFC and space
+ *     folding and with typographic quotes read as plain ones.
+ *   - A hyphen joins a word: a name preceded or followed by a hyphen that touches a letter or digit is part of a longer
+ *     word and does not match ("sub-ring" does not introduce "ring"; "R-module" is one word).
+ *   - Longest match wins: where a longer name of the class covers a span, the shorter names inside that span are not
+ *     credited by it ("ring homomorphism" does not introduce "ring").
  *   - Case: exact, with one exception: a name stored in lower case at its start (the glossary keeps running-text forms)
- *     also matches with its first letter capitalised AT THE START OF A SENTENCE (start of a text or line, or after ".",
- *     "!", "?" or ":", skipping spaces, quotes, brackets and Markdown markers). "Entropy is…" introduces "entropy";
- *     "Entropy" mid-sentence does not, and "ENTROPY" never does. Ambiguity is then decided on the name as stored.
- *   - Inflections are NOT matched ("resistors" does not introduce "resistor") unless the inflected form is an alias of
- *     the entry, or is itself an entry linked with it (a confirmed plural suggestion).
- *   - Symbols never introduce anything (a symbol alone is notation, not the term).
- *   - A sense of a homonym (an item with `sense`) is introduced by its name only in a session of a skill the sense is
- *     assigned to; a whole-entry item by its name in any session of the class.
- *   - Ask conversations count for nothing (they affect no progress anywhere else either), and nor do chats outside the
- *     class. Every other course mode counts for introduced; only Learn sessions pose quiz/explain, so only they check.
+ *     also matches with its first letter capitalised AT THE START OF A SENTENCE (start of a line, which is where every
+ *     heading, list item and table cell starts in the visible text, or after ".", "!", "?" or ":"). All-caps text never
+ *     matches a lower-case name.
+ *   - Inflections are NOT matched unless the inflected form is an alias of the entry, or is itself an entry linked with it.
+ *   - Symbols never introduce anything.
+ *   - Senses of a homonym: a mention credits a sense only when exactly ONE sense of that entry is eligible in the
+ *     session (assigned to one of its skills). With two or more eligible senses a bare mention introduces none of them.
+ *   - Ask conversations count for nothing, and nor do chats outside the class.
  */
 
-import type { CourseMode } from "./contracts/course.ts";
+import type { CourseMode, CoverageTermState } from "./contracts/course.ts";
 import type { CoverageGlossary, ResolvedCoverage } from "./coverage-items.ts";
 import { findTermCandidates, normalizeName, plainQuotes, stripInvisible } from "./glossary.ts";
 import { readAnswerVerdict } from "./lead-floor-gate.ts";
+import { seenTextsOfView } from "./learner-seen.ts";
 import type { LhMessage } from "./native-messages.ts";
+import type { QuestionAnswerData } from "./question-core.ts";
 import { normalizeConceptIds, normalizeQuestionLevel, QUESTION_LEVELS, type QuestionLevel } from "./question-quality.ts";
 import { FINISH_LESSON_TOOL, sessionFinishOf, VOCABULARY_REFUSAL_HEAD } from "./course-session.ts";
-import { projectView } from "./view.ts";
+import { projectView, type LhViewPart } from "./view.ts";
 
 // ─── what the learner saw ───────────────────────────────────────────────────
 
-const str = (v: unknown): string => (typeof v === "string" ? v : "");
-const QUESTION_PARTS = new Set(["tool-quiz", "tool-explain", "tool-probe", "tool-recall", "tool-ask_user_question"]);
-
-/** Every text the learner was shown in a transcript, in order (see the module comment). Pure. */
+/** Every text the learner was shown in a transcript, in order, as the screen shows it (core/learner-seen.ts). Pure. */
 export function learnerSeenTexts(messages: readonly LhMessage[]): string[] {
-	const out: string[] = [];
-	const push = (v: unknown) => {
-		const s = str(v);
-		if (s.trim() !== "") out.push(s);
-	};
-	for (const m of projectView(messages)) {
-		if (m.role !== "assistant") continue;
-		for (const part of m.parts) {
-			if (part.type === "text") {
-				push((part as { text?: unknown }).text);
-				continue;
-			}
-			if (part.state === "output-error" || part.state === "input-streaming") continue;
-			const input = (part.input ?? {}) as Record<string, unknown>;
-			if (QUESTION_PARTS.has(part.type)) {
-				push(input.question);
-				push(input.details);
-				if (Array.isArray(input.options)) {
-					for (const o of input.options) {
-						if (!o || typeof o !== "object") continue;
-						push((o as { label?: unknown }).label);
-						push((o as { description?: unknown }).description);
-					}
-				}
-				// shown only once he has answered
-				if (part.state === "output-available") {
-					if (part.type === "tool-quiz") push(input.explanation);
-					if (part.type === "tool-explain" && Array.isArray(input.keyPoints)) for (const k of input.keyPoints) push(k);
-				}
-			} else if (part.type === "tool-show_figure" && part.state === "output-available") {
-				push(input.caption);
-				push(input.lookAt);
-				push(input.tryThis);
-			} else if (part.type === "tool-problem") {
-				push(input.statement);
-			}
-		}
-	}
-	return out;
+	return seenTextsOfView(projectView(messages));
 }
 
 // ─── the name matcher ───────────────────────────────────────────────────────
 
 const WORD_RUN = /[\p{L}\p{N}\p{M}]+/gu;
-const WORD_CHAR = /[\p{L}\p{N}\p{M}]/u;
+const WORD_CHAR = /^[\p{L}\p{N}\p{M}]$/u;
 const FIRST_WORD = /^[\p{L}\p{N}\p{M}]+/u;
+const HYPHENS = new Set(["-", "‐", "‑"]);
 
 /** A text or a name as matching reads it: invisible characters out, NFC, typographic quotes plain, runs of spaces and
  *  tabs as one space (line breaks kept: they start sentences). */
@@ -122,6 +89,9 @@ function fnv(text: string): string {
 	return (h >>> 0).toString(36);
 }
 
+/** Bump when the matching rules change: cached chat scans made under older rules are then redone. */
+const MATCH_RULES_VERSION = 2;
+
 /** The matcher over every entry's name and aliases (never its symbols). Pure. */
 export function buildMatcher(glossary: Pick<CoverageGlossary, "terms">): VocabularyMatcher {
 	const forms = new Set<string>();
@@ -139,62 +109,126 @@ export function buildMatcher(glossary: Pick<CoverageGlossary, "terms">): Vocabul
 		if (!first) odd.push(form);
 		else byFirst.set(first, [...(byFirst.get(first) ?? []), form]);
 	}
-	return { key: `${sorted.length}:${fnv(sorted.join("\u0000"))}`, byFirst, odd };
+	return { key: `r${MATCH_RULES_VERSION}:${sorted.length}:${fnv(sorted.join("\u0000"))}`, byFirst, odd };
 }
 
-const SKIP_BACK = /[\s*_#>\-•"'“”‘’(\[«»]/u;
+/** The code point ending just before `i` ("" at the start). */
+function before(text: string, i: number): string {
+	if (i <= 0) return "";
+	const low = text.charCodeAt(i - 1);
+	if (low >= 0xdc00 && low <= 0xdfff && i >= 2) return text.slice(i - 2, i);
+	return text[i - 1]!;
+}
+/** The code point starting at `i` ("" at the end). */
+function after(text: string, i: number): string {
+	if (i >= text.length) return "";
+	return String.fromCodePoint(text.codePointAt(i)!);
+}
+const isWord = (ch: string) => ch !== "" && WORD_CHAR.test(ch);
 
-/** Does position `at` start a sentence (see the module comment)? */
-function sentenceStart(text: string, at: number): boolean {
-	let i = at - 1;
-	while (i >= 0 && SKIP_BACK.test(text[i]!)) {
-		if (text[i] === "\n") return true;
-		i--;
+/** Can a name start at `i`? Not inside a word, and not right after a hyphen that is joined to a word before it. */
+function startsClean(text: string, i: number): boolean {
+	const prev = before(text, i);
+	if (isWord(prev)) return false;
+	if (HYPHENS.has(prev) && isWord(before(text, i - prev.length))) return false;
+	return true;
+}
+/** Can a name end at `end`? The next character is not a word character, nor a hyphen joined to a word after it. */
+function endsClean(text: string, end: number): boolean {
+	const next = after(text, end);
+	if (isWord(next)) return false;
+	if (HYPHENS.has(next) && isWord(after(text, end + next.length))) return false;
+	return true;
+}
+
+const SKIP_BACK = /[\s*_#>\-•"'“”‘’(\[«»|]/u;
+
+/** Does position `i` start a sentence (see the module comment)? */
+function sentenceStart(text: string, i: number): boolean {
+	let k = i - 1;
+	while (k >= 0 && SKIP_BACK.test(text[k]!)) {
+		if (text[k] === "\n") return true;
+		k--;
 	}
-	return i < 0 || /[.!?:]/u.test(text[i]!);
+	return k < 0 || /[.!?:]/u.test(text[k]!);
 }
 
-const endsClean = (text: string, end: number, form: string) => end >= text.length || !WORD_CHAR.test(text[end]!) || !WORD_CHAR.test(form[form.length - 1]!);
-
-/** The text from `at` with its first character lower-cased, as long as `form`. */
-function loweredSlice(text: string, at: number, form: string): string {
-	const slice = text.slice(at, at + form.length);
+/** The text from `i` with its first character lower-cased, as long as `form`. */
+function loweredSlice(text: string, i: number, form: string): string {
+	const slice = text.slice(i, i + form.length);
 	const [head, ...tail] = [...slice];
 	return head === undefined ? "" : head.toLowerCase() + tail.join("");
 }
 
-/** Every name of the matcher that occurs in the text under the rules above. Pure. */
+interface Span {
+	start: number;
+	end: number;
+	form: string;
+}
+
+/** Every name of the matcher that occurs in the (visible) text under the rules above, longest match winning. Pure. */
 export function matchNames(rawText: string, m: VocabularyMatcher): Set<string> {
 	const text = matchText(rawText);
-	const found = new Set<string>();
+	const spans: Span[] = [];
 	for (const w of text.matchAll(WORD_RUN)) {
-		const at = w.index!;
+		const i = w.index!;
 		const word = w[0];
+		if (!startsClean(text, i)) continue;
 		for (const form of m.byFirst.get(word) ?? []) {
-			if (text.startsWith(form, at) && endsClean(text, at + form.length, form)) found.add(form);
+			if (text.startsWith(form, i) && endsClean(text, i + form.length)) spans.push({ start: i, end: i + form.length, form });
 		}
 		const [head, ...tail] = [...word];
-		if (head && head !== head.toLowerCase() && sentenceStart(text, at)) {
+		if (head && head !== head.toLowerCase() && sentenceStart(text, i)) {
 			const lowered = head.toLowerCase() + tail.join("");
 			for (const form of m.byFirst.get(lowered) ?? []) {
-				if (loweredSlice(text, at, form) === form && endsClean(text, at + form.length, form)) found.add(form);
+				if (loweredSlice(text, i, form) === form && endsClean(text, i + form.length)) spans.push({ start: i, end: i + form.length, form });
 			}
 		}
 	}
 	for (const form of m.odd) {
-		for (let at = text.indexOf(form); at >= 0; at = text.indexOf(form, at + 1)) {
-			if ((at === 0 || !WORD_CHAR.test(text[at - 1]!)) && endsClean(text, at + form.length, form)) {
-				found.add(form);
-				break;
-			}
+		for (let i = text.indexOf(form); i >= 0; i = text.indexOf(form, i + 1)) {
+			if (startsClean(text, i) && endsClean(text, i + form.length)) spans.push({ start: i, end: i + form.length, form });
 		}
+	}
+	// longest match wins: a span inside a longer one credits nothing
+	const found = new Set<string>();
+	for (const s of spans) {
+		const covered = spans.some((o) => o !== s && o.end - o.start > s.end - s.start && o.start <= s.start && o.end >= s.end);
+		if (!covered) found.add(s.form);
 	}
 	return found;
 }
 
+// ─── reading a question's conceptIds ────────────────────────────────────────
+
+/**
+ * The one reader of a question's `conceptIds` (the ledger and the turn timeline use it): an exact item key; an id
+ * written with the prompt's brackets ("[t_ring]"); or a term's name or alias when it names exactly one item of the class
+ * (or one linked group). Anything else is unknown: [] (ignored, counted in the timeline, never refused). Returns the
+ * item's live link group. Pure.
+ */
+export function resolveConceptId(raw: string, glossary: Pick<CoverageGlossary, "terms" | "lookup">, resolved: ResolvedCoverage): string[] {
+	let id = typeof raw === "string" ? raw.trim() : "";
+	const bracketed = /^\[(.+)\]$/u.exec(id);
+	if (bracketed) id = bracketed[1]!.trim();
+	if (id === "") return [];
+	const live = (key: string) => {
+		const item = resolved.byKey.get(key);
+		return item !== undefined && item.status !== "flagged";
+	};
+	if (live(id)) return resolved.group(id);
+	if (bracketed) return [];
+	const entries = new Set(findTermCandidates(glossary, id).filter((c) => c.matchedBy.includes("name") || c.matchedBy.includes("alias")).map((c) => c.entry.id));
+	if (entries.size === 0) return [];
+	const keys = resolved.items.filter((i) => i.status !== "flagged" && entries.has(i.item.entryId)).map((i) => i.key);
+	if (keys.length === 0) return [];
+	const group = resolved.group(keys[0]!);
+	return keys.every((k) => group.includes(k)) ? group : [];
+}
+
 // ─── one chat's vocabulary evidence (cached per chat file by the server) ────
 
-/** An answered teach question's tags. */
+/** An answered teach question's tags (as written; resolved against the mapping when folded). */
 export interface VocabularyCheck {
 	ids: string[];
 	level?: QuestionLevel;
@@ -207,19 +241,11 @@ export interface ChatVocabulary {
 	/** The matcher's names found in what the learner saw. */
 	forms: string[];
 	checks: VocabularyCheck[];
-	/** The ids the clean `finish_lesson` deferred. */
+	/** The ids the clean `finish_lesson` deferred with a reason. */
 	deferred: string[];
 }
 
-const TEACH_QUESTIONS = new Set(["quiz", "explain"]);
-
-interface ResultLike {
-	role: "toolResult";
-	toolCallId: string;
-	isError?: boolean;
-	details?: unknown;
-	content: unknown;
-}
+const TEACH_PARTS = new Set(["tool-quiz", "tool-explain"]);
 
 /** A chat's vocabulary evidence: the names seen, the answered tagged questions, and the lesson's deferred ids. Pure. */
 export function chatVocabularyOf(messages: readonly LhMessage[], matcher: VocabularyMatcher): ChatVocabulary {
@@ -228,37 +254,30 @@ export function chatVocabularyOf(messages: readonly LhMessage[], matcher: Vocabu
 	return { forms: [...forms].sort(), checks: checksOf(messages), deferred: deferredOf(messages) };
 }
 
-/** The answered quiz/explain calls that carry concept ids, with their level and grade. Pure. */
+/** The answered quiz/explain occurrences that carry concept ids, with their level and grade, read through the view so
+ *  each answer belongs to the question occurrence it answers. Dismissed (skipped or set aside) and refused ones check
+ *  nothing. Pure. */
 export function checksOf(messages: readonly LhMessage[]): VocabularyCheck[] {
-	const results = new Map<string, ResultLike>();
-	for (const msg of messages) {
-		const r = msg as unknown as ResultLike;
-		if (r.role === "toolResult" && r.toolCallId) results.set(r.toolCallId, r);
-	}
-	// teach questions in order: an explain's grade rides the next one's `previous`
-	const calls: Array<{ id: string; args: Record<string, unknown> }> = [];
-	for (const msg of messages) {
-		if ((msg as { role?: string }).role !== "assistant") continue;
-		for (const b of (msg as unknown as { content: Array<{ type: string; id?: string; name?: string; arguments?: unknown }> }).content) {
-			if (b.type === "toolCall" && b.id && b.name && TEACH_QUESTIONS.has(b.name)) calls.push({ id: b.id, args: (b.arguments ?? {}) as Record<string, unknown> });
-		}
-	}
+	const parts: LhViewPart[] = [];
+	for (const m of projectView(messages)) if (m.role === "assistant") for (const p of m.parts) if (TEACH_PARTS.has(p.type)) parts.push(p);
 	const checks: VocabularyCheck[] = [];
-	calls.forEach((call, i) => {
-		const result = results.get(call.id);
-		if (!result || result.isError || result.details == null) return;
-		if ((result.details as { dismissed?: unknown }).dismissed === true) return;
-		const ids = normalizeConceptIds(call.args.conceptIds) ?? [];
+	parts.forEach((part, i) => {
+		if (part.state !== "output-available") return;
+		const answer = part.output as QuestionAnswerData | null | undefined;
+		if (!answer || typeof answer !== "object" || answer.dismissed === true) return;
+		const args = (part.input ?? {}) as Record<string, unknown>;
+		const ids = normalizeConceptIds(args.conceptIds) ?? [];
 		if (ids.length === 0) return;
-		const verdict = readAnswerVerdict(result as never);
+		const verdict = readAnswerVerdict({ content: part.result?.content ?? [], details: answer } as never);
 		let right: boolean | null = verdict === "hit" ? true : verdict === "miss" ? false : null;
 		if (right === null) {
-			const next = calls.slice(i + 1).find((c) => !results.get(c.id)?.isError);
-			const previous = typeof next?.args.previous === "string" ? next.args.previous.trim().toLowerCase() : "";
+			const next = parts.slice(i + 1).find((p) => p.state !== "output-error");
+			const raw = (next?.input as { previous?: unknown } | undefined)?.previous;
+			const previous = typeof raw === "string" ? raw.trim().toLowerCase() : "";
 			if (previous === "right") right = true;
 			else if (previous === "partly" || previous === "wrong") right = false;
 		}
-		const level = normalizeQuestionLevel(call.args.level);
+		const level = normalizeQuestionLevel(args.level);
 		checks.push({ ids, ...(level ? { level } : {}), right });
 	});
 	return checks;
@@ -277,13 +296,16 @@ export function deferredOf(messages: readonly LhMessage[]): string[] {
 	return [];
 }
 
-/** The ids of a `deferred` argument ([{ id, why }], tolerant of bare strings); [] when absent. Pure. */
+/** The ids of a `deferred` argument ([{ id, why }]) that carry a reason; [] when absent (the field is optional). A
+ *  deferral without a non-blank `why` defers nothing. Pure. */
 export function deferredIdsOf(raw: unknown): string[] {
 	if (!Array.isArray(raw)) return [];
 	const out: string[] = [];
 	for (const d of raw) {
-		const id = typeof d === "string" ? d : d && typeof d === "object" ? (d as { id?: unknown }).id : undefined;
-		if (typeof id === "string" && id.trim() !== "" && !out.includes(id.trim())) out.push(id.trim());
+		if (!d || typeof d !== "object") continue;
+		const { id, why } = d as { id?: unknown; why?: unknown };
+		if (typeof id !== "string" || id.trim() === "" || typeof why !== "string" || why.trim() === "") continue;
+		if (!out.includes(id.trim())) out.push(id.trim());
 	}
 	return out;
 }
@@ -299,7 +321,9 @@ export interface LedgerChat {
 }
 
 export interface ItemLedger {
+	/** Named in what the learner saw (never by a tag alone). */
 	introduced: boolean;
+	/** An answered question was tagged with it. */
 	checked: boolean;
 	level?: QuestionLevel;
 	right?: boolean;
@@ -309,9 +333,18 @@ export interface ItemLedger {
 	deferredIn: Set<string>;
 }
 
+/** An item's state as the screens and the prompt show it: new, introduced (not checked), checked (and introduced), or
+ *  asked (checked, never named). Pure. */
+export function itemState(l: Pick<ItemLedger, "introduced" | "checked"> | undefined): CoverageTermState {
+	if (!l) return "new";
+	if (l.checked) return l.introduced ? "checked" : "asked";
+	return l.introduced ? "introduced" : "new";
+}
+
 const levelRank = (l: QuestionLevel | undefined) => (l ? QUESTION_LEVELS.indexOf(l) : -1);
 
-/** Which item keys a name introduces in a chat of these skills (none when the name is ambiguous in the class). Pure. */
+/** Which item keys a name introduces in a chat of these skills (none when the name is ambiguous in the class, and none
+ *  for a homonym with two or more senses eligible in the chat). Pure. */
 export function keysForName(form: string, glossary: Pick<CoverageGlossary, "terms" | "lookup">, resolved: ResolvedCoverage, chatSkills: ReadonlySet<string>): string[] {
 	const entries = findTermCandidates(glossary, form).map((c) => c.entry.id);
 	if (entries.length === 0) return [];
@@ -321,10 +354,11 @@ export function keysForName(form: string, glossary: Pick<CoverageGlossary, "term
 		if (!entries.every((id) => group.has(id))) return [];
 	}
 	const out: string[] = [];
-	for (const item of resolved.items) {
-		if (item.status === "flagged" || !entries.includes(item.item.entryId)) continue;
-		if (item.item.sense && !(item.item.skills ?? []).some((s) => chatSkills.has(s))) continue;
-		out.push(item.key);
+	for (const entryId of entries) {
+		const items = resolved.items.filter((i) => i.status !== "flagged" && i.item.entryId === entryId);
+		for (const i of items) if (!i.item.sense) out.push(i.key);
+		const eligible = items.filter((i) => i.item.sense && i.skills.some((s) => chatSkills.has(s)));
+		if (eligible.length === 1) out.push(eligible[0]!.key);
 	}
 	return out;
 }
@@ -334,15 +368,18 @@ export function keysForName(form: string, glossary: Pick<CoverageGlossary, "term
 export function foldLedger(resolved: ResolvedCoverage, glossary: Pick<CoverageGlossary, "terms" | "lookup">, chats: readonly LedgerChat[], exclude?: string): Map<string, ItemLedger> {
 	const ledger = new Map<string, ItemLedger>();
 	for (const item of resolved.items) if (item.status !== "flagged") ledger.set(item.key, { introduced: false, checked: false, seenIn: new Set(), deferredIn: new Set() });
-	const mark = (key: string, chatId: string, f: (l: ItemLedger) => void) => {
-		for (const k of resolved.group(key)) {
-			const l = ledger.get(k);
-			if (!l) continue;
-			f(l);
-			l.seenIn.add(chatId);
+	const mark = (keys: readonly string[], chatId: string, f: (l: ItemLedger) => void) => {
+		for (const key of keys) {
+			for (const k of resolved.group(key)) {
+				const l = ledger.get(k);
+				if (!l) continue;
+				f(l);
+				l.seenIn.add(chatId);
+			}
 		}
 	};
 	const nameCache = new Map<string, string[]>();
+	const idCache = new Map<string, string[]>();
 	for (const chat of chats) {
 		if (chat.mode === "ask" || chat.chatId === exclude) continue;
 		const skills = new Set(chat.skillIds);
@@ -351,37 +388,35 @@ export function foldLedger(resolved: ResolvedCoverage, glossary: Pick<CoverageGl
 			const cacheKey = `${skillKey}\u0000${form}`;
 			let keys = nameCache.get(cacheKey);
 			if (!keys) nameCache.set(cacheKey, (keys = keysForName(form, glossary, resolved, skills)));
-			for (const k of keys) mark(k, chat.chatId, (l) => (l.introduced = true));
+			mark(keys, chat.chatId, (l) => (l.introduced = true));
 		}
 		for (const check of chat.vocabulary.checks) {
 			for (const id of check.ids) {
-				if (!ledger.has(id)) continue;
-				mark(id, chat.chatId, (l) => {
+				let keys = idCache.get(id);
+				if (!keys) idCache.set(id, (keys = resolveConceptId(id, glossary, resolved)));
+				mark(keys, chat.chatId, (l) => {
 					l.checked = true;
-					l.introduced = true;
 					if (levelRank(check.level) > levelRank(l.level)) l.level = check.level;
 					if (check.right === true) l.right = true;
 					else if (check.right === false && l.right === undefined) l.right = false;
 				});
 			}
 		}
-		for (const id of chat.vocabulary.deferred) for (const k of resolved.group(id)) ledger.get(k)?.deferredIn.add(chat.chatId);
+		for (const id of chat.vocabulary.deferred) for (const k of resolveConceptId(id, glossary, resolved)) ledger.get(k)?.deferredIn.add(chat.chatId);
 	}
 	return ledger;
 }
 
-/** How many of a question's concept ids are not items of the class (an id the model invented). Pure. */
-export function unknownConceptIds(ids: readonly string[], known: ReadonlySet<string>): number {
-	return ids.filter((id) => !known.has(id)).length;
-}
-
 // ─── the lesson's prompt section ────────────────────────────────────────────
 
-/** The most terms a lesson's prompt lists with their definition (core first): a lesson teaches one skill in roughly half
- *  an hour, and a list longer than this stops being a checklist the tutor can keep in view. */
+/** The most terms one session is LISTED, and so owes (core first, carried-over first). A lesson teaches one skill in
+ *  roughly half an hour, a new term every two or three minutes is already dense, and a checklist longer than this stops
+ *  being one the tutor can keep in view; the rest of the skill's terms go to the next sessions. */
 export const VOCABULARY_PROMPT_MAX = 12;
-/** The most already-checked terms named (without definition) on one line. */
+/** The most already-done terms named (without definition) on one line. */
 export const VOCABULARY_CHECKED_MAX = 20;
+/** The most other names of a linked term shown on its line. */
+export const VOCABULARY_LINKED_MAX = 4;
 const DEFINITION_CHARS = 260;
 
 export interface VocabularyPromptItem {
@@ -391,15 +426,17 @@ export interface VocabularyPromptItem {
 	definition: string | null;
 	page: number | null;
 	material: string | null;
-	state: "new" | "introduced" | "checked";
+	state: CoverageTermState;
 	/** Introduced, checked or deferred in an earlier session of this skill. */
 	carried: boolean;
-	/** An earlier lesson of this skill deferred it. */
-	deferred?: boolean;
+	/** How many earlier lessons of this skill deferred it. */
+	deferredCount?: number;
 	level?: QuestionLevel;
 	right?: boolean;
 	/** Other names linked with it (one concept). */
 	linked?: string[];
+	/** For a sense of a homonym: how many senses of its word this session has (2 or more: a bare mention introduces none). */
+	senses?: number;
 }
 
 const flat = (t: string, max: number) => {
@@ -407,45 +444,86 @@ const flat = (t: string, max: number) => {
 	return s.length <= max ? s : `${s.slice(0, max - 1).trimEnd()}…`;
 };
 
+const isOpen = (i: VocabularyPromptItem) => i.state !== "checked";
+const rank = (i: VocabularyPromptItem) =>
+	(i.tier === "core" ? 0 : 10) + (i.carried && i.state !== "introduced" ? 0 : i.carried ? 1 : i.state === "introduced" ? 2 : 3);
+
 /**
- * The vocabulary block of a Learn or Practice session's course section: the skill's terms, core first, carried-over
- * ones before new ones, each with its id, the material's definition and page, and its state; checked terms on one line
- * by name. At most VOCABULARY_PROMPT_MAX with definitions. "" when the skill owes no term. Pure.
+ * Which of a skill's items a session is listed, in order: the open ones (not yet both introduced and checked), core
+ * first, carried-over ones first (those still to be introduced before those only to be checked), at most
+ * VOCABULARY_PROMPT_MAX. The session owes exactly these (the core ones not yet introduced); its section counts the rest
+ * as left for later sessions. Pure.
  */
-export function vocabularySection(skillName: string, items: readonly VocabularyPromptItem[], mode: CourseMode): string {
-	if (items.length === 0) return "";
-	const rank = (i: VocabularyPromptItem) => (i.tier === "core" ? 0 : 10) + (i.state === "checked" ? 3 : i.carried ? 0 : i.state === "introduced" ? 1 : 2);
-	const ordered = [...items].sort((a, b) => rank(a) - rank(b));
-	const open = ordered.filter((i) => i.state !== "checked");
-	const checked = ordered.filter((i) => i.state === "checked");
-	const shown = open.slice(0, VOCABULARY_PROMPT_MAX);
+export function listVocabulary(items: readonly VocabularyPromptItem[]): string[] {
+	return items
+		.filter(isOpen)
+		.map((item, i) => ({ item, i }))
+		.sort((a, b) => rank(a.item) - rank(b.item) || a.i - b.i)
+		.slice(0, VOCABULARY_PROMPT_MAX)
+		.map((x) => x.item.key);
+}
+
+function stateText(i: VocabularyPromptItem): string {
+	const carried = i.carried ? " (carried over)" : "";
+	const deferred = i.deferredCount ? `, left for later by ${i.deferredCount === 1 ? "an earlier lesson" : `${i.deferredCount} earlier lessons`}` : "";
+	switch (i.state) {
+		case "new":
+			return `new${deferred}${carried}`;
+		case "asked":
+			return `asked about in an earlier session but never named, so not introduced yet${deferred}${carried}`;
+		case "introduced":
+			return `introduced${i.carried ? " in an earlier session" : ""}, not checked yet${carried}`;
+		default:
+			return "introduced and checked";
+	}
+}
+
+/**
+ * The vocabulary block of a Learn or Practice session's course section: the items LISTED to this session (`listed`, the
+ * keys stored with it when it started: listVocabulary), each with its id, the material's definition and page, and its
+ * state; the skill's done terms on one line by name; and how many terms are left for later sessions (`later`). "" when
+ * nothing is listed and nothing is done. Pure.
+ */
+export function vocabularySection(skillName: string, listed: readonly VocabularyPromptItem[], mode: CourseMode, opts: { done?: readonly VocabularyPromptItem[]; later?: number } = {}): string {
+	const done = opts.done ?? [];
+	const later = opts.later ?? 0;
+	if (listed.length === 0 && done.length === 0) return "";
 	const line = (i: VocabularyPromptItem) => {
-		const state =
-			i.state === "new"
-				? i.deferred ? "new, left for later by an earlier lesson (carried over)" : "new"
-				: `introduced${i.carried ? " in an earlier session" : ""}, not checked yet${i.carried ? " (carried over)" : ""}`;
 		const where = [i.material, i.page !== null ? `p. ${i.page}` : null].filter(Boolean).join(", ");
 		const definition = i.definition !== null ? `The material: "${flat(i.definition, DEFINITION_CHARS)}"${where ? ` (${where})` : ""}` : `The material uses it without defining it${where ? ` (${where})` : ""}.`;
-		const linked = i.linked && i.linked.length > 0 ? ` Also named: ${i.linked.join(", ")}.` : "";
-		return `- [${i.key}] ${i.name}${i.tier === "supporting" ? " (supporting)" : ""} — ${state}. ${definition}${linked}`;
+		const names = i.linked ?? [];
+		const shownNames = names.slice(0, VOCABULARY_LINKED_MAX);
+		const linked = names.length > 0 ? ` Also named: ${shownNames.join(", ")}${names.length > shownNames.length ? ` (+${names.length - shownNames.length} more)` : ""}.` : "";
+		const sense =
+			i.senses && i.senses > 1
+				? ` One of ${i.senses} senses of "${i.name}" in this lesson (this one: ${where || "its own page"}): naming the word introduces none of them, so tag the check of this sense with this exact id, and list it in \`deferred\` if you leave it.`
+				: "";
+		return `- [${i.key}] ${i.name}${i.tier === "supporting" ? " (supporting)" : ""} — ${stateText(i)}. ${definition}${linked}${sense}`;
 	};
-	const body = [
-		`VOCABULARY — the class's own terms that "${skillName}" owes (from the class glossary, built from its material). The [id] in brackets is what \`conceptIds\` takes:`,
-		...shown.map(line),
-	];
-	if (open.length > shown.length) body.push(`(+${open.length - shown.length} more terms of this skill not listed here)`);
-	if (checked.length > 0) {
-		const names = checked.slice(0, VOCABULARY_CHECKED_MAX).map((i) => `${i.name} [${i.key}]${i.level ? ` (${i.level}${i.right ? ", right" : ""})` : ""}`);
-		body.push(`Already checked in earlier sessions: ${names.join("; ")}${checked.length > names.length ? ` (+${checked.length - names.length} more)` : ""}.`);
-	}
-	body.push(
-		"Introduce each term in the sentence that first uses it, with the class's own definition (cite the page) rather than a wording of your own; use the material's notation.",
-		"Tag every `quiz` and `explain` with the ids of the terms it tests in `conceptIds`, copied exactly from the brackets ([] when it tests none). An id that is not listed here counts for nothing.",
-	);
-	if (mode === "learn") {
+	const body: string[] = [];
+	if (listed.length > 0) {
 		body.push(
-			`Before \`${FINISH_LESSON_TOOL}\`, every core term above must have been introduced (in this lesson or an earlier one) or listed in its \`deferred\` with a few words of why. Terms introduced but not checked carry into the next session of this skill; they never block finishing.`,
+			`VOCABULARY — the class's own terms that this ${mode === "learn" ? "lesson" : "session"} of "${skillName}" owes (from the class glossary, built from its material). The [id] in brackets is what \`conceptIds\` takes:`,
+			...listed.map(line),
 		);
+	} else {
+		body.push(`VOCABULARY — "${skillName}" owes no new term in this ${mode === "learn" ? "lesson" : "session"}.`);
+	}
+	if (later > 0) body.push(`(${later} more term${later === 1 ? "" : "s"} of this skill ${later === 1 ? "is" : "are"} left for later sessions; not owed by this one.)`);
+	if (done.length > 0) {
+		const names = done.slice(0, VOCABULARY_CHECKED_MAX).map((i) => `${i.name} [${i.key}]${i.level ? ` (${i.level}${i.right ? ", right" : ""})` : ""}`);
+		body.push(`Already introduced and checked in earlier sessions: ${names.join("; ")}${done.length > names.length ? ` (+${done.length - names.length} more)` : ""}.`);
+	}
+	if (listed.length > 0) {
+		body.push(
+			"Introduce each term by naming it in the sentence that first uses it, with the class's own definition (cite the page) rather than a wording of your own; use the material's notation. A term counts as introduced only when the learner sees its name in your text, a question, or a figure note; a question tagged with it does not introduce it, and neither do multiple-choice options.",
+			"Tag every `quiz` and `explain` with the ids of the terms it tests in `conceptIds`, copied exactly from the brackets ([] when it tests none). An id that is not listed here counts for nothing.",
+		);
+		if (mode === "learn") {
+			body.push(
+				`Before \`${FINISH_LESSON_TOOL}\`, every core term listed above must have been introduced (in this lesson or an earlier one) or listed in its \`deferred\` with a few words of why. Terms introduced but not checked carry into the next session of this skill; they never block finishing.`,
+			);
+		}
 	}
 	return body.join("\n");
 }
@@ -454,19 +532,19 @@ export function vocabularySection(skillName: string, items: readonly VocabularyP
 
 export { VOCABULARY_REFUSAL_HEAD };
 
-/** The finish refusal's text, naming the items. */
+/** The finish refusal's text, naming every item it checked that is still owed. */
 export function vocabularyRefusalText(missing: ReadonlyArray<{ key: string; name: string }>): string {
-	const list = missing.slice(0, 12).map((i) => `${i.name} [${i.key}]`).join(", ");
-	const more = missing.length > 12 ? ` and ${missing.length - 12} more` : "";
+	const list = missing.map((i) => `${i.name} [${i.key}]`).join(", ");
 	const n = missing.length;
 	return (
-		`${VOCABULARY_REFUSAL_HEAD} this lesson's skill owes ${n} core term${n === 1 ? "" : "s"} of the class that ${n === 1 ? "has" : "have"} not been introduced, ` +
-		`in this lesson or an earlier one: ${list}${more}. Introduce each one now, with the class's definition, in the sentence that first uses it; or call \`${FINISH_LESSON_TOOL}\` again ` +
-		"with each one in `deferred` and a few words of why. This check refuses once per lesson."
+		`${VOCABULARY_REFUSAL_HEAD} this lesson owes ${n} core term${n === 1 ? "" : "s"} of the class that ${n === 1 ? "has" : "have"} not been introduced yet ` +
+		`(named where the learner sees it, in this lesson or an earlier one; a question tag alone does not count): ${list}. ` +
+		`Work the next one in where it belongs to what you just taught, and list the others in \`deferred\` with a few words of why each waits; then call \`${FINISH_LESSON_TOOL}\` again. ` +
+		"This check refuses once per lesson."
 	);
 }
 
-/** Did this lesson's transcript already get the vocabulary refusal? (It fires once per session at most.) */
+/** Did this lesson's transcript already get the vocabulary refusal? (It fires once per lesson at most.) */
 export function vocabularyRefusedBefore(messages: readonly unknown[]): boolean {
 	return messages.some((m) => {
 		const r = m as { role?: string; toolName?: string; isError?: boolean; content?: unknown };
@@ -475,16 +553,17 @@ export function vocabularyRefusedBefore(messages: readonly unknown[]): boolean {
 	});
 }
 
-/** What a lesson's finish check knows: the skill's core items (with their link groups), and what is introduced given
- *  this lesson's own transcript on top of every other session (the server's ledger, live). */
+/** What a lesson's finish check knows: the core items LISTED to it (its whole obligation, with their link groups), and
+ *  what is introduced given this lesson's own transcript on top of every other session (the server's ledger, live). */
 export interface LessonVocabulary {
 	items: ReadonlyArray<{ key: string; name: string; group: readonly string[] }>;
-	/** The keys introduced (or checked) given this lesson's messages and every other session of the class. */
+	/** The keys introduced given this lesson's messages and every other session of the class. */
 	introduced: (messages: readonly LhMessage[]) => ReadonlySet<string>;
 }
 
 /** The items a `finish_lesson` call would leave behind unnamed, or null when it may go through: nothing owed, every
- *  core item introduced or deferred, or the refusal already fired in this lesson. Pure given `introduced`. */
+ *  listed core item introduced or deferred with a reason, or the refusal already fired in this lesson. Pure given
+ *  `introduced`. `messages`: what the learner had seen when the call was made (core/learner-seen.ts messagesSeenAtFinish). */
 export function finishVocabularyProblem(lesson: LessonVocabulary | undefined, messages: readonly LhMessage[], args: unknown): Array<{ key: string; name: string }> | null {
 	if (!lesson || lesson.items.length === 0) return null;
 	if (vocabularyRefusedBefore(messages)) return null;
@@ -492,4 +571,14 @@ export function finishVocabularyProblem(lesson: LessonVocabulary | undefined, me
 	const introduced = lesson.introduced(messages);
 	const missing = lesson.items.filter((i) => !i.group.some((k) => introduced.has(k) || deferred.has(k)));
 	return missing.length > 0 ? missing.map(({ key, name }) => ({ key, name })) : null;
+}
+
+/** What a clean finish records about the lesson's terms, fixed as of that moment (the lesson result reads it back, so a
+ *  later lesson never changes it): the listed core items, how many were introduced, and the names of those left. Null
+ *  when the lesson owed none. Pure given `introduced`. */
+export function lessonCoverageAtFinish(lesson: LessonVocabulary | undefined, messages: readonly LhMessage[]): { total: number; covered: number; left: string[] } | null {
+	if (!lesson || lesson.items.length === 0) return null;
+	const introduced = lesson.introduced(messages);
+	const left = lesson.items.filter((i) => !i.group.some((k) => introduced.has(k))).map((i) => i.name);
+	return { total: lesson.items.length, covered: lesson.items.length - left.length, left };
 }

@@ -48,7 +48,8 @@ export function lastFinalProblemOf(messages: readonly unknown[]): { index: numbe
 }
 
 /** The index of the newest `finish_lesson` call before `beforeCallId` (or any, when it is absent); -1 when none. A call
- *  refused only for the lesson's vocabulary (WP5) is not an attempt: its final problem still stands. */
+ *  refused only for the lesson's vocabulary (WP5) is not an attempt: its final problem still stands. Nor is a sibling in
+ *  the calling message (WP5 review 1): two finish calls in one message are one attempt, made before either result. */
 function lastFinishAttempt(messages: readonly unknown[], exceptCallId: string): number {
 	const vocabularyRefused = new Set<string>();
 	for (const m of messages) {
@@ -58,7 +59,9 @@ function lastFinishAttempt(messages: readonly unknown[], exceptCallId: string): 
 	}
 	for (let i = messages.length - 1; i >= 0; i--) {
 		if (roleOf(messages[i]) !== "assistant") continue;
-		if ((messages[i] as AssistantMessage).content.some((b) => b.type === "toolCall" && b.name === FINISH_LESSON_TOOL && b.id !== exceptCallId && !vocabularyRefused.has(b.id))) return i;
+		const content = (messages[i] as AssistantMessage).content;
+		if (content.some((b) => b.type === "toolCall" && b.id === exceptCallId)) continue;
+		if (content.some((b) => b.type === "toolCall" && b.name === FINISH_LESSON_TOOL && !vocabularyRefused.has(b.id))) return i;
 	}
 	return -1;
 }

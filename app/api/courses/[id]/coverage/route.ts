@@ -1,10 +1,13 @@
 /**
  * POST — the class's vocabulary coverage (WP5 — docs/courses.md "Vocabulary coverage").
  *
- *   { map: true }                       → start "Map the class's terms" (the planner's mapping-only pass; returns at once)
+ *   { map: true, target?: "draft" }     → start "Map the class's terms" (the planner's mapping-only pass on the approved map,
+ *                                         or on the pending draft; returns at once). It only ADDS assignments for terms with
+ *                                         no decision; the exclusions and links it proposes are stored as suggestions
  *   { target: "approved" | "draft", action, … } → one edit of the approved mapping or of the draft's proposal:
  *       assign { key, skill } · unassign { key, skill } · exclude { key, reason } · link { keys } · unlink { key }
- *       · remove { key } · remap { key, to }   (key: a glossary entry id, a sense key, or an existing item's key)
+ *       · remove { key } · remap { key, to } · dismiss { key } | { keys } (turn a suggestion down) · clear-displaced
+ *       (key: a glossary entry id, a sense key, or an existing item's key; accepting a suggestion is exclude / link)
  */
 import { parseCoverageEdit } from "@/src/core";
 import { editCourseCoverage, startCourseTermMap } from "@/src/server";
@@ -16,7 +19,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 	const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
 	if (!body) return Response.json({ error: "a JSON body is required" }, { status: 400 });
 	if (body.map === true) {
-		const started = startCourseTermMap(id);
+		const started = startCourseTermMap(id, body.target === "draft" ? "draft" : "approved");
 		return started.ok ? Response.json({ course: started.value }) : Response.json({ error: started.error }, { status: started.status });
 	}
 	const target = body.target === "draft" ? "draft" : body.target === "approved" ? "approved" : null;

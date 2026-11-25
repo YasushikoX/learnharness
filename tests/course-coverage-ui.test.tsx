@@ -85,6 +85,31 @@ describe("a skill's terms", () => {
 		assert.match(text('[data-testid="term-t_ring"]'), /def of ring \(Lecture 3\.pdf, p\. 3\)/);
 		assert.match(text('[data-testid="term-t_unit"]'), /no definition in the material \(Lecture 3\.pdf, p\. 7\)/);
 	});
+	it("an asked term reads 'asked about, never named', with how many lessons left it for later; Norwegian too", async () => {
+		const v = view();
+		v.skills.sk_rings!.terms.push({ ...entry("t_kernel", "kernel"), state: "asked", deferredCount: 2 });
+		await mount(<SkillTerms skillId="sk_rings" />, v, []);
+		await click('[data-testid="skill-terms-toggle-sk_rings"]');
+		assert.equal(text('[data-testid="term-state-t_kernel"]'), "asked about, never named · left for later 2×");
+		await act(async () => root?.unmount());
+		host?.remove();
+		await mount(<SkillTerms skillId="sk_rings" />, { ...v, language: "nb" }, []);
+		await click('[data-testid="skill-terms-toggle-sk_rings"]');
+		assert.equal(text('[data-testid="term-state-t_kernel"]'), "spurt om, aldri nevnt · utsatt 2×");
+	});
+	it("suggestions are accepted or dismissed one by one; the displaced list is acknowledged", async () => {
+		const calls: Array<[string, unknown]> = [];
+		await mount(<CoverageSummary />, view({ suggested: { excluded: [{ key: "t_ideal", name: "ideal", reason: "not examined" }], links: [{ keys: ["t_Field", "t_field"], names: ["Field", "field"] }] }, displaced: [{ key: "t_unit", name: "unit", reason: "its skill left the class map; assign it again" }] }), calls);
+		await click('[data-testid="suggested-exclude-accept-t_ideal"]');
+		await click('[data-testid="suggested-link-accept-t_Field~t_field"]');
+		await click('[data-testid="coverage-displaced-ok"]');
+		assert.deepEqual(calls, [
+			["approved", { action: "exclude", key: "t_ideal", reason: "not examined" }],
+			["approved", { action: "link", keys: ["t_Field", "t_field"] }],
+			["approved", { action: "clear-displaced" }],
+		]);
+		assert.match(text('[data-testid="displaced-t_unit"]'), /unit — its skill left the class map/);
+	});
 	it("a skill with no terms shows nothing", async () => {
 		await mount(<SkillTerms skillId="sk_other" />, view(), []);
 		assert.equal(host!.innerHTML, "");

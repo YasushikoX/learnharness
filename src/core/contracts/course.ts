@@ -106,7 +106,8 @@ export interface CoverageItem {
 	leftAtApproval?: true;
 }
 
-/** `CourseRecord.coverage`: the approved vocabulary mapping. Absent on every class approved without an indexed glossary. */
+/** `CourseRecord.coverage`: the approved vocabulary mapping. Absent on every class approved without an indexed glossary.
+ *  JSON `null` is an EXPLICIT deletion (sync keeps a mapping a side merely lacks; see core/sync-merge.ts). */
 export interface CourseCoverage {
 	/** ISO — when the mapping was approved, mapped or last edited. */
 	updatedAt: string;
@@ -114,6 +115,24 @@ export interface CourseCoverage {
 	/** Groups of item keys confirmed as ONE concept under several names (each group two or more keys, no key in two
 	 *  groups): introducing or checking one satisfies the group. Unlinked suggested duplicates stay separate items. */
 	links: string[][];
+	/** A mapping pass's proposals that would change a decision (an exclusion, a link): shown for the student to accept one
+	 *  by one; never applied by the pass itself. */
+	suggested?: CoverageSuggestions;
+	/** Earlier decisions an approval (or a removed skill) could not keep, with why: shown on the page after approval. */
+	displaced?: CoverageDropped[];
+}
+
+/** A mapping pass's proposals awaiting the student. */
+export interface CoverageSuggestions {
+	excluded: Array<{ key: string; reason: string }>;
+	links: string[][];
+}
+
+/** One earlier decision that could not be kept. */
+export interface CoverageDropped {
+	key: string;
+	name: string;
+	reason: string;
 }
 
 /** `CourseDraft.coverage`: the planner's proposal, validated against the real glossary (unknown ids dropped, listed). */
@@ -126,6 +145,12 @@ export interface DraftCoverage {
 	incomplete: string[];
 	/** How many core entries the planner was shown with their definition, by name only, and not at all (the input bound). */
 	shown: { full: number; names: number; omitted: number };
+	/** A mapping pass's proposals on the draft that would change a decision (see CourseCoverage.suggested). */
+	suggested?: CoverageSuggestions;
+	/** The class's earlier approved decisions were carried into this proposal (core/coverage-items.ts carryForward). */
+	carried?: true;
+	/** Earlier decisions the carrying could not keep, with why (moved to CourseCoverage.displaced at approval). */
+	displaced?: CoverageDropped[];
 }
 
 /** One drafting run's usage (the money channel — like ExtractionRunUsage). */
@@ -212,6 +237,10 @@ export interface ChatCourseLink {
 	/** A placement session that is a RETEST: it asks only about skills not learned yet and learned skills that are due
 	 *  or fading before the exam, and a miss on a learned skill is a lapse (core/mastery.ts). */
 	retest?: boolean;
+	/** The vocabulary items LISTED to this session when it started (WP5, core/coverage-ledger.ts listVocabulary): the item
+	 *  keys its prompt shows and, for a Learn session, its whole vocabulary obligation at finish. Absent: the class had no
+	 *  vocabulary mapping when the session started, and the session owes none. */
+	vocabulary?: string[];
 }
 
 // ─── The API payloads ───────────────────────────────────────────────────────
@@ -318,8 +347,9 @@ export interface LessonResult {
 
 // ─── The coverage views (WP5, 2026-11-25; server/course-coverage.ts) ─────────────────────────────────────────────────
 
-/** new: never introduced; introduced: introduced, not checked; checked: an answered question tagged it. */
-export type CoverageTermState = "new" | "introduced" | "checked";
+/** new: never introduced; introduced: named where the learner saw it, not checked; checked: introduced, and an answered
+ *  question tagged it; asked: an answered question tagged it but it was never named (not introduced). */
+export type CoverageTermState = "new" | "introduced" | "checked" | "asked";
 
 /** A glossary entry as the coverage screens show it. */
 export interface CoverageEntryView {
@@ -341,6 +371,8 @@ export interface CoverageTermView extends CoverageEntryView {
 	right?: boolean;
 	/** The names it is linked with (one concept). */
 	linked?: string[];
+	/** How many finished lessons left it for later (`deferred`). */
+	deferredCount?: number;
 }
 
 /** One suggested duplicate pair, side by side, for the "same thing" action. */
@@ -367,10 +399,16 @@ export interface CourseCoverageView {
 	/** Items whose entry (or sense) is no longer in the material: they count toward nothing until removed or remapped. */
 	flagged: Array<{ key: string; name: string; skills: string[] }>;
 	excluded: Array<{ key: string; name: string; reason: string }>;
+	/** A mapping pass's proposals awaiting the student, one by one. */
+	suggested?: { excluded: Array<{ key: string; name: string; reason: string }>; links: Array<{ keys: string[]; names: string[] }> };
+	/** Earlier decisions the last approval (or a removed skill) could not keep, with why. */
+	displaced?: CoverageDropped[];
 	/** Materials whose index is missing or out of date. */
 	incomplete: string[];
 	/** The pending draft's proposal, for the approval screen. */
 	draft?: {
+		/** The draft carries no proposal yet (indexing finished after drafting): every core term is unassigned. */
+		empty?: boolean;
 		/** Per draft key: its terms. */
 		skills: Record<string, CoverageEntryView[]>;
 		unassigned: CoverageEntryView[];
@@ -379,6 +417,9 @@ export interface CourseCoverageView {
 		dropped: string[];
 		incomplete: string[];
 		shown: DraftCoverage["shown"];
+		suggested?: { excluded: Array<{ key: string; name: string; reason: string }>; links: Array<{ keys: string[]; names: string[] }> };
+		/** Earlier decisions the draft could not carry, with why. */
+		displaced?: CoverageDropped[];
 	};
 }
 

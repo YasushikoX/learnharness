@@ -1210,7 +1210,7 @@ data={data}
 					onAsk={(reopen) => void onAsk(reopen)}
 					onCoverage={{
 						edit: (target, edit) => void call(`/api/courses/${courseId}/coverage`, { target, ...edit }),
-						map: () => void call(`/api/courses/${courseId}/coverage`, { map: true }),
+						map: (target) => void call(`/api/courses/${courseId}/coverage`, { map: true, ...(target === "draft" ? { target: "draft" } : {}) }),
 						approveLeaving: () => void call(`/api/courses/${courseId}/approve`, { leaveUnassigned: true }),
 					}}
 				/>

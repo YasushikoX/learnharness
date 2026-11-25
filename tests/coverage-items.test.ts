@@ -9,7 +9,10 @@ import { describe, it } from "node:test";
 import {
 	applyCoverageEdit,
 	approveCoverage,
+	carryForward,
 	draftCoverageFrom,
+	mergeMappingPass,
+	pruneStaleSkills,
 	itemKey,
 	normalizeLinks,
 	parseCoverageEdit,
@@ -84,14 +87,22 @@ describe("the planner's glossary input", () => {
 		assert.deepEqual(block.shown, { full: 5, names: 0, omitted: 0 });
 	});
 
-	it("800 core entries: definitions until the first budget, then names only, then counted and not listed — bounded", () => {
+	it("800 core entries, 800 incomplete materials and hundreds of pairs: ONE budget for the whole block (review 1)", () => {
 		const many = Array.from({ length: 800 }, (_, i) => term(`concept number ${i}`, { page: 1 + (i % 300), def: `a fairly long definition of concept ${i} that runs on for a while to look like a real one from a slide deck` }));
-		const g = glossaryOf([{ material: BOOK, terms: many }]);
+		// similar-name pairs ("Widget part 0" ~ "widget part 0" …), so the duplicate list is long too
+		const pairs = Array.from({ length: 300 }, (_, i) => [term(`Widget part ${i}`), term(`widget part ${i}`)]).flat();
+		const incomplete = Array.from({ length: 800 }, (_, i) => ({ name: `Week ${i} slides with a long file name.pdf`, reason: "outdated" }));
+		const g = glossaryOf([{ material: BOOK, terms: [...many, ...pairs] }], incomplete);
 		const block = plannerGlossaryBlock(g)!;
-		assert.ok(block.text.length <= PLANNER_GLOSSARY_BUDGET + 2_000, `${block.text.length} characters`);
-		assert.equal(block.shown.full + block.shown.names + block.shown.omitted, 800);
-		assert.ok(block.shown.full > 50 && block.shown.full < 300, JSON.stringify(block.shown));
-		assert.ok(block.shown.names > 300, JSON.stringify(block.shown));
+		assert.ok(block.text.length <= PLANNER_GLOSSARY_BUDGET, `${block.text.length} characters`);
+		assert.match(block.text, /Materials whose index is incomplete[^\n]*\+\d+ more/, "the incomplete list is cut first, and says so");
+		assert.match(block.text, /more pairs not listed\)/, "so are the pairs");
+		const loose = plannerGlossaryBlock(glossaryOf([{ material: BOOK, terms: many }]))!;
+		assert.ok(loose.text.length <= PLANNER_GLOSSARY_BUDGET, `${loose.text.length} characters`);
+		assert.equal(block.shown.full + block.shown.names + block.shown.omitted, 1400);
+		assert.equal(loose.shown.full + loose.shown.names + loose.shown.omitted, 800);
+		assert.ok(loose.shown.full > 50 && loose.shown.full < 300, JSON.stringify(loose.shown));
+		assert.ok(loose.shown.names > 300, JSON.stringify(loose.shown));
 		// a tighter budget leaves some out, and says so
 		const tight = plannerGlossaryBlock(g, 20_000, 8_000)!;
 		assert.ok(tight.shown.omitted > 0);
@@ -159,6 +170,85 @@ describe("approval", () => {
 		assert.equal(left.length, 4);
 		assert.ok(left.every((i) => i.excluded === "left out at approval"));
 		assert.deepEqual(resolveCoverage(out.ok ? out.coverage : draft, base(), new Set(["sk_1"])).unassigned, []);
+	});
+	it("no proposal is an EMPTY mapping: every core entry is listed (review 1, finding 4)", () => {
+		const out = approveCoverage(undefined, idOf, base(), null, "2026-11-25T00:00:00Z");
+		assert.equal(out.ok, false);
+		assert.deepEqual(!out.ok && out.unassigned.map((e) => e.term).sort(), ["Entropy", "OLS", "entropy", "kernel", "ordinary least squares"]);
+	});
+});
+
+describe("keeping decisions: re-approval carries forward, the mapping pass only adds (review 1, finding 7)", () => {
+	const g = base();
+	const earlier = {
+		items: [
+			{ entryId: "t_entropy", name: "entropy", skills: ["sk_info"] },
+			{ entryId: "t_OLS", name: "OLS", skills: ["sk_reg"] },
+			{ entryId: "t_Entropy", name: "Entropy", excluded: "the heading form" },
+			{ entryId: "t_gone", name: "gone", skills: ["sk_info"] },
+		],
+		// the student deliberately keeps OLS and ordinary least squares apart: no link
+		links: [],
+	};
+	it("carryForward keeps every still-valid decision, translates reused skills to draft keys, and lists what it dropped", () => {
+		const proposal = {
+			items: [
+				{ entryId: "t_entropy", name: "entropy", skills: ["s2"] },
+				{ entryId: "t_ordinary_least_squares", name: "ordinary least squares", skills: ["s1"] },
+				{ entryId: "t_kernel", name: "kernel", excluded: "the planner thinks it is not taught" },
+			],
+			links: [["t_OLS", "t_ordinary_least_squares"]],
+		};
+		const out = carryForward(earlier, proposal, [{ key: "s1", reuse: "sk_info" }, { key: "s2" }], g);
+		const by = new Map(out.items.map((i) => [itemKey(i), i]));
+		assert.deepEqual(by.get("t_entropy")!.skills, ["s1"], "the earlier decision wins over the planner's, its skill now the draft key that reuses it");
+		assert.equal(by.get("t_OLS")!.skills, undefined, "its skill is not in the new draft: unassigned, for the student");
+		assert.equal(by.get("t_Entropy")!.excluded, "the heading form", "an exclusion is kept");
+		assert.equal(by.has("t_gone"), false);
+		assert.deepEqual(by.get("t_ordinary_least_squares")!.skills, ["s1"], "a key with no earlier decision takes the proposal's");
+		assert.deepEqual(out.links, [], "a proposed link touching an earlier decision is not made");
+		assert.deepEqual(out.suggested?.links, [["t_OLS", "t_ordinary_least_squares"]], "it is a suggestion instead");
+		assert.deepEqual(out.displaced.map((d) => [d.key, d.reason]).sort(), [["t_OLS", "its skill is not in the new class map; assign it again"], ["t_gone", "no longer in the material"]]);
+	});
+	it("approval reports a draft key that maps to no skill, and pruneStaleSkills leaves no stale skill id", () => {
+		const idOf = (k: string) => ({ s1: "sk_1" })[k];
+		const out = approveCoverage({ items: [{ entryId: "t_entropy", name: "entropy", skills: ["s1", "s9"] }], links: [] }, idOf, g, "left out", "now");
+		assert.ok(out.ok);
+		assert.deepEqual(out.ok && out.coverage.displaced?.map((d) => d.key), ["t_entropy"]);
+		const pruned = pruneStaleSkills({ items: [{ entryId: "t_entropy", name: "entropy", skills: ["sk_1", "sk_old"] }, { entryId: "t_OLS", name: "OLS", skills: ["sk_old"] }], links: [] }, new Set(["sk_1"]));
+		assert.deepEqual(pruned.mapping.items.map((i) => i.skills), [["sk_1"], undefined]);
+		assert.deepEqual(pruned.displaced.map((d) => d.key), ["t_entropy", "t_OLS"]);
+		assert.deepEqual(resolveCoverage(pruned.mapping, g, new Set(["sk_1"])).unassigned.map((e) => e.id).includes("t_OLS"), true, "the item is unassigned now");
+	});
+	it("mergeMappingPass adds assignments only where there is no decision; exclusions and links become suggestions", () => {
+		const existing = { items: [earlier.items[0]!, earlier.items[1]!, earlier.items[2]!, { entryId: "t_kernel", name: "kernel" }], links: [] };
+		const proposal = {
+			items: [
+				{ entryId: "t_entropy", name: "entropy", skills: ["sk_reg"] },
+				{ entryId: "t_Entropy", name: "Entropy", skills: ["sk_info"] },
+				{ entryId: "t_kernel", name: "kernel", skills: ["sk_reg", "sk_unknown"] },
+				{ entryId: "t_ordinary_least_squares", name: "ordinary least squares", excluded: "same as OLS" },
+			],
+			links: [["t_OLS", "t_ordinary_least_squares"]],
+		};
+		const merged = mergeMappingPass(existing, proposal, new Set(["sk_info", "sk_reg"]));
+		const by = new Map(merged.items.map((i) => [itemKey(i), i]));
+		assert.deepEqual(by.get("t_entropy")!.skills, ["sk_info"], "an existing assignment is never changed");
+		assert.equal(by.get("t_Entropy")!.excluded, "the heading form", "an exclusion is never reversed");
+		assert.deepEqual(by.get("t_kernel")!.skills, ["sk_reg"], "an undecided item gets the pass's assignment (live skills only)");
+		assert.equal(by.has("t_ordinary_least_squares"), false, "a proposed exclusion is not applied");
+		assert.deepEqual(merged.links, [], "no link is made");
+		assert.deepEqual(merged.suggested, { excluded: [{ key: "t_ordinary_least_squares", reason: "same as OLS" }], links: [["t_OLS", "t_ordinary_least_squares"]] });
+		// the student accepts the link and dismisses the exclusion, one by one
+		const ctx = { glossary: g, skills: new Set(["sk_info", "sk_reg"]) };
+		const linked = applyCoverageEdit(merged, { action: "link", keys: ["t_OLS", "t_ordinary_least_squares"] }, ctx);
+		assert.ok(linked.ok);
+		assert.deepEqual(linked.ok && linked.value.suggested, { excluded: [{ key: "t_ordinary_least_squares", reason: "same as OLS" }], links: [] });
+		const dismissed = linked.ok ? applyCoverageEdit(linked.value, { action: "dismiss", key: "t_ordinary_least_squares" }, ctx) : linked;
+		assert.ok(dismissed.ok);
+		assert.equal(dismissed.ok && dismissed.value.suggested, undefined);
+		assert.deepEqual(parseCoverageEdit({ action: "dismiss", keys: ["a", "b"] }), { action: "dismiss", keys: ["a", "b"] });
+		assert.deepEqual(parseCoverageEdit({ action: "clear-displaced" }), { action: "clear-displaced" });
 	});
 });
 

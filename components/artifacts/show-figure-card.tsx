@@ -1,6 +1,6 @@
 "use client";
 
-import { figureNotesOf, type ArtifactPartProps, type FigureEntry } from "@/src/core";
+import { showFigureContent, type ArtifactPartProps } from "@/src/core";
 import { DemoOutputCard } from "@/components/artifacts/demo-card";
 import { VisualOutputCard } from "@/components/artifacts/visual-card";
 import { FigureNotes } from "@/components/artifacts/figure-notes";
@@ -14,14 +14,13 @@ import { FigureNotes } from "@/components/artifacts/figure-notes";
  * in this chat (yet): the learner never sees a figure being made.
  */
 export function ShowFigureCard({ part }: ArtifactPartProps) {
-	if (part.state !== "output-available") return null;
-	const figure = part.figure as FigureEntry | undefined;
-	if (!figure || !figure.ok) return null;
-	const rawCaption = (part.input as { caption?: unknown } | null | undefined)?.caption;
-	const caption = typeof rawCaption === "string" && rawCaption.trim() ? rawCaption.trim() : undefined;
+	// Whether it renders, and what it shows, is decided in core/learner-seen.ts, where the vocabulary ledger reads the same
+	// decision (WP5). What to look at, and on a demo what to try (WP6): absent on calls from before it, which render as they did.
+	const shown = showFigureContent(part);
+	if (!shown) return null;
+	const { figure, caption } = shown;
 	const inverted = figure.ui?.inverted ?? false;
-	// What to look at, and on a demo what to try (WP6): absent on calls from before it, which render as they did.
-	const notes = figureNotesOf(part.input, figure.kind);
+	const notes = { lookAt: shown.lookAt, tryThis: shown.tryThis };
 	if (figure.kind === "visual") {
 		return (
 			<>

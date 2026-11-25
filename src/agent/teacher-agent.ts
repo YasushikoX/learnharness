@@ -19,7 +19,8 @@ import { pluginProblemTools, isPluginProblemPoseAcknowledgment, type NativePlugi
 import { placementProbeTool, placementRecallTool } from "./tools/course.ts";
 import { placementGradeAfterReadSketchHook } from "./placement-grade.ts";
 import { FINISH_LESSON_TOOL, FINISH_SESSION_TOOL } from "../core/course-session.ts";
-import { finishVocabularyProblem, vocabularyRefusalText, type LessonVocabulary } from "../core/coverage-ledger.ts";
+import { finishVocabularyProblem, lessonCoverageAtFinish, vocabularyRefusalText, type LessonVocabulary } from "../core/coverage-ledger.ts";
+import { messagesSeenAtFinish } from "../core/learner-seen.ts";
 import { hasUnreadPlacementSketch, placementProgressOf, type PlacementProgress, type PlacementSkillInfo } from "../core/placement-frontier.ts";
 import { healToolRecord, withArgumentHeal } from "./tools/heal.ts";
 import { sendToUserApplies, sendToUserTool } from "./tools/send-to-user.ts";
@@ -501,12 +502,13 @@ export function baseAgentOptions(
 						const finishProblem = lessonGates ? finishGateProblem(context.messages, toolCall.name, toolCall.id) : null;
 						const finishRefused = finishProblem ? refuse("finish", true, finishGateReason(finishProblem)) : undefined;
 						if (finishRefused) return finishRefused;
-						// The vocabulary check (WP5): once per lesson at most, under the finish gate's own share of the budget.
+						// The vocabulary check (WP5): once per lesson at most, on its own gate and allowance (agent/refusal-budget.ts), so it
+						// never spends a refusal of the final-problem requirement. It counts only what had reached the learner when the call
+						// was made: this message's prose, not its sibling calls, which have not settled yet (core/learner-seen.ts).
 						if (lessonGates && lessonVocabulary && toolCall.name === FINISH_LESSON_TOOL) {
-							const live = context.messages as unknown as LhMessage[];
-							const withCall = live.includes(assistantMessage as unknown as LhMessage) ? live : [...live, assistantMessage as unknown as LhMessage];
-							const missing = finishVocabularyProblem(lessonVocabulary, withCall, call.args);
-							const vocabularyRefused = missing ? refuse("finish", true, vocabularyRefusalText(missing)) : undefined;
+							const seen = messagesSeenAtFinish(context.messages as unknown as LhMessage[], assistantMessage as unknown as LhMessage);
+							const missing = finishVocabularyProblem(lessonVocabulary, seen, call.args);
+							const vocabularyRefused = missing ? refuse("vocabulary", true, vocabularyRefusalText(missing)) : undefined;
 							if (vocabularyRefused) return vocabularyRefused;
 						}
 						// The sources gate (owner, 2026-11-13 — core/sources-gate.ts): the plan of a course lesson comes after a look
@@ -545,7 +547,17 @@ export function baseAgentOptions(
 				}
 			}
 			const noted = await narrationHooks?.afterToolCall?.(call, signal);
-			return (await afterToolCall?.(call, signal)) ?? noted;
+			const after = (await afterToolCall?.(call, signal)) ?? noted;
+			// WP5: a clean finish records what the lesson covered of its listed terms, fixed as of now (the lesson result reads
+			// it back, so later lessons never change it); counted exactly as the vocabulary check counts.
+			if (lessonGates && lessonVocabulary && call.toolCall.name === FINISH_LESSON_TOOL && !(after?.isError ?? call.isError)) {
+				const coverage = lessonCoverageAtFinish(lessonVocabulary, messagesSeenAtFinish(call.context.messages as unknown as LhMessage[], call.assistantMessage as unknown as LhMessage));
+				if (coverage) {
+					const details = after?.details ?? call.result.details;
+					return { ...(after ?? {}), details: { ...(details && typeof details === "object" ? details : {}), coverage } };
+				}
+			}
+			return after;
 		},
 		// 0.87.1: shouldStopAfterTurn → finishTurn. Same call point (after
 		// tool results attach, before turn_end) and `{ action: "end" }` still

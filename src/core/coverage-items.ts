@@ -19,7 +19,7 @@
  *   - an item whose skills all left the class map is UNASSIGNED too.
  */
 
-import type { CoverageEntryView, CoverageItem, CoverageSense, DraftCoverage } from "./contracts/course.ts";
+import type { CourseCoverage, CoverageDropped, CoverageEntryView, CoverageItem, CoverageSense, CoverageSuggestions, DraftCoverage } from "./contracts/course.ts";
 import type { TermTier } from "./contracts/material-digest.ts";
 import { byCodeUnit, normalizeName, type GlossaryCitation, type GlossaryEntry, type SuggestedDuplicateGroup } from "./glossary.ts";
 
@@ -45,6 +45,10 @@ export interface CoverageGlossary {
 export interface CoverageMapping {
 	items: CoverageItem[];
 	links: string[][];
+	/** A mapping pass's proposals awaiting the student (never applied by the pass). */
+	suggested?: CoverageSuggestions;
+	/** Earlier decisions that could not be kept, with why (the page shows them after approval). */
+	displaced?: CoverageDropped[];
 }
 
 /** Does the glossary have anything coverage is about (a core entry)? Coverage behaviour exists only then. */
@@ -185,52 +189,198 @@ export function resolveCoverage(mapping: CoverageMapping, glossary: CoverageGlos
 	return { items, byKey, group, unassigned };
 }
 
+// ─── keeping decisions (re-approval, removed skills) ───────────────────────
+
+const decided = (i: CoverageItem) => (i.skills ?? []).length > 0 || i.excluded !== undefined;
+
+/**
+ * A new proposal with the class's EARLIER approved decisions carried in (re-drafting, re-approving): every earlier item
+ * whose entry still exists is kept as it was, its skills translated to the draft skills that reuse them; a skill the new
+ * draft does not carry is removed from the item (an item left with no skill is unassigned, for the student to assign
+ * again) and reported in `displaced`; an exclusion is kept; a link is kept while two or more of its names exist. The
+ * proposal fills in only the keys the earlier mapping had no item for, and its links among those; a proposed link that
+ * touches an earlier item becomes a suggestion. What could not be kept is listed in `displaced`. Pure.
+ */
+export function carryForward(
+	earlier: CoverageMapping | null | undefined,
+	proposal: CoverageMapping | null | undefined,
+	draftSkills: ReadonlyArray<{ key: string; reuse?: string }>,
+	glossary: CoverageGlossary | null | undefined,
+): CoverageMapping & { displaced: CoverageDropped[] } {
+	const dropped: CoverageDropped[] = [...(proposal?.displaced ?? [])];
+	const base = proposal ?? { items: [], links: [] };
+	if (!earlier) return { items: base.items.map((i) => ({ ...i })), links: base.links.map((g) => [...g]), ...(base.suggested ? { suggested: base.suggested } : {}), displaced: dropped };
+	const keyOfSkill = new Map(draftSkills.filter((s) => s.reuse).map((s) => [s.reuse!, s.key]));
+	const items: CoverageItem[] = [];
+	const kept = new Set<string>();
+	for (const item of earlier.items) {
+		const key = itemKey(item);
+		if (kept.has(key)) continue;
+		if (!keyExists(glossary, key)) {
+			dropped.push({ key, name: item.name, reason: "no longer in the material" });
+			continue;
+		}
+		kept.add(key);
+		const { skills: earlierSkills, ...rest } = item;
+		const skills = (earlierSkills ?? []).map((s) => keyOfSkill.get(s)).filter((s): s is string => s !== undefined);
+		if ((earlierSkills ?? []).length > skills.length) dropped.push({ key, name: item.name, reason: skills.length > 0 ? "one of its skills is not in the new class map" : "its skill is not in the new class map; assign it again" });
+		items.push(skills.length > 0 ? { ...rest, skills: [...new Set(skills)] } : rest);
+	}
+	for (const item of base.items) if (!kept.has(itemKey(item))) items.push({ ...item });
+	const exists = (k: string) => items.some((i) => itemKey(i) === k) || keyExists(glossary, k);
+	const links: string[][] = [];
+	for (const group of earlier.links) {
+		const live = group.filter(exists);
+		if (live.length < group.length) {
+			for (const k of group.filter((k) => !exists(k))) dropped.push({ key: k, name: glossary?.terms[parseItemKey(k)?.entryId ?? ""]?.term ?? k, reason: "a linked name no longer in the material" });
+		}
+		if (live.length >= 2) links.push(live);
+	}
+	const suggestedLinks = [...(base.suggested?.links ?? [])];
+	for (const group of base.links) {
+		if (group.some((k) => kept.has(k))) suggestedLinks.push([...group]);
+		else links.push([...group]);
+	}
+	const suggested = suggestionsOf({ excluded: base.suggested?.excluded ?? [], links: suggestedLinks }, links);
+	return { items, links: normalizeLinks(links), ...(suggested ? { suggested } : {}), displaced: dropped };
+}
+
+/** Suggestions cleaned: duplicate and already-made links dropped; undefined when nothing is left. */
+function suggestionsOf(s: CoverageSuggestions, links: ReadonlyArray<ReadonlyArray<string>>): CoverageSuggestions | undefined {
+	const groupOf = linkGroupsOf(links);
+	const excluded = [...new Map(s.excluded.map((x) => [x.key, x])).values()];
+	const seen = new Set<string>();
+	const outLinks: string[][] = [];
+	for (const g of normalizeLinks(s.links)) {
+		if (g.every((k) => groupOf(g[0]!).includes(k))) continue; // already one concept
+		const id = g.join("\n");
+		if (seen.has(id)) continue;
+		seen.add(id);
+		outLinks.push(g);
+	}
+	return excluded.length > 0 || outLinks.length > 0 ? { excluded, links: outLinks } : undefined;
+}
+
+/**
+ * A mapping with every skill reference checked against the class's skills now: a skill that is no longer the class's is
+ * removed from its item (an item left with none becomes unassigned) and reported. Run on every approval, so no stale
+ * skill id stays in a stored mapping. Pure.
+ */
+export function pruneStaleSkills(mapping: CoverageMapping, skills: ReadonlySet<string>): { mapping: CoverageMapping; displaced: CoverageDropped[] } {
+	const dropped: CoverageDropped[] = [];
+	const items = mapping.items.map((item) => {
+		const live = (item.skills ?? []).filter((s) => skills.has(s));
+		if (live.length === (item.skills ?? []).length) return item;
+		dropped.push({ key: itemKey(item), name: item.name, reason: live.length > 0 ? "one of its skills left the class map" : "its skill left the class map; assign it again" });
+		const { skills: _drop, ...rest } = item;
+		return live.length > 0 ? { ...rest, skills: live } : rest;
+	});
+	return { mapping: { ...mapping, items }, displaced: dropped };
+}
+
 // ─── approval ───────────────────────────────────────────────────────────────
 
 /**
- * Approve a draft's proposal: its items with draft keys turned into skill ids (`idOf`), checked against the glossary
- * NOW. Core entries with no assigned or excluded item refuse approval (returned as `unassigned`), unless `leaveReason`
- * is given (the student's explicit "leave N terms unassigned"): then each becomes an excluded item with that reason.
+ * Approve a proposal (a draft's, with the class's earlier decisions already carried in: carryForward): its items with
+ * draft keys turned into skill ids (`idOf`), checked against the glossary NOW. A missing proposal is an EMPTY mapping.
+ * Core entries with no assigned or excluded item refuse approval (returned as `unassigned`), unless `leaveReason` is
+ * given (the student's explicit "leave N terms unassigned"): then each becomes an excluded item with that reason. A
+ * draft key that resolves to no skill is removed and reported in `displaced`.
  */
 export function approveCoverage(
-	draft: Pick<DraftCoverage, "items" | "links">,
+	draft: CoverageMapping | null | undefined,
 	idOf: (draftKey: string) => string | undefined,
 	glossary: CoverageGlossary | null | undefined,
 	leaveReason: string | null,
 	now: string,
-): { ok: true; coverage: { updatedAt: string; items: CoverageItem[]; links: string[][] } } | { ok: false; unassigned: CoverageGlossaryEntry[] } {
-	const items: CoverageItem[] = draft.items.map((item) => {
+): { ok: true; coverage: CourseCoverage } | { ok: false; unassigned: CoverageGlossaryEntry[] } {
+	const proposal = draft ?? { items: [], links: [] };
+	const dropped: CoverageDropped[] = [...(proposal.displaced ?? [])];
+	const items: CoverageItem[] = proposal.items.map((item) => {
 		const skills = [...new Set((item.skills ?? []).map(idOf).filter((s): s is string => s !== undefined))];
+		if ((item.skills ?? []).length > 0 && skills.length < new Set(item.skills).size) dropped.push({ key: itemKey(item), name: item.name, reason: "its skill is not in the approved map" });
 		const { skills: _drop, ...rest } = item;
 		return skills.length > 0 ? { ...rest, skills, excluded: undefined } : rest;
 	}).map((i) => Object.fromEntries(Object.entries(i).filter(([, v]) => v !== undefined)) as unknown as CoverageItem);
-	const resolved = resolveCoverage({ items, links: draft.links }, glossary, null);
+	const links = proposal.links.map((g) => [...g]);
+	const resolved = resolveCoverage({ items, links }, glossary, null);
+	let out = items;
 	if (resolved.unassigned.length > 0) {
 		if (leaveReason === null) return { ok: false, unassigned: resolved.unassigned };
 		const left = new Set(resolved.unassigned.map((e) => e.id));
 		// an item whose skills all fell away is replaced, not doubled
-		const kept = items.filter((i) => !(left.has(i.entryId) && !i.sense && (i.skills ?? []).length === 0 && i.excluded === undefined));
-		for (const e of resolved.unassigned) kept.push({ entryId: e.id, name: e.term, excluded: leaveReason, leftAtApproval: true });
-		return { ok: true, coverage: { updatedAt: now, items: kept, links: draft.links.map((g) => [...g]) } };
+		out = items.filter((i) => !(left.has(i.entryId) && !i.sense && !decided(i)));
+		for (const e of resolved.unassigned) out.push({ entryId: e.id, name: e.term, excluded: leaveReason, leftAtApproval: true });
 	}
-	return { ok: true, coverage: { updatedAt: now, items, links: draft.links.map((g) => [...g]) } };
+	const suggested = proposal.suggested ? suggestionsOf(proposal.suggested, links) : undefined;
+	return { ok: true, coverage: { updatedAt: now, items: out, links, ...(suggested ? { suggested } : {}), ...(dropped.length > 0 ? { displaced: dropped } : {}) } };
+}
+
+/**
+ * A "Map the class's terms" pass merged into a mapping it must not overrule: it may only ADD assignments, for keys that
+ * have no decision now (no item, or an item with no live skill and no exclusion), and only to the given skills. Its
+ * proposed exclusions and links change decisions, so they become `suggested` (the student accepts them one by one);
+ * no existing item, exclusion or link is changed. Pure.
+ */
+export function mergeMappingPass(existing: CoverageMapping, proposal: CoverageMapping, skills: ReadonlySet<string>): CoverageMapping {
+	const items = existing.items.map((i) => ({ ...i, ...(i.skills ? { skills: [...i.skills] } : {}) }));
+	const byKey = new Map(items.map((i) => [itemKey(i), i]));
+	const undecided = (i: CoverageItem | undefined) => !i || (!(i.skills ?? []).some((s) => skills.has(s)) && i.excluded === undefined);
+	const excluded = [...(existing.suggested?.excluded ?? [])];
+	for (const p of proposal.items) {
+		const key = itemKey(p);
+		const current = byKey.get(key);
+		if (!undecided(current)) continue;
+		const live = (p.skills ?? []).filter((s) => skills.has(s));
+		if (live.length > 0) {
+			if (current) current.skills = [...new Set(live)];
+			else {
+				const { excluded: _x, leftAtApproval: _l, ...rest } = p;
+				const added: CoverageItem = { ...rest, skills: [...new Set(live)] };
+				items.push(added);
+				byKey.set(key, added);
+			}
+		} else if (p.excluded !== undefined) {
+			excluded.push({ key, reason: p.excluded });
+		}
+	}
+	const suggested = suggestionsOf({ excluded, links: [...(existing.suggested?.links ?? []), ...proposal.links] }, existing.links);
+	const { suggested: _s, ...rest } = existing;
+	return { ...rest, items, links: existing.links.map((g) => [...g]), ...(suggested ? { suggested } : {}) };
 }
 
 // ─── the planner's input (bounded) ──────────────────────────────────────────
 
-/** The planner's glossary block is cut at this many characters (about 15k tokens). */
+/** The planner's WHOLE glossary block (entries, duplicate pairs, materials, incomplete materials) stays within this many
+ *  characters (about 15k tokens). */
 export const PLANNER_GLOSSARY_BUDGET = 60_000;
-/** Of that, entries are shown with their definition until this many characters; the rest by name only. */
+/** Of the entries' share, entries are shown with their definition until this many characters; the rest by name only. */
 export const PLANNER_GLOSSARY_FULL_BUDGET = 24_000;
 /** A definition shown to the planner is cut at this many characters. */
 export const PLANNER_DEFINITION_CHARS = 200;
-/** The most suggested pairs the planner is shown. */
+/** The most suggested pairs the planner is shown, and the most characters they take. */
 export const PLANNER_DUPLICATE_PAIRS = 150;
+export const PLANNER_PAIRS_CHARS = 9_000;
+/** The most characters the list of materials, and the list of incomplete materials, each take. */
+export const PLANNER_MATERIALS_CHARS = 3_000;
+export const PLANNER_INCOMPLETE_CHARS = 2_000;
 
 const cut = (text: string, max: number) => {
 	const flat = text.replace(/\s+/g, " ").trim();
 	return flat.length <= max ? flat : `${flat.slice(0, max - 1).trimEnd()}…`;
 };
+
+/** Items joined with "; " until `max` characters, then "+N more". */
+function boundedList(items: readonly string[], max: number): string {
+	const out: string[] = [];
+	let used = 0;
+	for (const item of items) {
+		if (used + item.length + 2 > max) break;
+		out.push(item);
+		used += item.length + 2;
+	}
+	return out.join("; ") + (items.length > out.length ? `${out.length > 0 ? "; " : ""}+${items.length - out.length} more` : "");
+}
 
 /** The core entries in teaching order: the material they first appear in (the course's order), then the page, then id. */
 export function coreEntriesInOrder(glossary: CoverageGlossary): CoverageGlossaryEntry[] {
@@ -263,15 +413,47 @@ function placesOf(entry: CoverageGlossaryEntry, withIds: boolean): string {
 }
 
 /**
- * The class glossary as the planner reads it: every core entry with its id, its definition from the material (or "no
- * definition") and its pages, until PLANNER_GLOSSARY_FULL_BUDGET characters; then by id, name and pages only, until
- * PLANNER_GLOSSARY_BUDGET; any further entries are counted, not listed (they show as unassigned at approval). Then the
- * suggested duplicates as PAIRS with the reason for each pair, and the materials whose index is incomplete. Null when the
- * glossary has no core entry. Pure.
+ * The class glossary as the planner reads it, within ONE character budget for the whole block. What is cut first: the
+ * list of materials and the list of incomplete materials are each held to a small share (PLANNER_MATERIALS_CHARS,
+ * PLANNER_INCOMPLETE_CHARS; the rest counted as "+N more"), and the suggested duplicate pairs to PLANNER_DUPLICATE_PAIRS
+ * and PLANNER_PAIRS_CHARS; the core entries get everything else: with their id, definition from the material (or "no
+ * definition") and pages until PLANNER_GLOSSARY_FULL_BUDGET, then by id, name and pages only, and any further entries
+ * are counted, not listed (they show as unassigned at approval). Null when the glossary has no core entry. Pure.
  */
 export function plannerGlossaryBlock(glossary: CoverageGlossary | null | undefined, budget = PLANNER_GLOSSARY_BUDGET, fullBudget = PLANNER_GLOSSARY_FULL_BUDGET): { text: string; shown: DraftCoverage["shown"] } | null {
 	if (!glossary || !hasCoreEntries(glossary)) return null;
 	const core = coreEntriesInOrder(glossary);
+	const nameOf = (id: string) => glossary.terms[id]?.term ?? id;
+	// the small shares first, so the entries' share is what is left
+	const materials = "Materials: " + boundedList((glossary.indexed ?? []).map((m) => `${m.name} = ${m.id}`), PLANNER_MATERIALS_CHARS);
+	const allPairs = glossary.suggestedDuplicates.flatMap((g) => g.pairs ?? []).filter((p) => p.ids.some((id) => glossary.terms[id]?.tier === "core"));
+	const pairLines: string[] = [];
+	let pairChars = 0;
+	for (const p of allPairs.slice(0, PLANNER_DUPLICATE_PAIRS)) {
+		const line = `- ${p.ids[0]} (${nameOf(p.ids[0])}) ~ ${p.ids[1]} (${nameOf(p.ids[1])}): ${p.reasons.map((r) => r.replace("_", " ")).join(", ")}`;
+		if (pairChars + line.length + 1 > PLANNER_PAIRS_CHARS) break;
+		pairLines.push(line);
+		pairChars += line.length + 1;
+	}
+	const pairBlock =
+		allPairs.length > 0
+			? [
+					"",
+					"Suggested duplicates, as pairs (the names look alike; they may be one concept or two different ones — you decide; a pair is never merged unless you link it):",
+					...pairLines,
+					...(allPairs.length > pairLines.length ? [`(${allPairs.length - pairLines.length} more pairs not listed)`] : []),
+				]
+			: [];
+	const incomplete = glossary.incomplete ?? [];
+	const incompleteBlock =
+		incomplete.length > 0
+			? ["", `Materials whose index is incomplete (their terms may be missing here): ${boundedList(incomplete.map((m) => `${m.name}${m.reason ? ` (${m.reason.replace("_", " ")})` : ""}`), PLANNER_INCOMPLETE_CHARS)}`]
+			: [];
+	const headLine = (full: number, names: number, omitted: number) =>
+		`The class's own vocabulary, from its indexed material: ${core.length} CORE entries (things the material treats as what a student must know).` +
+		(names > 0 || omitted > 0 ? ` ${full} are shown with their definition, ${names} by name only${omitted > 0 ? `, and ${omitted} are not listed (the input is bounded; they will show as unassigned at approval)` : ""}.` : "");
+	const fixed = ["<class_glossary>", headLine(core.length, core.length, core.length), materials, "", "Core entries (id :: name — definition — where):", ...pairBlock, ...incompleteBlock, `(${core.length} more core entries not listed)`, "</class_glossary>"];
+	const entryBudget = Math.max(0, budget - fixed.join("\n").length - 1);
 	const lines: string[] = [];
 	let used = 0;
 	let full = 0;
@@ -280,43 +462,22 @@ export function plannerGlossaryBlock(glossary: CoverageGlossary | null | undefin
 		const aliases = e.aliases.length > 0 ? ` · also called: ${cut(e.aliases.slice(0, 5).join(", "), 120)}` : "";
 		const definition = e.definition !== null ? `"${cut(e.definition, PLANNER_DEFINITION_CHARS)}" (p. ${e.definitionPage})` : "no definition in the material";
 		const fullLine = `- ${e.id} :: ${e.term} — ${definition}${aliases} — ${placesOf(e, true)}`;
-		if (used + fullLine.length + 1 <= fullBudget && names === 0) {
+		if (used + fullLine.length + 1 <= Math.min(fullBudget, entryBudget) && names === 0) {
 			lines.push(fullLine);
 			used += fullLine.length + 1;
 			full++;
 			continue;
 		}
 		const short = `- ${e.id} :: ${e.term} (${placesOf(e, false)})`;
-		if (used + short.length + 1 > budget) break;
+		if (used + short.length + 1 > entryBudget) break;
 		lines.push(short);
 		used += short.length + 1;
 		names++;
 	}
 	const omitted = core.length - full - names;
-	const parts = [
-		`<class_glossary>`,
-		`The class's own vocabulary, from its indexed material: ${core.length} CORE entries (things the material treats as what a student must know).` +
-			(names > 0 || omitted > 0 ? ` ${full} are shown with their definition, ${names} by name only${omitted > 0 ? `, and ${omitted} are not listed (the input is bounded; they will show as unassigned at approval)` : ""}.` : ""),
-		"Materials: " + (glossary.indexed ?? []).map((m) => `${m.name} = ${m.id}`).join("; "),
-		"",
-		"Core entries (id :: name — definition — where):",
-		...lines,
-	];
+	const parts = ["<class_glossary>", headLine(full, names, omitted), materials, "", "Core entries (id :: name — definition — where):", ...lines];
 	if (omitted > 0) parts.push(`(${omitted} more core entries not listed)`);
-	const nameOf = (id: string) => glossary.terms[id]?.term ?? id;
-	const pairs = glossary.suggestedDuplicates.flatMap((g) => g.pairs ?? []).filter((p) => p.ids.some((id) => glossary.terms[id]?.tier === "core"));
-	if (pairs.length > 0) {
-		parts.push(
-			"",
-			"Suggested duplicates, as pairs (the names look alike; they may be one concept or two different ones — you decide; a pair is never merged unless you link it):",
-			...pairs.slice(0, PLANNER_DUPLICATE_PAIRS).map((p) => `- ${p.ids[0]} (${nameOf(p.ids[0])}) ~ ${p.ids[1]} (${nameOf(p.ids[1])}): ${p.reasons.map((r) => r.replace("_", " ")).join(", ")}`),
-		);
-		if (pairs.length > PLANNER_DUPLICATE_PAIRS) parts.push(`(${pairs.length - PLANNER_DUPLICATE_PAIRS} more pairs not listed)`);
-	}
-	if ((glossary.incomplete ?? []).length > 0) {
-		parts.push("", `Materials whose index is incomplete (their terms may be missing here): ${glossary.incomplete!.map((m) => `${m.name}${m.reason ? ` (${m.reason.replace("_", " ")})` : ""}`).join("; ")}`);
-	}
-	parts.push(`</class_glossary>`);
+	parts.push(...pairBlock, ...incompleteBlock, "</class_glossary>");
 	return { text: parts.join("\n"), shown: { full, names, omitted } };
 }
 
@@ -392,7 +553,11 @@ export type CoverageEdit =
 	| { action: "link"; keys: string[] }
 	| { action: "unlink"; key: string }
 	| { action: "remove"; key: string }
-	| { action: "remap"; key: string; to: string };
+	| { action: "remap"; key: string; to: string }
+	/** Turn down a mapping pass's suggestion: an exclusion (`key`) or a link (`keys`). */
+	| { action: "dismiss"; key?: string; keys?: string[] }
+	/** Clear the list of decisions the last approval could not keep (the student has read it). */
+	| { action: "clear-displaced" };
 
 /** Read an edit from a request body; an error string when it is not one. */
 export function parseCoverageEdit(raw: unknown): CoverageEdit | string {
@@ -412,8 +577,13 @@ export function parseCoverageEdit(raw: unknown): CoverageEdit | string {
 			return str("key") ? { action: r.action, key: str("key")! } : `${r.action} needs key`;
 		case "remap":
 			return str("key") && str("to") ? { action: "remap", key: str("key")!, to: str("to")! } : "remap needs key and to";
+		case "dismiss":
+			if (str("key")) return { action: "dismiss", key: str("key")! };
+			return Array.isArray(r.keys) && r.keys.filter((k) => typeof k === "string" && k.trim()).length >= 2 ? { action: "dismiss", keys: (r.keys as string[]).map((k) => k.trim()) } : "dismiss needs key or keys";
+		case "clear-displaced":
+			return { action: "clear-displaced" };
 		default:
-			return "unknown action (assign, unassign, exclude, link, unlink, remove, remap)";
+			return "unknown action (assign, unassign, exclude, link, unlink, remove, remap, dismiss, clear-displaced)";
 	}
 }
 
@@ -425,6 +595,9 @@ export function parseCoverageEdit(raw: unknown): CoverageEdit | string {
 export function applyCoverageEdit(mapping: CoverageMapping, edit: CoverageEdit, ctx: { glossary: CoverageGlossary | null | undefined; skills: ReadonlySet<string> }): { ok: true; value: CoverageMapping } | { ok: false; error: string } {
 	const items = mapping.items.map((i) => ({ ...i, ...(i.skills ? { skills: [...i.skills] } : {}) }));
 	let links = mapping.links.map((g) => [...g]);
+	let suggested: CoverageSuggestions = { excluded: [...(mapping.suggested?.excluded ?? [])], links: (mapping.suggested?.links ?? []).map((g) => [...g]) };
+	let displaced = mapping.displaced;
+	const sameGroup = (a: readonly string[], b: readonly string[]) => a.length === b.length && [...a].sort().join("\n") === [...b].sort().join("\n");
 	const find = (key: string) => items.find((i) => itemKey(i) === key);
 	const ensure = (key: string): CoverageItem | string => {
 		const found = find(key);
@@ -435,7 +608,11 @@ export function applyCoverageEdit(mapping: CoverageMapping, edit: CoverageEdit, 
 		items.push(item);
 		return item;
 	};
-	const done = (): { ok: true; value: CoverageMapping } => ({ ok: true, value: { items, links: normalizeLinks(links) } });
+	const done = (): { ok: true; value: CoverageMapping } => {
+		const normalized = normalizeLinks(links);
+		const cleaned = suggestionsOf(suggested, normalized);
+		return { ok: true, value: { items, links: normalized, ...(cleaned ? { suggested: cleaned } : {}), ...(displaced && displaced.length > 0 ? { displaced } : {}) } };
+	};
 	switch (edit.action) {
 		case "assign": {
 			if (!ctx.skills.has(edit.skill)) return { ok: false, error: `"${edit.skill}" is not a skill of this class map` };
@@ -459,6 +636,7 @@ export function applyCoverageEdit(mapping: CoverageMapping, edit: CoverageEdit, 
 			delete item.skills;
 			delete item.leftAtApproval;
 			item.excluded = edit.reason;
+			suggested.excluded = suggested.excluded.filter((x) => x.key !== edit.key);
 			return done();
 		}
 		case "link": {
@@ -475,6 +653,7 @@ export function applyCoverageEdit(mapping: CoverageMapping, edit: CoverageEdit, 
 				}
 			}
 			links.push(keys);
+			suggested.links = suggested.links.filter((g) => !g.every((k) => keys.includes(k)));
 			return done();
 		}
 		case "unlink":
@@ -500,5 +679,12 @@ export function applyCoverageEdit(mapping: CoverageMapping, edit: CoverageEdit, 
 			links = links.map((g) => g.map((k) => (k === edit.key ? edit.to : k)));
 			return done();
 		}
+		case "dismiss":
+			if (edit.key) suggested = { ...suggested, excluded: suggested.excluded.filter((x) => x.key !== edit.key) };
+			if (edit.keys) suggested = { ...suggested, links: suggested.links.filter((g) => !sameGroup(g, edit.keys!)) };
+			return done();
+		case "clear-displaced":
+			displaced = undefined;
+			return done();
 	}
 }

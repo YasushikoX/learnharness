@@ -205,7 +205,10 @@ function quizDescription(delta: { name: "quiz" | "probe"; nodeId: boolean; types
 		"\nExample arguments — copy the escaping exactly: inside JSON strings a LaTeX backslash is \\\\ and a newline is \\n.\n```json\n" +
 		JSON.stringify(example, null, 2) +
 		"\n```" +
-		(delta.nodeId ? " The example's nodeId is illustrative — copy an exact id from this session's plan_init." : "")
+		(delta.nodeId
+			? " The example's nodeId is illustrative — copy an exact id from this session's plan_init. Its conceptIds spells the term as the material does, " +
+				"which is the form for a session without a VOCABULARY list; when the course section lists VOCABULARY, copy the bracketed ids from it instead."
+			: "")
 	);
 }
 

@@ -28,6 +28,10 @@ export interface CoverageLabels {
 	readonly stateNew: string;
 	readonly stateIntroduced: string;
 	readonly stateChecked: string;
+	/** Checked by a question that never named it: not introduced. */
+	readonly stateAsked: string;
+	/** "left for later 2×": how many finished lessons deferred it. */
+	readonly deferredCount: (n: number) => string;
 	readonly supporting: string;
 	readonly noDefinition: string;
 	/** "3 new terms are not assigned to a skill" */
@@ -57,6 +61,17 @@ export interface CoverageLabels {
 	readonly incompleteLine: (names: string) => string;
 	/** The lesson result: "Covered 9 of 11 terms; 2 left for next time: a, b" */
 	readonly lessonLine: (covered: number, total: number, left: readonly string[]) => string;
+	/** A mapping pass's proposals awaiting the student. */
+	readonly suggestionsHeading: string;
+	/** "Leave out: why" */
+	readonly suggestExclude: (reason: string) => string;
+	readonly accept: string;
+	readonly dismiss: string;
+	/** Earlier decisions an approval could not keep. */
+	readonly displacedHeading: string;
+	readonly displacedOk: string;
+	/** The draft was made before the class's terms were indexed. */
+	readonly draftEmpty: string;
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -73,6 +88,8 @@ export const LESSON_LABELS: Readonly<Record<LessonLanguage, LessonLabels>> = {
 			stateNew: "new",
 			stateIntroduced: "introduced",
 			stateChecked: "checked",
+			stateAsked: "asked about, never named",
+			deferredCount: (n) => `left for later ${n}×`,
 			supporting: "supporting",
 			noDefinition: "no definition in the material",
 			unassignedLine: (n) => `${plural(n, "new term is", "new terms are")} not assigned to a skill`,
@@ -96,6 +113,13 @@ export const LESSON_LABELS: Readonly<Record<LessonLanguage, LessonLabels>> = {
 			incompleteLine: (names) => `Not fully indexed yet, so their terms may be missing: ${names}`,
 			lessonLine: (covered, total, left) =>
 				left.length === 0 ? `Covered all ${plural(total, "term", "terms")}.` : `Covered ${covered} of ${plural(total, "term", "terms")}; ${left.length} left for next time: ${left.join(", ")}`,
+			suggestionsHeading: "Suggested by the planner",
+			suggestExclude: (reason) => `Leave out: ${reason}`,
+			accept: "Accept",
+			dismiss: "Dismiss",
+			displacedHeading: "Not kept from the earlier map",
+			displacedOk: "OK",
+			draftEmpty: "This draft was made before the class's terms were indexed: assign them below, or let the planner map them.",
 		},
 	},
 	nb: {
@@ -109,6 +133,8 @@ export const LESSON_LABELS: Readonly<Record<LessonLanguage, LessonLabels>> = {
 			stateNew: "nytt",
 			stateIntroduced: "gjennomgått",
 			stateChecked: "sjekket",
+			stateAsked: "spurt om, aldri nevnt",
+			deferredCount: (n) => `utsatt ${n}×`,
 			supporting: "støttebegrep",
 			noDefinition: "ingen definisjon i materialet",
 			unassignedLine: (n) => `${plural(n, "nytt begrep er", "nye begreper er")} ikke knyttet til en ferdighet`,
@@ -132,6 +158,13 @@ export const LESSON_LABELS: Readonly<Record<LessonLanguage, LessonLabels>> = {
 			incompleteLine: (names) => `Ikke ferdig indeksert ennå, så begreper kan mangle: ${names}`,
 			lessonLine: (covered, total, left) =>
 				left.length === 0 ? `Gikk gjennom alle ${plural(total, "begrep", "begrepene")}.` : `Gikk gjennom ${covered} av ${plural(total, "begrep", "begreper")}; ${left.length} til neste gang: ${left.join(", ")}`,
+			suggestionsHeading: "Foreslått av planleggeren",
+			suggestExclude: (reason) => `Utelat: ${reason}`,
+			accept: "Godta",
+			dismiss: "Avvis",
+			displacedHeading: "Ikke beholdt fra det forrige kartet",
+			displacedOk: "OK",
+			draftEmpty: "Utkastet ble laget før klassens begreper var indeksert: knytt dem til ferdigheter nedenfor, eller la planleggeren gjøre det.",
 		},
 	},
 };

@@ -24,7 +24,16 @@ export const REFUSALS_PER_TURN = 3;
  * recorded about the learner (a lesson logged as finished with no final problem), so three refusals by other gates
  * earlier in the turn must not wave it through unrefused.
  */
-export const OWN_SHARE_GATES: readonly string[] = ["finish"];
+export const OWN_SHARE_GATES: readonly string[] = ["finish", "vocabulary"];
+
+/**
+ * Gates whose share in one learner turn is smaller than REFUSALS_PER_GATE. `vocabulary` (WP5, the finish check of a
+ * lesson's terms, core/coverage-ledger.ts) refuses at most ONCE per lesson, which the transcript decides (a refusal on
+ * record is never repeated); this allowance of one per turn is the in-turn guard for calls that run before that record
+ * exists (two finish calls in one message). It is outside the turn's total and has its own count, so it can never
+ * spend a refusal the final-problem requirement (`finish`) needs.
+ */
+export const GATE_ALLOWANCES: Readonly<Record<string, number>> = { vocabulary: 1 };
 
 export interface RefusalBudgetEvents {
 	/** A gate refused (counts toward the budget). */
@@ -42,7 +51,7 @@ export function makeRefusalBudget(perGate = REFUSALS_PER_GATE, perTurn = REFUSAL
 		if (!blocks) return undefined;
 		const used = byGate[gate] ?? 0;
 		const ownShare = OWN_SHARE_GATES.includes(gate);
-		if (used >= perGate || (!ownShare && total >= perTurn)) {
+		if (used >= Math.min(perGate, GATE_ALLOWANCES[gate] ?? perGate) || (!ownShare && total >= perTurn)) {
 			events.onPass?.(gate);
 			return undefined;
 		}

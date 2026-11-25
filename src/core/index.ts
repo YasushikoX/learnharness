@@ -126,6 +126,8 @@ export * from "./course-session.ts";
 // Vocabulary coverage (WP5, 2026-11-25): the items and the ledger, pure and browser-safe.
 export * from "./coverage-items.ts";
 export * from "./coverage-ledger.ts";
+export * from "./learner-seen.ts";
+export * from "./visible-text.ts";
 export * from "./session-progress.ts";
 // The Claude-subscription preset (fork addition, 2026-10-24).
 export * from "./profiles.ts";

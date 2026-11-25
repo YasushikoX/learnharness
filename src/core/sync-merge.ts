@@ -331,6 +331,24 @@ function mergeCourse(i: MergeInput & { local: string; remote: string }): MergeRe
 	for (const k of COURSE_UNIT) delete out[k];
 	Object.assign(out, unit.value as Obj);
 	if (unit.conflict) overridden("approval state");
+	// A side that merely LACKS `coverage` (a record written by a build without the vocabulary mapping) is not a deletion:
+	// only JSON null is (WP5 review 1, finding 6). When the base had a mapping, the other side left the unit unchanged and
+	// the taken side lacks the field, the mapping is kept if every skill it names is still in the merged skill set;
+	// otherwise the side that has it is saved as a conflict copy with a note, so it is never lost silently.
+	if (!unit.conflict && bu && isObj(bu.coverage) && !("coverage" in (unit.value as Obj))) {
+		const keeper: Side | null = deepEqual(lu, bu) && !deepEqual(ru, bu) ? "local" : deepEqual(ru, bu) && !deepEqual(lu, bu) ? "remote" : null;
+		if (keeper) {
+			const skills = new Set(arr(out.skills).filter((x): x is string => typeof x === "string"));
+			const named = arr(bu.coverage.items).flatMap((item) => (isObj(item) ? arr(item.skills) : []));
+			if (named.every((id) => typeof id === "string" && skills.has(id))) {
+				out.coverage = bu.coverage;
+				notes.push("kept the course's vocabulary mapping, which a copy from an older version of the app did not carry");
+			} else {
+				loser ??= own(i, keeper);
+				notes.push("a copy from an older version of the app dropped the course's vocabulary mapping and its skills changed; the mapping is kept in the conflict copy");
+			}
+		}
+	}
 	const wpick = (side: Obj) => Object.fromEntries(COURSE_WEIGHTS_UNIT.filter((k) => k in side).map((k) => [k, side[k]]));
 	const weights = threeWay(b ? wpick(b) : null, wpick(l), wpick(r), newer, b !== null);
 	for (const k of COURSE_WEIGHTS_UNIT) delete out[k];
