@@ -31,6 +31,12 @@ const TOOL_LABELS: Readonly<Record<string, string>> = {
 
 export const DEFAULT_PENDING_LABEL = "Thinking";
 
+export const TURN_ACTIVITY_LABELS = {
+	thinking: DEFAULT_PENDING_LABEL,
+	checker: "Checking the answer key",
+	grader: "Grading",
+} as const;
+
 /** A tool call that is still executing (its arguments are streaming or it has not returned). */
 const isRunningTool = (p: LivePart): boolean =>
 	p.type.startsWith("tool-") && (p.state === "input-streaming" || p.state === "input-available");

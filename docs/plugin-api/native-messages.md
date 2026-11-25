@@ -22,7 +22,7 @@ keys rendering on customType; the flag documents intent).
 export interface LhMarkerMessage {
     id: string;
     role: "custom";
-    customType: "graph-context" | "probe-handoff" | "subagent-steer" | "subagent-abort" | "plan-block" | "practice-thinking" | "plugin-problem-submission" | "practice-next" | "sketch-dispute" | "problem-dismissed" | "lesson-finished" | "compaction" | "side-question" | "side-question-told" | "practice-hint" | "check-nudge";
+    customType: "graph-context" | "probe-handoff" | "subagent-steer" | "subagent-abort" | "plan-block" | "practice-thinking" | "plugin-problem-submission" | "practice-next" | "sketch-dispute" | "problem-dismissed" | "lesson-finished" | "compaction" | "side-question" | "side-question-told" | "practice-hint" | "check-nudge" | "reply-recovery";
     content: string;
     display: boolean;
     details: unknown;
@@ -57,7 +57,7 @@ role: "custom";
 ### LhMarkerMessage customType
 
 ```ts
-customType: "graph-context" | "probe-handoff" | "subagent-steer" | "subagent-abort" | "plan-block" | "practice-thinking" | "plugin-problem-submission" | "practice-next" | "sketch-dispute" | "problem-dismissed" | "lesson-finished" | "compaction" | "side-question" | "side-question-told" | "practice-hint" | "check-nudge";
+customType: "graph-context" | "probe-handoff" | "subagent-steer" | "subagent-abort" | "plan-block" | "practice-thinking" | "plugin-problem-submission" | "practice-next" | "sketch-dispute" | "problem-dismissed" | "lesson-finished" | "compaction" | "side-question" | "side-question-told" | "practice-hint" | "check-nudge" | "reply-recovery";
 ```
 
 ### LhMarkerMessage content
@@ -99,6 +99,7 @@ A record message: a native pi message (or our marker) plus the record id.
 export type LhMessage = (UserMessage | AssistantMessage | ToolResultMessage | LhMarkerMessage) & {
     id: string;
     cliContextWindow?: number;
+    lhCutoffHasText?: boolean;
     lhQuestions?: PluginQuestionOccurrenceMap;
     lhQuestionOccurrence?: PluginQuestionOccurrence;
 };
@@ -110,6 +111,7 @@ export type LhMessage = (UserMessage | AssistantMessage | ToolResultMessage | Lh
 
 - [id](#lhmessage-id)
 - [cliContextWindow](#lhmessage-clicontextwindow)
+- [lhCutoffHasText](#lhmessage-lhcutoffhastext)
 - [lhQuestions](#lhmessage-lhquestions)
 - [lhQuestionOccurrence](#lhmessage-lhquestionoccurrence)
 
@@ -126,6 +128,14 @@ App-only metadata: never transmitted as provider/model message content.
 
 ```ts
 cliContextWindow?: number;
+```
+
+### LhMessage lhCutoffHasText
+
+Visible prose may precede the final, truncated model call in the same turn.
+
+```ts
+lhCutoffHasText?: boolean;
 ```
 
 ### LhMessage lhQuestions

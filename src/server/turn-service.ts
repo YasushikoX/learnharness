@@ -19,7 +19,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { LhMessage } from "../core/native-messages.ts";
-import { newMessageId } from "../core/native-messages.ts";
+import { newMessageId, sendToUserText } from "../core/native-messages.ts";
 import { QUESTION_TOOLS } from "../core/pending.ts";
 import { planBlocksFor } from "../core/plan-blocks.ts";
 import { coverageOf } from "../core/coverage.ts";
@@ -80,6 +80,13 @@ export function persistTurn(
 				continue;
 			}
 			stamped.push(message.id ? message : ({ ...message, id: newMessageId() } as LhMessage));
+		}
+		const finalReply = stamped.findLast(m => m.role === "assistant");
+		if (finalReply?.stopReason === "length") {
+			const delivered = new Set(stamped.flatMap(m => m.role === "toolResult" && !m.isError ? [m.toolCallId] : []));
+			const lhCutoffHasText = stamped.some(m => m.role === "assistant" && m.content.some(b =>
+				b.type === "text" ? !!b.text.trim() : b.type === "toolCall" && delivered.has(b.id) && !!sendToUserText(b)));
+			stamped[stamped.indexOf(finalReply)] = { ...finalReply, lhCutoffHasText };
 		}
 		const tree = record.tree;
 		const blocks = planBlocksFor(record.messages, stamped, tree, [

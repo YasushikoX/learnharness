@@ -96,7 +96,8 @@ export interface LhMarkerMessage {
 		| "side-question"
 		| "side-question-told"
 		| "practice-hint"
-		| "check-nudge";
+		| "check-nudge"
+		| "reply-recovery";
 	/** The model-facing text ("" for plan blocks — UI-only). */
 	content: string;
 	display: boolean;
@@ -118,6 +119,8 @@ export type LhMessage = (UserMessage | AssistantMessage | ToolResultMessage | Lh
 	/** CLI-reported effective context budget, not a catalog model maximum.
 	 * App-only metadata: never transmitted as provider/model message content. */
 	cliContextWindow?: number;
+	/** Visible prose may precede the final, truncated model call in the same turn. */
+	lhCutoffHasText?: boolean;
 	/** Host-owned occurrence annotations, never model input. */
 	lhQuestions?: PluginQuestionOccurrenceMap;
 	/** Exact binding for genuine plugin-question results (details stays public envelope). */
@@ -489,6 +492,13 @@ export function newPracticeHintMarker(problemCallId: string, n: number, size: Hi
  *  The model reads `content`; the transcript never shows it. */
 export function newCheckNudgeMarker(): LhMarkerMessage {
 	return { id: newMessageId(), role: "custom", customType: "check-nudge", content: CHECK_NUDGE_TEXT, display: false, details: {}, timestamp: Date.now() };
+}
+
+export function newReplyRecoveryMarker(hasText: boolean): LhMarkerMessage {
+	const content = hasText
+		? "Your previous reply was cut off. Continue from where you stopped without repeating the part already shown."
+		: "Your previous reply was cut off before any text appeared. Try replying to the existing conversation again.";
+	return { id: newMessageId(), role: "custom", customType: "reply-recovery", content, display: false, details: {}, timestamp: Date.now() };
 }
 
 /** The learner's explicit move-on signal (owner round 16): appended by
@@ -975,7 +985,7 @@ export function toLlmMessages(messages: readonly AgentMessage[], opts: ToLlmOpti
 			continue;
 		}
 		// Strip app-only id/CLI context metadata: the wire carries the native shape only.
-		const { id: _id, cliContextWindow: _cliContextWindow, lhQuestions: _lhQuestions, lhQuestionOccurrence: _lhQuestionOccurrence, ...native } = m as LhMessage;
+		const { id: _id, cliContextWindow: _cliContextWindow, lhCutoffHasText: _lhCutoffHasText, lhQuestions: _lhQuestions, lhQuestionOccurrence: _lhQuestionOccurrence, ...native } = m as LhMessage;
 		// Learner citations are links in the record; the wire carries them
 		// expanded (core/citations.ts) — the one model-facing rewrite.
 		const answerSketch = role === "toolResult" ? occurrenceAt.get(i) : undefined;
@@ -1258,7 +1268,7 @@ export function nativeInputCause(message: AgentMessage, history: readonly AgentM
 	if (message.role === "system" || message.role === "assistant") return "neutral";
 	if (message.role === "custom") {
 		if (["probe-handoff", "subagent-steer", "subagent-abort"].includes(message.customType)) return "automatic";
-		if (["practice-thinking", "plugin-problem-submission", "practice-next", "sketch-dispute", "lesson-finished"].includes(message.customType)) return "learner";
+		if (["practice-thinking", "plugin-problem-submission", "practice-next", "sketch-dispute", "lesson-finished", "reply-recovery"].includes(message.customType)) return "learner";
 		return ["graph-context", "plan-block", "problem-dismissed", "compaction", "side-question", "side-question-told", "practice-hint", "check-nudge"].includes(message.customType) ? "neutral" : "unrecognizable";
 	}
 	if (message.role === "toolResult") {

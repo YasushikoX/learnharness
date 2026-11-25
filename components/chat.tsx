@@ -5,7 +5,7 @@ import { createContext, Fragment, useCallback, useEffect, useLayoutEffect, useMe
 import { usePathname } from "next/navigation";
 import { useChatSession } from "@/components/session";
 import { usePlugins } from "./plugins";
-import { HANDOFF_WAIT_MS, isWritingText, pendingLabel, probeHandoffOwed } from "./pending-label.ts";
+import { HANDOFF_WAIT_MS, isWritingText, pendingLabel, probeHandoffOwed, TURN_ACTIVITY_LABELS } from "./pending-label.ts";
 import { EMPTY_KEY_STATE, nextKeyState } from "./stable-keys.ts";
 import { LandedText, SettledContext } from "./landed-text.tsx";
 import { PluginSubmissionRunner, SubmissionModelEpoch, type SubmissionAttempt } from "./plugin-submission-runner";
@@ -147,7 +147,7 @@ import {
 import { ReadingThinkingField } from "@/components/reading-thinking";
 import { FinishLessonButton, LessonFinishedLine, courseOfView } from "@/components/lesson-finish";
 import { LessonResultCard } from "@/components/lesson-result-card";
-import { RetryOnFallback, TurnErrorText } from "@/components/turn-error";
+import { CutOffReplyNotice, RetryOnFallback, TurnErrorText } from "@/components/turn-error";
 import { ComposerEdge } from "@/components/composer-edge";
 import { currentUserThinkingOpen, setAllUserThinkingOpen } from "@/components/thinking-block";
 
@@ -355,7 +355,7 @@ export function Chat({
 	// (core/view.ts projectView); sends are ONE explicit input event each
 	// ({chatId, input} — the stash indirection died with the SDK), and the
 	// turn stream is the VERBATIM AgentEvent passthrough the server emits.
-	const { canonicalMessages, reconciliation, reconcile, pluginQuestionAvailability, pluginQuestionDraft, pluginProblemAvailability, pluginProblemDraft, dismissPluginQuestion, readRecord, readStats, messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, status, evaluating, error, stop, clearError, resumeStream, setReattachSettled } =
+	const { canonicalMessages, reconciliation, reconcile, pluginQuestionAvailability, pluginQuestionDraft, pluginProblemAvailability, pluginProblemDraft, dismissPluginQuestion, readRecord, readStats, messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, status, evaluating, activity, cutOffReply, droppedStream, retryingStream, recoverReply, error, stop, clearError, resumeStream, setReattachSettled } =
 		useChatSession({ chatId, initialMessages, initialError, initiallyInFlight });
 
 	const controller = useOptionalInteractionLayers();
@@ -688,10 +688,10 @@ export function Chat({
 		return () => clearTimeout(timer);
 	}, [handoffOwed, status, turnInFlight]);
 	const turnRunning = status === "submitted" || status === "streaming" || turnInFlight || handoffWait;
-	const liveLabel = useMemo(() => pendingLabel(messages), [messages]);
+	const liveLabel = activity ? TURN_ACTIVITY_LABELS[activity] : pendingLabel(messages);
 	// The line goes quiet (it keeps its height, so nothing shifts) once the tutor
 	// is writing visible text in a live stream; it returns with the next tool or thinking.
-	const liveLineQuiet = status === "streaming" && !handoffWait && isWritingText(messages);
+	const liveLineQuiet = !activity && status === "streaming" && !handoffWait && isWritingText(messages);
 	// Stable keys: a live message keeps its component when the saved id replaces its temporary one.
 	const keyState = useRef(EMPTY_KEY_STATE);
 	const messageKeys = useMemo(() => {
@@ -1756,7 +1756,7 @@ export function Chat({
 			// says persistTurn has made the record durable truth.
 			if (statusRef.current === "error") {
 				setTurnInFlight(false);
-				clearError();
+				if (!droppedStream) clearError();
 				void syncFromServer();
 			}
 			return;
@@ -2315,7 +2315,7 @@ export function Chat({
 								</span>
 							)}
 							{turnRunning && (
-								<PendingTurnIndicator evaluating={evaluating} label={liveLabel} quiet={liveLineQuiet} />
+								<PendingTurnIndicator evaluating={evaluating && activity !== "grader"} label={liveLabel} quiet={liveLineQuiet} />
 							)}
 							{/* The margin bubbles of the learner's questions about the text (owner design, 2026-11-02). */}
 							<ClarifyLayer
@@ -2327,10 +2327,15 @@ export function Chat({
 								onDraftDone={() => setAskDraft(null)}
 							/>
 							{openingError && <p role="alert" className="text-sm text-destructive">{OPENING_PROMPT_FAILURE}</p>}
+							{cutOffReply && <CutOffReplyNotice hasText={cutOffReply.hasText} disabled={busy || compacting || retryingStream} recover={() => void recoverReply()} />}
 							{error && (
 								<div className="flex items-center justify-between gap-3 rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm">
 									<TurnErrorText message={error.message} />
-									{retryable && (
+									{droppedStream ? (
+										<Button variant="outline" size="xs" disabled={retryingStream || status === "submitted" || status === "streaming"} onClick={() => void recoverReply()}>
+											Retry
+										</Button>
+									) : retryable && (
 										<span className="flex shrink-0 items-center gap-2">
 											<Button variant="outline" size="xs" data-testid="retry-failed-turn" onClick={retryFailedTurn}>
 												Retry

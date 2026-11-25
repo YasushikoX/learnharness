@@ -24,6 +24,17 @@ export function TurnErrorText({ message }: { message: string }) {
 	);
 }
 
+export function CutOffReplyNotice({ hasText, disabled, recover }: { hasText: boolean; disabled: boolean; recover: () => void }) {
+	return (
+		<div role="status" className="flex items-center justify-between gap-3 rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+			<span>{hasText ? "The tutor’s reply was cut off." : "The tutor’s reply was cut off before any text appeared."}</span>
+			<Button variant="outline" size="xs" data-testid="recover-cut-off-reply" disabled={disabled} onClick={recover}>
+				{hasText ? "Continue" : "Retry"}
+			</Button>
+		</div>
+	);
+}
+
 /** "Retry on <model>": moves this session to the fallback model (the rest of its settings kept), then retries. Never
  *  automatic (src/core/turn-fallback.ts). */
 export function RetryOnFallback({ chatId, target, onSwitched }: { chatId: string; target: FallbackTarget; onSwitched: (model: string) => void }) {

@@ -45,6 +45,11 @@ import { toStreamJsonLine } from "../src/agent/claude-code/transcript.ts";
 import { runSubagent } from "../src/agent/subagents/pi-run.ts";
 import { runResearcherAgent } from "../src/agent/subagents/researcher.ts";
 import { configureWorkerRequestAdmission, createWorkerRequestScope, workerRequestStream } from "../src/agent/worker-request-admission.ts";
+import { runPiTurn, TURN_KEEPALIVE, TURN_KEEPALIVE_MS } from "../src/server/pi/ui-stream.ts";
+import { SessionModel, sseEvents } from "../components/session-core.ts";
+import { cutOffReplyAtEnd } from "../src/core/input-events.ts";
+import type { LhMessage } from "../src/core/native-messages.ts";
+import { TurnTimeline, type TurnTimelineLine } from "../src/server/turn-timeline.ts";
 
 const FAKE_CLAUDE = fileURLToPath(new URL("./fixtures/claude-code/fake-claude.mjs", import.meta.url));
 const FIXTURES = fileURLToPath(new URL("./fixtures/claude-code/", import.meta.url));
@@ -210,6 +215,90 @@ function getModel() {
 	assert.ok(model);
 	return model;
 }
+
+test("a silent Claude Code Opus thinking phase keeps the turn alive until text arrives", { timeout: 5_000 }, async (t) => {
+	const model = CLAUDE_CODE_MODELS.find(entry => entry.id === "opus");
+	assert.ok(model);
+	const lines = readFixtureLines("text.jsonl");
+	const start = lines.findIndex(line => line.includes('"type":"message_start"'));
+	assert.ok(start >= 0);
+	lines.splice(start + 1, 0, JSON.stringify({ fake: "checkpoint" }), JSON.stringify({ fake: "wait-for-message" }));
+	const { runClaude, calls } = createFakeRun(t, lines);
+	const reached = Promise.withResolvers<void>();
+	const streamFn = createClaudeCodeStreamFunction(async (args, options) => {
+		const child = await runClaude(args, options);
+		child?.once("message", () => reached.resolve());
+		return child;
+	});
+	const agent = new Agent({ initialState: { model, messages: [HI], thinkingLevel: "high" }, streamFn });
+	let now = 0;
+	let line: TurnTimelineLine | undefined;
+	let saved: LhMessage[] = [];
+	const timeline = new TurnTimeline({ chatId: SESSION_ID, turnId: "test", provider: model.provider, model: model.id, thinking: true }, result => { line = result; }, () => now);
+	const turn = runPiTurn({ agent, timeline, onFinish(messages) {
+		saved = messages.map((message, index) => ({ ...message, id: `saved-${index}` })) as LhMessage[];
+	} });
+	await reached.promise;
+	assert.equal(getFlagValue(calls[0]!.args, "--thinking-display"), "omitted");
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const view = turn.subscribe().getReader();
+	const wire = new TextDecoder();
+	assert.equal(wire.decode((await view.read()).value), TURN_KEEPALIVE);
+	const thinking = Promise.withResolvers<void>();
+	const session = new SessionModel({
+		chatId: SESSION_ID, initialMessages: [],
+		fetch: async url => String(url).endsWith("/stream") ? new Response(turn.subscribe()) : Response.json({ messages: saved }),
+		onChange() { if (session.getState().activity === "thinking") thinking.resolve(); },
+	});
+	const watching = session.resumeStream(false);
+	await thinking.promise;
+	let started = false;
+	while (!started) {
+		const frame = wire.decode((await view.read()).value);
+		const event = JSON.parse(frame.slice("data: ".length));
+		started = event.type === "message_start";
+	}
+	for (let i = 0; i < 2; i++) {
+		t.mock.timers.tick(TURN_KEEPALIVE_MS);
+		now += TURN_KEEPALIVE_MS;
+		assert.equal(wire.decode((await view.read()).value), TURN_KEEPALIVE);
+		assert.equal(session.getState().activity, "thinking");
+	}
+	const rest = sseEvents(view);
+	calls[0]!.child.send({ release: true });
+	const types: string[] = [];
+	for await (const event of rest) types.push(String(event.type));
+	await watching;
+	assert.ok(types.includes("message_end"));
+	const final = session.getState().nativeMessages.findLast(message => message.role === "assistant");
+	assert.ok(final && final.content.some(block => block.type === "text" && block.text.trim()));
+	assert.equal(final.stopReason, "stop");
+	assert.equal((await view.read()).done, true);
+	assert.deepEqual(line?.thinkingSpans, [{ source: "inferred", startMs: 0, durationMs: 2 * TURN_KEEPALIVE_MS }]);
+	assert.equal(line?.thinkingChars, 0);
+});
+
+test("Claude Code max_tokens reaches the saved cut-off notice with the partial text", async (t) => {
+	const lines = readFixtureLines("text.jsonl").map(line => line.replace('"end_turn"', '"max_tokens"'));
+	const { runClaude } = createFakeRun(t, lines);
+	const agent = new Agent({
+		initialState: { messages: [HI], model: getModel(), thinkingLevel: "high" },
+		streamFn: createClaudeCodeStreamFunction(runClaude),
+	});
+	let saved: LhMessage[] = [];
+	const turn = runPiTurn({ agent, onFinish(messages) {
+		saved = messages.map((message, index) => ({ ...message, id: `saved-${index}` })) as LhMessage[];
+	} });
+	const session = new SessionModel({
+		chatId: SESSION_ID, initialMessages: [], fetch: async url => String(url).endsWith("/stream")
+			? new Response(turn.subscribe()) : Response.json({ messages: saved }),
+	});
+	await session.resumeStream(false);
+	assert.equal(saved.at(-1)?.role, "assistant");
+	assert.equal(cutOffReplyAtEnd(saved)?.hasText, true);
+	assert.equal(session.getState().cutOffReply?.hasText, true);
+	assert.equal(session.getState().error, null);
+});
 
 async function runTurn(
 	streamFunction: StreamFunction<Api, SimpleStreamOptions>,

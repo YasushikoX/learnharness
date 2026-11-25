@@ -43,6 +43,7 @@ import {
 	newAnswerResult,
 	newNextMessage,
 	newProblemDismissedMarker,
+	newReplyRecoveryMarker,
 	newSketchDisputeMarker,
 	newThinkingMessage,
 	newUserMessage,
@@ -73,8 +74,9 @@ export type ChatInput =
 	 *  own ref on the answer. An answer carries a sketch OR inline images (answer.images), never both. */
 	| { type: "answer"; toolCallId: string; answer: QuestionAnswerData; sketch?: SketchPayload; occurrence?: PluginSubmissionOccurrence }
 	| { type: "continue" }
+	| { type: "continue-reply"; messageId: string }
 	/** The failed-turn retry (issue #110): the banner's Retry button. */
-	| { type: "retry" }
+	| { type: "retry"; failedHead?: string | null }
 	/** Explicit replacement of the current malformed question batch. */
 	| { type: "retry-question"; messageId: string; contentIndex: number; toolCallId: string }
 	/** The practice dock's two buttons (owner, 2026-10-04): the learner's
@@ -316,8 +318,13 @@ export function parseChatInput(input: unknown): ChatInput {
 		}
 		case "continue":
 			return { type: "continue" };
+		case "continue-reply":
+			if (typeof i.messageId !== "string" || !i.messageId) throw new ChatInputError("Continue requires the cut-off reply's id");
+			return { type: "continue-reply", messageId: i.messageId };
 		case "retry":
-			return { type: "retry" };
+			if (i.failedHead === undefined) return { type: "retry" };
+			if (i.failedHead !== null && (typeof i.failedHead !== "string" || !i.failedHead)) throw new ChatInputError("Retry requires a saved record head");
+			return { type: "retry", failedHead: i.failedHead };
 		case "retry-question":
 			if (typeof i.messageId !== "string" || !i.messageId || typeof i.toolCallId !== "string" || !i.toolCallId ||
 				typeof i.contentIndex !== "number" || !Number.isSafeInteger(i.contentIndex) || i.contentIndex < 0) {
@@ -406,6 +413,10 @@ export function inputAppends(
 		}
 		case "continue":
 			return dismissalConclusion(record);
+		case "continue-reply": {
+			const cutoff = requireCutOffReply(record.messages, input.messageId);
+			return [newReplyRecoveryMarker(cutoff.hasText)];
+		}
 		case "retry":
 			// The input already landed write-ahead. retryDrops affects only
 			// the temporary agent history — nothing new appends here.
@@ -517,6 +528,36 @@ export function failedResponseAtEnd(messages: readonly LhMessage[]): Extract<LhM
 		return m.role === "assistant" && m.stopReason === "error" ? m : undefined;
 	}
 	return undefined;
+}
+
+/** A length stop can be followed by the SDK's errors for its unexecuted tool calls. */
+export function cutOffReplyAtEnd(messages: readonly LhMessage[]): { messageId: string; hasText: boolean; omittedOnRetry: Set<string> } | undefined {
+	const results: Extract<LhMessage, { role: "toolResult" }>[] = [];
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i]!;
+		if (message.role === "custom" && (message.customType === "plan-block" || message.customType === "compaction" || isSideQuestionMarker(message))) continue;
+		if (message.role === "toolResult" && message.isError) { results.push(message); continue; }
+		if (message.role !== "assistant" || message.stopReason !== "length") return;
+		if (results.some(result => !message.content.some(block => block.type === "toolCall" && block.id === result.toolCallId && block.name === result.toolName))) return;
+		const hasText = message.lhCutoffHasText ?? message.content.some(block => block.type === "text" && !!block.text.trim());
+		return { messageId: message.id, hasText, omittedOnRetry: new Set(hasText ? [] : [message.id, ...results.map(result => result.id)]) };
+	}
+}
+
+export function requireCutOffReply(messages: readonly LhMessage[], messageId: string) {
+	const cutoff = cutOffReplyAtEnd(messages);
+	if (!cutoff || cutoff.messageId !== messageId) throw new ChatInputError("This cut-off reply is no longer the latest reply. Refresh the session.");
+	return cutoff;
+}
+
+/** A retained loop/save failure may have no saved assistant to omit. */
+export function retryTurnDrops(messages: readonly LhMessage[], failedHead: string | null | undefined, retainedFailure?: string): Set<string> {
+	if (failedHead !== undefined && (messages.at(-1)?.id ?? null) !== failedHead) throw new ChatInputError("The session changed before Retry. Refresh the session.");
+	if (failedHead !== undefined && retainedFailure && !failedResponseAtEnd(messages)) {
+		const { before } = failedTail(messages);
+		if (before && before.role !== "assistant") return new Set();
+	}
+	return retryDrops(messages);
 }
 
 /** Does the record end in a failure with input that can be retried?

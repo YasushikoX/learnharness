@@ -130,6 +130,7 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 	const adoptRecord = useCallback((record: LhMessage[]) => model.adoptRecord(record), [model]);
 	const stop = useCallback(() => model.stop(), [model]);
 	const clearError = useCallback(() => model.clearError(), [model]);
+	const recoverReply = useCallback(() => model.recoverReply(), [model]);
 	const resumeStream = useCallback(() => void model.resumeStream(), [model]);
 
 	return {
@@ -149,6 +150,10 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 		contextTokens: state.contextTokens,
 		status: state.status,
 		evaluating: state.evaluating,
+		activity: state.activity,
+		cutOffReply: state.cutOffReply,
+		droppedStream: state.droppedStream,
+		retryingStream: state.retryingStream,
 		error: state.error,
 		steerQueue: state.steerQueue,
 		send,
@@ -163,6 +168,7 @@ export function useChatSession({ chatId, initialMessages, initialError, initiall
 		adoptRecord,
 		stop,
 		clearError,
+		recoverReply,
 		resumeStream,
 		setReattachSettled,
 	};
