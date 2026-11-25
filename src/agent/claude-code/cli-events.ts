@@ -192,3 +192,13 @@ export function parseCliLine(text: string): CliEvent | null {
 			return null;
 	}
 }
+
+/** Fork (follow-ups 1): a successful `result` line, which parseCliLine ignores. Read only to record it (stream.ts). */
+export function isSuccessfulResultLine(text: string): boolean {
+	try {
+		const line = JSON.parse(text) as RawCliLine | null;
+		return typeof line === "object" && line !== null && line.type === "result" && line.is_error !== true;
+	} catch {
+		return false;
+	}
+}

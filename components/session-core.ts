@@ -16,7 +16,9 @@
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import {
+	CONTINUE_NOT_OWED_TEXT,
 	needsContinuation,
+	owesTutorReply,
 	activeProblemOf,
 	activeProblemOccurrenceOf,
 	pendingQuestionOf,
@@ -253,7 +255,7 @@ export interface SessionState {
 	/** Local submission with optional grading/processing, awaiting its POST response. */
 	evaluating: boolean;
 	activity: "thinking" | "checker" | "grader" | "processing" | null;
-	cutOffReply: { hasText: boolean; blockedByCompaction?: true } | undefined;
+	cutOffReply: { hasText: boolean; blockedByCompaction?: true; afterContinue?: true } | undefined;
 	/** The failure shown cannot be retried because a compaction landed after it; the banner says so. */
 	retryBlocked: boolean;
 	droppedStream: boolean;
@@ -358,6 +360,11 @@ export class SessionModel {
 	private detachedTail: { messages: LhMessage[]; chars: number } | null = null;
 	/** Request/loop failures are transient; provider failures derive from messages. */
 	private errorValue: { message: string } | null = null;
+	/** The refusal of a send made by the dropped banner's Retry; errorValue is it while identical (follow-ups 1, finding 2). */
+	private recoveryError: { message: string } | null = null;
+	/** The attach that follows this client's own accepted input (follow-ups 1, final round): its settle on a record that still
+	 *  owes the reply means the server lost the turn (a restart before the attach). */
+	private clientTurnAttach: AbortController | null = null;
 	/** The server-retained failure (record turnError) last adopted; errorValue is it while identical. */
 	private retainedError: { message: string } | null = null;
 	/** Dismissing a banner must not authorize an automatic replacement turn. */
@@ -544,11 +551,17 @@ export class SessionModel {
 			if (!this.appendMessages(record.messages, record.pluginQuestionAvailability, true, record.pluginProblemAvailability)) return undefined;
 			this.canonicalAcknowledged = Math.max(this.canonicalAcknowledged, ticket);
 		} else if (mode === "replace") {
-			const recovered = this.droppedStream && !options.allowInFlight && record.turnInFlight === false && !record.turnError && !failedResponseAtEnd(record.messages);
-			if (recovered) this.clearDroppedStream();
+			// Follow-ups 1: any read while no stream is live may resolve a drop (finding 1: the settle read after a full replay
+			// failed), but never a lost turn's (finding 4: the record still owes the reply), and a refused recovery's banner
+			// goes with it (finding 2). Decided on the record read, after the partial was reconciled against it (finding 3).
+			const live = this.statusValue === "submitted" || this.statusValue === "streaming";
 			this.canonicalAcknowledged = Math.max(this.canonicalAcknowledged, ticket);
 			this.replaceMessages(record.messages, record.turnError, record.pluginQuestionAvailability, record.pluginProblemAvailability);
+			const recovered = this.droppedStream && !live && record.turnInFlight === false && !record.turnError && !failedResponseAtEnd(record.messages) &&
+				!owesTutorReply(record.messages);
 			if (recovered) {
+				this.clearDroppedStream();
+				if (this.errorValue !== null && this.errorValue === this.recoveryError) this.errorValue = null;
 				this.reconciliationValue = "ready";
 				this.setStatus("ready");
 			}
@@ -659,7 +672,9 @@ export class SessionModel {
 			finally { onPostPending?.(false); }
 		};
 		let response = await post();
-		if (input.type === "plugin-question-answer" || input.type === "plugin-problem-submission" || input.type === "continue-reply" ||
+		// Follow-ups 1, finding 2: nor is `continue`. The turn holding the session may be the one that answers it, so a second
+		// post after it would run a turn the record no longer owes; send() reattaches instead.
+		if (input.type === "plugin-question-answer" || input.type === "plugin-problem-submission" || input.type === "continue-reply" || input.type === "continue" ||
 			(input.type === "retry" && input.failedHead !== undefined)) return response;
 		let waited = 0;
 		while (response.status === 409) {
@@ -877,7 +892,12 @@ export class SessionModel {
 						// attached) and the record is truth. A reply that landed leaves no drop behind; a failure
 						// keeps the dropped state only while the learner has seen more than was saved.
 						const failed = (this.errorValue !== null && this.errorValue.message !== STREAM_DROPPED) || failedResponseAtEnd(this.base) !== undefined;
-						if (failed && this.detachedTail) this.droppedStream = true;
+						// Follow-ups 1, finding 4: after a drop, a settled turn whose record still owes the reply was lost by the
+						// server (a restart). Keep the partial, if any, and the dropped banner, whose Retry runs the turn again.
+						// Final round: so is one this client started whose attach found it settled with nothing failed and the
+						// reply still owed (a restart between accepting the input and the attach).
+						const lost = owesTutorReply(this.base) && (this.detachedTail !== null || this.droppedStream || (this.clientTurnAttach === controller && !failed));
+						if ((failed && this.detachedTail) || lost) this.droppedStream = true;
 						else this.clearDroppedStream();
 					}
 					if (this.consumeAbort === controller && this.statusValue !== "error") this.setStatus("ready");
@@ -918,7 +938,7 @@ export class SessionModel {
 	 * lands on top. The stream then replays the turn from its first event
 	 * through the SAME consume path.
 	 */
-	async resumeStream(refetchRecordFirst = true, allowRecovery = true): Promise<void> {
+	async resumeStream(refetchRecordFirst = true, allowRecovery = true, clientTurn = false): Promise<void> {
 		// External reattachment supersedes unresolved POST preview ownership.
 		// Normal post-ack reattach keeps its preview until the atomic record swap.
 		this.retireImagePreview(this.imagePostOwner);
@@ -927,6 +947,7 @@ export class SessionModel {
 		const controller = new AbortController();
 		this.consumeAbort = controller;
 		this.latestRequest = controller;
+		this.clientTurnAttach = clientTurn ? controller : null;
 		this.activity = null;
 		this.modelThinking = false;
 		// REPLAY ONTO A CLEAN SLATE (owner, optimistic round 3, 2026-10-02):
@@ -953,10 +974,13 @@ export class SessionModel {
 			});
 		}
 		this.setStatus("submitted");
+		/** The record this attempt read and adopted, when it showed the turn over with nothing failed or owed. */
+		let settled: SessionRecordSnapshot | undefined;
 		try {
 			if (refetchRecordFirst) {
 				const record = await this.readRecord({ signal: controller.signal, allowInFlight: true, recoveringDrop: !allowRecovery, tolerateHttpFailure: true, isCurrent: () => this.consumeAbort === controller });
 				if (this.consumeAbort !== controller) return;
+				if (record?.turnInFlight === false && !record.turnError && !failedResponseAtEnd(record.messages) && !owesTutorReply(record.messages)) settled = record;
 				if (!record) {
 					// The record did not land — restore the clean-slate guard
 					// before the replay (no atomic swap is coming).
@@ -983,6 +1007,15 @@ export class SessionModel {
 			if (err instanceof StreamReadError) {
 				this.retainPartialReply();
 				if (allowRecovery) { await this.resumeStream(true, false); return; }
+				if (settled && this.tail.length === 0) {
+					// Follow-ups 1 (item 7): the record read just now showed the turn over and its reply saved, and the attach
+					// that failed added nothing to it. The learner sees that record: no drop banner beside it.
+					this.clearDroppedStream();
+					this.reconciliationValue = "ready";
+					this.setStatus("ready");
+					this.onReattachSettled?.();
+					return;
+				}
 				this.droppedStream = true;
 				this.setError(STREAM_DROPPED);
 			} else this.setError((err as Error).message);
@@ -1002,6 +1035,10 @@ export class SessionModel {
 		const owner = this.consumeAbort;
 		const connection = this.connectionGeneration;
 		const current = () => owner === this.consumeAbort && connection === this.connectionGeneration;
+		const resend = async (input: ChatInput) => {
+			await this.send(input);
+			if (this.statusValue === "error" && this.errorValue !== null) this.recoveryError = this.errorValue;
+		};
 		this.retryingStream = true;
 		this.onChange?.();
 		try {
@@ -1031,7 +1068,16 @@ export class SessionModel {
 				this.replaceMessages(record.messages, record.turnError, record.pluginQuestionAvailability, record.pluginProblemAvailability);
 				this.reconciliationValue = "ready";
 				this.setStatus("error");
-				await this.send({ type: "retry", failedHead });
+				await resend({ type: "retry", failedHead });
+				return;
+			}
+			if (!record.turnError && owesTutorReply(record.messages)) {
+				// Follow-ups 1, finding 4: the server lost the turn, so there is no failure to retry. `continue` runs the turn
+				// again from the saved input, as the continuation fold does; the learner's input is not sent again.
+				this.replaceMessages(record.messages, record.turnError, record.pluginQuestionAvailability, record.pluginProblemAvailability);
+				this.reconciliationValue = "ready";
+				this.setStatus("error");
+				await resend({ type: "continue" });
 				return;
 			}
 			this.clearDroppedStream();
@@ -1186,6 +1232,17 @@ export class SessionModel {
 				// superseded request must never clear its successor's label.
 				if (this.evaluation?.owner === controller) this.mutate(() => { this.evaluation = null; });
 			}
+			// Follow-ups 1, finding 2: a `continue` refused because another turn holds the session (409) or already answered it
+			// (the server's not-owed 400) means the session moved on. Reattach: the attach replays a running turn, or settles
+			// and syncs the record; nothing is posted again and no banner is left beside the reply.
+			const movedOn = input.type === "continue" && (res.status === 409 || (res.status === 400 && (await res.clone().text()).includes(CONTINUE_NOT_OWED_TEXT)));
+			if (movedOn) {
+				settleDelivery();
+				await res.body?.cancel().catch(() => {});
+				if (this.consumeAbort !== controller) return false;
+				await this.resumeStream(true);
+				return false;
+			}
 			if (res.status === 409) {
 				settleDelivery();
 				throw new Error("A turn is already running — try again in a moment.");
@@ -1229,7 +1286,7 @@ export class SessionModel {
 			// flight: the turn is live server-side either way — do not attach
 			// a stream from a view that is gone or superseded.
 			if (this.consumeAbort !== controller) return true;
-			await this.resumeStream(true);
+			await this.resumeStream(true, true, true);
 			return true;
 		} catch (err) {
 			settleDelivery();

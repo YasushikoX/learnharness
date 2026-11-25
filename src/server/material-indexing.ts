@@ -230,6 +230,13 @@ export function pendingIndexingError(invalidReason?: string): MaterialIndexingEr
 	};
 }
 
+/** The note an indexing run carries while it runs on a material that stays ready (a conversion retry that keeps the old
+ *  profiler's profile, review 5 finding 2): if the app stops during the run, the restarted app shows this; the run's own
+ *  outcome (indexPdfMaterial) replaces it. */
+export function unfinishedIndexingError(fallback: ProfileFallback): MaterialIndexingError {
+	return { kind: "pending", message: `Indexing this PDF has not finished (if the app stopped while it ran, it was interrupted), ${FALLBACK_CLAUSE[fallback]}. Retry the indexing to try again.`, retryable: true };
+}
+
 /** A PDF's physical page count; undefined when it cannot be opened. */
 async function pdfPageCount(file: string, signal: AbortSignal): Promise<number | undefined> {
 	let opened: Awaited<ReturnType<typeof openPdfBytes>> | undefined;

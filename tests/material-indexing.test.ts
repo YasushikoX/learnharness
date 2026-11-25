@@ -792,6 +792,77 @@ describe("review 4, finding 1: a conversion run leaves no stale index, whichever
 		assert.deepEqual(glossary.indexed.map((x) => x.id), [m.id]);
 	});
 
+	it("review 5, finding 2: a re-index after a conversion retry that keeps the old profile leaves a note if the app quits during it", async () => {
+		const course = courseStore.createCourse("Retry OCR, quit while indexing");
+		const m = await upload(course.id, "scan-quit.pdf", SCANNED);
+		assert.equal(m.profile, OLD_PROFILE);
+		replacePdf(course.id, m, SINGLE);
+		let release!: () => void;
+		let during: LessonMaterial | undefined;
+		script = { ...DEFAULT_SCRIPT, gate: new Promise<void>((r) => (release = r)), onIndexCall: () => (during ??= find(course.id, m.id)) };
+		assert.ok(service.retryMaterialConversion(course.id, m.id).ok);
+		await until(() => during !== undefined);
+		// What the record on disk says if the app quits now: still ready with the old profile, and a note with the Retry wording.
+		assert.equal(during!.status, "ready");
+		assert.equal(during!.profile, OLD_PROFILE);
+		assert.equal(during!.indexingError?.kind, "pending");
+		assert.match(during!.indexingError?.message ?? "", /has not finished \(if the app stopped while it ran, it was interrupted\), so the material keeps the profile it had\. Retry the indexing to try again\./);
+		assert.ok(exists(course.id, m, indexing.MATERIAL_INDEXING_STARTED));
+		assert.match(materialStatusLine({ ...during!, indexingProgress: undefined }), /has not finished/, "after a restart (no run, no progress) the row shows the note");
+		release();
+		await idle();
+		const after = find(course.id, m.id);
+		assert.equal(after.indexingError, undefined, "the completed index replaces the note");
+		assert.equal(after.profile, DIGEST_PROFILE);
+		assertIndexInvariant(course.id, m.id, "re-indexed after a conversion retry");
+	});
+
+	it("follow-ups 1, finding 7: a conversion retry whose content the stored index still describes never writes the unfinished note", async () => {
+		const course = courseStore.createCourse("Retry, identical content");
+		const m = await upload(course.id, "same.pdf", SINGLE);
+		assert.equal(m.profileFromDigest, true);
+		const notes: string[] = [];
+		const update = materialStore.update.bind(materialStore);
+		materialStore.update = (ownerId, id, patch) => {
+			if (patch.indexingError) notes.push(patch.indexingError.message);
+			return update(ownerId, id, patch);
+		};
+		try {
+			const after = await retryConversion(course.id, m.id);
+			assert.deepEqual(notes, [], "no note at any point: if the app stopped mid-run, none would be left on a current index");
+			assert.equal(after.indexingError, undefined);
+			assert.equal(after.profile, DIGEST_PROFILE);
+		} finally {
+			materialStore.update = update;
+		}
+		assertIndexInvariant(course.id, m.id, "converted again, unchanged");
+	});
+
+	it("follow-ups 1, concern 5: a re-index that finds content.md gone ('not converted') clears the unfinished note instead of leaving it", async () => {
+		const course = courseStore.createCourse("Retry OCR, content gone");
+		const m = await upload(course.id, "scan-gone.pdf", SCANNED);
+		assert.equal(m.profile, OLD_PROFILE);
+		replacePdf(course.id, m, SINGLE);
+		const update = materialStore.update.bind(materialStore);
+		let noted = false;
+		materialStore.update = (ownerId, id, patch) => {
+			const result = update(ownerId, id, patch);
+			// content.md disappears between the note and the indexing (canIndexMaterial, then indexMaterialContent)
+			if (id === m.id && patch.indexingError?.kind === "pending") { noted = true; fs.rmSync(aux(ownerId, m, PDF_CONTENT_FILE), { force: true }); }
+			return result;
+		};
+		try {
+			const after = await retryConversion(course.id, m.id);
+			assert.equal(noted, true, "the note was written before the indexing");
+			assert.equal(after.indexingError, undefined, "the run ended, so its note is gone");
+			assert.equal(after.status, "ready");
+			assert.equal(after.profile, OLD_PROFILE);
+		} finally {
+			materialStore.update = update;
+		}
+		assertIndexInvariant(course.id, m.id, "re-index found no content.md");
+	});
+
 	// The other writer of content.md: the conversion inside a read that restarts (status reading after an app restart).
 	it("a restarted read that re-converts changed content drops the stale digest too, also without a vision model", async () => {
 		const owner = lesson("Restart converts");
