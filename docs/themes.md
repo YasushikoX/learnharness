@@ -8,6 +8,7 @@ Dawn; Gruvbox Dark; Ivory; Pastel; and NvChad Onedark.
 
 Preset ids never change. Warm Brass still has the id `default`, so a saved selection of the old
 default keeps showing it. A record with no saved theme shows Dark (`dark`). Light is `light`.
+
 Each theme declares whether it is dark or light. The native window background
 follows the effective background, including your override; native control symbols
 choose a contrasting ink. Mermaid diagrams follow the theme's light/dark mode.
