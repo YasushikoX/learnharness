@@ -3074,6 +3074,7 @@ export function DockOverlay({
 	// The wide dock (fork: a landscape touch screen, WIDE_DOCK_QUERY) is the default container there.
 	const [wide, setWide] = useState(false);
 	const blockWRef = useRef(0);
+	const [blockPad, setBlockPad] = useState(0);
 	// Part A of the same round (the resize mute): any block size change
 	// stamps this — the fold machine ignores scroll events for a beat after,
 	// because a resize/rewrap re-clamps scrollTop and emits PHANTOM scroll
@@ -3091,6 +3092,9 @@ export function DockOverlay({
 		const measure = () => {
 			setRem(rootRem(block.ownerDocument));
 			setWide(wideDockScreen());
+			// The block's side padding (sm:px-8, UI round 1b): the dock's real room is the block less it.
+			const cs = block.ownerDocument.defaultView?.getComputedStyle(block);
+			setBlockPad(cs ? (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0) : 0);
 			const next = Math.round(block.offsetWidth);
 			if (Math.abs(next - blockWRef.current) > 1) {
 				blockWRef.current = next;
@@ -3116,7 +3120,7 @@ export function DockOverlay({
 	// (dockContainerMax: block - 1rem); a set width caps it there.
 	// Unset, the transcript is the reading column (globals.css --lh-reading-dock, 46rem), so the adaptive dock keeps to it
 	// too (one column, UI round 1b); the landscape tablet's wide dock keeps its old uncapped default.
-	const containerMax = dockContainerMax(blockW, rem, appearance.transcriptMaxWidth ?? (wide ? null : READING_DOCK_REM));
+	const containerMax = dockContainerMax(blockW - blockPad, rem, appearance.transcriptMaxWidth ?? (wide ? null : READING_DOCK_REM));
 	const fontKey = layoutFontKey(appearance);
 	// Fork: on the wide dock the default container (and so the card's default width) is 60rem instead of 46rem, capped at
 	// the Transcript width setting. The answered card solves with the same effective geometry, so the two always agree.
@@ -3373,7 +3377,9 @@ export function DockOverlay({
 	return (
 		<div className="pointer-events-none absolute inset-x-0 bottom-0" style={{ right: sbInset }}>
 			<div className="h-24 bg-gradient-to-t from-background via-background/85 to-transparent" />
-			<div ref={blockRef} data-dock-block="" className="relative bg-background pb-[calc(1.25rem+var(--lh-safe-bottom))]">
+			{/* sm:px-8 (UI round 1b): with the dock's own px-4 that is the transcript's 48px gutters, so when the
+			    window is narrower than the reading column the card still lines up with the prose edge to edge. */}
+			<div ref={blockRef} data-dock-block="" className="relative bg-background pb-[calc(1.25rem+var(--lh-safe-bottom))] sm:px-8">
 				<div ref={dockRef} data-dock-width={adaptedW ?? undefined} className={DOCK} style={adaptedW ? { maxWidth: adaptedW } : undefined}>
 					<div ref={viewportRef} data-dock-viewport="" className="pointer-events-auto">
 					<div ref={bodyRef}>

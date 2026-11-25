@@ -289,7 +289,7 @@ export function PracticeDock({
 
 	/* ── the expanded form ── */
 	return (
-		<div ref={element => { rootRef.current = element; }} data-testid="practice-dock" data-problem={problemCallId}>
+		<div ref={element => { rootRef.current = element; }} data-testid="practice-dock" data-problem={problemCallId} className="@container/dock">
 			{!expanded && bar}
 			<div hidden={!expanded}>
 			{/* The agent's half: the 'Problem' eyebrow (mirroring the quiz

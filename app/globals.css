@@ -647,6 +647,12 @@ html.lh-native-ink body > *:not([data-testid="sketch-view"]) {
 	overflow-x: auto;
 	overflow-y: hidden;
 }
+/* LESSON (UI round 1b, SPEC §3/§4): mermaid's plain flowchart boxes take the control radius (8px), in the chat and in
+   the focus overlay alike. */
+:is([data-streamdown="mermaid"], [data-lh-overlay-chart]) .node :is(rect.basic, rect.label-container) {
+	rx: 8px;
+	ry: 8px;
+}
 /* LESSON (UI round 1b, SPEC §7): display maths breathes — 22px above and below in teaching prose (KaTeX's own 1em). */
 .lh-prose .katex-display {
 	margin-block: 1.375rem;
