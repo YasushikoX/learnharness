@@ -13,7 +13,7 @@ import { connectionBackgroundAllowed as subscriptionBackgroundAllowed, connectio
 import { nativeSubscriptionError } from "../agent/subscription-stream.ts";
 import { chatGPTStreamError } from "../agent/chatgpt-stream.ts";
 import { SubscriptionRequestCycle, type SubscriptionDispatchLifecycle } from "../agent/subscription-request-cycle.ts";
-import { reconstructRequestCause } from "../core/native-messages.ts";
+import { owesTutorReply, reconstructRequestCause } from "../core/native-messages.ts";
 import { createJobRunner } from "../agent/subagents/runner.ts";
 import { createExtractionPipeline } from "../agent/subagents/extraction.ts";
 import type { ModelRole } from "../../config.ts";
@@ -77,6 +77,7 @@ import { settledTurnResponse } from "./turn-runs.ts";
 import { asAgentMessages, type LhMessage } from "../core/native-messages.ts";
 import { QUESTION_TOOLS, withQuizDefault } from "../core/pending.ts";
 import {
+	CONTINUE_NOT_OWED_TEXT,
 	ChatInputError,
 	assertPluginQuestionInputAllowed,
 	assertNativeSubmissionTarget,
@@ -660,6 +661,13 @@ export async function handleChatInput(
 		const current = stores.chatStore.getChat(chatId);
 		if (!current || current.createdAt !== record.createdAt || current.messages.at(-1)?.id !== record.messages.at(-1)?.id)
 			return Response.json({ error: "The session changed before recovery. Refresh the session." }, { status: 400 });
+	}
+	// Follow-ups 1, finding 2: a `continue` runs only while the CURRENT record still owes a reply (the client's predicate).
+	// One that arrives after another tab's turn answered it would start a second turn from an assistant tail.
+	if (input.type === "continue") {
+		const current = stores.chatStore.getChat(chatId);
+		if (!current || current.createdAt !== record.createdAt || !owesTutorReply(current.messages))
+			return Response.json({ error: CONTINUE_NOT_OWED_TEXT }, { status: 400 });
 	}
 	const placementTurnInfo = record.course?.mode === "placement" && input.type === "answer" ? courseForTurn(chatId) : undefined;
 	if (placementTurnInfo?.placementSkills) {

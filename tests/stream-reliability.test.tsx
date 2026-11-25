@@ -86,7 +86,7 @@ function lesson(steps: FauxResponseStep[], disconnect?: (attachment: number) => 
 	const saved = () => chatStore.getChat(id)!.messages;
 	const session = new SessionModel({ chatId: id, initialMessages: saved(), fetch: fetchView });
 	return {
-		session, saved, contexts, requests, id, get attachments() { return attachments; },
+		session, saved, contexts, requests, id, fetch: fetchView, get attachments() { return attachments; },
 		/** `learnerMessages`: the seed's message plus any the test sent after recovery. */
 		assertOneAnswer(learnerMessages = 1) {
 			assert.equal(requests.filter(input => input.type === "answer").length, 1);
@@ -517,19 +517,21 @@ it("end to end, Continue: a send_to_user cut-off continues; seen once, stored on
 	l.assertOneAnswer(2);
 });
 
-it("follow-ups 1, item 6: a kept cut-off of thinking alone (after send_to_user prose) never reaches the model as a thinking-only turn", async () => {
+for (const whitespace of [false, true]) it(`follow-ups 1, item 6${whitespace ? " and concern 2" : ""}: a kept cut-off of thinking alone${whitespace ? " and whitespace-only text" : ""} (after send_to_user prose) never reaches the model as a thinking-only turn`, async () => {
 	const l = lesson([
 		say("Part one before the cut.", "say-1"),
-		cutOff(),
+		whitespace ? cutOff([fauxThinking("Fixture-only private thought"), fauxText(" \n ")]) : cutOff(),
 		fauxAssistantMessage("Part two after continuation."),
 		fauxAssistantMessage("The next answer."),
 	], undefined, { tools: { send_to_user: sendToUserTool } });
 	await l.session.send(answer);
 	const kept = l.saved().find(message => message.role === "assistant" && message.stopReason === "length");
-	assert.ok(kept?.role === "assistant" && kept.lhCutoffHasText === true && kept.content.every(block => block.type === "thinking"), "the kept cut-off holds thinking only");
+	const noText = (message: Message) => message.role === "assistant" && message.content.every(block => block.type === "thinking" || (block.type === "text" && !block.text.trim()));
+	assert.ok(kept?.role === "assistant" && kept.lhCutoffHasText === true && noText(kept), "the kept cut-off holds thinking only");
+	if (whitespace) assert.ok(kept.content.some(block => block.type === "text"), "with a whitespace-only text block beside it");
 	await l.session.recoverReply();
 	await l.session.send({ type: "text", text: "What comes next?" });
-	const thinkingOnly = (messages: Message[]) => messages.filter(message => message.role === "assistant" && message.content.every(block => block.type === "thinking")).length;
+	const thinkingOnly = (messages: Message[]) => messages.filter(noText).length;
 	assert.equal(l.contexts.length, 4);
 	for (const context of l.contexts.slice(2)) {
 		assert.equal(thinkingOnly(context), 0);
@@ -848,6 +850,319 @@ it("follow-ups 1, finding 4: the server runs a continue on a record that ends on
 		assert.equal(l.session.getState().error, null);
 	}
 });
+
+// ─── Follow-ups 1, fix round (council/reviews/followups-1-review-1.md, findings 2 and 3, concern 1, item 7) ──────────
+
+const { owesTutorReply, newNextMessage, newSketchDisputeMarker, newProblemDismissedMarker, newThinkingMessage } = await import("../src/core/native-messages.ts");
+const { newLessonFinishedMarker } = await import("../src/core/course-session.ts");
+const { CONTINUE_NOT_OWED_TEXT } = await import("../src/core/input-events.ts");
+const { dismissedAnswer } = await import("../src/core/question-core.ts");
+const { READ_SKETCH_TOOL } = await import("../src/core/sketch-gate.ts");
+
+const STREAM_DROPPED_TEXT = "The connection dropped before the turn completed.";
+const quizCall: LhMessage = { ...fauxAssistantMessage([fauxToolCall("quiz", quiz, { id: answer.toolCallId })], { stopReason: "toolUse" }), id: "question" };
+const quizAnswered: LhMessage = { ...newAnswerResult(answer.toolCallId, "quiz", answer.answer), id: "answered" };
+const earlierReply: LhMessage = { ...fauxAssistantMessage("An earlier reply."), id: "earlier-reply" };
+const POSE_LEAD = "Here is a problem to try on your own, longer than the part seen before the drop.";
+const poseCall: LhMessage = { ...fauxAssistantMessage([fauxText(POSE_LEAD), fauxToolCall("problem", { statement: "Order the inner planets." }, { id: "pose" })], { stopReason: "toolUse" }), id: "pose-call" };
+const posed: LhMessage = { id: "posed", role: "toolResult", toolCallId: "pose", toolName: "problem", content: [{ type: "text", text: "Problem posed." }], isError: false, timestamp: 0 };
+const readCall: LhMessage = { ...fauxAssistantMessage([fauxToolCall(READ_SKETCH_TOOL, { sketchId: "sk_1" }, { id: "read" })], { stopReason: "toolUse" }), id: "read-call" };
+const doubtfulRead: LhMessage = { id: "doubtful", role: "toolResult", toolCallId: "read", toolName: READ_SKETCH_TOOL, content: [{ type: "text", text: "Two marks are unclear." }], details: { doubts: 2 }, isError: false, timestamp: 0 } as LhMessage;
+const quizDismissed: LhMessage = { ...newAnswerResult(answer.toolCallId, "quiz", dismissedAnswer("quiz", quiz.question)), id: "dismissed" };
+const failedReply: LhMessage = { ...fauxAssistantMessage("partial", { stopReason: "error", errorMessage: "fetch failed" }), id: "failed-reply" } as LhMessage;
+const compactionAtEnd = () => newCompactionMarker("SUMMARY", { firstKeptMessageId: "learner", tokensBefore: 1, model: "fixture", at: new Date().toISOString() });
+
+it("follow-ups 1 fix round, finding 3 and concern 1: one definition of a record the tutor still owes a reply, and the server's continue guard uses it", async () => {
+	const owed: [string, LhMessage[]][] = [
+		["a learner message", [learnerAsk]],
+		["an answered question", [learnerAsk, quizCall, quizAnswered]],
+		["Next", [learnerAsk, earlierReply, newNextMessage()]],
+		["a dispute", [learnerAsk, earlierReply, newSketchDisputeMarker("sk_1", "That is a 3, not an 8.")]],
+		["Finish", [learnerAsk, earlierReply, newLessonFinishedMarker("learn")]],
+		["Continue", [learnerAsk, { ...fauxAssistantMessage("A first half"), stopReason: "length", id: "half" } as LhMessage, newReplyRecoveryMarker()]],
+		["a practice submission", [learnerAsk, poseCall, posed, newThinkingMessage("pose", "Mercury, Venus, Earth, Mars.")]],
+		["a learner message with a compaction marker after it", [learnerAsk, compactionAtEnd()]],
+	];
+	const settled: [string, LhMessage[]][] = [
+		["an empty record", []],
+		["an assistant reply", [learnerAsk, earlierReply]],
+		["a failed reply", [learnerAsk, failedReply]],
+		["a posed problem", [learnerAsk, poseCall, posed]],
+		["a doubtful sketch read", [learnerAsk, readCall, doubtfulRead]],
+		["a dismissed question", [learnerAsk, quizCall, quizDismissed]],
+		["a dismissed problem", [learnerAsk, poseCall, posed, newProblemDismissedMarker("pose")]],
+	];
+	for (const [what, record] of owed) assert.equal(owesTutorReply(record), true, what);
+	for (const [what, record] of settled) assert.equal(owesTutorReply(record), false, what);
+
+	for (const [what, seed] of settled.filter(([what]) => what !== "an empty record")) {
+		const l = lesson([fauxAssistantMessage("A turn that must not run.")], undefined, { seed });
+		const refused = await handleChatRequest(new Request("http://test/api/chat", { method: "POST", body: JSON.stringify({ chatId: l.id, input: { type: "continue" } }) }));
+		assert.equal(refused.status, 400, what);
+		assert.equal((await refused.json()).error, CONTINUE_NOT_OWED_TEXT, what);
+		assert.equal(l.contexts.length, 0, `${what}: no turn ran`);
+		assert.deepEqual(l.saved(), seed, `${what}: nothing saved`);
+	}
+	for (const [what, seed] of owed.slice(0, 3)) {
+		const l = lesson([fauxAssistantMessage("The owed reply.")], undefined, { seed });
+		assert.equal(await l.session.send({ type: "continue" }), true, what);
+		assert.equal(visibleTexts(l.session).filter(text => text === "The owed reply.").length, 1, what);
+		assert.equal(l.session.getState().error, null, what);
+	}
+});
+
+it("follow-ups 1 fix round, finding 3a: a completed turn that posed a problem, dropped twice, gets no tutor turn from Retry", async () => {
+	let record: object = { messages: [learnerAsk], turnInFlight: true };
+	const { session, posts } = scriptedSession("finding-3a", [learnerAsk], () => record, [dropMidReply, () => {
+		record = { messages: [learnerAsk, poseCall, posed], turnInFlight: false }; // the turn ended normally on the pose
+		return dropMidReply();
+	}]);
+	await session.resumeStream(false);
+	assert.equal(session.getState().droppedStream, true);
+	await session.recoverReply();
+	assert.deepEqual(posts, [], "no continue after a posed problem");
+	assert.deepEqual(banner(session), { status: "ready", droppedStream: false, error: null });
+	assert.match(JSON.stringify(session.getState().messages), new RegExp(POSE_LEAD));
+});
+
+it("follow-ups 1 fix round, finding 3b: after a failed settle read, the next sync clears the banner beside a completed pose", async () => {
+	let record: object | Response = { messages: [learnerAsk], turnInFlight: true };
+	const { session, posts } = scriptedSession("finding-3b", [learnerAsk], () => record, [dropMidReply, () => {
+		record = new Response("unavailable", { status: 503 }); // the settle read after the full replay fails
+		return fullReplay(poseCall)();
+	}]);
+	await session.resumeStream(false);
+	assert.equal(session.getState().reconciliation, "failed");
+	record = { messages: [learnerAsk, poseCall, posed], turnInFlight: false };
+	await session.readRecord();
+	assert.deepEqual(banner(session), { status: "ready", droppedStream: false, error: null });
+	await session.recoverReply();
+	assert.deepEqual(posts, []);
+	assert.deepEqual(banner(session), { status: "ready", droppedStream: false, error: null });
+});
+
+it("follow-ups 1 fix round, finding 2: a continue refused with 409 or 'moved on' reattaches and syncs, never posts again, and leaves no banner", async () => {
+	const reply = { ...fauxAssistantMessage("The other tab's reply, longer than the part seen before the drop."), id: "other-tab" } as LhMessage;
+	for (const refusal of ["409", "moved on"] as const) {
+		for (const producer of ["Retry", "the continuation fold"] as const) {
+			const seed = producer === "Retry" ? [learnerAsk] : [learnerAsk, quizCall, quizAnswered];
+			let record: object = { messages: seed, turnInFlight: true };
+			const views = [
+				...(producer === "Retry" ? [dropMidReply, () => { record = { messages: seed, turnInFlight: false }; return settledTurnResponse(); }] : []),
+				refusal === "409" ? fullReplay(reply) : () => settledTurnResponse(),
+			];
+			const { session, posts } = scriptedSession(`finding-2-${refusal}-${producer}`, seed, () => record, views, () => {
+				// another tab's continue got there first: still running (409), or already answered (the server's 400)
+				record = refusal === "409" ? { messages: seed, turnInFlight: true } : { messages: [...seed, reply], turnInFlight: false };
+				const refused = refusal === "409" ? Response.json({ error: "A turn is already running for this session" }, { status: 409 }) : Response.json({ error: CONTINUE_NOT_OWED_TEXT }, { status: 400 });
+				if (refusal === "409") setTimeout(() => { record = { messages: [...seed, reply], turnInFlight: false }; }, 0);
+				return refused;
+			});
+			if (producer === "Retry") {
+				await session.resumeStream(false);
+				assert.equal(session.getState().droppedStream, true);
+				await session.recoverReply();
+			} else {
+				record = { messages: seed, turnInFlight: false };
+				await session.continueIfOwed(seed);
+			}
+			const what = `${refusal}, ${producer}`;
+			assert.deepEqual(posts, [{ type: "continue" }], `${what}: posted once`);
+			if (refusal === "409") await new Promise(resolve => setTimeout(resolve, 5));
+			await session.readRecord(); // the page's sync after record-changed
+			assert.deepEqual(banner(session), { status: "ready", droppedStream: false, error: null }, what);
+			assert.match(JSON.stringify(session.getState().messages), /The other tab's reply/, what);
+			assert.equal(posts.length, 1, `${what}: nothing was posted again`);
+		}
+	}
+});
+
+it("follow-ups 1 fix round, finding 2: two tabs pressing Retry on a server-lost turn run one turn; the second reattaches and both show the reply with no banner", async () => {
+	const gate = Promise.withResolvers<void>();
+	const REPLY = "The one reply after the restart, longer than the part seen before the drop.";
+	const l = lesson([async () => { await gate.promise; return fauxAssistantMessage(REPLY); }],
+		attachment => attachment <= 4 ? twoBrokenViews(attachment <= 2 ? attachment : attachment - 2) : undefined, { seed: [learnerAsk] });
+	const tabA = l.session;
+	const bRead = Promise.withResolvers<void>();
+	const aAccepted = Promise.withResolvers<void>();
+	const fetchA = tabA.fetch;
+	tabA.fetch = async (url, init) => {
+		const response = await fetchA(url, init);
+		if (url === "/api/chat") aAccepted.resolve();
+		return response;
+	};
+	const tabB = new SessionModel({ chatId: l.id, initialMessages: l.saved(), pollMs: 5, fetch: async (url, init) => {
+		if (url === "/api/chat") await aAccepted.promise; // tab A's Retry lands between tab B's read and its post
+		const response = await l.fetch(url, init);
+		if (String(url) === `/api/chats/${l.id}`) bRead.resolve();
+		return response;
+	} });
+	await tabA.resumeStream(false);
+	await tabB.resumeStream(false);
+	for (const tab of [tabA, tabB]) assert.equal(tab.getState().droppedStream, true);
+	const retryB = tabB.recoverReply();
+	await bRead.promise;
+	const retryA = tabA.recoverReply();
+	await aAccepted.promise;
+	await new Promise(resolve => setTimeout(resolve, 20));
+	gate.resolve();
+	await Promise.all([retryA, retryB]);
+	await new Promise(resolve => setTimeout(resolve, 20));
+	for (const tab of [tabA, tabB]) {
+		await tab.readRecord().catch(() => {});
+		assert.deepEqual(banner(tab), { status: "ready", droppedStream: false, error: null });
+		assert.equal(visibleTexts(tab).filter(text => text === REPLY).length, 1);
+	}
+	assert.deepEqual(l.requests.map(input => input.type), ["continue", "continue"], "tab B posted once and was refused");
+	assert.equal(l.contexts.length, 1, "one tutor turn ran");
+	assert.equal(l.saved().filter(message => message.role === "assistant").length, 1);
+	const stored = await (await readChat(new Request(`http://test/api/chats/${l.id}`), { params: Promise.resolve({ id: l.id }) })).json();
+	assert.equal(stored.turnError, undefined, "no server error on the session");
+});
+
+it("follow-ups 1 fix round: a drop before any text on a turn the server lost keeps the dropped banner, and its Retry runs the turn once", async () => {
+	const reply = { ...fauxAssistantMessage("The reply after the restart."), id: "after-restart" } as LhMessage;
+	let record: object = { messages: [learnerAsk], turnInFlight: true };
+	const { session, posts } = scriptedSession("lost-before-text", [learnerAsk], () => record, [
+		() => new Response(TURN_KEEPALIVE + streamFrame({ type: "agent_start" })), // dropped before any text
+		() => { record = { messages: [learnerAsk], turnInFlight: false }; return settledTurnResponse(); }, // the restarted server has no turn
+		() => { record = { messages: [learnerAsk, reply], turnInFlight: false }; return fullReplay(reply)(); },
+	], () => { record = { messages: [learnerAsk], turnInFlight: true }; return Response.json({ ok: true }); });
+	await session.resumeStream(false);
+	assert.deepEqual(banner(session), { status: "ready", droppedStream: true, error: STREAM_DROPPED_TEXT }, "never nothing with no control");
+	await session.readRecord();
+	assert.equal(session.getState().droppedStream, true, "a sync keeps it: the record still owes the reply");
+	assert.deepEqual(posts, []);
+	await session.recoverReply();
+	assert.deepEqual(posts, [{ type: "continue" }]);
+	assert.deepEqual(banner(session), { status: "ready", droppedStream: false, error: null });
+	assert.equal(visibleTexts(session).filter(text => text === "The reply after the restart.").length, 1);
+});
+
+// Item 7: the recovery rule as a matrix. Every case runs one sequence of steps against a scripted server for one record
+// ending, then checks the rule after every step and once more after a final sync: the learner sees exactly one of the
+// reply with no banner, a failure with a working Retry, or the dropped banner with a working Retry; never a banner beside
+// a complete reply, never a tutor turn nobody asked for, never nothing with no control.
+{
+	const REPLY_TEXT = "The tutor's whole reply, longer than the part seen before the drop.";
+	const tutorReply: LhMessage = { ...fauxAssistantMessage(REPLY_TEXT), id: "tutor-reply" };
+	const ENDINGS = {
+		"a learner message": { input: [learnerAsk], output: [tutorReply], owed: true, text: REPLY_TEXT },
+		"an answered question": { input: [learnerAsk, quizCall, quizAnswered], output: [tutorReply], owed: true, text: REPLY_TEXT },
+		"a custom input (Next)": { input: [learnerAsk, earlierReply, { ...newNextMessage(), id: "next" }], output: [tutorReply], owed: true, text: REPLY_TEXT },
+		"a posed problem": { input: [learnerAsk], output: [poseCall, posed], owed: false, text: POSE_LEAD },
+		"a complete reply": { input: [learnerAsk], output: [tutorReply], owed: false, text: REPLY_TEXT },
+	} satisfies Record<string, { input: LhMessage[]; output: LhMessage[]; owed: boolean; text: string }>;
+	type Recovery = "reattach after the turn ended" | "reattach while it runs (a restart cuts an owed one)" | "second drop";
+	type Step = "read fails" | "sync" | "Retry" | "offline Retry" | "second tab" | "second tab racing" | "Retry, its views drop twice";
+	const RECOVERIES: Recovery[] = ["reattach after the turn ended", "reattach while it runs (a restart cuts an owed one)", "second drop"];
+	const SEQUENCES: Step[][] = [
+		[], ["read fails"], ["read fails", "sync"], ["sync"], ["Retry"], ["read fails", "Retry"], ["offline Retry"], ["offline Retry", "Retry"],
+		["second tab"], ["second tab", "Retry"], ["second tab racing", "Retry"], ["read fails", "second tab racing", "Retry"],
+		["Retry, its views drop twice"], ["Retry, its views drop twice", "Retry"], ["offline Retry", "second tab", "Retry"],
+	];
+	let cases = 0;
+	for (const [ending, spec] of Object.entries(ENDINGS)) for (const recovery of RECOVERIES) for (const steps of SEQUENCES) {
+		cases++;
+		it(`item 7 matrix: record ending on ${ending}; drop, ${recovery}${steps.length ? ", " + steps.join(", ") : ""}`, async () => {
+			const server = { messages: [...spec.input] as LhMessage[], running: true, online: true, failReads: 0, failSettleRead: false, served: 0, raceNextPost: false, turnsRun: 0, ourContinues: 0, retryPresses: 0 };
+			const views: ("drop" | "drop, then the turn ends" | "auto")[] = [];
+			/** The client's last record read succeeded (after a failed one, a banner may wait for the next sync). */
+			let readable = true;
+			const endTurn = () => {
+				server.running = false;
+				if (!spec.owed) server.messages = [...spec.input, ...spec.output]; // an owed ending's turn is lost (a restart)
+			};
+			const runTurn = () => { server.running = true; server.turnsRun++; };
+			const replay = () => {
+				const frames = [streamFrame({ type: "agent_start" })];
+				for (const message of spec.output) if (message.role === "assistant") frames.push(streamFrame({ type: "message_start", message }), streamFrame({ type: "message_end", message }));
+				return new Response(frames.join("") + streamFrame({ type: "agent_end", messages: [] }) + "data: [DONE]\n\n");
+			};
+			const session = new SessionModel({ chatId: `matrix-${cases}`, initialMessages: spec.input, fetch: async (url, init) => {
+				if (!server.online) { if (!String(url).endsWith("/stream") && String(url) !== "/api/chat") readable = false; throw new TypeError("fetch failed (offline)"); }
+				if (String(url) === "/api/chat") {
+					const input = JSON.parse(String(init?.body)).input as ChatInput;
+					assert.equal(input.type, "continue", "nothing but continue is ever owed here");
+					server.ourContinues++;
+					if (server.raceNextPost && owesTutorReply(server.messages)) { server.raceNextPost = false; runTurn(); }
+					if (server.running) return Response.json({ error: "A turn is already running for this session" }, { status: 409 });
+					if (!owesTutorReply(server.messages)) return Response.json({ error: CONTINUE_NOT_OWED_TEXT }, { status: 400 });
+					runTurn();
+					return Response.json({ ok: true });
+				}
+				if (String(url).endsWith("/stream")) {
+					const view = views.shift() ?? "auto";
+					const recoveryAttach = ++server.served === 2;
+					// "read fails": the read after the recovery attach's terminal (its settle read) fails, once
+					const terminal = (response: Response) => { if (recoveryAttach && server.failSettleRead) server.failReads = 1; return response; };
+					// A drop shows the running turn's partial; with no turn running, the stream had nothing to show before it broke.
+					if (view === "drop") return server.running ? dropMidReply() : new Response(TURN_KEEPALIVE);
+					if (view === "drop, then the turn ends") { endTurn(); return dropMidReply(); }
+					if (!server.running) return terminal(settledTurnResponse());
+					if (server.turnsRun > 0) { server.messages = [...server.messages, ...spec.output]; server.running = false; return terminal(replay()); } // a turn a continue started
+					if (spec.owed) { endTurn(); return dropMidReply(); } // the restart cuts the replay
+					endTurn();
+					return terminal(replay());
+				}
+				if (server.failReads > 0) { server.failReads--; readable = false; return new Response("unavailable", { status: 503 }); }
+				readable = true;
+				return Response.json({ messages: server.messages, turnInFlight: server.running });
+			} });
+			const check = (when: string) => {
+				const state = session.getState();
+				const live = state.status === "submitted" || state.status === "streaming";
+				assert.equal(live, false, `${when}: nothing is left running`);
+				const shown = occurrences(JSON.stringify(state.messages), spec.text);
+				const outcome = state.error === null && !state.droppedStream ? "reply" : state.droppedStream && state.error?.message === STREAM_DROPPED_TEXT ? "dropped" : state.error !== null ? "failure" : "invalid";
+				assert.notEqual(outcome, "invalid", `${when}: one of the three states`);
+				if (outcome === "reply") assert.equal(shown, 1, `${when}: no banner means the reply is there, once (never nothing with no control)`);
+				// A settle read that failed may leave the banner until the next successful sync (follow-ups 1, finding 1).
+				if (readable && shown > 0) assert.equal(outcome, "reply", `${when}: never a banner beside a complete reply`);
+				assert.ok(server.turnsRun <= (spec.owed ? 1 : 0), `${when}: never a tutor turn nobody asked for`);
+				assert.ok(server.ourContinues <= server.retryPresses, `${when}: continue is posted only by a Retry press`);
+				return outcome;
+			};
+
+			// The view attached mid-turn and dropped; the automatic recovery attach then happens as `recovery` says.
+			if (recovery === "reattach after the turn ended") views.push("drop, then the turn ends", "auto");
+			else if (recovery === "second drop") views.push("drop, then the turn ends", "drop");
+			else views.push("drop", "auto");
+			if (steps[0] === "read fails") server.failSettleRead = true;
+			await session.resumeStream(false);
+			check("after the drop and the recovery attach");
+			let ranOrAnswered = false;
+			for (const [index, step] of steps.entries()) {
+				if (step === "read fails" && index === 0) continue;
+				if (step === "read fails") { server.failReads = 1; await session.readRecord().catch(() => {}); check(`after ${step}`); continue; }
+				if (step === "sync") await session.readRecord().catch(() => {});
+				if (step === "Retry") { server.retryPresses++; await session.recoverReply(); if (spec.owed) ranOrAnswered = true; }
+				if (step === "offline Retry") { server.online = false; server.retryPresses++; await session.recoverReply(); server.online = true; check(`after ${step}`); continue; }
+				if (step === "second tab" && owesTutorReply(server.messages)) { server.turnsRun++; server.messages = [...server.messages, ...spec.output]; ranOrAnswered = true; }
+				if (step === "second tab racing") server.raceNextPost = true;
+				if (step === "Retry, its views drop twice") { views.push("drop", "drop"); server.retryPresses++; await session.recoverReply(); if (spec.owed) ranOrAnswered = true; }
+				check(`after ${step}`);
+			}
+			await session.readRecord().catch(() => {}); // the page's next sync
+			const outcome = check("after the final sync");
+			// Expected: the reply once nothing is owed any more (the turn completed, a Retry ran it, or another tab did); the
+			// dropped banner while it is (no Retry yet, or the Retry's own views dropped while its turn still runs).
+			const owedStill = spec.owed && !ranOrAnswered;
+			const retryStillRunning = spec.owed && server.running;
+			assert.equal(outcome, owedStill || retryStillRunning ? "dropped" : "reply", owedStill || retryStillRunning ? "the dropped banner with its Retry" : "the reply, no banner");
+			if (outcome !== "reply") {
+				// The Retry works: one press brings the reply, with one tutor turn.
+				server.retryPresses++;
+				await session.recoverReply();
+				views.length = 0;
+				await session.readRecord().catch(() => {});
+				assert.equal(check("after the final Retry"), "reply");
+			}
+			assert.equal(server.turnsRun, spec.owed ? 1 : 0, spec.owed ? "the lost turn ran exactly once" : "no tutor turn ran");
+		});
+	}
+	it(`item 7 matrix: ${cases} cases (${Object.keys(ENDINGS).length} endings × ${RECOVERIES.length} recovery attaches × ${SEQUENCES.length} step sequences)`, () => assert.equal(cases, 225));
+}
 
 it("item 5: a cut-off with an unanswered question call has the malformed-question recovery only", () => {
 	const messages: LhMessage[] = [

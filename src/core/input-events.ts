@@ -538,6 +538,9 @@ export function failedResponseAtEnd(messages: readonly LhMessage[]): Extract<LhM
 	return undefined;
 }
 
+/** The server's refusal of a `continue` whose record no longer owes a reply (another tab's turn answered it): the client
+ *  treats it as "the session moved on" and syncs, never posting again (follow-ups 1, finding 2). */
+export const CONTINUE_NOT_OWED_TEXT = "The session moved on: the tutor already replied. Syncing the session.";
 /** Learner-facing: why a failure or an empty cut-off has no Retry once a compaction landed after it. */
 export const RETRY_AFTER_COMPACTION_TEXT = "This response cannot be retried after compaction. Send a new message to continue.";
 
