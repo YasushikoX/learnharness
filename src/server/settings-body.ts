@@ -29,10 +29,10 @@ import type {
 	PdfConversionSettings,
 	RoleModelOverride,
 } from "../core/settings.ts";
-import { BACKGROUND_MODEL_ROLES, CACHE_RETENTIONS, COMPACTION_THRESHOLD_FLOOR, CONFIDENCE_CONTROLS, CUSTOM_MODEL_PIN_FLOOR, EXTRACTION_CHUNK_TOKENS_FLOOR, isConfidenceControl, isTranscriptMaxWidth, MODEL_SLOTS, normalizeBaseUrl, READ_ALOUD_RATE_MAX, READ_ALOUD_RATE_MIN, TRANSCRIPT_WIDTH_MAX_REM, TRANSCRIPT_WIDTH_MIN_REM } from "../core/settings.ts";
+import { BACKGROUND_MODEL_ROLES, CACHE_RETENTIONS, COMPACTION_THRESHOLD_FLOOR, CONFIDENCE_CONTROLS, CUSTOM_MODEL_PIN_FLOOR, EXTRACTION_CHUNK_TOKENS_FLOOR, isConfidenceControl, isTranscriptMaxWidth, MODEL_SLOTS, normalizeBaseUrl, PROFILE_CONVERTER_ID, READ_ALOUD_RATE_MAX, READ_ALOUD_RATE_MIN, TRANSCRIPT_WIDTH_MAX_REM, TRANSCRIPT_WIDTH_MIN_REM } from "../core/settings.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
 import { parseRepo } from "./sync/service.ts";
-import { registeredPdfConverterIds } from "./converters/registry.ts";
+import { isRegisteredPdfConverter, registeredPdfConverterIds } from "./converters/registry.ts";
 import { LESSON_LANGUAGES, isDictationEngine, isLessonLanguage } from "../core/language.ts";
 import { PACES, PACE_NOTE_MAX, isPace, normalizePaceNote, type Pace } from "../core/pace.ts";
 import { DIFFICULTIES, isDifficulty, type Difficulty } from "../core/difficulty.ts";
@@ -663,7 +663,7 @@ export function parsePdfConversionSettingsBody(body: unknown): SettingsBodyResul
 	const settings: PdfConversionSettings = {};
 	if (raw.converter !== undefined) {
 		const ids = registeredPdfConverterIds();
-		if (typeof raw.converter !== "string" || !ids.includes(raw.converter.trim())) return { ok: false, error: `converter must be one of: ${ids.join(", ")}` };
+		if (typeof raw.converter !== "string" || !isRegisteredPdfConverter(raw.converter.trim())) return { ok: false, error: `converter must be one of: ${ids.join(", ")}, or custom:<id>` };
 		settings.converter = raw.converter.trim();
 	}
 	if (raw.docling !== undefined) {
@@ -687,6 +687,22 @@ export function parsePdfConversionSettingsBody(body: unknown): SettingsBodyResul
 			out.formulaEnrichment = docling.formulaEnrichment;
 		}
 		settings.docling = out;
+	}
+	if (raw.services !== undefined) {
+		const services = asRecord(raw.services);
+		if (!services) return { ok: false, error: "services must be an object" };
+		const out: NonNullable<PdfConversionSettings["services"]> = {};
+		for (const [id, value] of Object.entries(services)) {
+			const entry = asRecord(value);
+			if (!PROFILE_CONVERTER_ID.test(id) || !entry) return { ok: false, error: `services.${id} must be an object keyed by a converter id` };
+			let baseUrl = "";
+			if (entry.baseUrl !== undefined) {
+				if (typeof entry.baseUrl !== "string") return { ok: false, error: `services.${id}.baseUrl must be an HTTP(S) URL` };
+				if (entry.baseUrl.trim() && !(baseUrl = normalizeBaseUrl(entry.baseUrl))) return { ok: false, error: `services.${id}.baseUrl must be an absolute HTTP(S) URL without credentials, query, or fragment` };
+			}
+			Object.defineProperty(out, id, { value: baseUrl ? { baseUrl } : {}, enumerable: true, configurable: true, writable: true });
+		}
+		settings.services = out;
 	}
 	return { ok: true, settings };
 }

@@ -1,4 +1,5 @@
 import { CURRENT_SETTINGS_VERSION, normalizeBaseUrl } from "../../core/settings.ts";
+import { apiKeyProblem } from "./http-common.ts";
 import { readDoclingAuth, writeDoclingAuth } from "../../store/auth.ts";
 import { readSettings, writeSettings } from "../../store/settings.ts";
 
@@ -31,6 +32,8 @@ export function writeDoclingCredential(baseUrl: string, apiKey: string | undefin
 export function configureDocling(input: { baseUrl: string; apiKey?: string; select?: boolean }): string {
 	const canonical = normalizeBaseUrl(input.baseUrl);
 	if (!canonical) throw new Error("Docling needs an absolute HTTP(S) base URL without credentials, query or fragment");
+	const keyProblem = input.apiKey?.trim() ? apiKeyProblem(input.apiKey) : undefined;
+	if (keyProblem) throw new Error(`${keyProblem}; nothing was saved`);
 	writeDoclingCredential(canonical, input.apiKey?.trim() ? input.apiKey.trim() : undefined);
 	const record = readSettings() ?? { version: CURRENT_SETTINGS_VERSION };
 	const section = record.pdfConversion ?? {};

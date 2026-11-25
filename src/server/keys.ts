@@ -58,10 +58,10 @@ import { customProviderAvailable, installCustomProviderSource } from "./custom-p
 import { claudeCodeAvailable } from "./claude-code-config.ts";
 import { CLAUDE_CODE_PROVIDER } from "../agent/claude-code/constants.ts";
 import { CUSTOM_AUTH_BINDING } from "../core/custom-provider-auth.ts";
-import { DOCLING_API_KEY, DOCLING_AUTH_BINDING } from "../core/pdf-converter.ts";
+import { CONVERTER_CREDENTIALS, DOCLING_API_KEY, DOCLING_AUTH_BINDING } from "../core/pdf-converter.ts";
 
 /** auth.json entries only their own seams read: never in process.env, the key list or a child process. */
-const BOUND = new Set([CUSTOM_AUTH_BINDING, DOCLING_API_KEY, DOCLING_AUTH_BINDING]);
+const BOUND = new Set([CUSTOM_AUTH_BINDING, DOCLING_API_KEY, DOCLING_AUTH_BINDING, CONVERTER_CREDENTIALS]);
 
 // Shared HMR-stable provenance lets external CLIs exclude file-only injections
 // without importing this store-backed module into the agent layer.
@@ -218,7 +218,7 @@ export function providerKeyPresent(provider: string): boolean {
  */
 export function saveKey(id: string, value: string): { ok: true; status: AuthKeyStatus } | { ok: false; error: string } {
 	if (id === CUSTOM_PROVIDER.envVar || id === CUSTOM_AUTH_BINDING) return { ok: false, error: "Use the custom endpoint editor" };
-	if (BOUND.has(id)) return { ok: false, error: "Use the Docling connection setting" };
+	if (BOUND.has(id)) return { ok: false, error: "Use Settings → PDF conversion" };
 	const shape = isProviderEnvVar(id) ? genericProviderKeyGuard(id, value) : validateKeyShape(id, value);
 	if (!shape.ok) return { ok: false, error: shape.error };
 	const trimmed = value.trim();
@@ -239,7 +239,7 @@ export function saveKey(id: string, value: string): { ok: true; status: AuthKeyS
  */
 export function deleteKey(id: string): AuthKeyStatus {
 	if (id === CUSTOM_PROVIDER.envVar || id === CUSTOM_AUTH_BINDING) throw new Error("Use the custom endpoint editor");
-	if (BOUND.has(id)) throw new Error("Use the Docling connection setting");
+	if (BOUND.has(id)) throw new Error("Use Settings → PDF conversion (Docling and other converters)");
 	authStore.deleteAuthVar(id);
 	const record = boot();
 	if (record.fillGap.has(id) && !record.realEnv.has(id)) {
