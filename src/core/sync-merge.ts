@@ -282,6 +282,14 @@ function mergeChat(i: MergeInput & { local: string; remote: string }): MergeResu
 			}
 		}
 	}
+	// WP5 reviews 2 and 3: a session's vocabulary listing is fixed when it starts; a side whose course link lacks it (an
+	// older build), or holds null or a malformed one, must not erase a valid one (an array of non-empty strings), and a
+	// malformed list is never copied
+	const loserLink = (newer === "local" ? r : l).course;
+	const validListing = (v: unknown): v is string[] => Array.isArray(v) && v.every((k) => typeof k === "string" && k.trim() !== "");
+	if (isObj(out.course) && !validListing(out.course.vocabulary) && isObj(loserLink) && loserLink.courseId === out.course.courseId && validListing(loserLink.vocabulary)) {
+		out.course = { ...out.course, vocabulary: [...loserLink.vocabulary] };
+	}
 	out.updatedAt = maxIso(l.updatedAt, r.updatedAt);
 	out.version = chatVersionFor(out);
 	return result(pretty(out), { loser, notes });
@@ -290,8 +298,11 @@ function mergeChat(i: MergeInput & { local: string; remote: string }): MergeResu
 // ─── Courses ───────────────────────────────────────────────────────────────
 
 const COURSE_VERSION = 1;
-/** Fields that move together (an approval sets all four): taken from one side as a unit. */
-const COURSE_UNIT = ["status", "skills", "draft", "error"] as const;
+/** Fields that move together (an approval sets them at once): taken from one side as a unit. The vocabulary mapping
+ *  (WP5) rides the unit because its items name the approved skills and approval writes both: a mapping edit on one device
+ *  and an approval or another edit on the other is a conflict of the unit, so the newer side wins and the other is kept
+ *  as a conflict copy with a note; neither is dropped silently. */
+const COURSE_UNIT = ["status", "skills", "draft", "error", "coverage", "coverageError"] as const;
 /** The weighing pass's fields move together too (fork addition, 2026-11-13): weights, its summary, when and why it failed. */
 const COURSE_WEIGHTS_UNIT = ["skillWeights", "weightsSummary", "weightsAt", "pastExams", "weightsError"] as const;
 
@@ -328,6 +339,24 @@ function mergeCourse(i: MergeInput & { local: string; remote: string }): MergeRe
 	for (const k of COURSE_UNIT) delete out[k];
 	Object.assign(out, unit.value as Obj);
 	if (unit.conflict) overridden("approval state");
+	// A side that merely LACKS `coverage` (a record written by a build without the vocabulary mapping) is not a deletion:
+	// only JSON null is (WP5 review 1, finding 6). When the base had a mapping, the other side left the unit unchanged and
+	// the taken side lacks the field, the mapping is kept if every skill it names is still in the merged skill set;
+	// otherwise the side that has it is saved as a conflict copy with a note, so it is never lost silently.
+	if (!unit.conflict && bu && isObj(bu.coverage) && !("coverage" in (unit.value as Obj))) {
+		const keeper: Side | null = deepEqual(lu, bu) && !deepEqual(ru, bu) ? "local" : deepEqual(ru, bu) && !deepEqual(lu, bu) ? "remote" : null;
+		if (keeper) {
+			const skills = new Set(arr(out.skills).filter((x): x is string => typeof x === "string"));
+			const named = arr(bu.coverage.items).flatMap((item) => (isObj(item) ? arr(item.skills) : []));
+			if (named.every((id) => typeof id === "string" && skills.has(id))) {
+				out.coverage = bu.coverage;
+				notes.push("kept the course's vocabulary mapping, which a copy from an older version of the app did not carry");
+			} else {
+				loser ??= own(i, keeper);
+				notes.push("a copy from an older version of the app dropped the course's vocabulary mapping and its skills changed; the mapping is kept in the conflict copy");
+			}
+		}
+	}
 	const wpick = (side: Obj) => Object.fromEntries(COURSE_WEIGHTS_UNIT.filter((k) => k in side).map((k) => [k, side[k]]));
 	const weights = threeWay(b ? wpick(b) : null, wpick(l), wpick(r), newer, b !== null);
 	for (const k of COURSE_WEIGHTS_UNIT) delete out[k];

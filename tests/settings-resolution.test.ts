@@ -48,6 +48,7 @@ describe("resolveSettings", () => {
 			readAloudAuto: false,
 			readAloudRate: 1,
 			readAloudVoice: null,
+			refuseFinishWithUnintroducedTerms: false,
 		});
 		assert.deepEqual(eff.agent.tools, {});
 		assert.deepEqual(eff.agent.prompts, {});

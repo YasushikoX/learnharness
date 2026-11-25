@@ -27,6 +27,22 @@ const finishLessonInput = Type.Object({
 	summary: Type.String({
 		description: "One or two sentences: what the learner showed they can now do — the evidence the lesson is done.",
 	}),
+	// WP5 (2026-11-25; optional since review 1, so a class without vocabulary never pays a schema retry for it: absent
+	// reads as empty, and the vocabulary refusal is what asks for it). Read by core/coverage-ledger.ts (the finish check,
+	// and what carries into the next session); an entry without a reason defers nothing.
+	deferred: Type.Optional(
+		Type.Array(
+			Type.Object({
+				id: Type.String({ description: "The id of a core term from the course section's VOCABULARY list, copied exactly" }),
+				why: Type.String({ minLength: 1, description: "A few words: why it is left for a later session (required; an entry without it defers nothing)" }),
+			}),
+			{
+				description:
+					"Only when the course section lists VOCABULARY: the core terms listed there that you are deliberately leaving for a later session without " +
+					"introducing them, each with a few words of why. They carry into the next lesson on this skill. Leave it out when every listed term was introduced or the section lists none.",
+			},
+		),
+	),
 });
 
 export function finishLessonTool(ctx: { chatId: string; chatStore: Pick<ChatStore, "getChat"> }): AgentTool<typeof finishLessonInput> {

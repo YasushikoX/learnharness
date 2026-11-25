@@ -50,9 +50,11 @@ export function normalizeQuestionLevel(raw: unknown): QuestionLevel | undefined 
 
 export const conceptIdsField = Type.Array(Type.String(), {
 	description:
-		"REQUIRED, may be empty ([]). The terms or concepts this question tests, one string each: when the session lists a class " +
-		"glossary, its terms exactly as spelled there; otherwise each term exactly as the class material spells it. [] when the " +
-		"question tests no named term. Order does not matter; duplicates are dropped. Recorded with the question, never shown to the learner.",
+		"REQUIRED, may be empty ([]). The terms or concepts this question tests, one string each: when the course section lists " +
+		"VOCABULARY, the ids in its brackets (\"t_…\"), copied exactly without the brackets; an id that is not listed there counts for nothing. " +
+		"Otherwise each term exactly as the class material spells it (as in the example). [] when the question tests no named term. Order does " +
+		"not matter; duplicates are dropped. Recorded with the question, never shown to the learner; a tag records that the term was checked, " +
+		"it never counts as introducing it.",
 });
 
 /** A persisted `conceptIds`: trimmed, blanks and duplicates dropped, first-seen order kept (order carries no meaning).

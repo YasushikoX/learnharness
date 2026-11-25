@@ -19,6 +19,7 @@ export interface ChatCourseLink {
     mode: CourseMode;
     skillIds: string[];
     retest?: boolean;
+    vocabulary?: string[];
 }
 ```
 
@@ -30,6 +31,7 @@ export interface ChatCourseLink {
 - [mode](#chatcourselink-mode)
 - [skillIds](#chatcourselink-skillids)
 - [retest](#chatcourselink-retest)
+- [vocabulary](#chatcourselink-vocabulary)
 
 ### ChatCourseLink courseId
 
@@ -58,6 +60,16 @@ or fading before the exam, and a miss on a learned skill is a lapse (core/master
 
 ```ts
 retest?: boolean;
+```
+
+### ChatCourseLink vocabulary
+
+The vocabulary items LISTED to this session when it started (WP5, core/coverage-ledger.ts listVocabulary): the item
+keys its prompt shows and, for a Learn session, its whole vocabulary obligation at finish. Absent: the class had no
+vocabulary mapping when the session started, and the session owes none.
+
+```ts
+vocabulary?: string[];
 ```
 
 ## CourseMode

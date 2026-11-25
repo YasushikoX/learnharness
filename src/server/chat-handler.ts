@@ -849,6 +849,8 @@ export async function handleChatInput(
 		restoreAutomatic: (automaticIds, retainedIds) => restoreUncommittedAutomatic(chatId, constructed, automaticIds, retainedIds),
 	});
 	const course = courseForTurn(chatId);
+	// WP5: the turn timeline counts the question tags that are not an item of the class
+	if (course?.conceptIds) activeTimeline.watchConceptIds(course.conceptIds);
 	let pendingSideBudgetError: Error | undefined;
 	let liveAgentMessages: (() => LhMessage[]) | undefined;
 	const agentOpts: AgentBuildOptions = {
@@ -1019,7 +1021,8 @@ export async function handleChatInput(
 						// = no research tool in the teacher's registry.
 						searchAvailable,
 						// A course lesson (owner, 2026-11-13): its skill, for the final problem and the grader's rating of it.
-						...(course?.mode === "learn" && course.lessonSkill ? { lesson: { skill: course.lessonSkill, sessionModel: conversation, ...(course.openerSkills ? { openerSkills: course.openerSkills } : {}) } } : {}),
+						// WP5: and, when the class has vocabulary coverage, the skill's terms for the finish check.
+						...(course?.mode === "learn" && course.lessonSkill ? { lesson: { skill: course.lessonSkill, sessionModel: conversation, ...(course.openerSkills ? { openerSkills: course.openerSkills } : {}), ...(course.vocabulary ? { vocabulary: course.vocabulary } : {}) } } : {}),
 					},
 					agentOpts,
 				)

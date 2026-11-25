@@ -1329,22 +1329,26 @@ function verbalizeLatex(src: string, depth: number): VerbalizedLatex | null {
 
 /**
  * Strip paired Markdown emphasis/strikethrough delimiters (`**`, `__`, `~~`, `*`, `_`)
- * in strictly linear O(n) time without backtracking regexes.
+ * in strictly linear O(n) time without backtracking regexes. `unicodeWords`: the
+ * intraword test for `_` reads any Unicode letter or digit as a word character, as
+ * CommonMark does (WP5 review 3: `über_ring` keeps its underscore); read-aloud keeps
+ * the ASCII test it was built with.
  */
-function stripLinearEmphasis(text: string): string {
-	let result = stripPairedDouble(text, "*", false);
-	result = stripPairedDouble(result, "_", true);
-	result = stripPairedDouble(result, "~", false);
-	result = stripPairedSingle(result, "*", false);
-	result = stripPairedSingle(result, "_", true);
+export function stripLinearEmphasis(text: string, opts: { unicodeWords?: boolean } = {}): string {
+	const unicode = opts.unicodeWords === true;
+	let result = stripPairedDouble(text, "*", false, unicode);
+	result = stripPairedDouble(result, "_", true, unicode);
+	result = stripPairedDouble(result, "~", false, unicode);
+	result = stripPairedSingle(result, "*", false, unicode);
+	result = stripPairedSingle(result, "_", true, unicode);
 	return result;
 }
 
-function isWordChar(ch: string | undefined): boolean {
-	return ch !== undefined && /[A-Za-z0-9_]/.test(ch);
+function isWordChar(ch: string | undefined, unicode = false): boolean {
+	return ch !== undefined && (unicode ? /[\p{L}\p{N}\p{M}_]/u : /[A-Za-z0-9_]/).test(ch);
 }
 
-function stripPairedDouble(text: string, marker: string, respectWordBoundary: boolean): string {
+function stripPairedDouble(text: string, marker: string, respectWordBoundary: boolean, unicode = false): string {
 	const drop = new Uint8Array(text.length);
 	const stack: number[] = [];
 	let i = 0;
@@ -1356,11 +1360,11 @@ function stripPairedDouble(text: string, marker: string, respectWordBoundary: bo
 				stack.length > 0 &&
 				prev !== undefined &&
 				!/\s/.test(prev) &&
-				(!respectWordBoundary || !isWordChar(next));
+				(!respectWordBoundary || !isWordChar(next, unicode));
 			const canOpen =
 				next !== undefined &&
 				!/\s/.test(next) &&
-				(!respectWordBoundary || !isWordChar(prev));
+				(!respectWordBoundary || !isWordChar(prev, unicode));
 
 			if (canClose) {
 				const openPos = stack.pop()!;
@@ -1384,7 +1388,7 @@ function stripPairedDouble(text: string, marker: string, respectWordBoundary: bo
 	return out;
 }
 
-function stripPairedSingle(text: string, marker: string, respectWordBoundary: boolean): string {
+function stripPairedSingle(text: string, marker: string, respectWordBoundary: boolean, unicode = false): string {
 	const drop = new Uint8Array(text.length);
 	const stack: number[] = [];
 	for (let i = 0; i < text.length; i++) {
@@ -1398,11 +1402,11 @@ function stripPairedSingle(text: string, marker: string, respectWordBoundary: bo
 			stack.length > 0 &&
 			prev !== undefined &&
 			!/\s/.test(prev) &&
-			(!respectWordBoundary || !isWordChar(next));
+			(!respectWordBoundary || !isWordChar(next, unicode));
 		const canOpen =
 			next !== undefined &&
 			!/\s/.test(next) &&
-			(!respectWordBoundary || !isWordChar(prev));
+			(!respectWordBoundary || !isWordChar(prev, unicode));
 
 		if (canClose) {
 			const openPos = stack.pop()!;
@@ -1689,13 +1693,11 @@ function collectBlocksFromHast(root: Root, language: LessonLanguage): string[] {
 }
 
 /**
- * Parse and sanitise displayed Markdown through the same CommonMark/GFM/math
- * + raw HTML + HAST sanitisation pipeline as `ToolContentResponse`, converting
- * only visible content into clean speakable prose. Pure, no DOM.
+ * The parse stage on its own: displayed Markdown through the same CommonMark/GFM/math + raw HTML + HAST sanitisation
+ * pipeline as `ToolContentResponse`, as the sanitised HAST the screen is built from. No speech vocabulary here, so other
+ * readers of "what is on screen" (core/visible-text.ts, the vocabulary ledger) share it. Pure, no DOM.
  */
-export function markdownToSpeech(markdown: string, language: LessonLanguage = DEFAULT_LESSON_LANGUAGE): string {
-	if (!markdown.trim()) return "";
-
+export function displayedMarkdownHast(markdown: string): Root {
 	const needsMathPrepass = markdown.includes("\\") || (markdown.includes("$") && /[\b\t\n\v\f\r]/.test(markdown));
 	const prepared = (needsMathPrepass ? transformMathDelimiters(repairMathForDisplay(markdown)) : markdown).replace(/\r\n?/g, "\n");
 	const mdast = fromMarkdown(prepared, {
@@ -1703,9 +1705,18 @@ export function markdownToSpeech(markdown: string, language: LessonLanguage = DE
 		mdastExtensions: MDAST_EXTENSIONS,
 	});
 	const rawHast = raw(toHast(mdast, { allowDangerousHtml: true }) as Root) as Root;
-	const cleanHast = sanitize(rawHast, SPEECH_SANITIZE_SCHEMA) as Root;
+	return sanitize(rawHast, SPEECH_SANITIZE_SCHEMA) as Root;
+}
 
-	const blocks = collectBlocksFromHast(cleanHast, language);
+/**
+ * Parse and sanitise displayed Markdown through the same CommonMark/GFM/math
+ * + raw HTML + HAST sanitisation pipeline as `ToolContentResponse`, converting
+ * only visible content into clean speakable prose. Pure, no DOM.
+ */
+export function markdownToSpeech(markdown: string, language: LessonLanguage = DEFAULT_LESSON_LANGUAGE): string {
+	if (!markdown.trim()) return "";
+
+	const blocks = collectBlocksFromHast(displayedMarkdownHast(markdown), language);
 	return blocks
 		.map((b, idx) => (idx < blocks.length - 1 && !/[.!?:]$/.test(b) ? `${b}.` : b))
 		.join(" ");

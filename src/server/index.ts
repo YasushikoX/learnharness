@@ -144,7 +144,10 @@ export {
 	todayCourses,
 	graphSkillLayer,
 	startCourseDraft,
+	startCourseTermMap,
 } from "./courses.ts";
+// Vocabulary coverage (WP5 — docs/courses.md "Vocabulary coverage").
+export { courseTermMapping, editCourseCoverage } from "./course-coverage.ts";
 export { startServerTiming, type ServerTiming } from "./server-timing.ts";
 export { refreshModelCatalog } from "./remote-model-catalog.ts";
 export { subscriptionControlsResponse, subscriptionBrowserResponse } from "./web-subscription-http.ts";

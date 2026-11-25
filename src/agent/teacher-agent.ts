@@ -18,7 +18,9 @@ import { practiceTools, createPracticeGate, type PracticeGate, type PracticeTool
 import { pluginProblemTools, isPluginProblemPoseAcknowledgment, type NativePluginProblemContribution } from "./plugin-problem-tools.ts";
 import { placementProbeTool, placementRecallTool } from "./tools/course.ts";
 import { placementGradeAfterReadSketchHook } from "./placement-grade.ts";
-import { FINISH_SESSION_TOOL } from "../core/course-session.ts";
+import { FINISH_LESSON_TOOL, FINISH_SESSION_TOOL } from "../core/course-session.ts";
+import { finishVocabularyProblem, lessonCoverageAtFinish, vocabularyRefusalText, type LessonVocabulary } from "../core/coverage-ledger.ts";
+import { messagesSeenAtFinish } from "../core/learner-seen.ts";
 import { hasUnreadPlacementSketch, placementProgressOf, type PlacementProgress, type PlacementSkillInfo } from "../core/placement-frontier.ts";
 import { healToolRecord, withArgumentHeal } from "./tools/heal.ts";
 import { sendToUserApplies, sendToUserTool } from "./tools/send-to-user.ts";
@@ -350,6 +352,10 @@ export function baseAgentOptions(
 	/** A course Learn session's teacher (owner, 2026-11-13): finish_lesson waits for an answered final problem, and
 	 *  plan_init for a look in the course's sources. */
 	lessonGates = false,
+	/** A course Learn session's vocabulary (WP5, core/coverage-ledger.ts): with its `refuse` on (a setting, off by default)
+	 *  finish_lesson is refused once when a listed core term is neither introduced nor deferred; either way a clean finish
+	 *  records the lesson's coverage line. Absent: the class has no coverage, nothing is checked. */
+	lessonVocabulary?: LessonVocabulary,
 ) {
 	// Practice never reaches the role fallback (the handler ALWAYS injects
 	// the session's conversation engine — practice rides the same
@@ -461,6 +467,10 @@ export function baseAgentOptions(
 			// One refusal budget for every gate below, the narration guard included (WP6 — agent/refusal-budget.ts): at most
 			// REFUSALS_PER_GATE per gate and REFUSALS_PER_TURN in all, then calls pass. Turn-local: the agent is built once per turn.
 			const refuse = makeGateRefusals(GATE_REFUSAL_CAP, opts.onGateRefusal, REFUSALS_PER_TURN, opts.onGatePass);
+			// WP5 review 2: the vocabulary refusal of one assistant message, shown to every finish_lesson call in it. The
+			// allowance of one is per lesson, counted in SETTLED refusals (vocabularyRefusedBefore): two calls in one message
+			// are prepared before either result exists, so they are one refusal event and both get it.
+			const vocabularyRefusalOf = new WeakMap<object, { block: true; reason: string }>();
 			return {
 				beforeToolCall: async (call: BeforeToolCallContext, signal?: AbortSignal) => {
 					const { assistantMessage, toolCall, context } = call;
@@ -497,6 +507,26 @@ export function baseAgentOptions(
 						const finishProblem = lessonGates ? finishGateProblem(context.messages, toolCall.name, toolCall.id) : null;
 						const finishRefused = finishProblem ? refuse("finish", true, finishGateReason(finishProblem)) : undefined;
 						if (finishRefused) return finishRefused;
+						// The vocabulary check (WP5): once per lesson at most, on its own gate and allowance (agent/refusal-budget.ts), so it
+						// never spends a refusal of the final-problem requirement. It counts only what had reached the learner when the call
+						// was made: this message's prose, not its sibling calls, which have not settled yet (core/learner-seen.ts).
+						// A setting, off by default (general.refuseFinishWithUnintroducedTerms, read into lessonVocabulary.refuse).
+						if (lessonGates && lessonVocabulary?.refuse === true && toolCall.name === FINISH_LESSON_TOOL) {
+							const sibling = vocabularyRefusalOf.get(assistantMessage);
+							if (sibling) return sibling;
+							let missing: ReturnType<typeof finishVocabularyProblem> = null;
+							try {
+								const seen = messagesSeenAtFinish(context.messages as unknown as LhMessage[], assistantMessage as unknown as LhMessage);
+								missing = finishVocabularyProblem(lessonVocabulary, seen, call.args);
+							} catch {
+								missing = null; // nothing in one chat may break a lesson turn: an unreadable transcript refuses nothing
+							}
+							const vocabularyRefused = missing ? refuse("vocabulary", true, vocabularyRefusalText(missing)) : undefined;
+							if (vocabularyRefused) {
+								vocabularyRefusalOf.set(assistantMessage, vocabularyRefused);
+								return vocabularyRefused;
+							}
+						}
 						// The sources gate (owner, 2026-11-13 — core/sources-gate.ts): the plan of a course lesson comes after a look
 						// in the course's sources.
 						const sourcesProblem = lessonGates
@@ -533,7 +563,22 @@ export function baseAgentOptions(
 				}
 			}
 			const noted = await narrationHooks?.afterToolCall?.(call, signal);
-			return (await afterToolCall?.(call, signal)) ?? noted;
+			const after = (await afterToolCall?.(call, signal)) ?? noted;
+			// WP5: a clean finish records what the lesson covered of its listed terms, fixed as of now (the lesson result reads
+			// it back, so later lessons never change it); counted exactly as the vocabulary check counts.
+			if (lessonGates && lessonVocabulary && call.toolCall.name === FINISH_LESSON_TOOL && !(after?.isError ?? call.isError)) {
+				let coverage: ReturnType<typeof lessonCoverageAtFinish> = null;
+				try {
+					coverage = lessonCoverageAtFinish(lessonVocabulary, messagesSeenAtFinish(call.context.messages as unknown as LhMessage[], call.assistantMessage as unknown as LhMessage));
+				} catch {
+					coverage = null; // no line rather than a broken finish
+				}
+				if (coverage) {
+					const details = after?.details ?? call.result.details;
+					return { ...(after ?? {}), details: { ...(details && typeof details === "object" ? details : {}), coverage } };
+				}
+			}
+			return after;
 		},
 		// 0.87.1: shouldStopAfterTurn → finishTurn. Same call point (after
 		// tool results attach, before turn_end) and `{ action: "end" }` still
@@ -653,7 +698,7 @@ export function createTeacherAgent(
 	const gradeHook = ctx?.lesson ? lessonGradeHook(ctx.lesson) : undefined;
 	return baseAgentOptions("teacher", opts, Object.values(tools), ctx
 		? nodeId => ctx.chatStore.getChat(ctx.chatId)?.tree?.nodes.some(node => node.id === nodeId) ?? false
-		: undefined, undefined, gradeHook, ctx?.lesson !== undefined);
+		: undefined, undefined, gradeHook, ctx?.lesson !== undefined, ctx?.lesson?.vocabulary);
 }
 
 /** The bare teach question set (tests, bare agents): quiz with the shared

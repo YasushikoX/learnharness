@@ -184,6 +184,9 @@ const SINGLE = pdfOf(["Eigenvalues and eigenvectors"], ["The characteristic poly
 
 // ── Tests ────────────────────────────────────────────────────────────────
 
+/** The duplicate groups without their pairs (WP5 added `pairs`; tests/coverage-items.test.ts checks them). */
+const groupsOnly = (groups: ReadonlyArray<{ ids: string[]; reasons: string[] }>) => groups.map(({ ids, reasons }) => ({ ids, reasons }));
+
 describe("indexing at upload", () => {
 	it("a converted one-batch PDF is indexed with exactly one model call, and its profile comes from the digest", async () => {
 		const owner = lesson("Single");
@@ -593,7 +596,7 @@ describe("the class glossary", () => {
 		// Matrix (a.pdf) and matrix (b.pdf) stay two entries, side by side for the planner; lookup does not pick one
 		assert.equal(findTerm(glossary, "matrix"), undefined);
 		assert.deepEqual(findTermCandidates(glossary, "matrix").map((c) => c.entry.citations.map((x) => x.materials)), [[[{ id: a.id, name: "a.pdf" }]], [[{ id: b.id, name: "b.pdf" }]]]);
-		assert.deepEqual(glossary.suggestedDuplicates, [{ ids: ["t_Matrix", "t_matrix"], reasons: ["similar_name"] }]);
+		assert.deepEqual(groupsOnly(glossary.suggestedDuplicates), [{ ids: ["t_Matrix", "t_matrix"], reasons: ["similar_name"] }]);
 		assert.deepEqual(glossary.conflicts, []);
 		assert.deepEqual(glossary.indexed.map((x) => x.id).sort(), [a.id, b.id].sort());
 		assert.deepEqual(glossary.incomplete, [{ id: notes.id, name: "notes.md", kind: "text", reason: "no_digest" }]);

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { LessonResult } from "@/src/core";
+import { lessonLabels, type LessonResult } from "@/src/core";
 import { RichText } from "@/components/rich-text";
 import { useNotifyHub } from "@/components/server-events";
 
@@ -54,6 +54,12 @@ export function LessonResultView({
 				<div className="mt-2 text-sm text-foreground/80" data-testid="lesson-result-summary">
 					<RichText prose>{result.summary}</RichText>
 				</div>
+			)}
+			{result.coverage && (
+				// WP5: what the lesson covered of the skill's core terms, in the lesson language
+				<p className="mt-2 text-xs text-muted-foreground" data-testid="lesson-result-terms">
+					{lessonLabels(result.coverage.language).coverage.lessonLine(result.coverage.covered, result.coverage.total, result.coverage.left)}
+				</p>
 			)}
 			<div className="mt-3 flex flex-wrap items-center gap-2">
 				<button type="button" className={BTN} disabled={busy} data-testid="lesson-result-practice" onClick={onPractice}>

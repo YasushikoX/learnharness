@@ -83,10 +83,27 @@ import { weighCourse } from "../agent/subagents/exam-weigher.ts";
 import { callUsage } from "../agent/subagents/extraction.ts";
 import { materialTools } from "../agent/tools/materials.ts";
 import { plannerGraphTools } from "../agent/tools/planner-graph.ts";
+import { approveCoverage, carryForward, hasCoreEntries, pruneStaleSkills, readCourseCoverage } from "../core/coverage-items.ts";
+import type { LessonVocabulary } from "../core/coverage-ledger.ts";
+import {
+	abortCourseTermMapping,
+	approvalProposal,
+	carriedStamp,
+	courseTermMapping,
+	coverageGlossary,
+	coverageView,
+	draftUnassigned,
+	leftAtApprovalReason,
+	lessonCoverage,
+	listedVocabularyFor,
+	sessionVocabulary,
+	startCourseTermMapping,
+	type ConceptIdReader,
+} from "./course-coverage.ts";
 import { stampNewSession, titleFromPrompt } from "./chats.ts";
 import { removeCourseLectureNotes } from "./lecture-notes.ts";
 import { listMaterials, removeMaterial, waitForMaterials } from "./materials.ts";
-import { stores } from "./stores.ts";
+import { effectiveSettings, stores } from "./stores.ts";
 
 /**
  * Courses — the service seam (fork addition, 2026-10-24; spec:
@@ -601,6 +618,8 @@ export function courseView(courseId: string): CourseView | null {
 		missed: missedViews(openMisses(ctx.problems.get(courseId) ?? []), ctx),
 		sessions,
 		reused,
+		// vocabulary coverage (WP5): absent when the class has no indexed core term and no mapping
+		...((v) => (v ? { coverage: v } : {}))(coverageView(course, courseLanguage(course), courseTermMapping(courseId))),
 	};
 }
 
@@ -709,6 +728,7 @@ export function deleteCourse(courseId: string): boolean {
 	if (!stores.courseStore.getCourse(courseId)) return false;
 	draftRuns().get(courseId)?.abort();
 	weighRuns().get(courseId)?.abort();
+	abortCourseTermMapping(courseId);
 	for (const m of stores.materialStore.list(courseId)) removeMaterial(courseId, m.id);
 	stores.materialStore.removeAll(courseId);
 	removeCourseLectureNotes(courseId);
@@ -882,6 +902,8 @@ async function runDraft(courseId: string, feedback: string | undefined, controll
 				...(feedback && course.draft ? { previous: { draft: course.draft, feedback } } : {}),
 				...(approved.length > 0 ? { approved } : {}),
 				language: courseLanguage(course),
+				// the class glossary (WP5): the planner maps its core terms when it has any
+				glossary: coverageGlossary(courseId),
 			},
 			{
 				engine: piEngineForSpec(spec),
@@ -895,11 +917,26 @@ async function runDraft(courseId: string, feedback: string | undefined, controll
 				},
 			},
 		);
+		// WP5: a re-draft keeps the class's earlier vocabulary decisions (carried into the proposal the student reviews)
+		const glossaryNow = coverageGlossary(courseId);
+		const before = readCourseCoverage(stores.courseStore.getCourse(courseId)?.coverage);
+		const coverage =
+			before && (result.coverage || hasCoreEntries(glossaryNow))
+				? {
+						dropped: result.coverage?.dropped ?? [],
+						incomplete: result.coverage?.incomplete ?? (glossaryNow?.incomplete ?? []).map((m) => m.name),
+						shown: result.coverage?.shown ?? { full: 0, names: 0, omitted: 0 },
+						...carryForward(before, result.coverage, result.skills, glossaryNow),
+						// the carry is advice for the page: approval carries again if the approved map changes (review 2, finding 7)
+						...carriedStamp(before),
+					}
+				: result.coverage;
 		const draft: CourseDraft = {
 			createdAt: new Date().toISOString(),
 			summary: result.summary,
 			...(feedback ? { feedback } : {}),
 			skills: result.skills,
+			...(coverage ? { coverage } : {}),
 		};
 		const fresh = stores.courseStore.getCourse(courseId);
 		settle({ status: (fresh?.skills.length ?? 0) > 0 ? "active" : "draft", draft, error: undefined });
@@ -915,21 +952,88 @@ async function runDraft(courseId: string, feedback: string | undefined, controll
 
 // ─── approval (the skills ledger's ONLY writer) ──────────────────────────────
 
-export function approveCourse(courseId: string): Result<CourseRecord> {
+/** A draft of the shape approval reads: an object whose skills each have a key, a name, a statement and their lists. */
+function readableDraft(draft: unknown): draft is CourseDraft {
+	if (!draft || typeof draft !== "object" || Array.isArray(draft)) return false;
+	const skills = (draft as { skills?: unknown }).skills;
+	return (
+		Array.isArray(skills) &&
+		skills.every((s) => {
+			const r = s as Record<string, unknown> | null;
+			return !!r && typeof r === "object" && typeof r.key === "string" && typeof r.name === "string" && typeof r.statement === "string" && Array.isArray(r.requires) && Array.isArray(r.restsOn) && (r.reuse === undefined || typeof r.reuse === "string");
+		})
+	);
+}
+
+/** Approve the pending draft. When the class glossary has core terms NOW (WP5), every one must be assigned or excluded,
+ *  whether or not the draft carries a proposal (none reads as an empty mapping): otherwise approval is refused (409) and
+ *  lists them, unless `leaveUnassigned` (the student's explicit "leave N terms unassigned") makes each one excluded with
+ *  the reason "left out at approval". The class's earlier decisions are carried forward (core/coverage-items.ts
+ *  carryForward) and the ones that could not be kept are listed on the page. A class whose glossary has no core term
+ *  approves as before, its stored mapping (if any) only cleared of skills no longer in the map. */
+export function approveCourse(courseId: string, opts: { leaveUnassigned?: boolean } = {}): Result<CourseRecord> {
 	const course = stores.courseStore.getCourse(courseId);
 	if (!course) return { ok: false, status: 404, error: "Unknown course" };
 	if (draftRuns().has(courseId)) return { ok: false, status: 409, error: "The skill map is still being drafted" };
 	if (!course.draft) return { ok: false, status: 409, error: "There is no draft to approve" };
+	// a synced or hand-edited draft of the wrong shape is refused, never a thrown request (WP5 review 3)
+	if (!readableDraft(course.draft)) return { ok: false, status: 422, error: "The draft cannot be read — ask for changes to re-draft it" };
 	const ctx = checkContext();
 	const problems = draftProblems(course.draft.skills, ctx);
 	if (problems.length > 0) {
 		return { ok: false, status: 422, error: `The draft no longer fits the graph — ask for changes to re-draft it: ${problems.join("; ")}` };
 	}
+	// refused BEFORE anything is written (no silent drop in either direction); the vocabulary part never throws out of
+	// approval (WP5 review 3): a proposal that cannot be read refuses it
+	let unassigned: ReturnType<typeof draftUnassigned>;
+	try {
+		unassigned = draftUnassigned(course);
+	} catch {
+		return { ok: false, status: 409, error: "The draft's vocabulary mapping could not be read — ask for changes to re-draft it" };
+	}
+	if (unassigned.length > 0 && !opts.leaveUnassigned) {
+		const names = unassigned.slice(0, 12).map((e) => e.name).join(", ");
+		return {
+			ok: false,
+			status: 409,
+			error: `${unassigned.length} core term${unassigned.length === 1 ? " is" : "s are"} neither assigned to a skill nor excluded: ${names}${unassigned.length > 12 ? ` and ${unassigned.length - 12} more` : ""}. Assign or exclude ${unassigned.length === 1 ? "it" : "them"}, or choose "Leave ${unassigned.length} unassigned".`,
+		};
+	}
+	const now = new Date().toISOString();
 	const mint = () => `sk_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
-	const { lines, skillIds } = approveDraft(course.draft, ctx, mint, new Date().toISOString());
+	const { lines, skillIds, idOf } = approveDraft(course.draft, ctx, mint, now);
+	let coverage = readCourseCoverage(course.coverage);
+	const glossary = coverageGlossary(courseId);
+	if (hasCoreEntries(glossary)) {
+		let proposal: ReturnType<typeof approvalProposal>;
+		try {
+			proposal = approvalProposal(course, glossary);
+		} catch {
+			return { ok: false, status: 409, error: "The draft's vocabulary mapping could not be read — ask for changes to re-draft it" };
+		}
+		const approved = approveCoverage(proposal, (key) => idOf[key], glossary, opts.leaveUnassigned ? leftAtApprovalReason(courseLanguage(course)) : null, now);
+		if (!approved.ok) return { ok: false, status: 409, error: `Core terms are unassigned: ${approved.unassigned.map((e) => e.term).join(", ")}` };
+		coverage = approved.coverage;
+	}
+	// no stale skill id stays in a stored mapping after an approval
+	if (coverage) {
+		const pruned = pruneStaleSkills(coverage, new Set(skillIds));
+		const displaced = [...(coverage.displaced ?? []), ...pruned.displaced];
+		coverage = { ...coverage, ...pruned.mapping, updatedAt: now, ...(displaced.length > 0 ? { displaced } : {}) };
+	}
 	stores.skillStore.appendSkillLines(lines);
-	const updated = stores.courseStore.updateCourse(courseId, { skills: skillIds, draft: undefined, status: "active", error: undefined })!;
+	const updated = stores.courseStore.updateCourse(courseId, { skills: skillIds, draft: undefined, status: "active", error: undefined, ...(coverage ? { coverage } : {}) })!;
 	return { ok: true, value: updated };
+}
+
+/** "Map the class's terms" (WP5): the planner's mapping-only pass on the approved map, or on the pending draft
+ *  (`target`), in the class's language. It only adds assignments for terms with no decision; its exclusions and links
+ *  become suggestions. Returns at once (server/course-coverage.ts). */
+export function startCourseTermMap(courseId: string, target: "approved" | "draft" = "approved"): Result<CourseRecord> {
+	const course = stores.courseStore.getCourse(courseId);
+	if (!course) return { ok: false, status: 404, error: "Unknown course" };
+	if (draftRuns().has(courseId)) return { ok: false, status: 409, error: "The skill map is being drafted" };
+	return startCourseTermMapping(courseId, courseLanguage(course), target);
 }
 
 // ─── sessions from a course ──────────────────────────────────────────────────
@@ -1009,6 +1113,9 @@ export function lessonResult(chatId: string): LessonResult | null {
 		reviewAt: state ? new Date(reviewAt(state)).toISOString() : null,
 		summary: ev.note?.summary ?? null,
 		next: next ? { id: next, name: ctx.skills.get(next)?.name ?? next } : null,
+		// what the lesson covered of the skill's core terms (WP5)
+		// (read from the clean finish's record; only a class with a vocabulary mapping has one, so others never read the chat)
+		...((c) => (c ? { coverage: c } : {}))(course.coverage ? lessonCoverage(stores.chatStore.getChat(chatId)?.messages ?? [], courseLanguage(course)) : undefined),
 	};
 }
 
@@ -1111,7 +1218,10 @@ export function createCourseSession(
 	const byId = new Map(ctx.graph.nodes.map((n) => [n.id, n]));
 	const picked = propIds.map((id) => byId.get(id)!).filter(Boolean);
 	const chains = chainsForSelection(picked, ctx.graph.chains).map((c) => formatChainLine(c, Object.fromEntries(byId)));
-	const link: ChatCourseLink = { courseId, mode, skillIds: ids, ...(retest ? { retest: true } : {}) };
+	// WP5: the vocabulary items this session is listed (and, for Learn, owes) are fixed now and stored with it
+	const vocabSkill = mode === "learn" || (mode === "practice" && ids.length === 1) ? ids[0] : undefined;
+	const listed = vocabSkill ? listedVocabularyFor(course, vocabSkill) : undefined;
+	const link: ChatCourseLink = { courseId, mode, skillIds: ids, ...(retest ? { retest: true } : {}), ...(listed ? { vocabulary: listed } : {}) };
 	const title = courseSessionTitle(mode, course.title, skills, retest);
 	// Learn and the placement test are conversation sessions (the teacher;
 	// the placement tester); practice and review are practice sessions.
@@ -1199,12 +1309,35 @@ export function courseSessionSkillNames(chatId: string): { courseId: string; ski
 	return { courseId: link.courseId, skills };
 }
 
+/** Is the vocabulary finish refusal on (Settings → General → Lessons; off by default, and off when the settings cannot
+ *  be read)? */
+function refuseFinishSetting(): boolean {
+	try {
+		return effectiveSettings().general.refuseFinishWithUnintroducedTerms === true;
+	} catch {
+		return false;
+	}
+}
+
 /** A course session's per-turn pieces: the prompt section, its mode, and
  *  (practice modes, the placement test) the skills its question/problem
  *  tool may tag. Undefined for other sessions, or when the course is gone. */
 export function courseForTurn(
 	chatId: string,
-): { section: string; mode: CourseMode; exam?: string; skills?: () => ReadonlyArray<{ id: string; name: string }>; placementSkills?: readonly PlacementSkillInfo[]; lessonSkill?: { id: string; name: string }; openerSkills?: Array<{ id: string; name: string }> } | undefined {
+): {
+	section: string;
+	mode: CourseMode;
+	exam?: string;
+	skills?: () => ReadonlyArray<{ id: string; name: string }>;
+	placementSkills?: readonly PlacementSkillInfo[];
+	lessonSkill?: { id: string; name: string };
+	openerSkills?: Array<{ id: string; name: string }>;
+	/** WP5: a Learn session's vocabulary finish check (absent without coverage). */
+	vocabulary?: LessonVocabulary;
+	/** WP5: reads a question's tags against the class's items (core/coverage-ledger.ts resolveConceptId); a tag it does
+	 *  not know is counted as unknown in the turn timeline. */
+	conceptIds?: ConceptIdReader;
+} | undefined {
 	const link = stores.chatStore.getChat(chatId)?.course;
 	if (!link) return undefined;
 	const course = stores.courseStore.getCourse(link.courseId);
@@ -1229,6 +1362,12 @@ export function courseForTurn(
 	const missed = link.mode === "practice" || link.mode === "review" ? missesForSession(openMisses(courseProblems), link.skillIds) : [];
 	const recentSolved = link.mode === "practice" || link.mode === "review" ? recentSolvedForSession(courseProblems, link.skillIds) : [];
 	const nameOf = (id: string) => ctx.skills.get(id)?.name ?? id;
+	// WP5: a Learn session, or a Practice session on one skill, is told the vocabulary its skill owes
+	const vocabSkill = (link.mode === "learn" || (link.mode === "practice" && skills.length === 1)) ? skills[0] : undefined;
+	// the finish refusal is a setting, off by default, read as the turn's agent is built: a change applies from the next turn
+	const refuseFinish = link.mode === "learn" && vocabSkill !== undefined && refuseFinishSetting();
+	const vocabulary = course && vocabSkill ? sessionVocabulary(course, chatId, { id: vocabSkill.id, name: vocabSkill.name }, link.mode, link.vocabulary, { refuseFinish }) : undefined;
+	const coverageParts = vocabulary ? { ...(vocabulary.lesson ? { vocabulary: vocabulary.lesson } : {}), conceptIds: vocabulary.known } : {};
 	const section = coursePromptSection(
 		link.mode,
 		course?.title ?? "(deleted course)",
@@ -1245,6 +1384,7 @@ export function courseForTurn(
 			skillNames: s.skills.filter((id) => link.skillIds.includes(id)).map(nameOf),
 			date: new Date(s.at).toISOString().slice(0, 10),
 		})),
+		vocabulary?.section,
 	);
 	// The exam date becomes the teacher's exam line ("12 Dec 2026, 30 days left"), read fresh every turn so a changed
 	// date, and each passing day, reach the sessions already running. The course's stored time note is no longer read.
@@ -1255,7 +1395,7 @@ export function courseForTurn(
 	const openerSkills = link.mode === "learn" && skills[0]
 		? (ctx.skills.get(skills[0].id)?.requires ?? []).filter((r) => ctx.skillStates.has(r) && ctx.skills.has(r)).map((r) => ({ id: r, name: ctx.skills.get(r)!.name }))
 		: [];
-	if (link.mode === "learn") return { section, mode: link.mode, ...(exam ? { exam } : {}), ...(lessonSkill ? { lessonSkill } : {}), ...(openerSkills.length > 0 ? { openerSkills } : {}) };
+	if (link.mode === "learn") return { section, mode: link.mode, ...(exam ? { exam } : {}), ...(lessonSkill ? { lessonSkill } : {}), ...(openerSkills.length > 0 ? { openerSkills } : {}), ...coverageParts };
 	const tags = skills.map((s) => ({ id: s.id, name: s.name }));
 	if (link.mode === "placement") {
 		const placementSkills: PlacementSkillInfo[] = skills.map((s) => ({
@@ -1266,5 +1406,5 @@ export function courseForTurn(
 		}));
 		return { section, mode: link.mode, ...(exam ? { exam } : {}), skills: () => tags, placementSkills };
 	}
-	return { section, mode: link.mode, ...(exam ? { exam } : {}), skills: () => tags };
+	return { section, mode: link.mode, ...(exam ? { exam } : {}), skills: () => tags, ...coverageParts };
 }

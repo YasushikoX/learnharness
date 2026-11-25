@@ -171,6 +171,9 @@ function source(sourceHash: string, terms: DigestTerm[], opts: { failed?: number
 
 const ids = (g: { terms: Record<string, unknown> }) => Object.keys(g.terms);
 
+/** The duplicate groups without their pairs (WP5 added `pairs`; tests/coverage-items.test.ts checks them). */
+const groupsOnly = (groups: ReadonlyArray<{ ids: string[]; reasons: string[] }>) => groups.map(({ ids, reasons }) => ({ ids, reasons }));
+
 describe("digestMaterial", () => {
 	it("a single-part document (a slide deck) costs exactly one call, which also writes the profile", async () => {
 		const doc = slideDeck(3, 200);
@@ -1077,7 +1080,7 @@ describe("mergeGlossary: exact ids, occurrences, suggested duplicates", () => {
 		assert.deepEqual(eigen.citations.map((c) => [c.sourceHash, c.page, c.tier, c.definitionTier]), [["doc-a", 4, "supporting", "supporting"], ["doc-b", 12, "core", "core"]]);
 		assert.deepEqual(eigen.occurrences.map((o) => [o.sourceHash, o.page]), [["doc-a", 4], ["doc-b", 12]]);
 		assert.equal(eigen.occurrenceCount, 2);
-		assert.deepEqual(g.suggestedDuplicates, [{ ids: ["t_Matrise", "t_matrise"], reasons: ["similar_name"] }]);
+		assert.deepEqual(groupsOnly(g.suggestedDuplicates), [{ ids: ["t_Matrise", "t_matrise"], reasons: ["similar_name"] }]);
 		assert.deepEqual(mergeGlossary([b, a]), g, "independent of input order");
 		assert.deepEqual(g.conflicts, []);
 	});
@@ -1090,7 +1093,7 @@ describe("mergeGlossary: exact ids, occurrences, suggested duplicates", () => {
 			source("physics", [docTerm("velocity", 1, "core", { symbols: ["v"] }), docTerm("voltage", 1, "core", { symbols: ["v", "U"] }), docTerm("internal energy", 1, "core", { symbols: ["U"] })]),
 		]);
 		assert.equal(ids(g).length, 9, "nothing merged");
-		assert.deepEqual(g.suggestedDuplicates, [
+		assert.deepEqual(groupsOnly(g.suggestedDuplicates), [
 			{ ids: ["t_COVID_19", "t_COVID~2d~19"], reasons: ["similar_name"] },
 			{ ids: ["t_Entropy", "t_entropy"], reasons: ["similar_name"] },
 			{ ids: ["t_OLS", "t_ordinary_least_squares"], reasons: ["alias"] },
@@ -1101,7 +1104,7 @@ describe("mergeGlossary: exact ids, occurrences, suggested duplicates", () => {
 		assert.equal(findTerm(g, "velocity")?.id, "t_velocity");
 		// two entries naming each other, and a shared relaxed name plus an alias, are one group with both reasons
 		const both = mergeGlossary([source("x", [docTerm("Kernel", 1, "core", { aliases: ["kernel"] }), docTerm("kernel", 2, "core")])]);
-		assert.deepEqual(both.suggestedDuplicates, [{ ids: ["t_Kernel", "t_kernel"], reasons: ["alias", "similar_name"] }]);
+		assert.deepEqual(groupsOnly(both.suggestedDuplicates), [{ ids: ["t_Kernel", "t_kernel"], reasons: ["alias", "similar_name"] }]);
 	});
 
 	// Review 1, defect 3; review 2, finding 1; review 3, finding 2: shared symbols, flipped aliases, hubs, chains and
@@ -1238,7 +1241,7 @@ describe("mergeGlossary: exact ids, occurrences, suggested duplicates", () => {
 			source("geometry", [docTerm("vertex", 1, "core"), docTerm("vertices", 2, "core"), docTerm("switch", 3, "core"), docTerm("switches", 4, "core")]),
 		]);
 		assert.equal(ids(g).length, 14, "nothing merged");
-		assert.deepEqual(g.suggestedDuplicates, [
+		assert.deepEqual(groupsOnly(g.suggestedDuplicates), [
 			{ ids: ["t_Ohm~27~s_law", `t_Ohm${rsquo}s_law`], reasons: ["similar_name"] },
 			{ ids: ["t_bus", "t_buses"], reasons: ["plural"] },
 			{ ids: ["t_matrices", "t_matrix"], reasons: ["plural"] },
@@ -1259,7 +1262,7 @@ describe("mergeGlossary: exact ids, occurrences, suggested duplicates", () => {
 				docTerm("criterion", 1, "core"), docTerm("criteria", 1, "core"), docTerm("bas", 1, "core"), docTerm("ba", 1, "core"),
 			]),
 		]);
-		assert.deepEqual(quiet.suggestedDuplicates, []);
+		assert.deepEqual(groupsOnly(quiet.suggestedDuplicates), []);
 		assert.deepEqual(pluralSingulars("resistors"), ["resistor"]);
 		assert.ok(pluralSingulars("matrices").includes("matrix") && pluralSingulars("vertices").includes("vertex"));
 		assert.deepEqual(pluralSingulars("GPUs"), [], "an upper-case letter before the ending: not read as a plural");
@@ -1267,9 +1270,9 @@ describe("mergeGlossary: exact ids, occurrences, suggested duplicates", () => {
 
 		// overlapping pairs: one group per connected set, with every reason
 		const ols = mergeGlossary([source("s", [docTerm("ordinary least squares", 1, "core", { aliases: ["OLS"] }), docTerm("OLS", 2, "core"), docTerm("ols", 3, "supporting")])]);
-		assert.deepEqual(ols.suggestedDuplicates, [{ ids: ["t_OLS", "t_ols", "t_ordinary_least_squares"], reasons: ["alias", "similar_name"] }]);
+		assert.deepEqual(groupsOnly(ols.suggestedDuplicates), [{ ids: ["t_OLS", "t_ols", "t_ordinary_least_squares"], reasons: ["alias", "similar_name"] }]);
 		const chain = mergeGlossary([source("c", [docTerm("resistor", 1, "core"), docTerm("Resistors", 2, "core"), docTerm("resistors", 3, "core"), docTerm("capacitor", 4, "core")])]);
-		assert.deepEqual(chain.suggestedDuplicates, [{ ids: ["t_Resistors", "t_resistor", "t_resistors"], reasons: ["plural", "similar_name"] }]);
+		assert.deepEqual(groupsOnly(chain.suggestedDuplicates), [{ ids: ["t_Resistors", "t_resistor", "t_resistors"], reasons: ["plural", "similar_name"] }]);
 		for (const g2 of [g, quiet, ols, chain]) {
 			const seen = g2.suggestedDuplicates.flatMap((x) => x.ids);
 			assert.equal(new Set(seen).size, seen.length, "no entry is in two groups");

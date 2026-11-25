@@ -70,6 +70,8 @@ export interface ApprovedDraft {
 	 *  prerequisite a reused skill already had (so no course skill is
 	 *  locked behind a skill the course doesn't show). */
 	skillIds: string[];
+	/** Each draft key's skill id (the vocabulary mapping's draft keys resolve through it). */
+	idOf: Record<string, string>;
 }
 
 /** Turn a VALID draft into ledger lines + the course's skill set. */
@@ -108,5 +110,5 @@ export function approveDraft(draft: CourseDraft, ctx: DraftCheckContext, mintId:
 	};
 	const all = new Set(draftIds);
 	for (const id of draftIds) for (const req of prerequisiteClosure(id, requiresOf)) all.add(req);
-	return { lines, skillIds: [...all] };
+	return { lines, skillIds: [...all], idOf: Object.fromEntries(idOf) };
 }

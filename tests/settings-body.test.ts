@@ -19,6 +19,7 @@ import {
 	SETTINGS_SECTIONS,
 	parseSyncSettingsBody,
 } from "../src/server/settings-body.ts";
+import { resolveSettings, sanitizeUserSettings } from "../src/core/index.ts";
 
 describe("parseGeneralSettingsBody", () => {
 	it("parses {} and {autoUpdate} replace-whole", () => {
@@ -361,5 +362,27 @@ describe("parseSyncSettingsBody (GitHub sync, 2026-11-02)", () => {
 		for (const body of [{ repo: "nope" }, { repo: "a/b/c" }, { repo: 5 }, "x", null]) {
 			assert.equal(parseSyncSettingsBody(body).ok, false, JSON.stringify(body));
 		}
+	});
+});
+
+describe("general.refuseFinishWithUnintroducedTerms (WP5 review 3: the vocabulary finish refusal, off by default)", () => {
+	it("accepts a boolean and rejects anything else", () => {
+		const on = parseGeneralSettingsBody({ refuseFinishWithUnintroducedTerms: true });
+		assert.ok(on.ok);
+		assert.deepEqual(on.settings, { refuseFinishWithUnintroducedTerms: true });
+		const off = parseGeneralSettingsBody({ refuseFinishWithUnintroducedTerms: false });
+		assert.ok(off.ok);
+		assert.deepEqual(off.settings, { refuseFinishWithUnintroducedTerms: false });
+		for (const bad of ["yes", 1, null, {}]) {
+			const r = parseGeneralSettingsBody({ refuseFinishWithUnintroducedTerms: bad });
+			assert.equal(r.ok, false, String(bad));
+			if (!r.ok) assert.equal(r.error, "refuseFinishWithUnintroducedTerms must be a boolean");
+		}
+	});
+	it("an old settings file without it, a fresh install and a malformed stored value all read as off", () => {
+		assert.equal(resolveSettings(null).general.refuseFinishWithUnintroducedTerms, false);
+		assert.equal(resolveSettings(sanitizeUserSettings({ version: 1, general: { autoUpdate: false, pace: "steady" } })).general.refuseFinishWithUnintroducedTerms, false);
+		assert.equal(resolveSettings(sanitizeUserSettings({ version: 1, general: { refuseFinishWithUnintroducedTerms: "yes" } })).general.refuseFinishWithUnintroducedTerms, false);
+		assert.equal(resolveSettings(sanitizeUserSettings({ version: 1, general: { refuseFinishWithUnintroducedTerms: true } })).general.refuseFinishWithUnintroducedTerms, true);
 	});
 });

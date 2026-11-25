@@ -43,6 +43,7 @@ import { cn } from "@/lib/utils";
 import { HEAD_COUNT, PAGE_HEAD, SECTION_HEAD } from "@/components/section-heads";
 import { FitTitleInput } from "@/components/fit-title-input";
 import { RichLine, RichText } from "@/components/rich-text";
+import { CoverageContext, CoverageSummary, DraftCoverageReview, DraftTerms, SkillTerms, type CoverageActions } from "@/components/course-coverage";
 
 /**
  * The course page (fork addition, 2026-10-24 — docs/courses.md §6): the
@@ -273,6 +274,7 @@ function SkillRow({
 						</div>
 					)}
 					<WeightEditor skill={skill} />
+					<SkillTerms skillId={skill.id} />
 					<div className="max-h-[2.6rem] overflow-hidden [&_p]:line-clamp-2" data-testid={`skill-statement-${skill.id}`}>
 						<RichText className={cn(ITEM_TYPE, "text-muted-foreground")}>{skill.statement}</RichText>
 					</div>
@@ -379,9 +381,11 @@ function DraftReview({
 							{s.restsOn.length > 0 ? ` · rests on ${s.restsOn.length} proposition${s.restsOn.length === 1 ? "" : "s"} you have learned` : ""}
 							{s.cite ? ` · ${s.cite}` : ""}
 						</p>
+						<DraftTerms draftKey={s.key} />
 					</li>
 				))}
 			</ol>
+			<DraftCoverageReview />
 			<textarea
 				value={feedback}
 				onChange={(e) => setFeedback(e.target.value)}
@@ -487,6 +491,7 @@ export function CourseBody({
 	settingsOpen,
 	onSettingsOpenChange,
 	onAsk,
+	onCoverage,
 }: {
 	data: CoursePayload;
 	busy: boolean;
@@ -511,6 +516,8 @@ export function CourseBody({
 	onSettingsOpenChange?: (open: boolean) => void;
 	/** Open the course's Ask conversation (2026-11-25): `reopen` = an existing one's chat id, absent = a new one. */
 	onAsk?: (reopen?: string) => void;
+	/** The vocabulary coverage actions (WP5): edits, "Map the class's terms", approve leaving terms unassigned. */
+	onCoverage?: CoverageActions;
 }) {
 	// The map opens where the learner is: what is due, then what is next.
 	const mapFocus = useMemo(
@@ -630,7 +637,10 @@ export function CourseBody({
 		if (s.learned && s.known) return practiceOnly(s);
 		return undefined;
 	};
+	const draftNames = new Map((course.draft?.skills ?? []).map((s) => [s.key, s.name]));
+	const coverage = data.coverage ? { view: data.coverage, skillNames: names, draftNames, busy, ...(onCoverage ? { actions: onCoverage } : {}) } : null;
 	return (
+		<CoverageContext.Provider value={coverage}>
 		<SkillListContext.Provider value={choose}>
 		<div className="space-y-8">
 			{/* Learn, Ask, Practice (2026-11-25): the three ways in, also before a skill map exists (then only Ask starts). */}
@@ -701,6 +711,9 @@ export function CourseBody({
 							</section>
 						)}
 					</div>
+
+					{/* The class's vocabulary (WP5): unassigned and flagged terms, or "Map the class's terms". */}
+					<CoverageSummary />
 
 					<div className="flex flex-wrap items-center gap-2 border-t border-border/50 pt-6">
 						<h2 className={cn(PAGE_HEAD, "pb-0")}>
@@ -939,6 +952,7 @@ export function CourseBody({
 			{data.sessions.length > 0 && <SessionsSection sessions={data.sessions} />}
 		</div>
 		</SkillListContext.Provider>
+		</CoverageContext.Provider>
 	);
 }
 
@@ -1194,6 +1208,11 @@ data={data}
 					settingsOpen={settingsOpen}
 					onSettingsOpenChange={setSettingsOpen}
 					onAsk={(reopen) => void onAsk(reopen)}
+					onCoverage={{
+						edit: (target, edit) => void call(`/api/courses/${courseId}/coverage`, { target, ...edit }),
+						map: (target) => void call(`/api/courses/${courseId}/coverage`, { map: true, ...(target === "draft" ? { target: "draft" } : {}) }),
+						approveLeaving: () => void call(`/api/courses/${courseId}/approve`, { leaveUnassigned: true }),
+					}}
 				/>
 				</WeightEditContext.Provider>
 				<div className="mt-12 border-t border-border/60 pt-4">

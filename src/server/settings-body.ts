@@ -200,6 +200,12 @@ export function parseGeneralSettingsBody(body: unknown): SettingsBodyResult<Gene
 		}
 		settings.readAloudVoice = raw.readAloudVoice === null ? null : (raw.readAloudVoice as string).trim();
 	}
+	if (raw.refuseFinishWithUnintroducedTerms !== undefined) {
+		if (typeof raw.refuseFinishWithUnintroducedTerms !== "boolean") {
+			return { ok: false, error: "refuseFinishWithUnintroducedTerms must be a boolean" };
+		}
+		settings.refuseFinishWithUnintroducedTerms = raw.refuseFinishWithUnintroducedTerms;
+	}
 	return { ok: true, settings };
 }
 

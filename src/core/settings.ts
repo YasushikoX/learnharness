@@ -422,6 +422,11 @@ export interface GeneralSettings {
 	readAloudRate?: number;
 	/** Preferred system voice (voiceURI or name) for question read-aloud; null = system default matched to lesson language. Per device. */
 	readAloudVoice?: string | null;
+	/** Vocabulary coverage (WP5, 2026-11-25; core/coverage-ledger.ts): refuse a course lesson's `finish_lesson` once while
+	 *  a core term listed to it was neither introduced nor deferred. OFF by default (experimental until a trial with a real
+	 *  model measures its false refusals); the term lists, the lesson-result line and the course page's counts work without
+	 *  it. Read when a turn's agent is built, so a change applies from the next turn. */
+	refuseFinishWithUnintroducedTerms?: boolean;
 }
 
 /** One app-wide dictation preference, shared by every composer. */
@@ -720,6 +725,7 @@ export const FACTORY_SETTINGS: FactorySettings = {
 		readAloudAuto: false,
 		readAloudRate: DEFAULT_READ_ALOUD_RATE,
 		readAloudVoice: null,
+		refuseFinishWithUnintroducedTerms: false,
 	},
 	agent: { workerRequestConcurrency: 8 },
 	dictation: { language: "en" },
@@ -787,6 +793,8 @@ function sanitizeGeneral(raw: Record<string, unknown>): GeneralSettings {
 	if (raw.readAloudVoice !== undefined) {
 		out.readAloudVoice = typeof raw.readAloudVoice === "string" && raw.readAloudVoice.trim() ? raw.readAloudVoice.trim() : null;
 	}
+	const refuseFinish = boolOrDrop(raw.refuseFinishWithUnintroducedTerms);
+	if (refuseFinish !== undefined) out.refuseFinishWithUnintroducedTerms = refuseFinish;
 	return out;
 }
 

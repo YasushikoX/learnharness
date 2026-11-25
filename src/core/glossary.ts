@@ -116,6 +116,11 @@ const TYPOGRAPHIC_APOSTROPHE = /[‘’‚‛ʼ＇]/gu;
 /** Typographic double quotes (left, right, low-9, reversed, the full-width one). */
 const TYPOGRAPHIC_QUOTE = /[“”„‟＂]/gu;
 
+/** Typographic apostrophes and quotes read as the plain ' and " (a prime stays). Lookup and matching only, never identity. Pure. */
+export function plainQuotes(text: string): string {
+	return text.replace(TYPOGRAPHIC_APOSTROPHE, "'").replace(TYPOGRAPHIC_QUOTE, '"');
+}
+
 /**
  * The relaxed key used ONLY for lookup and duplicate suggestions, never for identity: the normalised name with
  * typographic apostrophes and quotes read as the plain ' and " ("Ohm’s law" and "Ohm's law" share one; a prime ′ is
@@ -124,9 +129,7 @@ const TYPOGRAPHIC_QUOTE = /[“”„‟＂]/gu;
  * remaining whitespace removed. Other symbols stay ("C", "C++" and "C--" keep different keys). Pure.
  */
 export function relaxedKey(text: string): string {
-	return normalizeName(text)
-		.replace(TYPOGRAPHIC_APOSTROPHE, "'")
-		.replace(TYPOGRAPHIC_QUOTE, '"')
+	return plainQuotes(normalizeName(text))
 		.toUpperCase()
 		.toLowerCase()
 		.normalize("NFC")
@@ -231,6 +234,18 @@ export interface SuggestedDuplicateGroup {
 	 * Why, over all the group's pairs, sorted: similar_name: names that share a relaxed key; alias: one names another as
 	 * an alias; plural: names that differ only by a simple English plural ending (pluralSingulars).
 	 */
+	reasons: ("alias" | "plural" | "similar_name")[];
+	/**
+	 * Every suggested pair behind the group, with the reasons for that pair (WP5, 2026-11-25): a group formed by chaining
+	 * (A~B, B~C) can join two entries that were never suggested together, so whoever confirms a duplicate reads the pairs,
+	 * not the group. Sorted by the two ids; each pair's ids are sorted.
+	 */
+	pairs: SuggestedDuplicatePair[];
+}
+
+/** One suggested pair of a duplicate group and why it was suggested. */
+export interface SuggestedDuplicatePair {
+	ids: [string, string];
 	reasons: ("alias" | "plural" | "similar_name")[];
 }
 
@@ -429,13 +444,13 @@ export function mergeGlossary(digests: readonly GlossarySource[]): Glossary {
 		}
 		return at;
 	};
-	const pairReasons: [string, Reason][] = [];
+	const pairReasons: [string, string, Reason][] = [];
 	const suggest = (a: string, b: string, reason: Reason) => {
 		if (a === b) return;
 		for (const id of [a, b]) if (!parent.has(id)) parent.set(id, id);
 		const [ra, rb] = [root(a), root(b)];
 		if (ra !== rb) parent.set(byCodeUnit(ra, rb) < 0 ? rb : ra, byCodeUnit(ra, rb) < 0 ? ra : rb);
-		pairReasons.push([a, reason]);
+		pairReasons.push(byCodeUnit(a, b) < 0 ? [a, b, reason] : [b, a, reason]);
 	};
 	const byRelaxedName = new Map<string, string[]>();
 	const nameOf = new Map<string, string>();
@@ -455,16 +470,36 @@ export function mergeGlossary(digests: readonly GlossarySource[]): Glossary {
 			for (const other of byRelaxedName.get(singular) ?? []) if (/\p{Ll}$/u.test(normalizeName(nameOf.get(other)!))) suggest(id, other, "plural");
 		}
 	}
-	const grouped = new Map<string, { ids: string[]; reasons: Set<Reason> }>();
+	interface PairAcc {
+		ids: [string, string];
+		reasons: Set<Reason>;
+	}
+	interface GroupAcc {
+		ids: string[];
+		reasons: Set<Reason>;
+		pairs: Map<string, PairAcc>;
+	}
+	const grouped = new Map<string, GroupAcc>();
 	for (const id of parent.keys()) {
 		const r = root(id);
-		const group = grouped.get(r) ?? { ids: [], reasons: new Set<Reason>() };
+		const group: GroupAcc = grouped.get(r) ?? { ids: [], reasons: new Set<Reason>(), pairs: new Map<string, PairAcc>() };
 		group.ids.push(id);
 		grouped.set(r, group);
 	}
-	for (const [id, reason] of pairReasons) grouped.get(root(id))!.reasons.add(reason);
+	for (const [a, b, reason] of pairReasons) {
+		const group = grouped.get(root(a))!;
+		group.reasons.add(reason);
+		const key = `${a}\n${b}`;
+		const pair = group.pairs.get(key) ?? { ids: [a, b] as [string, string], reasons: new Set<Reason>() };
+		pair.reasons.add(reason);
+		group.pairs.set(key, pair);
+	}
 	const suggestedDuplicates = [...grouped.values()]
-		.map((g) => ({ ids: g.ids.sort(byCodeUnit), reasons: [...g.reasons].sort(byCodeUnit) }))
+		.map((g) => ({
+			ids: g.ids.sort(byCodeUnit),
+			reasons: [...g.reasons].sort(byCodeUnit),
+			pairs: [...g.pairs.entries()].sort(([x], [y]) => byCodeUnit(x, y)).map(([, p]) => ({ ids: p.ids, reasons: [...p.reasons].sort(byCodeUnit) })),
+		}))
 		.sort((a, b) => byCodeUnit(a.ids.join("\n"), b.ids.join("\n")));
 
 	// Object.fromEntries defines own properties, so a key such as "__proto__" never reaches a prototype.
