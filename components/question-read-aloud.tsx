@@ -16,29 +16,40 @@ import {
 	type LessonLanguage,
 	type QuestionData,
 	type QuestionKind,
+	type ReadAloudEngine,
+	type ReadAloudStatus,
 	type SpeechQuestionOption,
 	type UserSettings,
+	effectiveReadAloudEngine,
 } from "@/src/core";
 import { cn } from "@/lib/utils";
 import { useSettingsSaved } from "@/components/settings-signal";
 import {
-	createSpeechController,
-	type SpeechController,
-	type SpeechControllerDeps,
-	type SpeechState,
-} from "@/components/speech-controller";
+	createReadAloudController,
+	type ReadAloudController,
+	type ReadAloudControllerDeps,
+	type ReadAloudState,
+} from "@/components/read-aloud-controller";
 
 export interface ReadAloudConfig {
 	autoRead: boolean;
 	rate: number;
+	/** The system voice (system engine and the fallback). */
 	voice: string | null;
+	/** The engine reads use: Google when chosen (or not chosen) and a key is available, else system voices. */
+	engine: ReadAloudEngine;
 }
 
 const DEFAULT_READ_ALOUD_CONFIG: ReadAloudConfig = {
 	autoRead: false,
 	rate: DEFAULT_READ_ALOUD_RATE,
 	voice: null,
+	engine: "system",
 };
+
+// The learner pressed read aloud in this app session: a question that appears is then likely to be read, so its first
+// sentences are synthesized (and cached) as it appears.
+let readAloudUsed = false;
 
 const AUTO_READ_STORAGE_KEY = "lh:read-aloud-seen";
 const MAX_AUTO_READ_HISTORY = 200;
@@ -98,6 +109,7 @@ function markAutoReadQuestion(questionId: string): void {
 /** Clear recorded auto-read question IDs (for tests). */
 export function clearAutoReadHistory(): void {
 	autoReadSeen.clear();
+	readAloudUsed = false;
 	try {
 		if (typeof window !== "undefined" && window.sessionStorage) {
 			window.sessionStorage.removeItem(AUTO_READ_STORAGE_KEY);
@@ -122,7 +134,7 @@ export function speechOptionsFromQuestion(
 	}));
 }
 
-function configFromSettings(settings: UserSettings | null | undefined): ReadAloudConfig {
+function configFromSettings(settings: UserSettings | null | undefined, googleKey: boolean): ReadAloudConfig {
 	const g = settings?.general;
 	const rate = typeof g?.readAloudRate === "number" && Number.isFinite(g.readAloudRate)
 		? Math.min(READ_ALOUD_RATE_MAX, Math.max(READ_ALOUD_RATE_MIN, g.readAloudRate))
@@ -131,6 +143,7 @@ function configFromSettings(settings: UserSettings | null | undefined): ReadAlou
 		autoRead: g?.readAloudAuto === true,
 		rate,
 		voice: typeof g?.readAloudVoice === "string" && g.readAloudVoice.trim() ? g.readAloudVoice.trim() : null,
+		engine: effectiveReadAloudEngine(g?.readAloudEngine ?? null, googleKey),
 	};
 }
 
@@ -142,12 +155,10 @@ export function useReadAloudSettings(override?: Partial<ReadAloudConfig>): ReadA
 	const reload = useCallback(() => {
 		if (hasOverride || typeof window === "undefined" || typeof fetch !== "function") return;
 		let alive = true;
-		fetch("/api/settings")
-			.then((r) => (r.ok ? (r.json() as Promise<{ settings?: UserSettings | null }>) : null))
-			.then((body) => {
-				if (alive && body) setStored(configFromSettings(body.settings));
-			})
-			.catch(() => {});
+		const json = <T,>(url: string): Promise<T | null> => fetch(url).then((r) => (r.ok ? (r.json() as Promise<T>) : null)).catch(() => null);
+		void Promise.all([json<{ settings?: UserSettings | null }>("/api/settings"), json<ReadAloudStatus>("/api/tts")]).then(([body, tts]) => {
+			if (alive && body) setStored(configFromSettings(body.settings, !!tts?.key?.source));
+		});
 		return () => {
 			alive = false;
 		};
@@ -155,7 +166,8 @@ export function useReadAloudSettings(override?: Partial<ReadAloudConfig>): ReadA
 
 	useEffect(() => reload(), [reload]);
 	useSettingsSaved((section) => {
-		if (section === "general") void reload();
+		// "keys": a Google key saved (Settings → Read aloud, PDF conversion or providers) switches the engine
+		if (section === "general" || section === "keys") void reload();
 	});
 
 	return useMemo(
@@ -163,8 +175,9 @@ export function useReadAloudSettings(override?: Partial<ReadAloudConfig>): ReadA
 			autoRead: override?.autoRead ?? stored.autoRead,
 			rate: override?.rate ?? stored.rate,
 			voice: override?.voice !== undefined ? override.voice : stored.voice,
+			engine: override?.engine ?? stored.engine,
 		}),
-		[override?.autoRead, override?.rate, override?.voice, stored],
+		[override?.autoRead, override?.rate, override?.voice, override?.engine, stored],
 	);
 }
 
@@ -191,20 +204,22 @@ export interface QuestionReadAloudProps {
 	stopRef?: { current: (() => void) | null };
 	/** Optional settings override (tests). */
 	settingsOverride?: Partial<ReadAloudConfig>;
-	/** Optional speechSynthesis dependency injection (tests). */
-	controllerDeps?: SpeechControllerDeps;
+	/** Optional speechSynthesis / Google client injection (tests). */
+	controllerDeps?: ReadAloudControllerDeps;
 	className?: string;
 }
 
-const INITIAL_SPEECH_STATE: SpeechState = {
+const INITIAL_SPEECH_STATE: ReadAloudState = {
 	status: "unsupported",
 	speaking: false,
 	voices: [],
+	engine: "system",
+	notice: null,
 };
 
 const NO_UTTERANCES: readonly string[] = [];
 
-function unavailableReason(status: SpeechState["status"], buildFailed: boolean): string | null {
+function unavailableReason(status: ReadAloudState["status"], buildFailed: boolean): string | null {
 	if (status === "unsupported") return "Read aloud is unavailable in this browser";
 	if (status === "no-voices") return "No system speech voices installed";
 	if (buildFailed) return "This question cannot be read aloud";
@@ -263,8 +278,8 @@ export function QuestionReadAloud({
 	className,
 }: QuestionReadAloudProps) {
 	const config = useReadAloudSettings(settingsOverride);
-	const controllerRef = useRef<SpeechController | null>(null);
-	const [speech, setSpeech] = useState<SpeechState>(INITIAL_SPEECH_STATE);
+	const controllerRef = useRef<ReadAloudController | null>(null);
+	const [speech, setSpeech] = useState<ReadAloudState>(INITIAL_SPEECH_STATE);
 	const [shortcutLabel, setShortcutLabel] = useState<string>(() => formatBinding(bindingForAction("read-question-aloud")));
 	const reasonId = useId();
 
@@ -291,9 +306,10 @@ export function QuestionReadAloud({
 	const latestRef = useRef({ utterances, language, config, active });
 	latestRef.current = { utterances, language, config, active };
 
-	// Create and dispose the Web Speech controller on mount/unmount.
+	// Create and dispose the read-aloud controller (Google and system voices) on mount/unmount.
 	useEffect(() => {
-		const controller = createSpeechController(controllerDeps);
+		const controller = createReadAloudController(controllerDeps);
+		controller.setEngine(latestRef.current.config.engine);
 		controllerRef.current = controller;
 		setSpeech(controller.getState());
 		const unsubscribe = controller.subscribe(setSpeech);
@@ -305,6 +321,10 @@ export function QuestionReadAloud({
 			if (controllerRef.current === controller) controllerRef.current = null;
 		};
 	}, [controllerDeps, stopRef]);
+
+	useEffect(() => {
+		controllerRef.current?.setEngine(config.engine);
+	}, [config.engine]);
 
 	// Keep shortcut hint in sync if the user rebinds the shortcut in Settings.
 	useEffect(() => {
@@ -352,7 +372,10 @@ export function QuestionReadAloud({
 		const controller = controllerRef.current;
 		if (!controller) return;
 		if (controller.getState().speaking) controller.stop();
-		else speakNow();
+		else {
+			readAloudUsed = true;
+			speakNow();
+		}
 	}, [speakNow]);
 
 	// Keyboard shortcut: toggle play/stop while this question is active.
@@ -377,6 +400,13 @@ export function QuestionReadAloud({
 		speakNow();
 	}, [config.autoRead, active, speech.status, chatId, questionId, utterances.length, speakNow]);
 
+	// Google voices: synthesize the first sentences as the question appears when it is likely to be read (the learner has
+	// used read aloud in this session; auto-read speaks at once anyway). Cached on the server, so the read starts at once.
+	useEffect(() => {
+		if (!active || config.autoRead || !readAloudUsed || speech.engine !== "google" || utterances.length === 0) return;
+		controllerRef.current?.prefetch(utterances, { language, rate: config.rate, voice: config.voice });
+	}, [active, config.autoRead, config.rate, config.voice, speech.engine, utterances, language]);
+
 	// While the voice list is still loading the button waits, without a reason (it would flash before voices arrive).
 	const reason = unavailableReason(speech.status, built === null);
 	const disabled = reason !== null || speech.status === "loading" || utterances.length === 0;
@@ -384,6 +414,7 @@ export function QuestionReadAloud({
 	// Changing label alone communicates state — never combine with aria-pressed. The accessible
 	// name starts with the visible text, so voice control ("click Read aloud") finds it.
 	const actionLabel = speaking ? "Stop reading the question" : "Read aloud the question";
+	const notice = reason ? null : speech.notice;
 	const tooltip = reason
 		? reason
 		: speech.status === "loading"
@@ -400,11 +431,17 @@ export function QuestionReadAloud({
 					{reason}
 				</span>
 			)}
+			{notice && (
+				<span role="status" data-testid="question-read-aloud-notice" title={notice} className={READ_ALOUD_REASON}>
+					{notice}
+				</span>
+			)}
 			<div className={cn(READ_ALOUD_SLOT, className)}>
 				<button
 					type="button"
 					data-testid="question-read-aloud"
 					data-speech-status={speech.status}
+					data-speech-engine={speech.engine}
 					disabled={disabled}
 					aria-label={actionLabel}
 					aria-describedby={reason ? reasonId : undefined}
