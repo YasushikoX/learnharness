@@ -32,6 +32,8 @@ export const ASK_FRAGMENT_CONDITIONS: Readonly<Record<string, (c: AskPromptCapab
 	// WP8: the class tools (quizzes and exams; what the learner says they know)
 	"ask/40-class-facts.md": (c) => c.tools.includes("assessment_save"),
 	"ask/41-self-reports.md": (c) => c.tools.includes("record_self_report"),
+	// WP9: lectures, the class position, weights, the class's settings, and "where you stand"
+	"ask/42-class-page.md": (c) => c.tools.includes("class_update"),
 };
 
 /** The fixed wording of the grounding rules, per course language (every language the fork supports). */

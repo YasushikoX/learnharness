@@ -34,7 +34,17 @@ const CONTENT_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 /** WP8: the Short question tools whose result is a change card (components/class-change-card.tsx). */
-const CHANGE_TOOLS: ReadonlySet<string> = new Set(["assessment_save", "assessment_remove", "record_self_report"]);
+const CHANGE_TOOLS: ReadonlySet<string> = new Set([
+	"assessment_save",
+	"assessment_remove",
+	"record_self_report",
+	// WP9: lectures, the class position, skill weights, class settings
+	"lecture_save",
+	"lecture_remove",
+	"class_position_set",
+	"skill_weights_set",
+	"class_update",
+]);
 
 /** Tools that pose a question: the dock shows them live, the transcript only once answered. */
 const QUESTION_TOOLS: ReadonlySet<string> = new Set(["quiz", "probe", "explain", "recall", "ask_user_question"]);

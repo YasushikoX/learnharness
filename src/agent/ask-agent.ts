@@ -27,6 +27,10 @@ import { jobTools, type JobToolContext } from "./tools/jobs.ts";
  *     assessment_remove, assessments_find_in_syllabus and (with an approved skill map) record_self_report. They are the
  *     ONLY Ask tools that change anything: the class's assessments, and the learner's self-reports, which are the only
  *     way an Ask conversation reaches understanding (core/mastery.ts applySelfReports; never graded evidence).
+ *   - WP9 (2026-11-25): the rest of what the class page lets the learner change: lectures_list, lecture_save,
+ *     lecture_remove, class_position_set, skill_weights_set (with a map), class_update (title, language, pace, folder),
+ *     and the read-only class_overview ("where you stand"). Deleting the class or its files, approving or re-drafting the
+ *     skill map and Settings outside the class have no tool.
  * Plus plain reply text. Its prompt is prompts/ask/ only, each conditional fragment composed only when this turn offers
  * what it is about (agent/ask-prompt.ts).
  */
@@ -48,6 +52,14 @@ export const ASK_TOOL_NAMES = Object.freeze([
 	"assessment_remove",
 	"assessments_find_in_syllabus",
 	"record_self_report",
+	// WP9: everything else the learner edits on the class page (agent/tools/class-facts.ts)
+	"lectures_list",
+	"lecture_save",
+	"lecture_remove",
+	"class_position_set",
+	"skill_weights_set",
+	"class_update",
+	"class_overview",
 ] as const);
 
 export interface AskAgentContext {

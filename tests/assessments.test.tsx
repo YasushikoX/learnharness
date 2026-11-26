@@ -32,6 +32,8 @@ const { graphStore } = await import("../src/store/graph.ts");
 const { materialStore } = await import("../src/store/materials.ts");
 const courses = await import("../src/server/courses.ts");
 const assess = await import("../src/server/assessments.ts");
+// WP9: the change cards, Undo and the tools' port moved to server/class-changes.ts
+const changes = await import("../src/server/class-changes.ts");
 const { handleChatRequest } = await import("../src/server/chat-handler.ts");
 const { runningTurn } = await import("../src/server/turn-runs.ts");
 const { createAskAgent, ASK_TOOL_NAMES } = await import("../src/agent/ask-agent.ts");
@@ -144,7 +146,7 @@ function scripted(steps: FauxResponseStep[]): PiEngine {
 
 async function runTurn(chatId: string, text: string, engine: PiEngine) {
 	const req = new Request("http://test/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatId, input: { type: "text", text } }) });
-	const ack = await handleChatRequest(req, (opts) => createAskAgent({ classFacts: classFactsTools(assess.classFactsPort(chatId)!) }, { ...opts, engine }));
+	const ack = await handleChatRequest(req, (opts) => createAskAgent({ classFacts: classFactsTools(changes.classFactsPort(chatId)!) }, { ...opts, engine }));
 	if (ack.status !== 200) assert.fail(`expected 200 ack, got ${ack.status}: ${await ack.text()}`);
 	const handle = runningTurn(chatId);
 	if (handle) await new Response(handle.subscribe()).text();
@@ -502,19 +504,23 @@ describe("Short question writes what the learner states", () => {
 	it("offers the class tools (self-reports only with a skill map) and tells the prompt today's date", () => {
 		const { courseId } = approvedCourse();
 		const chatId = askChat(courseId);
-		const tools = classFactsTools(assess.classFactsPort(chatId)!);
-		assert.deepEqual(Object.keys(tools).sort(), ["assessment_remove", "assessment_save", "assessments_find_in_syllabus", "assessments_list", "record_self_report"]);
+		const tools = classFactsTools(changes.classFactsPort(chatId)!);
+		// WP9 added the rest of the class page's edits (tests/where-you-stand.test.tsx pins those)
+		assert.deepEqual(
+			Object.keys(tools).filter((n) => !["lectures_list", "lecture_save", "lecture_remove", "class_position_set", "skill_weights_set", "class_update", "class_overview"].includes(n)).sort(),
+			["assessment_remove", "assessment_save", "assessments_find_in_syllabus", "assessments_list", "record_self_report"],
+		);
 		for (const name of Object.keys(tools)) assert.ok((ASK_TOOL_NAMES as readonly string[]).includes(name), name);
 		const bare = courseStore.createCourse("No map");
 		const early = askChat(bare.id);
-		assert.ok(!("record_self_report" in classFactsTools(assess.classFactsPort(early)!)));
+		assert.ok(!("record_self_report" in classFactsTools(changes.classFactsPort(early)!)));
 		const agent = createAskAgent({ classFacts: tools }, { engine: scripted([]) });
 		assert.match(agent.state.systemPrompt, /## Quizzes and exams the learner tells you about/);
 		assert.match(agent.state.systemPrompt, /## What the learner says they know/);
 		assert.match(agent.state.systemPrompt, /<today>\nToday is \w+day \d{4}-\d{2}-\d{2}\.\n<\/today>/);
 		const plain = askSystemPrompt({ caps: { tools: ["material_search"], sources: { pdf: true, other: false, notes: false } } });
 		assert.doesNotMatch(plain, /Quizzes and exams the learner|<today>/, "without the tools: no fragment, no date");
-		assert.equal(assess.classFactsPort("chat_nope"), null);
+		assert.equal(changes.classFactsPort("chat_nope"), null);
 	});
 
 	it("\"quiz 3 is next Friday on chapters 4 and 5\": saved at once, the date resolved, shown as a card; Undo removes it", async () => {
@@ -601,7 +607,7 @@ describe("Short question writes what the learner states", () => {
 		const last = chatStore.getChat(chatId)!.messages.at(-1) as unknown as { content: Array<{ text?: string }> };
 		assert.match(last.content.map((c) => c.text ?? "").join(""), /Which Quiz 3/);
 		// a date it cannot read is refused too
-		const port = assess.classFactsPort(chatId)!;
+		const port = changes.classFactsPort(chatId)!;
 		const save = classFactsTools(port).assessment_save!;
 		const refused = (await save.execute("x", { kind: "quiz", title: "Quiz 9", date: "after the break" }, undefined as never)) as { isError?: boolean; content: Array<{ text: string }> };
 		assert.equal(refused.isError, true);
@@ -701,7 +707,7 @@ describe("self-reports: through Short question, the page and sync", () => {
 	it("refuses skills off the approved map; deleting the Ask chat keeps the report (and costs no progress)", async () => {
 		const { courseId, b } = approvedCourse();
 		const chatId = askChat(courseId);
-		const port = assess.classFactsPort(chatId)!;
+		const port = changes.classFactsPort(chatId)!;
 		assert.equal(port.selfReport({ skillIds: ["sk_stranger"], stance: "know", note: "" }).ok, false);
 		assert.equal(port.selfReport({ skillIds: [b], stance: "maybe", note: "" }).ok, false);
 		assert.ok(port.selfReport({ skillIds: [b], stance: "dont_know", note: "poles confuse me" }).ok);
@@ -934,7 +940,7 @@ describe("review 1 fixes", () => {
 		// the tool refuses the ambiguous date and tells the agent the question to ask, naming both dates
 		const { courseId } = approvedCourse();
 		const chatId = askChat(courseId);
-		const port = assess.classFactsPort(chatId)!;
+		const port = changes.classFactsPort(chatId)!;
 		const save = classFactsTools({ ...port, now: () => wed, timeZone: () => undefined }).assessment_save!;
 		const out = (await save.execute("x", { kind: "quiz", title: "Quiz 3", date: "next Friday" }, undefined as never)) as { isError?: boolean; content: Array<{ text: string }> };
 		assert.equal(out.isError, true);
@@ -942,12 +948,12 @@ describe("review 1 fixes", () => {
 		assert.deepEqual(live(getCourse(courseId)), [], "nothing saved");
 		// the browser's time zone rides the chat request and reaches the class tools and the prompt
 		const req = new Request("http://test/api/chat", { method: "POST", headers: { "Content-Type": "application/json", "X-LH-Time-Zone": "America/Los_Angeles" }, body: JSON.stringify({ chatId, input: { type: "text", text: "hi" } }) });
-		const ack = await handleChatRequest(req, (opts) => createAskAgent({ classFacts: classFactsTools(assess.classFactsPort(chatId)!) }, { ...opts, engine: scripted([fauxAssistantMessage([fauxText("Hi.")])]) }));
+		const ack = await handleChatRequest(req, (opts) => createAskAgent({ classFacts: classFactsTools(changes.classFactsPort(chatId)!) }, { ...opts, engine: scripted([fauxAssistantMessage([fauxText("Hi.")])]) }));
 		assert.equal(ack.status, 200);
 		const handle = runningTurn(chatId);
 		if (handle) await new Response(handle.subscribe()).text();
 		assert.equal(assess.learnerTimeZone(chatId), "America/Los_Angeles");
-		assert.equal(assess.classFactsPort(chatId)!.timeZone(), "America/Los_Angeles");
+		assert.equal(changes.classFactsPort(chatId)!.timeZone(), "America/Los_Angeles");
 		assert.match(askSystemPrompt({ caps: { tools: ["assessment_save"], sources: { pdf: false, other: false, notes: false } }, now: utcMorning, timeZone: "America/Los_Angeles" }), /Today is Wednesday 2026-11-25\./);
 	});
 
@@ -968,11 +974,11 @@ describe("review 1 fixes", () => {
 			{ id: "rma", role: "assistant", content: [{ type: "toolCall", id: "rm", name: "assessment_remove", arguments: {} }], ...ASSISTANT_BASE, timestamp: Date.now() },
 			{ id: "rmr", role: "toolResult", toolCallId: "rm", toolName: "assessment_remove", content: [{ type: "text", text: "ok" }], isError: false, details: { change: { kind: "assessment", courseId, ...removed.value, skillNames: [] } }, timestamp: Date.now() },
 		] as unknown as LhMessage[]);
-		assert.equal(assess.classChangeStatuses(chatId).rm, "applied");
+		assert.equal(changes.classChangeStatuses(chatId).rm, "applied");
 		courses.setCourseExamDate(courseId, inDays(40));
 		courses.setCourseExamDate(courseId, undefined);
-		assert.equal(assess.classChangeStatuses(chatId).rm, "changed");
-		assert.equal(assess.undoClassChange(chatId, "rm").ok, false);
+		assert.equal(changes.classChangeStatuses(chatId).rm, "changed");
+		assert.equal(changes.undoClassChange(chatId, "rm").ok, false);
 		assert.equal(getCourse(courseId).examDate, undefined, "the old date does not come back");
 		// N3: a bare weekday said on that weekday could be today or a week from today
 		const fri = new Date(2026, 10, 27, 12).getTime();
@@ -1010,28 +1016,28 @@ describe("review 1 fixes", () => {
 			{ id: `${id}r`, role: "toolResult", toolCallId: id, toolName: "assessment_save", content: [{ type: "text", text: "ok" }], isError: false, details: { change }, timestamp: Date.now() },
 		];
 		chatStore.saveMessages(chatId, toolCall("conv", { kind: "assessment", courseId, ...edited.value, skillNames: [] }) as unknown as LhMessage[]);
-		assert.deepEqual(assess.classChangeStatuses(chatId), { conv: "applied" });
+		assert.deepEqual(changes.classChangeStatuses(chatId), { conv: "applied" });
 		courseStore.updateCourse(courseId, { examDate: inDays(35) });
-		assert.deepEqual(assess.classChangeStatuses(chatId), { conv: "changed" });
-		assert.equal(assess.undoClassChange(chatId, "conv").ok, false);
+		assert.deepEqual(changes.classChangeStatuses(chatId), { conv: "changed" });
+		assert.equal(changes.undoClassChange(chatId, "conv").ok, false);
 		assert.equal(getCourse(courseId).examDate, inDays(35), "the synced date stays");
 		// removing the (new) legacy exam: its card holds only while its own tombstone does
 		courseStore.updateCourse(courseId, { assessments: [] });
 		const removed = assess.deleteAssessment(courseId, A.LEGACY_EXAM_ID);
 		assert.ok(removed.ok);
 		chatStore.saveMessages(chatId, [...chatStore.getChat(chatId)!.messages, ...(toolCall("rm", { kind: "assessment", courseId, ...removed.value, skillNames: [] }) as unknown as LhMessage[])]);
-		assert.equal(assess.classChangeStatuses(chatId).rm, "applied");
-		assert.ok(assess.undoClassChange(chatId, "rm").ok);
+		assert.equal(changes.classChangeStatuses(chatId).rm, "applied");
+		assert.ok(changes.undoClassChange(chatId, "rm").ok);
 		assert.equal(getCourse(courseId).examDate, inDays(35));
 		courseStore.updateCourse(courseId, { examDate: undefined }); // the field becomes empty again some other way
-		assert.equal(assess.classChangeStatuses(chatId).rm, "changed", "the removal card does not come back to life");
+		assert.equal(changes.classChangeStatuses(chatId).rm, "changed", "the removal card does not come back to life");
 		// an ordinary item: a write with the same stamp but other values (another device, the same millisecond) is a change
 		const made = assess.createAssessment(courseId, { kind: "quiz", title: "Quiz 1", date: inDays(3) });
 		assert.ok(made.ok);
 		chatStore.saveMessages(chatId, [...chatStore.getChat(chatId)!.messages, ...(toolCall("add", { kind: "assessment", courseId, ...made.value, skillNames: [] }) as unknown as LhMessage[])]);
 		const entries = A.readAssessmentEntries(getCourse(courseId).assessments).map((e) => (e.id === made.value.id ? { ...e, title: "Quiz 1 (moved)" } : e));
 		courseStore.updateCourse(courseId, { assessments: entries });
-		assert.equal(assess.classChangeStatuses(chatId).add, "changed");
+		assert.equal(changes.classChangeStatuses(chatId).add, "changed");
 		assert.ok(A.sameEntry(made.value.after, made.value.after) && !A.sameEntry({ ...made.value.after!, title: "x" }, made.value.after));
 	});
 
@@ -1131,7 +1137,7 @@ describe("review 1 fixes", () => {
 		const other = courseStore.createCourse("Class B");
 		courseStore.updateCourse(other.id, { status: "active", skills: [b] });
 		const chatId = askChat(courseId);
-		assert.ok(assess.classFactsPort(chatId)!.selfReport({ skillIds: [b], stance: "dont_know", note: "" }).ok);
+		assert.ok(changes.classFactsPort(chatId)!.selfReport({ skillIds: [b], stance: "dont_know", note: "" }).ok);
 		const inB = courses.courseView(other.id)!.skills.find((s) => s.id === b)!.selfReport!;
 		assert.equal(inB.courseId, courseId, "B shows A's report and knows it is A's");
 		assert.equal(inB.chatId, chatId);
@@ -1147,7 +1153,7 @@ describe("review 1 fixes", () => {
 		assert.equal(await removeSelfReport({ id: "sr_gone" }, other.id, ok), "Unknown self-report");
 		assert.equal(await removeSelfReport({ id: "x" }, other.id, (async () => { throw new Error("offline"); }) as unknown as typeof fetch), "Could not reach the server — try again.");
 		// the chat it was said in is deleted: the report stays, its "where" link goes
-		assert.ok(assess.classFactsPort(chatId)!.selfReport({ skillIds: [b], stance: "shaky", note: "" }).ok);
+		assert.ok(changes.classFactsPort(chatId)!.selfReport({ skillIds: [b], stance: "shaky", note: "" }).ok);
 		chatStore.deleteChat(chatId);
 		const kept = courses.courseView(courseId)!.skills.find((s) => s.id === b)!.selfReport!;
 		assert.equal(kept.stance, "shaky");
@@ -1202,7 +1208,7 @@ describe("review 1 fixes", () => {
 		assert.ok(made.ok);
 		// Ask: naming another all-Japanese quiz adds it, never overwrites the one there
 		const chatId = askChat(courseId);
-		const save = classFactsTools(assess.classFactsPort(chatId)!).assessment_save!;
+		const save = classFactsTools(changes.classFactsPort(chatId)!).assessment_save!;
 		const out = (await save.execute("x", { kind: "quiz", title: "中間試験", date: inDays(9) }, undefined as never)) as { isError?: boolean };
 		assert.notEqual(out.isError, true);
 		assert.deepEqual(live(getCourse(courseId)).map((a) => [a.title, a.date]).sort(), [["中間試験", inDays(9)], ["小テスト1", inDays(4)]]);

@@ -141,6 +141,8 @@ const ASK_FRAGMENTS = [
 	"ask/23-no-sources.md", "ask/24-no-tools.md", "ask/30-figure-blocks.md", "ask/31-circuits.md", "ask/32-visual.md", "ask/33-demo.md",
 	// WP8: the class tools' fragments (composed only when those tools are offered)
 	"ask/40-class-facts.md", "ask/41-self-reports.md",
+	// WP9: the rest of the class page (lectures, position, weights, settings, the overview)
+	"ask/42-class-page.md",
 ];
 
 const NOT_ASK = ["probe_done", "plan_init", "finish_session", "finish_lesson", "problem", "conclude", "read_sketch", "send_to_user", "probe", "recall", "read", "ls", "find", "grep", "show_image", "research", "pdf"];

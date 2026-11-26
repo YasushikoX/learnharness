@@ -9,7 +9,8 @@ import {
 } from "../agent/teacher-agent.ts";
 import { createAskAgent } from "../agent/ask-agent.ts";
 import { classFactsTools } from "../agent/tools/class-facts.ts";
-import { classFactsPort, learnerTimeZone, noteClientTimeZone } from "./assessments.ts";
+import { learnerTimeZone, noteClientTimeZone } from "./assessments.ts";
+import { classFactsPort } from "./class-changes.ts";
 import { piEngineForSpec, type PiEngine } from "../agent/models.ts";
 import { connectionBackgroundAllowed as subscriptionBackgroundAllowed, connectionScopeCurrent, isSubscriptionProvider } from "../agent/subscription-connections.ts";
 import { nativeSubscriptionError } from "../agent/subscription-stream.ts";
