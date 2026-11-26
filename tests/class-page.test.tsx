@@ -17,7 +17,8 @@ const { ClassPanel, skillMapButton } = await import("../components/class-panel.t
 const { ClassSetup, filesSummary, mapStepState, setupSteps } = await import("../components/class-setup.tsx");
 const { filesCount } = await import("../components/class-files.tsx");
 const { materialStatusLine, pagesLabel } = await import("../components/materials-control.tsx");
-const { CourseBody, UNDERSTANDING_HELP } = await import("../components/course-page.tsx");
+const { CourseBody, UNDERSTANDING_HELP, titleFieldValue } = await import("../components/course-page.tsx");
+const { isUntitledClass, UNTITLED_CLASS } = await import("../src/core/index.ts");
 const { SHORT_QUESTION } = await import("../components/course-modes.tsx");
 type CoursePayload = import("../components/course-page.tsx").CoursePayload;
 
@@ -121,8 +122,9 @@ describe("the setup checklist (an empty class)", () => {
 
 	it("renders the drop zone while there is no file, and the Draft button (the one primary) once one is read", () => {
 		const setup = (files: MaterialsApi, over: Record<string, unknown> = {}) =>
-			renderToStaticMarkup(<ClassSetup title={<h1>Bio</h1>} files={files} hasSkills={false} hasDraft={false} drafting={false} busy={false} onDraft={() => {}} {...over} />);
+			renderToStaticMarkup(<ClassSetup files={files} hasSkills={false} hasDraft={false} drafting={false} busy={false} onDraft={() => {}} {...over} />);
 		const empty = setup(fakeFiles());
+		assert.match(empty, /^<section[^>]*data-testid="class-setup"[^>]*><ol[^>]*data-testid="class-setup-steps"[^>]*><li[^>]*data-testid="setup-step-files"/, "the card starts at step 1: the class name is the top bar's");
 		assert.match(empty, /data-testid="class-drop-zone"/);
 		assert.match(empty, /Drop your class files here/);
 		assert.doesNotMatch(empty, /setup-draft|setup-learn/, "no disabled buttons for steps that cannot start");
@@ -142,7 +144,7 @@ describe("the setup checklist (an empty class)", () => {
 
 describe("the class page body", () => {
 	const noMap = (over: Partial<CoursePayload> = {}): CoursePayload => ({
-		course: { id: "course_a", title: "Untitled course", createdAt: "t", updatedAt: "t", status: "new", skills: [] },
+		course: { id: "course_a", title: "Untitled class", createdAt: "t", updatedAt: "t", status: "new", skills: [] },
 		skills: [],
 		review: [],
 		reviewBatch: 0,
@@ -161,11 +163,28 @@ describe("the class page body", () => {
 	const body = (data: CoursePayload, materialCount = 0) =>
 		renderToStaticMarkup(<CourseBody data={data} busy={false} error={null} onDraft={() => {}} onApprove={() => {}} onStart={() => {}} materialCount={materialCount} onAsk={() => {}} />);
 
-	it("an empty class is one setup card: the class name, the three steps, no settings card and no junk lines", () => {
+	it("an empty class is one setup card: the three steps, no settings card and no junk lines", () => {
 		const html = body(noMap());
-		assert.match(html, /data-testid="class-setup"[\s\S]*Untitled course[\s\S]*Add your class files[\s\S]*Draft the skill map[\s\S]*Start learning/);
-		assert.doesNotMatch(html, /course-settings|stats-materials|Waits for|Learned: a finished lesson|Delete course/);
+		assert.match(html, /data-testid="class-setup"[\s\S]*Add your class files[\s\S]*Draft the skill map[\s\S]*Start learning/);
+		assert.doesNotMatch(html, /Untitled class|Untitled course|<h1/, "the class name is the top bar's field, not the card's");
+		assert.doesNotMatch(html, /course-settings|stats-materials|Waits for|Learned: a finished lesson|Delete class|Delete course/);
 		assert.doesNotMatch(html, /course-mode-learn|course-mode-practice/);
+		assert.doesNotMatch(html, /where-you-stand|data-testid="lectures"/, "no WP9 block on a class without a skill map");
+	});
+
+	it("a new class opens on an empty name field; a named class shows its name", () => {
+		assert.equal(titleFieldValue("Untitled class"), "");
+		assert.equal(titleFieldValue("Untitled course"), "", "a class made before the rename too");
+		assert.equal(titleFieldValue("Biology"), "Biology");
+		assert.ok(isUntitledClass(UNTITLED_CLASS));
+		assert.equal(UNTITLED_CLASS, "Untitled class");
+		// the field: always the top bar's title, placeholder "Class name", focused on a new class, Enter saves (blur)
+		const page = fs.readFileSync("components/course-page.tsx", "utf8");
+		assert.match(page, /autoFocus=\{setup && isUntitledClass\(initial\.course\.title\)\}/);
+		assert.match(page, /placeholder="Class name"/);
+		assert.match(page, /onBlur=\{\(\) => void commitTitle\(\)\}/);
+		assert.match(page, /e\.key === "Enter"\) \{\s*e\.preventDefault\(\);\s*e\.currentTarget\.blur\(\);/);
+		assert.doesNotMatch(page, /setup \? <span className="flex-1" \/>/, "no empty top band on a new class");
 	});
 
 	it("the learned / known definitions are the Understanding heading's help, not a paragraph", () => {
@@ -204,14 +223,25 @@ describe("the class side panel", () => {
 		assert.doesNotMatch(panel(), /material-remove-confirm/, "the confirm shows only after the first press");
 	});
 
-	it("without a skill map: Draft skill map, no exam or starting point; why the button is off", () => {
-		const html = panel({ hasSkills: false, exam: undefined, files: fakeFiles() });
-		assert.match(html, /data-testid="course-draft-button"[^>]*>Draft skill map</);
-		assert.match(html, /<button[^>]*disabled=""[^>]*data-testid="course-draft-button"/);
-		assert.match(html, /data-testid="course-draft-reason"[^>]*>Add a class file first\./);
-		assert.doesNotMatch(html, /course-exam-settings|course-placement/);
+	it("a brand-new class (no file, no draft, no map) shows only Files and Delete class…", () => {
+		const html = panel({ hasSkills: false, exam: undefined, files: fakeFiles(), upcoming: { items: [], finding: false } });
+		assert.match(html, /data-testid="class-panel" data-quiet="true"/);
+		assert.match(html, /data-testid="class-files"/);
+		assert.match(html, /data-testid="course-delete"[^>]*>Delete class…</);
+		assert.doesNotMatch(html, /course-curriculum|Skill map|data-testid="upcoming"|data-testid="lectures"|class-settings|course-pace|course-lecture-notes|course-exam-settings|course-placement/);
 		assert.match(html, /data-testid="class-files-empty"/);
 		assert.doesNotMatch(panel({ hasSkills: false, exam: undefined, files: fakeFiles(), setup: true }), /class-files-empty|course-draft-reason/, "the empty class's center holds the drop zone and the steps");
+	});
+
+	it("with a file but no skill map: Draft skill map, the settings and notes; no exam or starting point", () => {
+		const html = panel({ hasSkills: false, exam: undefined, files: fakeFiles([material({ status: "reading" })]) });
+		assert.match(html, /data-testid="class-panel" data-quiet="false"/);
+		assert.match(html, /data-testid="course-draft-button"[^>]*>Draft skill map</);
+		assert.match(html, /<button[^>]*disabled=""[^>]*data-testid="course-draft-button"/);
+		assert.match(html, /data-testid="course-draft-reason"[^>]*>Waiting for the files to be read\./);
+		assert.match(html, /data-testid="course-pace-select"[\s\S]*data-testid="course-lecture-notes"/);
+		assert.doesNotMatch(html, /course-exam-settings|course-placement/);
+		assert.match(panel({ hasSkills: false, hasDraft: true, exam: undefined, files: fakeFiles() }), /data-quiet="false"/, "a draft to review keeps the skill map section");
 	});
 
 	it("drafting shows the planner's progress and disables re-drafting; a failure shows its reason", () => {

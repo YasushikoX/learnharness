@@ -67,7 +67,7 @@ export function TodayPage({ initial }: { initial: TodayCourse[] }) {
 			<div className={cn(COLUMN, "pb-16 pt-4")} data-testid="today-page">
 				{count === 0 ? (
 					<p className="text-sm text-muted-foreground" data-testid="today-empty">
-						Nothing to review or learn today. Open a course to practice or learn ahead.
+						Nothing to review or learn today. Open a class to practice or learn ahead.
 					</p>
 				) : (
 					<div className="space-y-8">

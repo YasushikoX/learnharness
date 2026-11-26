@@ -192,7 +192,7 @@ export function FolderMenu({
 			<button type="button" data-testid="ctx-folder-remove" onClick={onRemove} className={ITEM}>
 				Remove folder
 			</button>
-			<span className="px-2.5 pb-1 text-muted-foreground">Removing a folder deletes no course.</span>
+			<span className="px-2.5 pb-1 text-muted-foreground">Removing a folder deletes no class.</span>
 		</MenuShell>
 	);
 }

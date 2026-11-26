@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
  * single exam-date field), the Lectures (WP9: the timeline, the class's position, from the syllabus, the file names, Short
  * question or here), the Exam (weighing), Starting point and Pace rows, the Lecture
  * notes, and a quiet Delete class… whose dialog holds the one destructive button. It replaces the Course settings card,
- * its header gear and the Sources popover.
+ * its header gear and the Sources popover. A brand-new class shows only Files and Delete class… until its first file.
  */
 
 const BTN = buttonVariants({ variant: "outline" });
@@ -113,12 +113,17 @@ export function ClassPanel({
 }) {
 	const [deleting, setDeleting] = useState(false);
 	const map = skillMapButton({ hasSkills, hasDraft, drafting, materialCount: files.materials.length, reading: files.reading, busy });
+	// A brand-new class (no file, no draft, no skill map) shows only Files and Delete class… (new-class polish,
+	// 2026-11-25): the setup checklist guides the rest, and the other sections appear with the first file.
+	const quiet = !hasSkills && !hasDraft && !drafting && files.materials.length === 0;
 	return (
-		<div className="flex flex-col divide-y divide-border" data-testid="class-panel">
+		<div className="flex flex-col divide-y divide-border" data-testid="class-panel" data-quiet={quiet ? "true" : "false"}>
 			<div className="px-4 pt-3 pb-4">
 				<ClassFiles files={files} dropping={dropping} setup={setup} />
 			</div>
 
+			{!quiet && (
+			<>
 			<section className="lh-course-controls space-y-2 px-4 py-4" data-testid="course-curriculum" aria-label="Skill map">
 				<h2 className="text-body font-semibold text-foreground">Skill map</h2>
 				<div className="flex flex-wrap items-center gap-2">
@@ -166,6 +171,8 @@ export function ClassPanel({
 			<div className="px-4 py-4">
 				<LectureNotesRow courseId={courseId} compact />
 			</div>
+			</>
+			)}
 
 			<div className="px-4 py-3">
 				<button

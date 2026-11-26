@@ -41,7 +41,7 @@ export function CourseRenameRow({ course, onCommit, onCancel }: { course: Course
 							onCancel();
 						}
 					}}
-					aria-label="Rename course"
+					aria-label="Rename class"
 					data-testid="course-rename-input"
 					className="lh-input w-full min-w-0 truncate border-0 border-b border-border bg-transparent px-0 text-foreground outline-none"
 				/>
@@ -100,19 +100,19 @@ export function DeleteCourseDialog({
 			<div
 				role="dialog"
 				aria-modal="true"
-				aria-label="Delete course"
+				aria-label="Delete class"
 				data-testid="delete-course-dialog"
 				onClick={(e) => e.stopPropagation()}
 				className="w-[32rem] max-w-[calc(100vw-2rem)] lh-dialog p-6"
 			>
-				<h2 className="text-sm font-semibold text-destructive">Delete course?</h2>
+				<h2 className="text-sm font-semibold text-destructive">Delete class?</h2>
 				<div className="mt-1.5">
 					<code data-testid="course-name-code" className="font-sans text-sm font-medium text-foreground">
 						{course.title}
 					</code>
 				</div>
 				<p className="mt-2 text-sm text-muted-foreground">
-					This removes the course and its curriculum material. Its skills stay in your knowledge graph. This cannot be
+					This removes the class and its curriculum material. Its skills stay in your knowledge graph. This cannot be
 					undone.
 				</p>
 				{failure && (

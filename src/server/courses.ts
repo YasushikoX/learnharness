@@ -23,6 +23,7 @@ import type {
 	Skill,
 	TodayCourse,
 } from "../core/contracts.ts";
+import { UNTITLED_CLASS } from "../core/contracts.ts";
 import { FOLDER_NAME_MAX, canonicalFolderName, normalizeFolderName, removeFolderChanges, renameFolderChanges } from "../core/course-folders.ts";
 import {
 	daysUntil,
@@ -724,7 +725,7 @@ export function setCourseLanguage(courseId: string, language: LessonLanguage): C
 }
 
 export function renameCourse(courseId: string, title: string): CourseRecord | null {
-	return stores.courseStore.updateCourse(courseId, { title: title.trim() || "Untitled course" });
+	return stores.courseStore.updateCourse(courseId, { title: title.trim() || UNTITLED_CLASS });
 }
 
 /** Set or clear (undefined) a course's default pace (fork addition, 2026-11-09 — core/pace.ts). Cleared = the global default. */
@@ -889,7 +890,7 @@ async function runWeigh(courseId: string, controller: AbortController): Promise<
 		if (!course || controller.signal.aborted) return;
 		const spec = resolveRoleSpec("coursePlanner", stores.settingsStore.readSettings());
 		if (!spec) {
-			settle({ weightsError: "No model is configured for the course planner (Settings → Agent: the strong slot or a Course planner override)" });
+			settle({ weightsError: "No model is configured for the class planner (Settings → Agent: the strong slot or a Class planner override)" });
 			return;
 		}
 		const materials = listMaterials(courseId);
@@ -968,7 +969,7 @@ async function runDraft(courseId: string, feedback: string | undefined, controll
 		if (!course || controller.signal.aborted) return;
 		const spec = resolveRoleSpec("coursePlanner", stores.settingsStore.readSettings());
 		if (!spec) {
-			settle({ status: course.skills.length > 0 ? "active" : "error", error: "No model is configured for the course planner (Settings → Agent: the strong slot or a Course planner override)" });
+			settle({ status: course.skills.length > 0 ? "active" : "error", error: "No model is configured for the class planner (Settings → Agent: the strong slot or a Class planner override)" });
 			return;
 		}
 		const materials = listMaterials(courseId);
@@ -1246,17 +1247,17 @@ export function createCourseSession(
 	if (!course) return { ok: false, status: 404, error: "Unknown course" };
 	// Ask (2026-11-25) needs no skill map: right after an upload the learner can ask about the PDF.
 	if (mode === "ask") return createAskSession(course, skillId, skillIds, retest);
-	if (course.skills.length === 0) return { ok: false, status: 409, error: "Approve the course's skill map first" };
+	if (course.skills.length === 0) return { ok: false, status: 409, error: "Approve the class's skill map first" };
 	const ctx = readContext();
 	const p = partitionOf(course, ctx);
-	if (skillId !== undefined && !p.order.includes(skillId)) return { ok: false, status: 400, error: "That skill is not in this course" };
+	if (skillId !== undefined && !p.order.includes(skillId)) return { ok: false, status: 400, error: "That skill is not in this class" };
 	if (retest && mode !== "placement") return { ok: false, status: 400, error: "retest is only for the placement test" };
 	let chosen: string[] | undefined;
 	if (skillIds !== undefined) {
 		if (mode !== "practice") return { ok: false, status: 400, error: "skillIds is only for practice" };
 		chosen = [...new Set(skillIds)];
 		if (chosen.length === 0) return { ok: false, status: 400, error: "Choose at least one skill to practice" };
-		if (chosen.some((id) => !p.order.includes(id))) return { ok: false, status: 400, error: "A chosen skill is not in this course" };
+		if (chosen.some((id) => !p.order.includes(id))) return { ok: false, status: 400, error: "A chosen skill is not in this class" };
 		// a locked skill cannot be taught from its prerequisites: it has to be learned first
 		if (chosen.some((id) => p.locked.includes(id))) return { ok: false, status: 409, error: "A locked skill cannot be practiced — learn what it builds on first" };
 	}
@@ -1290,7 +1291,7 @@ export function createCourseSession(
 			// skills already had from another course get their own context
 			// check — the placement test does not spend questions on them
 			ids = p.order.filter((id) => !p.contextCheck.includes(id));
-			if (ids.length === 0) return { ok: false, status: 409, error: "Every skill is already known from another course — use the context checks" };
+			if (ids.length === 0) return { ok: false, status: 409, error: "Every skill is already known from another class — use the context checks" };
 			break;
 		case "check":
 			if (skillId === undefined) return { ok: false, status: 400, error: "A context check needs a skill" };

@@ -511,10 +511,16 @@ A long set titles the session with three names and "+n more".
 
 ## 6. UI
 
-- **Sidebar → Courses** (above sessions): one row per course with its title and a meta line, plus
-  "+ New course". The new-course row creates "Untitled course" and
+- **Sidebar → Classes** (above sessions): one row per course with its title and a meta line, plus
+  "+ New class". The new-class row creates "Untitled class" and
   opens its page. Session rows from a course show the course name as a small
   label.
+  - **"Class" in the UI (owner, 2026-11-25).** Everything the learner reads says class ("Classes", "Delete class?",
+    "Untitled class", "Back to the class", the Class planner in Settings → Agent); code names, ids, API paths, stored
+    data, prompts and `COURSE_MODE_LABEL` keep "course". A class still named "Untitled class" (or the older "Untitled
+    course") opens on an empty, focused **Class name** field in the top bar; Enter or leaving it saves through the
+    rename. Until its first file, the side panel shows only Files and Delete class… (the setup checklist guides the
+    rest), and at 1024 px the panel starts closed.
   - **Folders (owner, 2026-11-14).** The list is courses with no folder (by name), then one collapsible header per
     folder ("2026-2 Høst · 3", highest name first), its courses by name. The whole section collapses too
     ("Courses · 7"); open or closed is remembered per device in `localStorage` (`lh:courses-open`,

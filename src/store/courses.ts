@@ -11,7 +11,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { PATHS } from "../../config.ts";
 import { emit } from "../core/events.ts";
-import { CURRENT_COURSE_VERSION, type CourseRecord } from "../core/contracts.ts";
+import { CURRENT_COURSE_VERSION, UNTITLED_CLASS, type CourseRecord } from "../core/contracts.ts";
 import type { CourseStore } from "../core/ports.ts";
 
 function courseFile(id: string): string {
@@ -44,7 +44,7 @@ export const courseStore: CourseStore = {
 		const now = new Date().toISOString();
 		const record: CourseRecord = {
 			id: `course_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`,
-			title: title.trim() || "Untitled course",
+			title: title.trim() || UNTITLED_CLASS,
 			createdAt: now,
 			updatedAt: now,
 			status: "new",

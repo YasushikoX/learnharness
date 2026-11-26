@@ -134,7 +134,7 @@ export function PaceControl({ chatId, variant = "edge" }: { chatId: string; vari
 					<div className="mt-1 border-t px-2 pt-1.5">
 						{hasCourse ? (
 							<p data-testid="pace-note-course" className="text-xs text-muted-foreground">
-								The time note for this lesson is set on the course page.
+								The time note for this lesson is set on the class page.
 							</p>
 						) : (
 							<label className="flex flex-col gap-1 text-xs text-muted-foreground">

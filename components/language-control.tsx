@@ -123,7 +123,7 @@ export function LanguageControl({ chatId, courseId, variant = "pill" }: { chatId
 
 	return (
 		<div ref={containerRef} className="relative flex items-center" data-testid="language-control">
-			<Hint label={courseId ? "Course language" : chatId ? "Lesson language" : "Language for new lessons"} side="bottom">
+			<Hint label={courseId ? "Class language" : chatId ? "Lesson language" : "Language for new lessons"} side="bottom">
 				<button
 					type="button"
 					data-testid="stats-language"
@@ -162,7 +162,7 @@ export function LanguageControl({ chatId, courseId, variant = "pill" }: { chatId
 						</button>
 					))}
 					<div className="mt-1 border-t px-2 pt-1.5 text-xs text-muted-foreground">
-						{courseId ? "This course's language — its skill map and sessions" : chatId ? "This lesson's language — teaching and dictation" : "Default for new lessons"}
+						{courseId ? "This class's language — its skill map and sessions" : chatId ? "This lesson's language — teaching and dictation" : "Default for new lessons"}
 					</div>
 				</MenuShell>
 			)}

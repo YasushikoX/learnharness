@@ -8,9 +8,10 @@ import { cn } from "@/lib/utils";
 
 /**
  * The new / empty class's setup (UI class page, 2026-11-25; owner: an empty class was "a stack of disabled controls").
- * One card in the center: the editable class name, then three steps that tick off as they complete — 1 add your class
- * files (a large drop zone, the same upload path as the side panel), 2 draft the skill map (once a file has been read),
- * 3 start learning (once the map exists). A step that cannot start yet shows only its title, never a disabled button.
+ * One card in the center: three steps that tick off as they complete — 1 add your class files (a large drop zone, the
+ * same upload path as the side panel), 2 draft the skill map (once a file has been read), 3 start learning (once the map
+ * exists). A step that cannot start yet shows only its title, never a disabled button. The class name is the page's top
+ * bar title (new-class polish, 2026-11-25: an empty, focused "Class name" field on a new class).
  */
 
 export type SetupStepId = "files" | "map" | "learn";
@@ -84,7 +85,6 @@ function StepMark({ n, done, current }: { n: number; done: boolean; current: boo
 const PRIMARY = buttonVariants();
 
 export function ClassSetup({
-	title,
 	files,
 	materialCount: countProp = 0,
 	dropping = false,
@@ -96,8 +96,6 @@ export function ClassSetup({
 	onDraft,
 	onLearn,
 }: {
-	/** The editable class name (the page's H1). */
-	title: React.ReactNode;
 	/** The class's files (the page's useMaterials); absent in a bare render, which then reads `materialCount`. */
 	files?: MaterialsApi;
 	materialCount?: number;
@@ -155,8 +153,7 @@ export function ClassSetup({
 	};
 	return (
 		<section data-testid="class-setup" aria-label="Set up this class" className="rounded-lg border border-border bg-card p-6">
-			{title}
-			<ol className="mt-5 space-y-1" data-testid="class-setup-steps">
+			<ol className="-my-2 space-y-1" data-testid="class-setup-steps">
 				{steps.map((step, n) => {
 					const content = step.current ? body(step) : null;
 					return (

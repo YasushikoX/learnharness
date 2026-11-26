@@ -354,7 +354,7 @@ async function runLinking(courseId: string, controller: AbortController): Promis
 		}
 		const spec = linkerOverride ? null : resolveRoleSpec("coursePlanner", stores.settingsStore.readSettings());
 		if (!linkerOverride && !spec) {
-			settle({ lecturesLinkError: "No model is configured for the course planner (Settings → Agent: the strong slot or a Course planner override)" });
+			settle({ lecturesLinkError: "No model is configured for the class planner (Settings → Agent: the strong slot or a Class planner override)" });
 			return;
 		}
 		const byFile = new Map(files.map((f) => [f.id, f]));

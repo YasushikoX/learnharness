@@ -220,7 +220,7 @@ export function ConverterWizard({ onClose, onApproved }: { onClose: () => void; 
 				<div className={BOX} data-testid="converter-wizard">
 					{header}
 					<p data-testid="wizard-no-model" className={NOTE}>
-						No model is configured for drafting (Settings → Agent: the strong slot, or a Course planner override). You can still import a profile below.
+						No model is configured for drafting (Settings → Agent: the strong slot, or a Class planner override). You can still import a profile below.
 					</p>
 				</div>
 			);

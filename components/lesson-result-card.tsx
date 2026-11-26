@@ -73,7 +73,7 @@ export function LessonResultView({
 					</button>
 				)}
 				<button type="button" className={BTN} disabled={busy} data-testid="lesson-result-course" onClick={onCourse}>
-					Back to the course
+					Back to the class
 				</button>
 			</div>
 		</div>

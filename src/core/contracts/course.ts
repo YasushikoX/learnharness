@@ -260,6 +260,15 @@ export interface CourseRecord {
 
 export const CURRENT_COURSE_VERSION = 1;
 
+/** The name a class gets when none was given (UI new-class polish, 2026-11-25: "class" in the UI). */
+export const UNTITLED_CLASS = "Untitled class";
+
+/** The class still has its default name: the class page shows an empty, focused name field. Classes made before
+ *  2026-11-25 were stored as "Untitled course". Pure. */
+export function isUntitledClass(title: string): boolean {
+	return title === UNTITLED_CLASS || title === "Untitled course";
+}
+
 // ─── The session's course link (ChatRecord.course) ──────────────────────────
 
 /** learn: a teach session aimed at one skill · practice/review/placement:

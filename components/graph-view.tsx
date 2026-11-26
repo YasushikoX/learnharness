@@ -198,7 +198,7 @@ export function SkillDetail({
 			</div>
 			{skill.courses.length > 0 && (
 				<div className="flex flex-col gap-1">
-					<div className="text-xs text-muted-foreground">Courses</div>
+					<div className="text-xs text-muted-foreground">Classes</div>
 					{skill.courses.map((c) => (
 						<Link key={c.id} href={`/course/${c.id}`} className="truncate rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent">
 							{c.title}
@@ -826,7 +826,7 @@ function GraphSettingsControl({
 									}))}
 							/>
 							<SettingSlider
-								label="Course pull"
+								label="Class pull"
 								min={0}
 								max={100}
 								step={5}

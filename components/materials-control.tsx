@@ -140,7 +140,7 @@ export function MaterialsControl({
 	const count = chatId ? materials.length : draft.length;
 	return (
 		<div ref={containerRef} className="relative flex items-center" data-testid="materials-control">
-			<Hint label={courseId ? "This course's curriculum" : chatId ? "This lesson's source material" : "Source material for the new lesson"} side="bottom">
+			<Hint label={courseId ? "This class's curriculum" : chatId ? "This lesson's source material" : "Source material for the new lesson"} side="bottom">
 				<button
 					type="button"
 					data-testid="stats-materials"

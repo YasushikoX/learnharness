@@ -395,7 +395,7 @@ async function runFind(courseId: string, controller: AbortController): Promise<v
 		if (!course || controller.signal.aborted) return;
 		const spec = finderOverride ? null : resolveRoleSpec("coursePlanner", stores.settingsStore.readSettings());
 		if (!finderOverride && !spec) {
-			settle({ assessmentsError: "No model is configured for the course planner (Settings → Agent: the strong slot or a Course planner override)" });
+			settle({ assessmentsError: "No model is configured for the class planner (Settings → Agent: the strong slot or a Class planner override)" });
 			return;
 		}
 		const materials = listMaterials(courseId);

@@ -13,6 +13,7 @@ import {
 	knownShare,
 	DUE_BUCKET_LABEL,
 	isDue,
+	isUntitledClass,
 	KNOWN_UNDERSTANDING,
 	lastsLabel,
 	matchesSelection,
@@ -563,7 +564,6 @@ export function CourseBody({
 	onPracticeSet,
 	materialCount,
 	files,
-	title,
 	dropping = false,
 	placementSkipped = false,
 	onSkipPlacement,
@@ -584,8 +584,6 @@ export function CourseBody({
 	materialCount: number;
 	/** The class's files (the page's useMaterials): the empty class's drop zone uploads through it. */
 	files?: MaterialsApi;
-	/** The editable class name: the empty class's setup card is headed by it (the page header then shows none). */
-	title?: React.ReactNode;
 	/** A file drag is over the page. */
 	dropping?: boolean;
 	/** The learner chose "Start from the beginning" (per-viewer). */
@@ -739,9 +737,9 @@ export function CourseBody({
 			{skills.length === 0 ? (
 				<>
 					{/* The empty / new class (UI class page, 2026-11-25): one setup card, then Short question once there is a
-					    file to ask about, and any sessions already had. Learn and Practice show once they can work. */}
+					    file to ask about, and any sessions already had. Learn and Practice show once they can work. The class
+					    name is the top bar's title, as on a class in use (new-class polish: no empty band above the card). */}
 					<ClassSetup
-						title={title ?? <h1 className="lh-page-title">{course.title}</h1>}
 						files={files}
 						materialCount={materialCount}
 						dropping={dropping}
@@ -934,7 +932,7 @@ export function CourseBody({
 							{data.contextCheck.length > 0 && (
 								<section data-testid="course-context-check">
 									<div className={SECTION_HEAD}>
-										From another course<span className={HEAD_COUNT}>{data.contextCheck.length}</span>
+										From another class<span className={HEAD_COUNT}>{data.contextCheck.length}</span>
 									</div>
 									<p className="mb-2 text-xs text-muted-foreground">
 										You already have these from another course. A short check confirms each one works the same way here — optional, nothing is locked behind it.
@@ -1077,21 +1075,27 @@ export function courseProgress(data: Pick<CourseView, "skills" | "known">): stri
 	return `${data.known.length}/${data.skills.length} known`;
 }
 
+/** What the name field shows for a stored title: empty while the class still has its default name, so a new class
+ *  opens on an empty "Class name" field (new-class polish, 2026-11-25). Pure. */
+export function titleFieldValue(stored: string): string {
+	return isUntitledClass(stored) ? "" : stored;
+}
+
 export function CoursePage({ courseId, initial }: { courseId: string; initial: CoursePayload }) {
 	const router = useRouter();
 	const [data, setData] = useState<CoursePayload>(initial);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const [title, setTitle] = useState(initial.course.title);
+	const [title, setTitle] = useState(() => titleFieldValue(initial.course.title));
 	const [placementSkipped, setPlacementSkipped] = useState(false);
 	useEffect(() => setPlacementSkipped(readPlacementSkipped(courseId)), [courseId]);
 	// The class's files (UI class page, 2026-11-25): one list for the side panel, the empty class's drop zone and a drop
 	// anywhere on the page.
 	const files = useMaterials(courseId);
 	const materialCount = files.materials.length;
-	// The side panel always shows on a wide page; on a narrower one (1024) it is a toggle in the header, open from the
-	// start for an empty class, whose files and skill map live there.
-	const [panelOpen, setPanelOpen] = useState(() => initial.skills.length === 0);
+	// The side panel always shows on a wide page; on a narrower one (1024) it is a toggle in the header, closed from the
+	// start: an empty class's files and skill map are its setup card's steps (new-class polish, 2026-11-25).
+	const [panelOpen, setPanelOpen] = useState(false);
 	const [dropping, setDropping] = useState(false);
 	const dragDepth = useRef(0);
 	const scrollRef = useRef<HTMLDivElement>(null);
@@ -1124,7 +1128,7 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 	useServerEvent("chats-changed", schedule);
 	useServerResync(() => void refresh());
 	useEffect(() => () => debounceRef.current && clearTimeout(debounceRef.current), []);
-	useEffect(() => setTitle(data.course.title), [data.course.title]);
+	useEffect(() => setTitle(titleFieldValue(data.course.title)), [data.course.title]);
 
 	const call = async (url: string, body: unknown): Promise<Response | null> => {
 		setBusy(true);
@@ -1205,7 +1209,7 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 	const commitTitle = async () => {
 		const t = title.trim();
 		if (!t || t === data.course.title) {
-			setTitle(data.course.title);
+			setTitle(titleFieldValue(data.course.title));
 			return;
 		}
 		await fetch(`/api/courses/${courseId}`, {
@@ -1220,24 +1224,30 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 	const hasSkills = data.skills.length > 0;
 	const drafting = data.drafting || data.course.status === "drafting";
 	const weighed = !!data.course.weightsAt;
-	// The empty class (no skill map yet): the setup card in the center carries the class name as its H1.
+	// The empty class (no skill map yet): the setup card in the center.
 	const setup = !hasSkills;
+	// The class name, the top bar's title in every state (new-class polish, 2026-11-25): a new, untitled class opens on
+	// it empty and focused, "Class name" as its placeholder; Enter or leaving it saves through the rename.
 	const titleField = (className: string) => (
 		<FitTitleInput
 			value={title}
 			onChange={(e) => setTitle(e.target.value)}
 			onBlur={() => void commitTitle()}
 			onKeyDown={(e) => {
-				if (e.key === "Enter") e.currentTarget.blur();
+				if (e.key === "Enter") {
+					e.preventDefault();
+					e.currentTarget.blur();
+				}
 				if (e.key === "Escape") {
-					setTitle(data.course.title);
+					setTitle(titleFieldValue(data.course.title));
 					e.currentTarget.blur();
 				}
 			}}
+			autoFocus={setup && isUntitledClass(initial.course.title)}
 			placeholder="Class name"
 			aria-label="Class name"
 			data-testid="course-title"
-			className={cn("lh-no-drag resize-none overflow-y-auto bg-transparent lh-page-title outline-none", className)}
+			className={cn("lh-no-drag resize-none overflow-y-auto bg-transparent lh-page-title outline-none placeholder:text-muted-foreground", className)}
 		/>
 	);
 	// A file dropped anywhere on the class page becomes a class file (UI class page): the panel opens to show it land.
@@ -1248,7 +1258,8 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 			e.stopPropagation();
 			dragDepth.current++;
 			setDropping(true);
-			setPanelOpen(true);
+			// an empty class's setup card holds the drop zone: the panel stays as it is, so nothing moves under the drag
+			if (!setup) setPanelOpen(true);
 		},
 		onDragOver: (e: React.DragEvent) => {
 			if (!dragHasFiles(e)) return;
@@ -1284,7 +1295,7 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 					{/* the same column and padding as the page below, so the title lines up with the content (owner, 2026-11-16) */}
 					<div className="mx-auto flex min-h-9 max-w-5xl items-center gap-3 px-6">
 						<SidebarToggle />
-						{setup ? <span className="flex-1" /> : titleField("min-w-0 flex-1")}
+						{titleField("min-w-0 flex-1")}
 						{/* One quiet group (UI round 1b): the known count as meta text, then 32px controls 8px apart. */}
 						<span className="lh-no-drag flex shrink-0 items-center gap-2">
 							{progress && (
@@ -1345,7 +1356,6 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 							onRetest={() => void onRetest()}
 							materialCount={materialCount}
 							files={files}
-							title={titleField("w-full")}
 							dropping={dropping}
 							placementSkipped={placementSkipped}
 							onSkipPlacement={() => {

@@ -617,7 +617,7 @@ describe("the stores", () => {
 			if (e.type === "courses-changed") announced++;
 		});
 		const a = courseStore.createCourse("  ");
-		assert.equal(a.title, "Untitled course");
+		assert.equal(a.title, "Untitled class");
 		assert.equal(a.status, "new");
 		assert.match(a.id, /^course_/);
 		const updated = courseStore.updateCourse(a.id, { error: "boom", status: "error" })!;
@@ -1553,7 +1553,7 @@ describe("the UI", () => {
 			sessions: [],
 		});
 		const html = body(data);
-		assert.match(html, /data-testid="course-context-check"[\s\S]*From another course<span[^>]*>1<[\s\S]*optional, nothing is locked[\s\S]*data-testid="skill-a"/);
+		assert.match(html, /data-testid="course-context-check"[\s\S]*From another class<span[^>]*>1<[\s\S]*optional, nothing is locked[\s\S]*data-testid="skill-a"/);
 		assert.doesNotMatch(html, /data-testid="course-known"/, "A shows once — in its own section");
 		assert.match(html, /about one short question for 1 skill,/);
 		assert.doesNotMatch(body({ ...data, skills: [skillView("a", { understanding: 6, learned: true, known: true })], nextUp: [] }), /placement-offer/, "nothing left to place");

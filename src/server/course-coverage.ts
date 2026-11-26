@@ -695,7 +695,7 @@ async function runMapping(courseId: string, language: LessonLanguage, target: "a
 		if (!course || !glossary || controller.signal.aborted) return;
 		const spec = resolveRoleSpec("coursePlanner", stores.settingsStore.readSettings());
 		if (!spec) {
-			settle({ coverageError: "No model is configured for the course planner (Settings → Agent: the strong slot or a Course planner override)" });
+			settle({ coverageError: "No model is configured for the class planner (Settings → Agent: the strong slot or a Class planner override)" });
 			return;
 		}
 		let skills: Array<{ id: string; name: string; statement: string }>;

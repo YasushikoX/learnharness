@@ -46,7 +46,7 @@ export function LearnPaceBody({
 				<div className="mt-4">
 					<PaceRadios pace={pace} onPace={onPace} />
 				</div>
-				<p className="mt-3 text-sm text-muted-foreground">This lesson only. The course and Settings keep their own defaults.</p>
+				<p className="mt-3 text-sm text-muted-foreground">This lesson only. The class and Settings keep their own defaults.</p>
 				<div className="mt-6 flex justify-end gap-2">
 					<button type="button" data-testid="learn-pace-cancel" onClick={onClose} className={buttonVariants({ variant: "ghost" })}>
 						Cancel
