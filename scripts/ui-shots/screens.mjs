@@ -141,6 +141,10 @@ export async function captureScreens({ page, origin, theme, stage, signal, withL
 
 		await visible(testId("course-pace"));
 		await capture(5, "class-panel", "Class side panel: files, skill map, exam, starting point, pace, lecture notes.", testId("class-side-panel"));
+		// WP9: "Where you stand" at the top of Next up, and the lecture timeline in the side panel
+		await capture(61, "class-where-you-stand", "Next up with Where you stand: the class's lecture, what you have learned, the next quiz's readiness, the gap's Start.", testId("course-next-up"));
+		await scroll(testId("lectures"), "center");
+		await capture(62, "class-lectures", "The lecture timeline in the side panel: the class's position marked, skills per lecture.", testId("lectures"));
 		await click(testId(`material-remove-${ids.material}`));
 		await visible(testId(`material-remove-confirm-${ids.material}`));
 		await capture(6, "class-files", "Class files in the side panel with the remove confirm open.", testId("class-files"));
@@ -193,6 +197,10 @@ export async function captureScreens({ page, origin, theme, stage, signal, withL
 		await visit(`/chat/${ids.ask}`, composer);
 		await visible(firstMessage);
 		await capture(18, "ask", "Course Ask conversation about why plants need both chloroplasts and mitochondria.");
+		// WP9: the change cards for a lecture moved, the class's position and an exam weight, each with Undo
+		const cards = await page.$$(testId("class-change"));
+		if (cards.length > 0) await cards.at(-1).evaluate(node => node.scrollIntoView({ block: "center" }));
+		await capture(63, "ask-class-cards", "Short question's change cards: a lecture moved, the class position, an exam weight, each with Undo.");
 
 		const session = `[data-session-id="${ids.lesson}"]`;
 		await (await visible(session)).click({ button: "right" });

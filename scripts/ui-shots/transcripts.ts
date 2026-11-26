@@ -176,7 +176,42 @@ function ask(start: number) {
 	log.result(save, "Added: Quiz 3 (quiz).", { change: { kind: "assessment", courseId: ids.biology, action: "added", before: null, after: quiz3, id: quiz3.id, stamp: quiz3.updatedAt, skillNames: ["Glycolysis", "Fermentation"] } });
 	log.result(report, "Recorded.", { change: { kind: "self-report", courseId: ids.biology, report: calvinReport, skillNames: ["Calvin cycle"] } });
 	log.assistant("Saved Quiz 3 for Friday, and noted that the Calvin cycle is unclear: it comes first among your next lessons.");
+	// WP9: the rest of the class page from the chat: a lecture moved, where the class is, an exam weight; then "am I ready?"
+	log.user("Lecture 5 got moved to Thursday, and we covered the proton gradient today. Light reactions are on every exam, by the way.");
+	const moved = call("call_lec5", "lecture_save", { n: 5, date: "Thursday" });
+	const position = call("call_pos", "class_position_set", { lectureNumber: 4, coveredThrough: "the proton gradient" });
+	const weights = call("call_w", "skill_weights_set", { weights: [{ skillId: "sk_light", weight: 3 }] });
+	log.assistant(moved, position, weights);
+	log.result(moved, "Updated lecture: Lecture 5.", { change: { kind: "lecture", courseId: ids.biology, action: "updated", before: lecture5Before, after: lecture5, id: lecture5.id, stamp: lecture5.updatedAt, skillNames: ["Light reactions"] } });
+	log.result(position, "Set.", { change: { kind: "position", courseId: ids.biology, before: null, after: classPosition, label: "Lecture 4: The proton gradient", beforeLabel: null } });
+	log.result(weights, "Set exam weights.", { change: { kind: "weights", courseId: ids.biology, before: { sk_light: { w: 2, by: "model" } }, after: { sk_light: { w: 3, by: "learner" } }, names: { sk_light: "Light reactions" } } });
+	log.assistant("Moved Lecture 5 to Thursday, set the class at Lecture 4, and marked light reactions as on every exam.");
+	log.user("Am I ready for Friday?");
+	const overview = call("call_overview", "class_overview", {});
+	log.assistant(overview);
+	log.result(overview, "Quiz 3 needs Glycolysis and Fermentation.", null);
+	log.assistant("Nearly: Quiz 3 needs **glycolysis** and **fermentation**. Glycolysis is learned; fermentation (Lecture 3) is not yet, so start there.");
 	return log.messages;
+}
+
+/** WP9: the class's lectures (fixture.ts), with Lecture 5 as the Ask conversation moved it. */
+export let lecture5Before = { id: "lc_ui_5", n: 5, title: "Lecture 5: Light reactions", date: "", topics: "Photosystems, the electron transport chain in the thylakoid", materialIds: [] as string[], skillIds: ["sk_light"], skillsBy: "model" as const, source: "syllabus" as const, updatedAt: "", cite: "Unit 3 syllabus.pdf p. 3" };
+export let lecture5 = { ...lecture5Before };
+export let classPosition = { lectureId: "lc_ui_4", coveredThrough: "the proton gradient", updatedAt: "" };
+
+/** The lecture timeline for the screenshot day: four past, Lecture 5 moved, one ahead. */
+export function uiLectures(day: number) {
+	const dayIso = (n: number) => new Date(day + n * 86_400_000).toISOString().slice(0, 10);
+	const at = new Date(day - 10 * 86_400_000).toISOString();
+	const l = (n: number, title: string, offset: number, topics: string, skillIds: string[]) => ({ id: `lc_ui_${n}`, n, title, date: dayIso(offset), topics, materialIds: [] as string[], skillIds, skillsBy: "model" as const, source: "syllabus" as const, updatedAt: at, cite: "Unit 3 syllabus.pdf p. 3" });
+	return [
+		l(1, "Lecture 1: ATP and energy coupling", -21, "Free energy, coupled reactions, electron carriers", ["sk_atp", "sk_redox"]),
+		l(2, "Lecture 2: Glycolysis", -14, "Glucose to pyruvate", ["sk_glycolysis"]),
+		l(3, "Lecture 3: Fermentation and the citric acid cycle", -7, "Regenerating NAD⁺; acetyl-CoA", ["sk_ferment", "sk_citric"]),
+		l(4, "Lecture 4: The proton gradient", -1, "The respiratory chain and ATP synthase", ["sk_gradient"]),
+		lecture5,
+		l(6, "Lecture 6: The Calvin cycle", 13, "Carbon fixation", ["sk_calvin"]),
+	];
 }
 
 /** The fixture's assessments and self-report (WP8), shared with fixture.ts so the cards' Undo state matches the class. */
@@ -191,7 +226,13 @@ export function stampClassFacts(day: number) {
 	const friday = (5 - new Date(day).getUTCDay() + 7) % 7 || 7;
 	quiz3 = { ...quiz3, date: dayIso(friday), updatedAt: at };
 	calvinReport = { ...calvinReport, at, updatedAt: at };
-	return { quiz3, calvinReport, dayIso };
+	// WP9: Lecture 5 was set for day + 6; the chat moved it to "Thursday" (the first Thursday after the screenshot day)
+	const thursday = (4 - new Date(day).getUTCDay() + 7) % 7 || 7;
+	const at2 = new Date(day - 3 * 3_600_000 + 9 * 90_000).toISOString();
+	lecture5Before = { ...lecture5Before, date: dayIso(6), updatedAt: new Date(day - 10 * 86_400_000).toISOString() };
+	lecture5 = { ...lecture5Before, date: dayIso(thursday), skillsBy: "model", updatedAt: at2 };
+	classPosition = { ...classPosition, updatedAt: at2 };
+	return { quiz3, calvinReport, dayIso, classPosition };
 }
 
 const history = [

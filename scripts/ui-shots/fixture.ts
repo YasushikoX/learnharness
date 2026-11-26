@@ -34,7 +34,9 @@ const { chatStore } = await import("../../src/store/chats.ts");
 const { courseStore } = await import("../../src/store/courses.ts");
 const { courseGlossary } = await import("../../src/server/material-indexing.ts");
 const { owesTutorReply } = await import("../../src/core/native-messages.ts");
-const { seedChats, stampClassFacts } = await import("./transcripts.ts");
+const { seedChats, stampClassFacts, uiLectures } = await import("./transcripts.ts");
+const { courseLectures, lectureLinkKey } = await import("../../src/core/lectures.ts");
+const { materialStore } = await import("../../src/store/materials.ts");
 const { biology, calculus, coverageItems, seedCurriculum, skillLines } = await import("./curriculum.ts");
 
 const DAY_MS = 86_400_000;
@@ -58,7 +60,7 @@ authStore.setAuthVar("ANTHROPIC_API_KEY", "synthetic-ui-screenshot-fixture-key")
 const weight = (w: SkillWeightValue) => ({ w, by: "model" as const });
 // WP8: Quiz 3 (said in Short question), the old exam date read as "Exam", an undated lab report, one self-report, and a
 // pending syllabus proposal, so the Upcoming list, its proposal and the Ask cards all show
-const { quiz3, calvinReport, dayIso } = stampClassFacts(day);
+const { quiz3, calvinReport, dayIso, classPosition } = stampClassFacts(day);
 const courses: CourseRecord[] = [
 	{
 		id: ids.biology, title: "AP Biology: Cellular Energetics", createdAt, updatedAt, status: "active",
@@ -66,7 +68,8 @@ const courses: CourseRecord[] = [
 		examDate: iso(day + 12 * DAY_MS).slice(0, 10),
 		skillWeights: {
 			sk_atp: weight(2), sk_redox: weight(2), sk_glycolysis: weight(3), sk_citric: weight(2),
-			sk_gradient: weight(3), sk_ferment: weight(1), sk_light: weight(2), sk_calvin: weight(1),
+			// WP9: light reactions as Short question set them ("on every exam")
+			sk_gradient: weight(3), sk_ferment: weight(1), sk_light: { w: 3, by: "learner" }, sk_calvin: weight(1),
 		},
 		weightsSummary: "Practice tests emphasize tracking energy and electron flow, especially the role of the proton gradient.",
 		weightsAt: updatedAt, pastExams: 2,
@@ -85,6 +88,9 @@ const courses: CourseRecord[] = [
 			],
 		},
 		assessmentsScannedAt: updatedAt,
+		// WP9: the lecture timeline and where the class is (as the Ask transcript set them)
+		lectures: uiLectures(day),
+		classPosition,
 	},
 	{
 		id: ids.calculus, title: "Calculus I", createdAt, updatedAt: createdAt, status: "active",
@@ -143,3 +149,11 @@ for (const [premises, conclusion] of chains) {
 	graphStore.appendChain({ id: `arg_ui_${conclusion}`, premises: [...premises], conclusion, createdAt, provenance });
 }
 skillStore.appendSkillLines(skillLines(createdAt));
+
+// WP9: the "link skills to lectures" step already ran for these lectures (so the server starts no model call)
+{
+	const course = courseStore.getCourse(ids.biology)!;
+	const files = materialStore.list(ids.biology).map((m) => ({ id: m.id, name: m.name, ...(m.profile ? { profile: m.profile } : {}), addedAt: m.addedAt }));
+	const key = lectureLinkKey(courseLectures(course, files), course.skills);
+	writeFileAtomicSync(join(PATHS.courses, `${ids.biology}.json`), JSON.stringify({ ...course, lecturesLinkedKey: key, lecturesLinkedAt: updatedAt }, null, "\t"));
+}
