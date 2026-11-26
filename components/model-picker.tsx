@@ -211,11 +211,11 @@ export function useModelSelection(chatId?: string, onModelChange?: (model: strin
 		[chatId, models, save, saveChat],
 	);
 
-	return { chatId, catalog, refresh, loading: !!chatId && !session, model, effectiveId, effectiveProvider, effectiveLevel, storedLevel, levels, apply };
+	return { chatId, catalog, refresh, loading: !!chatId && !session, model, entry, effectiveId, effectiveProvider, effectiveLevel, storedLevel, levels, apply };
 }
 
 export function ModelControlView({ selection, variant = "bar" }: { selection: ModelSelection; variant?: ModelControlVariant }) {
-	const { chatId, catalog, refresh, loading, effectiveId, effectiveProvider, effectiveLevel, storedLevel, levels } = selection;
+	const { chatId, catalog, refresh, loading, entry, effectiveId, effectiveProvider, effectiveLevel, storedLevel, levels } = selection;
 	const [open, setOpen] = useState<"model" | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -332,7 +332,7 @@ export function ModelControlView({ selection, variant = "bar" }: { selection: Mo
 						// (import notes, gear, coverage) — blurred, fuller opacity, shadowed.
 						: "lh-touch flex h-7 items-center gap-1.5 rounded-sm px-2 text-xs whitespace-nowrap transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised"}
 				>
-					<span className={variant === "edge" ? "min-w-0 truncate" : "text-card-foreground"}>{effectiveId ? prettyModel(effectiveId) : "—"}</span>
+					<span className={variant === "edge" ? "min-w-0 truncate" : "text-card-foreground"}>{effectiveId ? (entry?.name ?? prettyModel(effectiveId)) : "—"}</span>
 					{/* a session still loading has no model yet: one dash, not a pair */}
 					{!loading && (
 						<>
@@ -358,25 +358,28 @@ export function ModelControlView({ selection, variant = "bar" }: { selection: Mo
 				>
 					{error && <div className="mb-1.5 text-destructive">{error}</div>}
 					{catalog && levels.length > 0 && (
-						<div className="mb-2 flex flex-wrap items-center gap-1.5 border-b pb-2" data-testid="effort-row">
-							<span className="mr-1 text-muted-foreground">Effort</span>
-							{levels.map((level) => (
-								<button
-									key={level}
-									type="button"
-									data-testid={`thinking-option-${level}`}
-									aria-pressed={level === effectiveLevel}
-									onClick={() => apply(effectiveProvider ?? "", effectiveId ?? "", level as ThinkingLevel)}
-									className={cn(
-										"lh-touch rounded-full border px-2.5 py-1 transition-colors",
-										level === effectiveLevel
-											? "border-primary bg-accent text-card-foreground"
-											: "border-transparent text-muted-foreground hover:bg-muted hover:text-card-foreground",
-									)}
-								>
-									{THINKING_LABEL[level] ?? level}
-								</button>
-							))}
+						// UI round 8 (SPEC §9): the effort is the app's segmented control, inset like the list's rows
+						<div className="mb-1.5 flex items-center justify-between gap-3 border-b px-2 pt-1 pb-2" data-testid="effort-row">
+							<span className="text-muted-foreground">Effort</span>
+							<div role="group" aria-label="Effort" className="flex h-7 min-w-0 rounded-md bg-raised p-0.5">
+								{levels.map((level) => (
+									<button
+										key={level}
+										type="button"
+										data-testid={`thinking-option-${level}`}
+										aria-pressed={level === effectiveLevel}
+										onClick={() => apply(effectiveProvider ?? "", effectiveId ?? "", level as ThinkingLevel)}
+										className={cn(
+											"h-6 rounded-sm px-2 text-xs font-medium whitespace-nowrap transition-colors duration-(--lh-duration-hover) ease-(--lh-ease)",
+											level === effectiveLevel
+												? "bg-card text-foreground shadow-[0_0_0_1px_var(--border),0_1px_2px_rgb(0_0_0/0.08)] dark:bg-raised-strong"
+												: "text-muted-foreground hover:text-foreground",
+										)}
+									>
+										{THINKING_LABEL[level] ?? level}
+									</button>
+								))}
+							</div>
 						</div>
 					)}
 					<ModelMenuList

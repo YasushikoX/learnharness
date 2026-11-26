@@ -35,6 +35,7 @@ import {
 	type Tombstone,
 } from "./assessments.ts";
 import { examDateLabel, parseExamDate } from "./exam-plan.ts";
+import { dayLabel } from "./dates.ts";
 
 export type LectureSource = "syllabus" | "files" | "chat" | "manual";
 
@@ -418,11 +419,9 @@ export function lectureShortLabel(l: Pick<Lecture, "n" | "title">): string {
 	return w ? `${w} ${l.n}` : l.title;
 }
 
-/** "Tue 24 Nov" for the card. Pure. */
-export function shortDate(date: string): string {
-	const [y, m, d] = date.split("-").map(Number) as [number, number, number];
-	const day = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" });
-	return `${day} ${examDateLabel(date).replace(/\s+\d{4}$/, "")}`;
+/** "Tue 24 Nov" for the card ("Tue 24 Nov 2027" in another year): the one on-screen date (SPEC §9). Pure. */
+export function shortDate(date: string, now: number = Date.now()): string {
+	return dayLabel(date, now);
 }
 
 /** What an assessment needs, and how much of it is learned. */

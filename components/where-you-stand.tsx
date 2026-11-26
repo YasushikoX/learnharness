@@ -5,7 +5,10 @@ import { buttonVariants } from "@/components/ui/button";
 import { ThinSelect } from "@/components/settings/controls";
 import { FIELD_CLASS } from "@/components/ui/input";
 import { clientTimeZoneHeader } from "@/components/time-zone";
-import { daysUntil, lectureShortLabel, shortDate, type CourseStandingView } from "@/src/core";
+import { daysUntil, lectureShortLabel, shortDate, weekdayLabel, type CourseStandingView } from "@/src/core";
+import { PencilIcon } from "lucide-react";
+import { Field } from "@/components/ui/field";
+import { ErrorNotice } from "@/components/ui/error-notice";
 import { cn } from "@/lib/utils";
 
 /**
@@ -40,21 +43,27 @@ export function standingLines(s: CourseStandingView, now = Date.now()): Standing
 		const l = s.lectures.find((x) => x.id === id);
 		return l ? lectureShortLabel(l) : id;
 	};
+	// The row labels (Class, You, Next) already say whose line it is: the values never repeat them (owner, round 8 (a)).
 	let classLine: string | null = null;
 	if (s.position) {
-		const at = s.position.lectureId && s.position.label ? `Class is at ${title(s.position.lectureId)}` : "Class";
-		const covered = s.position.coveredThrough ? `${s.position.label ? " · covered" : " covered"} ${s.position.coveredThrough}` : "";
-		classLine = `${at}${s.position.date ? ` · ${shortDate(s.position.date)}` : ""}${covered}${s.position.note ? ` · ${s.position.note}` : ""}`;
-	} else if (s.lectures.length > 0) classLine = "Where the class is: not known yet";
+		const parts = [
+			s.position.lectureId && s.position.label ? title(s.position.lectureId) : null,
+			s.position.date ? shortDate(s.position.date, now) : null,
+			s.position.coveredThrough ? `covered ${s.position.coveredThrough}` : null,
+			s.position.note || null,
+		].filter((p): p is string => !!p);
+		const line = parts.join(" · ");
+		classLine = line ? line[0]!.toUpperCase() + line.slice(1) : "Not known yet";
+	} else if (s.lectures.length > 0) classLine = "Not known yet";
 	let youLine: string | null = null;
 	const withSkills = s.lectures.filter((l) => l.skillIds.length > 0);
-	if (s.learnedThrough) youLine = `You've learned what ${s.learnedThrough.label} ${/–|^Lectures|^Forelesnings|^Weeks/.test(s.learnedThrough.label) ? "cover" : "covers"}`;
+	if (s.learnedThrough) youLine = `${s.learnedThrough.label} learned`;
 	else if (withSkills.length > 0) youLine = `Not all of ${lectureShortLabel(withSkills[0]!)} learned yet`;
 	else if (s.lectures.length > 0) youLine = s.linking ? "Placing the skills in the lectures…" : "Skills aren't placed in lectures yet";
 	let nextLine: string | null = null;
 	if (s.next) {
 		const days = daysUntil(s.next.date, now);
-		const when = days >= 0 && days <= 6 ? shortDate(s.next.date).split(" ")[0]! : shortDate(s.next.date);
+		const when = days >= 0 && days <= 6 ? weekdayLabel(s.next.date) : shortDate(s.next.date, now);
 		const head = `${s.next.title} · ${when}`;
 		if (!s.next.needs) nextLine = head;
 		else {
@@ -103,37 +112,55 @@ function PositionEditor({ courseId, standing, onDone }: { courseId: string; stan
 		}
 	};
 	return (
+		// UI round 8 (SPEC §9): labelled fields on one grid, the lecture by its short name (no clipped title), and the
+		// actions on their own row under them
 		<form
-			className="mt-1 flex flex-wrap items-center gap-2"
+			className="mt-1 space-y-2.5 rounded-lg border border-border bg-card p-3"
 			data-testid="standing-position-form"
 			onSubmit={(e) => {
 				e.preventDefault();
 				void send(positionBody({ lectureId, covered, note }), "PUT");
 			}}
+			onKeyDown={(e) => {
+				if (e.key === "Escape") {
+					e.stopPropagation();
+					onDone(false);
+				}
+			}}
 		>
-			<ThinSelect value={lectureId} onChange={setLectureId} ariaLabel="The lecture the class is at" className="w-48" testid="standing-position-lecture">
-				<option value="">No lecture</option>
-				{standing.lectures.map((l) => (
-					<option key={l.id} value={l.id}>
-						{l.title}
-						{l.date ? ` · ${shortDate(l.date)}` : ""}
-					</option>
-				))}
-			</ThinSelect>
-			<input aria-label="What the class covered" placeholder="Covered (e.g. chapter 6)" value={covered} onChange={(e) => setCovered(e.target.value)} className={cn(FIELD_CLASS, "h-7 w-44 px-2")} data-testid="standing-position-covered" />
-			<input aria-label="Note" placeholder="Note (e.g. a week behind)" value={note} onChange={(e) => setNote(e.target.value)} className={cn(FIELD_CLASS, "h-7 w-44 px-2")} data-testid="standing-position-note" />
-			<button type="submit" className={SMALL} disabled={working || (!lectureId && !covered.trim() && !note.trim())} data-testid="standing-position-save">
-				Save
-			</button>
-			{standing.position?.how === "explicit" && (
-				<button type="button" className={GHOST} disabled={working} data-testid="standing-position-dates" onClick={() => void send(null, "DELETE")}>
-					Follow the dates
+			<div className="grid grid-cols-3 gap-2">
+				<Field label="Lecture">
+					<ThinSelect value={lectureId} onChange={setLectureId} ariaLabel="The lecture the class is at" className="w-full" testid="standing-position-lecture">
+						<option value="">No lecture</option>
+						{standing.lectures.map((l) => (
+							<option key={l.id} value={l.id} title={l.title}>
+								{lectureShortLabel(l)}
+								{l.date ? ` · ${shortDate(l.date)}` : ""}
+							</option>
+						))}
+					</ThinSelect>
+				</Field>
+				<Field label="Covered">
+					<input placeholder="e.g. chapter 6" value={covered} onChange={(e) => setCovered(e.target.value)} className={cn(FIELD_CLASS, "h-8 w-full px-2.5")} data-testid="standing-position-covered" />
+				</Field>
+				<Field label="Note">
+					<input placeholder="e.g. a week behind" value={note} onChange={(e) => setNote(e.target.value)} className={cn(FIELD_CLASS, "h-8 w-full px-2.5")} data-testid="standing-position-note" />
+				</Field>
+			</div>
+			<div className="flex items-center gap-2">
+				<button type="submit" className={SMALL} disabled={working || (!lectureId && !covered.trim() && !note.trim())} data-testid="standing-position-save">
+					Save
 				</button>
-			)}
-			<button type="button" className={GHOST} onClick={() => onDone(false)}>
-				Cancel
-			</button>
-			{error && <p className="w-full text-meta text-error">{error}</p>}
+				<button type="button" className={GHOST} onClick={() => onDone(false)}>
+					Cancel
+				</button>
+				{standing.position?.how === "explicit" && (
+					<button type="button" className={cn(GHOST, "ml-auto")} disabled={working} data-testid="standing-position-dates" onClick={() => void send(null, "DELETE")}>
+						Follow the dates again
+					</button>
+				)}
+			</div>
+			{error && <ErrorNotice error={error} what="Couldn't save where the class is." testid="standing-position-error" />}
 		</form>
 	);
 }
@@ -163,9 +190,16 @@ export function WhereYouStand({ courseId, standing, onChanged, now }: { courseId
 							}}
 						/>
 					) : (
-						<button type="button" className="truncate text-left hover:underline hover:decoration-border hover:underline-offset-2" title="Correct where the class is" data-testid="standing-class-edit" onClick={() => setEditing(true)}>
-							{lines.classLine}
-							{standing.position?.how === "explicit" && <span className="ml-1.5 text-meta text-muted-foreground">(you said)</span>}
+						<button
+							type="button"
+							className="group/pos -mx-1.5 flex max-w-full items-center gap-1.5 rounded-sm px-1.5 text-left transition-colors duration-(--lh-duration-hover) hover:bg-raised"
+							aria-label={`Edit class position: ${lines.classLine}`}
+							data-testid="standing-class-edit"
+							onClick={() => setEditing(true)}
+						>
+							<span className="min-w-0 truncate">{lines.classLine}</span>
+							{standing.position?.how === "explicit" && <span className="shrink-0 text-meta text-muted-foreground">(you said)</span>}
+							<PencilIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground opacity-60 group-hover/pos:opacity-100" />
 						</button>
 					),
 					"standing-class",

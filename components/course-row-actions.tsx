@@ -1,6 +1,7 @@
 "use client";
 
 import { buttonVariants } from "@/components/ui/button";
+import { ErrorNotice } from "@/components/ui/error-notice";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CourseSummary } from "@/src/core";
@@ -103,32 +104,17 @@ export function DeleteCourseDialog({
 				aria-label="Delete class"
 				data-testid="delete-course-dialog"
 				onClick={(e) => e.stopPropagation()}
-				className="w-[32rem] max-w-[calc(100vw-2rem)] lh-dialog p-6"
+				className="w-[27.5rem] max-w-[calc(100vw-2rem)] lh-dialog p-6"
 			>
-				<h2 className="text-sm font-semibold text-destructive">Delete class?</h2>
-				<div className="mt-1.5">
-					<code data-testid="course-name-code" className="font-sans text-sm font-medium text-foreground">
-						{course.title}
-					</code>
-				</div>
-				<p className="mt-2 text-sm text-muted-foreground">
+				{/* UI round 8 (SPEC §9): a 15/20 title in the text colour (the danger fill is the confirm's alone), 440px */}
+				<h2 className="lh-section-title text-foreground">
+					Delete <span data-testid="course-name-code">“{course.title}”</span>?
+				</h2>
+				<p className="mt-2 text-body text-muted-foreground">
 					This removes the class and its curriculum material. Its skills stay in your knowledge graph. This cannot be
 					undone.
 				</p>
-				{failure && (
-					<div role="alert" data-testid="delete-course-failure" className="mt-3 rounded-sm border border-border/60 px-3 py-2 text-xs">
-						<span className="text-foreground">{failure}</span>
-						<button
-							type="button"
-							data-testid="delete-course-retry"
-							onClick={() => void run()}
-							disabled={busy}
-							className="ml-3 text-xs text-foreground underline-offset-2 hover:underline disabled:opacity-40"
-						>
-							Try again
-						</button>
-					</div>
-				)}
+				{failure && <ErrorNotice className="mt-3" error={failure} what="Couldn't delete the class." onRetry={() => void run()} retrying={busy} testid="delete-course-failure" />}
 				<div className="mt-4 flex justify-end gap-2">
 					<button
 						type="button"

@@ -5,10 +5,12 @@ import { FIELD_CLASS } from "@/components/ui/input";
 import { Children, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, InfoIcon, LockIcon, PanelRightIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, InfoIcon, LockIcon, PanelRightIcon, PencilIcon } from "lucide-react";
 import {
 	COURSE_MODE_LABEL,
 	courseProgressPercent,
+	dayLabel,
+	STANCE_LABELS,
 	examReadiness,
 	knownShare,
 	DUE_BUCKET_LABEL,
@@ -36,7 +38,8 @@ import {
 import { DistributionStrip, DueChip, DueTimeline, UnderstandingBar, useNow } from "@/components/skill-visuals";
 import { CourseModes, SHORT_QUESTION } from "@/components/course-modes";
 import { ClassPanel } from "@/components/class-panel";
-import { ClassSetup } from "@/components/class-setup";
+import { ClassNameField, ClassSetup } from "@/components/class-setup";
+import { DeleteCourseDialog } from "@/components/course-row-actions";
 import { dragHasFiles, useMaterials, type MaterialsApi } from "@/components/use-materials";
 import { Hint } from "@/components/ui/hint";
 import { LearnPaceDialog } from "@/components/learn-pace-dialog";
@@ -135,7 +138,7 @@ export function dueShort(skill: Pick<CourseSkillView, "learned" | "reviewAt">, n
 	const ms = Date.parse(skill.reviewAt) - now;
 	if (ms <= 0) return "now";
 	const days = Math.ceil(ms / 86_400_000);
-	return days === 1 ? "tomorrow" : `${days} d`;
+	return days === 1 ? "tomorrow" : `${days} days`;
 }
 
 /** One figure of the opened skill: a number, a one-word label and, for recall, a small meter with the 90% review line. */
@@ -221,9 +224,10 @@ export async function removeSelfReport(report: { id: string; courseId?: string }
 	}
 }
 
-/** What the learner said, as the skill shows it: "you said you know this", "…this is unclear", "…you don't get this". Pure. */
+/** What the learner said, as the skill shows it, in the one wording (SPEC §9): "you said: know it", "…: unsure",
+ *  "…: don't get it yet". Pure. */
 export function selfReportLabel(stance: "know" | "shaky" | "dont_know"): string {
-	return stance === "know" ? "you said you know this" : stance === "shaky" ? "you said this is unclear" : "you said you don't get this";
+	return `you said: ${STANCE_LABELS[stance]}`;
 }
 
 /**
@@ -283,7 +287,7 @@ function SkillRow({
 				{skill.selfReport && (
 					// WP8: a quiet marker for what the learner said (the detail says it in words, with its date)
 					<span className="shrink-0 text-meta text-muted-foreground" title={selfReportLabel(skill.selfReport.stance)} data-testid={`skill-said-${skill.id}`}>
-						{skill.selfReport.stance === "know" ? "said: know" : skill.selfReport.stance === "shaky" ? "said: unsure" : "said: unclear"}
+						said: {STANCE_LABELS[skill.selfReport.stance]}
 					</span>
 				)}
 				{!skill.learned && skill.missing.length > 0 && <LockIcon role="img" aria-label="locked" data-testid={`skill-lock-${skill.id}`} className="size-3.5 shrink-0 text-muted-foreground" />}
@@ -312,22 +316,25 @@ function SkillRow({
 						</p>
 					)}
 					{skill.requires.length > 0 && (
-						<div className="flex flex-wrap items-center gap-1.5" data-testid={`skill-needs-${skill.id}`}>
-							<span className="text-muted-foreground">needs</span>
-							{skill.requires.map((id) => (
-								<PrereqChip key={id} name={names.get(id) ?? id} learned={choose?.learned.has(id) === true} />
-							))}
+						// UI round 8: the label in its own column, so a wrapped chip lines up under the first one
+						<div className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-2" data-testid={`skill-needs-${skill.id}`}>
+							<span className="text-muted-foreground">Needs</span>
+							<span className="flex flex-wrap gap-1.5">
+								{skill.requires.map((id) => (
+									<PrereqChip key={id} name={names.get(id) ?? id} learned={choose?.learned.has(id) === true} />
+								))}
+							</span>
 						</div>
 					)}
 					{skill.selfReport && (
 						<p className="flex flex-wrap items-center gap-x-2 text-muted-foreground" data-testid={`skill-self-report-${skill.id}`}>
 							<span>
-								{selfReportLabel(skill.selfReport.stance)[0]!.toUpperCase() + selfReportLabel(skill.selfReport.stance).slice(1)} ({skill.selfReport.at.slice(0, 10)})
+								{selfReportLabel(skill.selfReport.stance)[0]!.toUpperCase() + selfReportLabel(skill.selfReport.stance).slice(1)} · {dayLabel(skill.selfReport.at)}
 								{skill.selfReport.chatId && (
 									<>
 										{" · "}
 										<Link href={`/chat/${skill.selfReport.chatId}`} className="underline decoration-border underline-offset-2 hover:text-foreground">
-											where
+											View session
 										</Link>
 									</>
 								)}
@@ -357,8 +364,9 @@ function SkillRow({
 					<div className="max-h-[2.6rem] overflow-hidden [&_p]:line-clamp-2" data-testid={`skill-statement-${skill.id}`}>
 						<RichText className={cn(ITEM_TYPE, "text-muted-foreground")}>{skill.statement}</RichText>
 					</div>
-					<button type="button" className="text-muted-foreground underline decoration-border underline-offset-2 hover:text-foreground" aria-expanded={more} data-testid={`skill-more-${skill.id}`} onClick={() => setMore((m) => !m)}>
-						{more ? "Less ‹" : "More ›"}
+					<button type="button" className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "-ml-2.5 text-muted-foreground hover:text-foreground")} aria-expanded={more} data-testid={`skill-more-${skill.id}`} onClick={() => setMore((m) => !m)}>
+						{more ? "Less" : "More"}
+						<ChevronRightIcon aria-hidden className={cn("transition-transform duration-(--lh-duration-hover)", more && "-rotate-90")} />
 					</button>
 					{more && (
 						<div className="space-y-2 border-t border-border/50 pt-2" data-testid={`skill-more-body-${skill.id}`}>
@@ -367,7 +375,7 @@ function SkillRow({
 							{skill.lessonNote && (
 								<div className="space-y-0.5" data-testid={`skill-note-${skill.id}`}>
 									<p className="text-muted-foreground">
-										Last lesson ({skill.lessonNote.at.slice(0, 10)}):{" "}
+										Last lesson ({dayLabel(skill.lessonNote.at)}):{" "}
 										<Link href={`/chat/${skill.lessonNote.chatId}`} className="underline decoration-border underline-offset-2 hover:text-foreground">
 											open
 										</Link>
@@ -571,7 +579,12 @@ export function CourseBody({
 	onChanged,
 	onAsk,
 	onCoverage,
+	setupName,
+	setupFooter,
 }: {
+	/** A new class's name field and footer (Delete class…) for the setup card (owner, 2026-11-25). */
+	setupName?: React.ReactNode;
+	setupFooter?: React.ReactNode;
 	data: CoursePayload;
 	busy: boolean;
 	error: string | null;
@@ -750,6 +763,8 @@ export function CourseBody({
 						courseError={course.error}
 						busy={busy}
 						onDraft={() => onDraft()}
+						nameField={setupName}
+						footer={setupFooter}
 					/>
 					{error && <p className="text-meta text-error">{error}</p>}
 					{course.draft && !drafting && <DraftReview data={data} busy={busy} onFeedback={(f) => onDraft(f)} onApprove={onApprove} />}
@@ -999,7 +1014,7 @@ export function CourseBody({
 														<RichLine>{oneLineStatement(m.statement)}</RichLine>
 													</div>
 													<div className="mt-0.5 text-xs text-muted-foreground">
-														{m.skills.map((s) => s.name).join(", ")} · {m.how} · {m.at.slice(0, 10)}
+														{m.skills.map((s) => s.name).join(", ")} · {m.how} · {dayLabel(m.at)}
 													</div>
 												</div>
 												<button
@@ -1208,17 +1223,26 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 		// every arrival by a link with ?learn=, also from another lesson of the same course (the effect follows the URL)
 	}, [wantedLearn]);
 
+	const [nameSaved, setNameSaved] = useState(false);
+	useEffect(() => {
+		if (!nameSaved) return;
+		const t = setTimeout(() => setNameSaved(false), 2500);
+		return () => clearTimeout(t);
+	}, [nameSaved]);
 	const commitTitle = async () => {
 		const t = title.trim();
 		if (!t || t === data.course.title) {
 			setTitle(titleFieldValue(data.course.title));
 			return;
 		}
-		await fetch(`/api/courses/${courseId}`, {
+		const ok = await fetch(`/api/courses/${courseId}`, {
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ title: t }),
-		}).catch(() => {});
+		})
+			.then((r) => r.ok)
+			.catch(() => false);
+		if (ok) setNameSaved(true);
 		void refresh();
 	};
 
@@ -1228,30 +1252,54 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 	const weighed = !!data.course.weightsAt;
 	// The empty class (no skill map yet): the setup card in the center.
 	const setup = !hasSkills;
-	// The class name, the top bar's title in every state (new-class polish, 2026-11-25): a new, untitled class opens on
-	// it empty and focused, "Class name" as its placeholder; Enter or leaving it saves through the rename.
-	const titleField = (className: string) => (
-		<FitTitleInput
-			value={title}
-			onChange={(e) => setTitle(e.target.value)}
-			onBlur={() => void commitTitle()}
-			onKeyDown={(e) => {
-				if (e.key === "Enter") {
-					e.preventDefault();
-					e.currentTarget.blur();
-				}
-				if (e.key === "Escape") {
-					setTitle(titleFieldValue(data.course.title));
-					e.currentTarget.blur();
-				}
-			}}
-			autoFocus={setup && isUntitledClass(initial.course.title)}
-			placeholder="Class name"
-			aria-label="Class name"
-			data-testid="course-title"
-			className={cn("lh-no-drag resize-none overflow-y-auto bg-transparent lh-page-title outline-none placeholder:text-muted-foreground", className)}
-		/>
-	);
+	// A brand-new class (no file, no draft, no map) has no side panel at all (owner, 2026-11-25: "it's just saying the same
+	// thing the centre is saying"): its setup card holds the name, the files and Delete class…; the panel arrives with the
+	// first file.
+	const bare = setup && !data.course.draft && !drafting && materialCount === 0;
+	const untitled = isUntitledClass(data.course.title);
+	const [deleting, setDeleting] = useState(false);
+	// The class name in the top bar (new-class polish; round 8): a named class renames here, the field showing it can be
+	// edited (a faint fill and a pencil on hover); a bare class shows its name, or a muted "New class", as plain text,
+	// because the setup card's own labelled field is where it is entered.
+	const titleField = (className: string) =>
+		bare ? (
+			<h1 className={cn("min-w-0 flex-1 truncate lh-page-title", untitled && "text-muted-foreground", className)} data-testid="course-title-static">
+				{untitled ? "New class" : data.course.title}
+			</h1>
+		) : (
+			<span className={cn("group/title relative -mx-1.5 flex min-w-0 items-center rounded-md px-1.5 transition-colors duration-(--lh-duration-hover) hover:bg-raised focus-within:bg-raised", className)}>
+				<FitTitleInput
+					value={title}
+					onChange={(e) => setTitle(e.target.value)}
+					onBlur={() => void commitTitle()}
+					onKeyDown={(e) => {
+						if (e.key === "Enter") {
+							e.preventDefault();
+							e.currentTarget.blur();
+						}
+						if (e.key === "Escape") {
+							setTitle(titleFieldValue(data.course.title));
+							e.currentTarget.blur();
+						}
+					}}
+					placeholder="Class name"
+					aria-label="Class name"
+					title="Rename the class"
+					data-testid="course-title"
+					className="lh-no-drag min-w-0 flex-1 resize-none overflow-y-auto bg-transparent lh-page-title outline-none placeholder:text-muted-foreground"
+				/>
+				<PencilIcon aria-hidden className="ml-1 size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity duration-(--lh-duration-hover) group-hover/title:opacity-100 group-focus-within/title:opacity-0" />
+			</span>
+		);
+	// At 1024 the side panel is a sheet over the page (UI round 8, SPEC §9): Esc or a click outside closes it.
+	useEffect(() => {
+		if (!panelOpen) return;
+		const key = (e: KeyboardEvent) => {
+			if (e.key === "Escape" && !e.defaultPrevented) setPanelOpen(false);
+		};
+		window.addEventListener("keydown", key);
+		return () => window.removeEventListener("keydown", key);
+	}, [panelOpen]);
 	// A file dropped anywhere on the class page becomes a class file (UI class page): the panel opens to show it land.
 	const dropHandlers = {
 		onDragEnter: (e: React.DragEvent) => {
@@ -1316,7 +1364,7 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 									{reviewLabel(data)}
 								</button>
 							)}
-							<button
+							{!bare && <button
 								type="button"
 								className={cn(HEAD_ICON_BTN, "lh-touch @6xl/class:hidden", panelOpen && "bg-raised text-foreground")}
 								aria-label={panelOpen ? "Hide class files and settings" : "Show class files and settings"}
@@ -1326,7 +1374,7 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 								onClick={() => setPanelOpen((o) => !o)}
 							>
 								<PanelRightIcon strokeWidth={1.75} aria-hidden />
-							</button>
+							</button>}
 						</span>
 					</div>
 				</header>
@@ -1366,6 +1414,25 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 							}}
 							onChanged={() => void refresh()}
 							onAsk={(reopen) => void onAsk(reopen)}
+							setupName={
+								bare ? (
+									<ClassNameField
+										value={title}
+										onChange={setTitle}
+										onCommit={() => void commitTitle()}
+										onReset={() => setTitle(titleFieldValue(data.course.title))}
+										saved={nameSaved}
+										autoFocus={isUntitledClass(initial.course.title)}
+									/>
+								) : undefined
+							}
+							setupFooter={
+								bare ? (
+									<button type="button" className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "-ml-2.5 text-destructive")} data-testid="course-delete" onClick={() => setDeleting(true)}>
+										Delete class…
+									</button>
+								) : undefined
+							}
 							onCoverage={{
 								edit: (target, edit) => void call(`/api/courses/${courseId}/coverage`, { target, ...edit }),
 								map: (target) => void call(`/api/courses/${courseId}/coverage`, { map: true, ...(target === "draft" ? { target: "draft" } : {}) }),
@@ -1375,11 +1442,15 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 					</WeightEditContext.Provider>
 				</div>
 			</div>
-			<aside
+			{/* At 1024 the open panel is a sheet over the page (UI round 8, SPEC §9; pushing would leave the centre about
+			    430px with the sidebar open, and the cards truncated): this transparent layer takes the click outside. */}
+			{!bare && panelOpen && <div aria-hidden className="absolute inset-0 z-20 @6xl/class:hidden" data-testid="class-panel-backdrop" onClick={() => setPanelOpen(false)} />}
+			{!bare && <aside
 				aria-label="Class files and settings"
 				data-testid="class-side-panel"
 				className={cn(
-					"w-84 shrink-0 overflow-y-auto border-l border-border bg-background pt-[var(--lh-safe-top)] transition-colors duration-(--lh-duration-hover)",
+					"lh-panel-in w-84 shrink-0 overflow-y-auto border-l border-border bg-background pt-[var(--lh-safe-top)] transition-colors duration-(--lh-duration-hover)",
+					"@max-6xl/class:absolute @max-6xl/class:inset-y-0 @max-6xl/class:right-0 @max-6xl/class:z-30 @max-6xl/class:shadow-(--lh-shadow-pop)",
 					panelOpen ? "block" : "hidden @6xl/class:block",
 					dropping && "bg-raised/40",
 				)}
@@ -1403,7 +1474,7 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 					onDeleted={() => router.push("/")}
 					exam={
 						hasSkills
-							? { examDate: data.course.examDate, hasWeights: weighed, weighing: data.weighing === true, canWeigh: !drafting && materialCount > 0, weightsSummary: data.course.weightsSummary, weightsAt: data.course.weightsAt }
+							? { examDate: data.course.examDate, hasWeights: weighed, weighing: data.weighing === true, canWeigh: !drafting && materialCount > 0, weightsSummary: data.course.weightsSummary, weightsAt: data.course.weightsAt, ...(data.course.weightsError ? { weightsError: data.course.weightsError } : {}) }
 							: undefined
 					}
 					// WP8: the Upcoming list (quizzes, exams; the old exam date as an "Exam") and the syllabus pass
@@ -1412,7 +1483,8 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 					{...(data.standing ? { standing: data.standing } : {})}
 					skills={data.skills.map((s) => ({ id: s.id, name: s.name }))}
 				/>
-			</aside>
+			</aside>}
+			<DeleteCourseDialog course={deleting ? { id: courseId, title: data.course.title } : null} onClose={() => setDeleting(false)} onDeleted={() => router.push("/")} />
 		</div>
 	);
 }

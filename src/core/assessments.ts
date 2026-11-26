@@ -71,6 +71,9 @@ export type AssessmentEntry = Assessment | Tombstone;
 
 export type SelfReportStance = "know" | "shaky" | "dont_know";
 export const SELF_REPORT_STANCES: readonly SelfReportStance[] = ["know", "shaky", "dont_know"];
+/** What the learner said, in one wording everywhere it shows (UI round 8, SPEC §9): the skill row, its detail and the
+ *  change card. */
+export const STANCE_LABELS: Record<SelfReportStance, string> = { know: "know it", shaky: "unsure", dont_know: "don't get it yet" };
 
 /** What the learner said about some skills, in a Short question conversation. */
 export interface SelfReport {

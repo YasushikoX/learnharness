@@ -26,10 +26,11 @@ import { formatTokens } from "@/components/usage-format";
 import { Input } from "@/components/ui/input";
 import { SearchMenuList } from "./search-menu-list";
 
-function priceLabel(cost: ModelCatalogEntry["cost"]): string {
+/** "$0.10 / $0.50": two decimals always, thin spaces around the slash (UI round 8, SPEC §9). Pure. */
+export function priceLabel(cost: ModelCatalogEntry["cost"]): string {
 	if (!cost) return "Unpriced";
-	const fmt = (n: number) => `$${n < 1 ? n.toFixed(2).replace(/0$/, "") : n.toFixed(2)}`;
-	return `${fmt(cost.input)}/${fmt(cost.output)}`;
+	const fmt = (n: number) => `$${n.toFixed(2)}`;
+	return `${fmt(cost.input)} / ${fmt(cost.output)}`;
 }
 
 /** The model dropdown body — fuzzy search + ranked list. `models ===
@@ -83,16 +84,20 @@ export function ModelMenuList({
 				placeholder="Search models…"
 				loading="Loading models…"
 				empty="No models match."
+				header="Input / output, $ per 1M tokens"
 				renderItem={(m) => <>
 					<span className="flex items-center justify-between gap-2">
-						<span className="truncate text-card-foreground">{m.name}</span>
+						<span className="flex min-w-0 items-center gap-1.5 text-card-foreground">
+							<span className="truncate">{m.name}</span>
+							{m.id === effectiveId && m.provider === (effectiveProvider ?? m.provider) && <span aria-label="selected">✓</span>}
+						</span>
 						<span className="shrink-0 tabular-nums text-muted-foreground" title={m.provider === CLAUDE_CODE_PROVIDER ? "Billing is determined by your Claude Code configuration; LearnHarness does not estimate it." : subscriptionLabel(`${m.provider}:${m.id}`) ? "Subscription connection" : m.cost ? "USD per 1M tokens in/out" : "Price unavailable"}>
 							{m.provider === CLAUDE_CODE_PROVIDER ? "CLI billing" : subscriptionLabel(`${m.provider}:${m.id}`) ?? priceLabel(m.cost)}
 						</span>
 					</span>
 					<span className="flex items-center justify-between gap-2 text-muted-foreground">
 						<span className="truncate">{subscriptionLabel(`${m.provider}:${m.id}`) ? `${subscriptionLabel(`${m.provider}:${m.id}`)} (subscription)` : m.provider} · {m.id}</span>
-						<span className="shrink-0 tabular-nums">{m.contextWindow === null ? "—" : formatTokens(m.contextWindow)}</span>
+						<span className="shrink-0 tabular-nums">{m.contextWindow === null ? "—" : `${formatTokens(m.contextWindow)} context`}</span>
 					</span>
 				</>}
 			/>

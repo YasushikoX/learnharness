@@ -405,7 +405,7 @@ export function CoursesSection({ onCourses, query = "" }: { onCourses?: (courses
 				>
 					<GraduationCapIcon className="size-4" strokeWidth={1.75} />
 					Classes
-					{courses !== null && <span className="font-normal tabular-nums text-muted-foreground">{total}</span>}
+					{courses !== null && total > 0 && <span className="font-normal tabular-nums text-muted-foreground">{total}</span>}
 					{bodyOpen ? <ChevronDownIcon className="size-3.5" strokeWidth={1.75} /> : <ChevronRightIcon className="size-3.5" strokeWidth={1.75} />}
 				</button>
 				{/* a quiet + (owner, 2026-11-16): the gold pill was the loudest thing in the sidebar */}

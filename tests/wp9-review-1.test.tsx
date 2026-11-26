@@ -419,7 +419,7 @@ describe("WP9 review 1", () => {
 		await runTurn(chatId, "Actually I do get Laplace now.", oneCall("self_report_retract", { skillIds: [a] }, "r1"));
 		const live = A.liveSelfReports(getCourse(courseId).selfReports);
 		assert.deepEqual(live.map((r) => r.skillIds), [[c]], "Laplace taken back, Bode kept");
-		assert.deepEqual(classChangeLines(changeOf(chatId, "r1") as never), { eyebrow: "Taken back", title: "Laplace", lines: ["Was: Don't get yet", "Your practice results decide it again."] });
+		assert.deepEqual(classChangeLines(changeOf(chatId, "r1") as never), { eyebrow: "Taken back", title: "Laplace", lines: ["You had said: don't get it yet", "Your practice results decide it again."] });
 		assert.equal((await undo(chatId, "r1")).status, 200);
 		assert.deepEqual(A.liveSelfReports(getCourse(courseId).selfReports).map((r) => r.skillIds), [[a, c]]);
 		// a lecture note: renamed and redated, then undone to its automatic title and old date

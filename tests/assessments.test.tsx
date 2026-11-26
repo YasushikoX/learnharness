@@ -764,7 +764,7 @@ describe("the class page: the Upcoming list in each state", () => {
 	const render = (upcoming: UpcomingView, canFind = true) => renderToStaticMarkup(<UpcomingList courseId="course_1" upcoming={upcoming} skills={[{ id: "sk_p", name: "Poles" }]} canFind={canFind} onChanged={() => {}} now={NOW} />);
 
 	it("countdown and grouping helpers", () => {
-		assert.deepEqual(["2026-11-25", "2026-11-26", "2026-12-04", "2026-11-20"].map((d) => countdownLabel(d, NOW)), ["today", "tomorrow", "in 9 d", "passed"]);
+		assert.deepEqual(["2026-11-25", "2026-11-26", "2026-12-04", "2026-11-20"].map((d) => countdownLabel(d, NOW)), ["today", "tomorrow", "in 9 days", "passed"]);
 		const rows = upcomingRows([item({ id: "p", date: "2026-11-01" }), item({ id: "u", date: undefined }), item({ id: "n" })], NOW);
 		assert.deepEqual([rows.coming.map((a) => a.id), rows.undated.map((a) => a.id), rows.past.map((a) => a.id)], [["n"], ["u"], ["p"]]);
 	});
@@ -772,23 +772,29 @@ describe("the class page: the Upcoming list in each state", () => {
 	it("empty: says how to add one, Find in syllabus (off without a file)", () => {
 		const html = render(view());
 		assert.match(html, /data-testid="upcoming"[\s\S]*Upcoming/);
-		assert.match(html, /data-testid="upcoming-empty"[^>]*>No quizzes or exams yet\. Add one, find them in the syllabus, or tell Short question\./);
+		assert.match(html, /data-testid="upcoming-empty"[^>]*>No quizzes or exams yet\. Add one with \+, find them in the syllabus, or tell Short question\./);
 		assert.match(html, /data-testid="upcoming-add"/);
 		assert.match(render(view(), false), /<button[^>]*disabled=""[^>]*data-testid="upcoming-find"/);
+		// UI round 8: the reason is visible text under the button, not only a native title
+		assert.match(render(view(), false), /data-testid="upcoming-find-reason"[^>]*>Add the syllabus or another class file first\./);
+		assert.doesNotMatch(render(view()), /upcoming-find-reason/);
 	});
 
 	it("items: the next one marked, date with countdown, kind, topics and skills; undated; past folded", () => {
 		const html = render(view({ items: [item(), item({ id: "as_2", title: "Final", kind: "final", date: undefined, topics: "", skillIds: [] }), item({ id: "as_0", title: "Quiz 1", date: "2026-11-01" })], nextId: "as_1" }));
-		assert.match(html, /data-testid="upcoming-item-as_1"[\s\S]*aria-label="next"[\s\S]*Quiz 3[\s\S]*4 Dec 2026 · in 9 d[\s\S]*Quiz · chapters 4 and 5 · Poles/);
+		assert.match(html, /data-testid="upcoming-item-as_1"[\s\S]*aria-label="next"[\s\S]*Quiz 3[\s\S]*Fri 4 Dec · in 9 days[\s\S]*Quiz · chapters 4 and 5 · Poles/);
 		assert.match(html, /data-testid="upcoming-when-as_2"[^>]*>no date</);
 		assert.match(html, /data-testid="upcoming-past-toggle"[^>]*>Past · 1</);
 		assert.doesNotMatch(html, /upcoming-item-as_0/, "past items folded");
 	});
 
 	it("finding, failure, a syllabus hint, and the proposal with citations and its actions", () => {
-		assert.match(render(view({ finding: true })), /data-testid="upcoming-finding"[\s\S]*Reading the syllabus…/);
+		// the running state is on the button that started it (UI round 8), disabled, with its spinner
+		assert.match(render(view({ finding: true })), /<button[^>]*disabled=""[^>]*aria-busy="true"[^>]*data-testid="upcoming-finding"[^>]*>[\s\S]*Reading the syllabus…/);
 		assert.doesNotMatch(render(view({ finding: true })), /upcoming-find"/, "no second start while running");
-		assert.match(render(view({ error: "no model" })), /Finding failed: no model/);
+		// one error notice: a plain sentence, the raw text as its detail, Try again
+		const failed = render(view({ error: "no model" }));
+		assert.match(failed, /data-testid="upcoming-error"[\s\S]*Couldn&#x27;t find quizzes and exams\.[\s\S]*data-testid="upcoming-error-detail"[^>]*>no model<[\s\S]*data-testid="upcoming-error-retry"[^>]*>Try again</);
 		assert.match(render(view({ syllabusHint: { materialId: "mat_s", name: "Syllabus.pdf" } })), /data-testid="upcoming-syllabus-hint"[\s\S]*Syllabus\.pdf[\s\S]*looks like a syllabus[\s\S]*Find quizzes and exams/);
 		const proposal: AssessmentProposal = {
 			createdAt: "t",
@@ -807,6 +813,10 @@ describe("the class page: the Upcoming list in each state", () => {
 		assert.match(html, /data-testid="proposal-drop-p1"/);
 		assert.match(html, /data-testid="proposal-approve"[^>]*>Add all 2</);
 		assert.match(html, /data-testid="proposal-discard"[^>]*>Discard</);
+		// while a new reading runs, nothing in the older proposal can start (UI round 8, SPEC §9 one running state)
+		const running = render(view({ items: [item()], proposal, finding: true }));
+		for (const id of ["proposal-approve", "proposal-discard", "proposal-drop-p1"]) assert.match(running, new RegExp(`<button[^>]*disabled=""[^>]*data-testid="${id}"`), id);
+		assert.match(running, /This list is replaced when the new reading finishes\./);
 	});
 
 	it("the side panel holds Upcoming instead of the exam-date field", () => {
@@ -823,16 +833,19 @@ describe("the class page: the Upcoming list in each state", () => {
 	it("the transcript card: what changed, its date and topics, Undo while it still holds", () => {
 		const after = item();
 		const added = { kind: "assessment" as const, courseId: "c", action: "added" as const, before: null, after, skillNames: ["Poles"] };
-		assert.deepEqual(classChangeLines(added), { eyebrow: "Added · Quiz", title: "Quiz 3", lines: ["Fri 4 Dec 2026", "chapters 4 and 5", "Skills: Poles"] });
+		assert.deepEqual(classChangeLines(added, NOW), { eyebrow: "Added · Quiz", title: "Quiz 3", lines: ["Fri 4 Dec", "chapters 4 and 5", "Skills: Poles"] });
 		const moved = { ...added, action: "updated" as const, before: item({ date: "2026-12-01" }) };
-		assert.equal(classChangeLines(moved).lines[0], "Fri 4 Dec 2026 (was Tue 1 Dec 2026)");
+		assert.equal(classChangeLines(moved, NOW).lines[0], "Fri 4 Dec (was Tue 1 Dec)");
+		assert.equal(classChangeLines(added, new Date(2027, 0, 5).getTime()).lines[0], "Fri 4 Dec 2026", "another year adds it");
 		const html = renderToStaticMarkup(<ClassChangeView change={added} status="applied" onUndo={() => {}} />);
 		assert.match(html, /data-testid="class-change"[\s\S]*Added · Quiz[\s\S]*Quiz 3[\s\S]*data-testid="class-change-undo"[^>]*>Undo</);
 		const changed = renderToStaticMarkup(<ClassChangeView change={added} status="changed" onUndo={() => {}} />);
 		assert.doesNotMatch(changed, /class-change-undo/);
-		assert.match(changed, /undone or changed since/);
+		// UI round 8: the state is a line of its own where Undo was, not grey corner text
+		assert.match(changed, /data-testid="class-change-status"[^>]*>[\s\S]*Undone or changed since, so it can&#x27;t be undone from here\./);
 		const report = { kind: "self-report" as const, courseId: "c", report: { stance: "dont_know" as const, note: "", at: "t" }, skillNames: ["Bode"] };
-		assert.match(renderToStaticMarkup(<ClassChangeView change={report} status="applied" onUndo={() => {}} />), /Noted[\s\S]*Don&#x27;t get yet: Bode/);
+		// the one self-report wording (SPEC §9)
+		assert.match(renderToStaticMarkup(<ClassChangeView change={report} status="applied" onUndo={() => {}} />), /Noted[\s\S]*You said: don&#x27;t get it yet · Bode/);
 	});
 });
 

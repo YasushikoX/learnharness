@@ -447,8 +447,9 @@ describe("the exam plan on the page", () => {
 	});
 
 	it("labels days, dates and skills left", () => {
-		assert.equal(examUi.examCountdown(29), "29 d");
-		assert.equal(examUi.examCountdown(1), "1 d");
+		// spelled out in the hero number (UI round 8, SPEC §9)
+		assert.equal(examUi.examCountdown(29), "29 days");
+		assert.equal(examUi.examCountdown(1), "1 day");
 		assert.equal(examUi.examCountdown(0), "today");
 		assert.equal(examUi.examCountdown(-3), "passed");
 		assert.equal(examUi.skillsLeftLabel(27), "27 skills left");
@@ -459,7 +460,7 @@ describe("the exam plan on the page", () => {
 		const html = renderToStaticMarkup(
 			<examUi.ExamPlanSection {...props({ examDate: "2026-12-12", plan: { ...basePlan, examDate: "2026-12-12", daysLeft: 29, forecast: plan.forecast({ skillsLeft: 27, daysLeft: 29, pacePerDay: 1.2 }) } })} />,
 		);
-		assert.match(html, /data-testid="course-exam-countdown"[^>]*>[\s\S]*?29 d[\s\S]*?12 Dec 2026/);
+		assert.match(html, /data-testid="course-exam-countdown"[^>]*>[\s\S]*?29 days[\s\S]*?Sat 12 Dec( 2026)?</);
 		assert.match(html, /27 skills left/);
 		// UI round 1b: a no-break space before each middot (\s matches it), so the line never wraps onto a leading "·"
 		assert.match(html, /needs 1 lesson\/day\s· your pace 1\.2\/day\s· on track/);
@@ -537,10 +538,15 @@ describe("the exam plan on the page", () => {
 		assert.match(weighed, /Skills weighed by exam importance\./);
 		assert.ok(!weighed.includes("course-weigh-button"), "Weigh again is a setting");
 		const failed = renderToStaticMarkup(<examUi.ExamPlanSection {...props({ weightsError: "out of credit (Google)" })} />);
-		assert.match(failed, /Weighing failed: out of credit \(Google\)/);
+		// the shared error notice under the button that runs it, with Try again
+		assert.match(failed, /data-testid="course-weigh-button"[\s\S]*data-testid="course-weights-error"[\s\S]*Couldn&#x27;t weigh the exams\.[\s\S]*out of credit \(Google\)[\s\S]*>Try again</);
 		const running = renderToStaticMarkup(<examUi.ExamPlanSection {...props({ weighing: true })} />);
-		assert.match(running, /Reading the exams…/);
-		assert.match(running, /<button[^>]*disabled=""[^>]*data-testid="course-weigh-button"/);
+		// the running state is the button itself: spinner, present tense, disabled
+		assert.match(running, /<button[^>]*disabled=""[^>]*aria-busy="true"[^>]*data-testid="course-weighing"[^>]*>[\s\S]*Reading the exams…/);
+		// a re-weigh (Weigh again is in the side panel) keeps the last result here, said as such, and no second spinner
+		const reweigh = renderToStaticMarkup(<examUi.ExamPlanSection {...props({ hasWeights: true, weighing: true })} />);
+		assert.match(reweigh, /the last weighing; a new one is running/);
+		assert.doesNotMatch(reweigh, /course-weighing/);
 		const noSources = renderToStaticMarkup(<examUi.ExamPlanSection {...props({ canWeigh: false })} />);
 		assert.match(noSources, /<button[^>]*disabled=""[^>]*data-testid="course-weigh-button"/);
 	});
@@ -554,8 +560,12 @@ describe("the exam plan on the page", () => {
 		assert.ok(!dated.includes("course-weigh-button"), "Weigh by exams is on the card until weighed");
 		const weighed = renderToStaticMarkup(<examUi.ExamSettings {...settings({ hasWeights: true, weightsSummary: "Used 3 past exams.", weightsAt: "2026-11-13T10:00:00Z" })} />);
 		assert.match(weighed, />Weigh again</);
-		assert.match(weighed, /Last weighing \(2026-11-13\): Used 3 past exams\./);
-		assert.match(weighed, /<p class="truncate[^"]*" title="Used 3 past exams\."/, "one line, the whole text on a long press");
+		// the date on its own line in the one date format, the finding wrapping under it (UI round 8: it was clipped)
+		assert.match(weighed, /Last weighed Fri 13 Nov( 2026)?<\/p><p class="line-clamp-3[^"]*" title="Used 3 past exams\.">Used 3 past exams\.</);
+		const reweighing = renderToStaticMarkup(<examUi.ExamSettings {...settings({ hasWeights: true, weighing: true })} />);
+		assert.match(reweighing, /<button[^>]*disabled=""[^>]*aria-busy="true"[^>]*data-testid="course-weighing"[^>]*>[\s\S]*Weighing…/);
+		const reFailed = renderToStaticMarkup(<examUi.ExamSettings {...settings({ hasWeights: true, weightsError: "429 rate limited: the provider asks to wait 40 s" })} />);
+		assert.match(reFailed, /data-testid="course-weights-error"[\s\S]*Couldn&#x27;t weigh the exams\. The provider is busy; try again in 40 seconds\.[\s\S]*429 rate limited/);
 		assert.ok(!weighed.includes("course-exam-date-clear"));
 	});
 

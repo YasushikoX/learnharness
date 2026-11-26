@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 export function SearchMenuList<T>({
 	items, itemKey, searchTerms, compare, prioritize, isSelected, onPick, renderItem,
 	searchTestid, listTestid, optionTestid, placeholder, ariaLabel, loading, empty,
-	disabled = false,
+	disabled = false, header,
 }: {
 	items: readonly T[] | undefined;
 	itemKey: (item: T) => string;
@@ -31,6 +31,8 @@ export function SearchMenuList<T>({
 	loading?: string;
 	empty: string;
 	disabled?: boolean;
+	/** A quiet line between the search and the list (the model menu's "Input / output per 1M tokens"). */
+	header?: ReactNode;
 }) {
 	const [query, setQuery] = useState("");
 	const [menuIdx, setMenuIdx] = useState<number | null>(null);
@@ -38,6 +40,9 @@ export function SearchMenuList<T>({
 	const listRef = useRef<HTMLUListElement>(null);
 
 	useEffect(() => { searchRef.current?.focus(); }, []);
+	// UI round 8: the menu opens on the current choice, not on the top of the list
+	const loaded = items !== undefined;
+	useEffect(() => { if (loaded) listRef.current?.querySelector("[data-selected]")?.scrollIntoView?.({ block: "nearest" }); }, [loaded]);
 	useEffect(() => {
 		if (menuIdx === null) return;
 		listRef.current?.querySelector(`[data-idx="${menuIdx}"]`)?.scrollIntoView({ block: "nearest" });
@@ -85,13 +90,16 @@ export function SearchMenuList<T>({
 		/>
 		{!items && loading && <div className="px-2 py-3 text-center text-muted-foreground">{loading}</div>}
 		{items && results.length === 0 && <div className="px-2 py-3 text-center text-muted-foreground">{empty}</div>}
-		<ul ref={listRef} data-testid={listTestid} className="flex max-h-72 flex-col overflow-y-auto px-1">
+		{header && items && results.length > 0 && <div className="flex justify-end px-3 pb-1 text-xs text-muted-foreground">{header}</div>}
+		<ul ref={listRef} data-testid={listTestid} className="flex max-h-72 flex-col overflow-y-auto px-1 pb-3 [mask-image:linear-gradient(to_bottom,#000_calc(100%-12px),transparent)]">
 			{results.map((item, i) => <li key={itemKey(item)}>
 				<button
 					type="button"
 					data-testid={optionTestid(item)}
 					data-idx={i}
 					data-highlighted={i === menuIdx ? "" : undefined}
+					data-selected={isSelected(item) ? "" : undefined}
+					aria-current={isSelected(item) ? "true" : undefined}
 					disabled={disabled}
 					onClick={() => onPick(item)}
 					className={`lh-menu-item w-full ${isSelected(item) ? "bg-raised" : ""}`}

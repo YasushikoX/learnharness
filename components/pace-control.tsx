@@ -120,9 +120,8 @@ export function PaceControl({ chatId, variant = "edge" }: { chatId: string; vari
 							type="button"
 							data-testid={`pace-option-${p.id}`}
 							onClick={() => void pick(p.id)}
-							className={`flex items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted ${
-								p.id === current ? "text-foreground" : "text-muted-foreground"
-							}`}
+							aria-current={p.id === current ? "true" : undefined}
+							className="lh-menu-item items-start justify-between py-1.5 text-foreground"
 						>
 							<span className="flex flex-col">
 								<span>{p.label}</span>
@@ -134,7 +133,7 @@ export function PaceControl({ chatId, variant = "edge" }: { chatId: string; vari
 					<div className="mt-1 border-t px-2 pt-1.5">
 						{hasCourse ? (
 							<p data-testid="pace-note-course" className="text-xs text-muted-foreground">
-								The time note for this lesson is set on the class page.
+								This lesson only, from the next turn. Its time note is set on the class page.
 							</p>
 						) : (
 							<label className="flex flex-col gap-1 text-xs text-muted-foreground">
@@ -159,7 +158,7 @@ export function PaceControl({ chatId, variant = "edge" }: { chatId: string; vari
 							</label>
 						)}
 					</div>
-					<div className="px-2 pt-1 text-xs text-muted-foreground">This lesson only — takes effect on the next turn</div>
+					{!hasCourse && <div className="px-2 pt-1 text-xs text-muted-foreground">This lesson only, from the next turn.</div>}
 				</MenuShell>
 			)}
 		</div>

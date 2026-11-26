@@ -143,8 +143,10 @@ export function LanguageControl({ chatId, courseId, variant = "pill" }: { chatId
 				<MenuShell
 					anchorRef={containerRef}
 					testid="language-menu"
-					preferredSide="up"
-					menuClass="flex w-48 flex-col gap-0.5 lh-menu"
+					// UI round 8 (SPEC §9): the class panel's menu opens under its button, inside the panel; the composer's opens up
+					preferredSide={courseId ? "down" : "up"}
+					align="left"
+					menuClass="flex w-56 flex-col gap-0.5 lh-menu"
 				>
 					{error && <div className="mb-1.5 text-destructive">{error}</div>}
 					{LESSON_LANGUAGES.map((l) => (
@@ -153,9 +155,8 @@ export function LanguageControl({ chatId, courseId, variant = "pill" }: { chatId
 							type="button"
 							data-testid={`language-option-${l.id}`}
 							onClick={() => void pick(l.id)}
-							className={`flex items-center justify-between rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted ${
-								l.id === current ? "text-foreground" : "text-muted-foreground"
-							}`}
+							aria-current={l.id === current ? "true" : undefined}
+							className="lh-menu-item justify-between text-foreground"
 						>
 							<span>{l.label}</span>
 							{l.id === current && <span aria-hidden>✓</span>}

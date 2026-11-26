@@ -5,6 +5,7 @@ import { CameraIcon, PlusIcon, UploadIcon } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { FIELD_CLASS } from "@/components/ui/input";
 import { MaterialRow } from "@/components/materials-control";
+import { ErrorNotice } from "@/components/ui/error-notice";
 import type { MaterialsApi } from "@/components/use-materials";
 import { cn } from "@/lib/utils";
 
@@ -48,7 +49,7 @@ export function AddFilesRow({ files }: { files: MaterialsApi }) {
 		<div className="flex items-center gap-2">
 			<button type="button" disabled={files.busy} data-testid="materials-add-files" onClick={files.pickFiles} className={BTN}>
 				<PlusIcon aria-hidden />
-				Add files
+				Add files…
 			</button>
 			{files.camera.available && (
 				<button type="button" disabled={files.busy} data-testid="materials-camera" onClick={files.camera.open} className={buttonVariants({ variant: "outline", size: "icon" })} aria-label="Camera" title="Camera">
@@ -90,11 +91,7 @@ export function ClassFiles({ files, dropping = false, setup = false }: { files: 
 				</button>
 			)}
 			<AddFilesRow files={files} />
-			{files.error && !setup && (
-				<p className="text-meta text-error" role="alert" data-testid="materials-error">
-					{files.error}
-				</p>
-			)}
+			{files.error && !setup && <ErrorNotice error={files.error} what="Couldn't add the file." testid="materials-error" />}
 		</section>
 	);
 }
@@ -129,11 +126,7 @@ export function FileDropZone({ files, dropping = false }: { files: MaterialsApi;
 				)}
 				<LinkField files={files} className="flex-1" />
 			</div>
-			{files.error && (
-				<p className="text-meta text-error" role="alert" data-testid="materials-error">
-					{files.error}
-				</p>
-			)}
+			{files.error && <ErrorNotice error={files.error} what="Couldn't add the file." testid="materials-error" />}
 		</div>
 	);
 }

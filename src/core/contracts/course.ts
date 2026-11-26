@@ -334,6 +334,8 @@ export interface TodayCourse {
 	title: string;
 	examDate?: string;
 	daysLeft?: number;
+	/** The counted-down assessment's own title ("Quiz 3"); absent for the old single exam date ("the exam"). */
+	examTitle?: string;
 	/** Reviews due, and how many the next review takes (0 = none due). */
 	reviewDue: number;
 	reviewBatch: number;

@@ -84,7 +84,7 @@ export const LESSON_LABELS: Readonly<Record<LessonLanguage, LessonLabels>> = {
 		keyPointMet: "in your answer",
 		keyPointMissed: "missing from your answer",
 		coverage: {
-			skillLine: (i, t, c) => `terms: ${i} of ${t} introduced, ${c} checked`,
+			skillLine: (i, t, c) => `Terms: ${i} of ${t} introduced, ${c === 0 ? "none" : c} checked`,
 			stateNew: "new",
 			stateIntroduced: "introduced",
 			stateChecked: "checked",
@@ -129,7 +129,7 @@ export const LESSON_LABELS: Readonly<Record<LessonLanguage, LessonLabels>> = {
 		keyPointMet: "med i svaret ditt",
 		keyPointMissed: "mangler i svaret ditt",
 		coverage: {
-			skillLine: (i, t, c) => `begreper: ${i} av ${t} gjennomgått, ${c} sjekket`,
+			skillLine: (i, t, c) => `Begreper: ${i} av ${t} gjennomgått, ${c === 0 ? "ingen" : c} sjekket`,
 			stateNew: "nytt",
 			stateIntroduced: "gjennomgått",
 			stateChecked: "sjekket",

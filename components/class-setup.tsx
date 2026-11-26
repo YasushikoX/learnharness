@@ -3,6 +3,8 @@
 import { CheckIcon, Loader2Icon } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { FileDropZone } from "@/components/class-files";
+import { ErrorNotice } from "@/components/ui/error-notice";
+import { FIELD_CLASS } from "@/components/ui/input";
 import type { MaterialsApi } from "@/components/use-materials";
 import { cn } from "@/lib/utils";
 
@@ -95,7 +97,13 @@ export function ClassSetup({
 	busy,
 	onDraft,
 	onLearn,
+	nameField,
+	footer,
 }: {
+	/** The new class's name field (ClassNameField), above step 1. */
+	nameField?: React.ReactNode;
+	/** The card's footer (a new class's quiet Delete class…: it has no side panel yet). */
+	footer?: React.ReactNode;
 	/** The class's files (the page's useMaterials); absent in a bare render, which then reads `materialCount`. */
 	files?: MaterialsApi;
 	materialCount?: number;
@@ -121,28 +129,23 @@ export function ClassSetup({
 			return null;
 		}
 		if (step.id === "map") {
+			// one running state (SPEC §9): the button that started the draft shows the spinner, keeps its place, is disabled
 			if (map === "drafting")
 				return (
-					<p className="flex items-center gap-1.5 text-chrome text-muted-foreground" data-testid="setup-drafting">
-						<Loader2Icon className="size-3.5 shrink-0 animate-spin" aria-hidden />
+					<button type="button" className={PRIMARY} disabled aria-busy data-testid="setup-drafting">
+						<Loader2Icon className="animate-spin" aria-hidden />
 						Drafting the skill map…
-					</p>
+					</button>
 				);
 			if (map === "review") return <p className="text-chrome text-muted-foreground">Review the draft below, then approve it.</p>;
 			if (map === "reading") return <p className="text-chrome text-muted-foreground">Waiting for the files to be read…</p>;
-			if (map === "ready" || map === "error")
+			if (map === "ready")
 				return (
-					<div className="space-y-2">
-						{map === "error" && (
-							<p className="text-chrome text-error" data-testid="setup-error">
-								Drafting failed: {courseError}
-							</p>
-						)}
-						<button type="button" className={PRIMARY} disabled={busy} data-testid="setup-draft" onClick={onDraft}>
-							{map === "error" ? "Try again" : "Draft skill map"}
-						</button>
-					</div>
+					<button type="button" className={PRIMARY} disabled={busy} data-testid="setup-draft" onClick={onDraft}>
+						Draft skill map
+					</button>
 				);
+			if (map === "error") return <ErrorNotice error={courseError ?? ""} what="Couldn't draft the skill map." onRetry={busy ? undefined : onDraft} testid="setup-error" />;
 			return null;
 		}
 		return step.enabled ? (
@@ -153,6 +156,7 @@ export function ClassSetup({
 	};
 	return (
 		<section data-testid="class-setup" aria-label="Set up this class" className="rounded-lg border border-border bg-card p-6">
+			{nameField && <div className="mb-5">{nameField}</div>}
 			<ol className="-my-2 space-y-1" data-testid="class-setup-steps">
 				{steps.map((step, n) => {
 					const content = step.current ? body(step) : null;
@@ -172,6 +176,63 @@ export function ClassSetup({
 					);
 				})}
 			</ol>
+			{footer && <div className="mt-5 flex items-center border-t border-border pt-3">{footer}</div>}
 		</section>
+	);
+}
+
+/**
+ * The new class's name (owner, 2026-11-25: "it's not intuitive that you just click the name"): a real labelled field at
+ * the top of the setup card, focused on open, saved on Enter or blur through the class rename, with a quiet "Saved" once
+ * it is.
+ */
+export function ClassNameField({
+	value,
+	onChange,
+	onCommit,
+	onReset,
+	saved,
+	autoFocus = false,
+}: {
+	value: string;
+	onChange: (v: string) => void;
+	onCommit: () => void;
+	/** Esc: back to the stored name. */
+	onReset: () => void;
+	saved: boolean;
+	autoFocus?: boolean;
+}) {
+	return (
+		<label className="flex flex-col gap-1" data-testid="setup-name">
+			<span className="flex items-center justify-between text-meta font-medium text-muted-foreground">
+				Class name
+				{saved && (
+					<span className="flex items-center gap-1 font-normal text-success" role="status" data-testid="setup-name-saved">
+						<CheckIcon className="size-3.5" aria-hidden />
+						Saved
+					</span>
+				)}
+			</span>
+			<input
+				value={value}
+				onChange={(e) => onChange(e.target.value)}
+				onBlur={onCommit}
+				onKeyDown={(e) => {
+					if (e.key === "Enter") {
+						e.preventDefault();
+						e.currentTarget.blur();
+					}
+					if (e.key === "Escape") {
+						onReset();
+						e.currentTarget.blur();
+					}
+				}}
+				// the one thing a new class needs first (owner)
+				autoFocus={autoFocus}
+				placeholder="e.g. Linear Algebra"
+				data-testid="setup-name-input"
+				className={cn(FIELD_CLASS, "h-9 w-full px-3 text-body")}
+			/>
+		</label>
 	);
 }

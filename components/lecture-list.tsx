@@ -1,10 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2Icon, PlusIcon } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { FIELD_CLASS } from "@/components/ui/input";
-import { shortDate, type CourseStandingView, type LectureView } from "@/src/core";
+import { CheckRow, Field, FieldGroup, useOverflow } from "@/components/ui/field";
+import { ErrorNotice } from "@/components/ui/error-notice";
+import { InlineConfirm } from "@/components/ui/inline-confirm";
+import { formDirty, useUnsavedGuard } from "@/components/use-unsaved-guard";
+import { dayLabel, shortDate, type CourseStandingView, type LectureView } from "@/src/core";
 import { cn } from "@/lib/utils";
 
 /**
@@ -14,6 +18,7 @@ import { cn } from "@/lib/utils";
  * skills) or remove one, like the Upcoming list; and the "link skills to lectures" step's state.
  */
 
+const BTN = buttonVariants({ variant: "outline", size: "sm" });
 const SMALL = buttonVariants({ variant: "secondary", size: "sm" });
 const GHOST = buttonVariants({ variant: "ghost", size: "sm" });
 const ICON = buttonVariants({ variant: "ghost", size: "icon-xs" });
@@ -46,52 +51,118 @@ export function lectureBody(v: FormValue, before?: Pick<LectureView, "skillIds">
 	};
 }
 
-function LectureForm({ initial, skills, busy, onSave, onCancel, onDelete, testid }: { initial: FormValue; skills: ReadonlyArray<{ id: string; name: string }>; busy: boolean; onSave: (v: FormValue) => void; onCancel: () => void; onDelete?: () => void; testid: string }) {
+/** The next lecture number after the timeline's own (for the "e.g." hint). Pure. */
+export function nextLectureNumber(lectures: ReadonlyArray<Pick<LectureView, "n">>): number {
+	return lectures.reduce((m, l) => Math.max(m, l.n ?? 0), 0) + 1;
+}
+
+/** The inline add / edit form (UI round 8, SPEC §9): labelled fields, whole skill rows, Remove behind an inline confirm,
+ *  and "Discard changes?" when the list asks to leave it dirty. */
+function LectureForm({
+	initial,
+	heading,
+	nextN,
+	skills,
+	busy,
+	asking = false,
+	onSave,
+	onCancel,
+	onDelete,
+	onDirty,
+	onDiscard,
+	onKeep,
+	testid,
+}: {
+	initial: FormValue;
+	heading: string;
+	nextN: number;
+	skills: ReadonlyArray<{ id: string; name: string }>;
+	busy: boolean;
+	asking?: boolean;
+	onSave: (v: FormValue) => void;
+	onCancel: () => void;
+	onDelete?: () => void;
+	onDirty?: (dirty: boolean) => void;
+	onDiscard?: () => void;
+	onKeep?: () => void;
+	testid: string;
+}) {
 	const [v, setV] = useState<FormValue>(initial);
+	const [confirmDelete, setConfirmDelete] = useState(false);
+	const [listRef, overflow] = useOverflow<HTMLDivElement>();
 	const toggle = (id: string) => setV((x) => ({ ...x, skillIds: x.skillIds.includes(id) ? x.skillIds.filter((s) => s !== id) : [...x.skillIds, id] }));
 	const valid = v.title.trim() !== "" || v.n.trim() !== "";
+	const dirty = formDirty(initial, v);
+	useEffect(() => onDirty?.(dirty), [dirty, onDirty]);
+	const name = v.title.trim() || (v.n.trim() ? `Lecture ${v.n.trim()}` : "this lecture");
 	return (
 		<form
-			className="space-y-2 rounded-lg border border-border bg-card p-3"
+			className="space-y-3 rounded-lg border border-border bg-card p-3"
 			data-testid={testid}
+			aria-label={heading}
 			onSubmit={(e) => {
 				e.preventDefault();
 				if (valid) onSave(v);
 			}}
+			onKeyDown={(e) => {
+				if (e.key === "Escape" && !asking && !confirmDelete) {
+					e.stopPropagation();
+					onCancel();
+				}
+			}}
 		>
-			<div className="flex gap-2">
-				<input aria-label="Number" placeholder="#" inputMode="numeric" value={v.n} onChange={(e) => setV((x) => ({ ...x, n: e.target.value.replace(/[^\d]/g, "").slice(0, 3) }))} className={cn(FIELD_CLASS, "h-8 w-14 px-2.5")} data-testid={`${testid}-n`} />
-				<input aria-label="Title" placeholder="Lecture 8" value={v.title} onChange={(e) => setV((x) => ({ ...x, title: e.target.value }))} className={cn(FIELD_CLASS, "h-8 min-w-0 flex-1 px-2.5")} data-testid={`${testid}-title`} />
+			<div>
+				<h3 className="text-chrome font-semibold text-foreground">{heading}</h3>
+				<p className="text-meta text-muted-foreground">A number or a title is enough.</p>
 			</div>
-			<input type="date" aria-label="Date" value={v.date} onChange={(e) => setV((x) => ({ ...x, date: e.target.value }))} className={cn(FIELD_CLASS, "h-8 w-fit px-2.5")} data-testid={`${testid}-date`} />
-			<textarea aria-label="Topics" placeholder="What it covers" rows={2} value={v.topics} onChange={(e) => setV((x) => ({ ...x, topics: e.target.value }))} className={cn(FIELD_CLASS, "block w-full resize-y px-2.5 py-1.5")} data-testid={`${testid}-topics`} />
+			<div className="grid grid-cols-[4rem_minmax(0,1fr)] gap-2">
+				<Field label="Number">
+					<input placeholder={`e.g. ${nextN}`} inputMode="numeric" value={v.n} onChange={(e) => setV((x) => ({ ...x, n: e.target.value.replace(/[^\d]/g, "").slice(0, 3) }))} className={cn(FIELD_CLASS, "h-8 w-full px-2.5")} data-testid={`${testid}-n`} />
+				</Field>
+				<Field label="Title">
+					<input placeholder="e.g. The proton gradient" value={v.title} onChange={(e) => setV((x) => ({ ...x, title: e.target.value }))} className={cn(FIELD_CLASS, "h-8 w-full min-w-0 px-2.5")} data-testid={`${testid}-title`} />
+				</Field>
+			</div>
+			<Field label="Date" hint={v.date ? dayLabel(v.date) : undefined}>
+				<input type="date" value={v.date} onChange={(e) => setV((x) => ({ ...x, date: e.target.value }))} className={cn(FIELD_CLASS, "h-8 w-fit px-2.5")} data-testid={`${testid}-date`} />
+			</Field>
+			<Field label="What it covers">
+				<textarea placeholder="e.g. chapter 6, ATP synthase" rows={2} value={v.topics} onChange={(e) => setV((x) => ({ ...x, topics: e.target.value }))} className={cn(FIELD_CLASS, "block w-full resize-none px-2.5 py-1.5")} data-testid={`${testid}-topics`} />
+			</Field>
 			{skills.length > 0 && (
-				<fieldset className="max-h-32 space-y-0.5 overflow-y-auto rounded-md border border-border px-2 py-1.5 text-meta" data-testid={`${testid}-skills`}>
-					<legend className="px-1 text-muted-foreground">Skills it teaches</legend>
-					{skills.map((s) => (
-						<label key={s.id} className="flex items-center gap-2 py-0.5">
-							<input type="checkbox" checked={v.skillIds.includes(s.id)} onChange={() => toggle(s.id)} />
-							<span className="truncate">{s.name}</span>
-						</label>
-					))}
-				</fieldset>
+				<FieldGroup label="Skills it teaches" testid={`${testid}-skills`}>
+					<div ref={listRef} className="lh-row-list rounded-md border border-border p-0.5" data-overflow={overflow ? "true" : "false"}>
+						{skills.map((s) => (
+							<CheckRow key={s.id} checked={v.skillIds.includes(s.id)} onChange={() => toggle(s.id)}>
+								{s.name}
+							</CheckRow>
+						))}
+					</div>
+				</FieldGroup>
 			)}
-			<div className="flex items-center gap-2">
-				<button type="submit" className={SMALL} disabled={busy || !valid} data-testid={`${testid}-save`}>
-					Save
-				</button>
-				<button type="button" className={GHOST} onClick={onCancel}>
-					Cancel
-				</button>
-				{onDelete && (
-					<button type="button" className={cn(GHOST, "ml-auto text-error")} disabled={busy} onClick={onDelete} data-testid={`${testid}-delete`}>
-						Remove
+			{asking ? (
+				<InlineConfirm question="Discard changes?" cancelLabel="Keep editing" confirmLabel="Discard" onCancel={() => onKeep?.()} onConfirm={() => onDiscard?.()} testid={`${testid}-discard`} />
+			) : confirmDelete && onDelete ? (
+				<InlineConfirm question={`Remove ${name}?`} confirmLabel="Remove lecture" busy={busy} onCancel={() => setConfirmDelete(false)} onConfirm={onDelete} testid={`${testid}-delete-confirm`} />
+			) : (
+				<div className="flex items-center gap-2">
+					<button type="submit" className={SMALL} disabled={busy || !valid} data-testid={`${testid}-save`}>
+						Save
 					</button>
-				)}
-			</div>
+					<button type="button" className={GHOST} onClick={onCancel}>
+						Cancel
+					</button>
+					{onDelete && (
+						<button type="button" className={cn(GHOST, "ml-auto text-error")} disabled={busy} onClick={() => setConfirmDelete(true)} data-testid={`${testid}-delete`}>
+							Remove…
+						</button>
+					)}
+				</div>
+			)}
 		</form>
 	);
 }
+
 
 /** One lecture row: number and title, its date; the topics or where it came from, and how many skills it teaches. */
 function Row({ l, here, covered, onEdit }: { l: LectureView; here: boolean; covered: boolean; onEdit: () => void }) {
@@ -116,53 +187,57 @@ function Row({ l, here, covered, onEdit }: { l: LectureView; here: boolean; cove
 }
 
 export function LectureList({ courseId, standing, skills, busy = false, onChanged }: { courseId: string; standing: CourseStandingView; skills: ReadonlyArray<{ id: string; name: string }>; busy?: boolean; onChanged: () => void }) {
-	const [editing, setEditing] = useState<string | null>(null);
-	const [error, setError] = useState<string | null>(null);
-	const [working, setWorking] = useState(false);
-	const call = async (url: string, init: RequestInit): Promise<boolean> => {
+	const guard = useUnsavedGuard<string>();
+	const editing = guard.open;
+	const [error, setError] = useState<{ text: string; where: "form" | "link" } | null>(null);
+	const [working, setWorking] = useState<null | "form" | "link">(null);
+	const call = async (url: string, init: RequestInit, where: "form" | "link"): Promise<boolean> => {
 		setError(null);
-		setWorking(true);
+		setWorking(where);
 		try {
 			const res = await fetch(url, { ...init, headers: { "Content-Type": "application/json" } });
 			if (!res.ok) {
-				setError(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `rejected (${res.status})`);
+				setError({ text: ((await res.json().catch(() => ({}))) as { error?: string }).error ?? `rejected (${res.status})`, where });
 				return false;
 			}
 			onChanged();
 			return true;
 		} catch {
-			setError("Could not reach the server — try again.");
+			setError({ text: "Could not reach the server.", where });
 			return false;
 		} finally {
-			setWorking(false);
+			setWorking(null);
 		}
 	};
 	const base = `/api/courses/${encodeURIComponent(courseId)}/lectures`;
-	const disabled = busy || working;
+	const linking = standing.linking === true || working === "link";
+	const disabled = busy || working !== null;
 	const covered = new Set(standing.covered);
+	const nextN = nextLectureNumber(standing.lectures);
+	const link = () => void call(`${base}/link`, { method: "POST" }, "link");
+	const formProps = (key: string) => ({ skills, busy: disabled, nextN, asking: guard.open === key && guard.asking, onDirty: guard.setDirty, onDiscard: guard.discard, onKeep: guard.keep, onCancel: guard.close });
 	return (
 		<section className="space-y-2 px-4 py-4" data-testid="lectures" aria-label="Lectures">
 			<div className="flex items-center justify-between gap-2">
 				<h2 className="text-body font-semibold text-foreground">Lectures</h2>
-				<button type="button" className={ICON} aria-label="Add a lecture" title="Add a lecture" disabled={disabled} data-testid="lecture-add" onClick={() => setEditing("new")}>
+				<button type="button" className={ICON} aria-label="Add a lecture" title="Add a lecture" disabled={disabled} data-testid="lecture-add" onClick={() => guard.request("new")}>
 					<PlusIcon aria-hidden />
 				</button>
 			</div>
 			{editing === "new" && (
 				<LectureForm
+					{...formProps("new")}
 					testid="lecture-form-new"
+					heading="New lecture"
 					initial={EMPTY}
-					skills={skills}
-					busy={disabled}
-					onCancel={() => setEditing(null)}
 					onSave={async (v) => {
-						if (await call(base, { method: "POST", body: JSON.stringify(lectureBody(v)) })) setEditing(null);
+						if (await call(base, { method: "POST", body: JSON.stringify(lectureBody(v)) }, "form")) guard.close();
 					}}
 				/>
 			)}
 			{standing.lectures.length === 0 && editing !== "new" && (
 				<p className="text-meta text-muted-foreground" data-testid="lectures-empty">
-					No lectures yet. Name files like “Lecture 8” or “L08”, find them in the syllabus, add one, or tell Short question.
+					No lectures yet. Add one with +, name files like “Lecture 8” or “L08”, find them in the syllabus, or tell Short question.
 				</p>
 			)}
 			{standing.lectures.length > 0 && (
@@ -171,38 +246,41 @@ export function LectureList({ courseId, standing, skills, busy = false, onChange
 						editing === l.id ? (
 							<LectureForm
 								key={l.id}
+								{...formProps(l.id)}
 								testid={`lecture-form-${l.id}`}
+								heading={`Edit ${l.title}`}
 								initial={formOf(l)}
-								skills={skills}
-								busy={disabled}
-								onCancel={() => setEditing(null)}
 								onSave={async (v) => {
-									if (await call(`${base}/${encodeURIComponent(l.id)}`, { method: "PATCH", body: JSON.stringify(lectureBody(v, l)) })) setEditing(null);
+									if (await call(`${base}/${encodeURIComponent(l.id)}`, { method: "PATCH", body: JSON.stringify(lectureBody(v, l)) }, "form")) guard.close();
 								}}
 								onDelete={async () => {
-									if (await call(`${base}/${encodeURIComponent(l.id)}`, { method: "DELETE" })) setEditing(null);
+									if (await call(`${base}/${encodeURIComponent(l.id)}`, { method: "DELETE" }, "form")) guard.close();
 								}}
 							/>
 						) : (
-							<Row key={l.id} l={l} here={standing.position?.lectureId === l.id} covered={covered.has(l.id)} onEdit={() => setEditing(l.id)} />
+							<Row key={l.id} l={l} here={standing.position?.lectureId === l.id} covered={covered.has(l.id)} onEdit={() => guard.request(l.id)} />
 						),
 					)}
 				</div>
 			)}
-			{standing.linking ? (
-				<p className="flex items-center gap-1.5 text-meta text-muted-foreground" data-testid="lectures-linking">
-					<Loader2Icon className="size-3.5 shrink-0 animate-spin" aria-hidden />
-					Placing the skills in the lectures…
-				</p>
-			) : standing.lectures.length > 0 && (standing.unplaced > 0 || standing.linkError) ? (
-				<p className="flex flex-wrap items-center gap-x-2 text-meta text-muted-foreground" data-testid="lectures-unplaced">
-					{standing.linkError ? <span className="text-error">Placing skills failed: {standing.linkError}</span> : <span>{standing.unplaced === 1 ? "1 skill is" : `${standing.unplaced} skills are`} not placed in a lecture.</span>}
-					<button type="button" className="text-foreground underline decoration-border underline-offset-2 hover:decoration-foreground" disabled={disabled} data-testid="lectures-link" onClick={() => void call(`${base}/link`, { method: "POST" })}>
-						Place skills
-					</button>
-				</p>
-			) : null}
-			{error && <p className="text-meta text-error">{error}</p>}
+			{error?.where === "form" && <ErrorNotice error={error.text} what="Couldn't save the lecture." testid="lectures-form-error" />}
+			{/* The linking step: its button carries the running state; its failure sits under it with Try again. */}
+			{standing.lectures.length > 0 && (linking || standing.unplaced > 0 || standing.linkError || error?.where === "link") && (
+				<div className="space-y-1.5 pt-1" data-testid="lectures-unplaced">
+					{!linking && !standing.linkError && (
+						<p className="text-meta text-muted-foreground">{standing.unplaced === 1 ? "1 skill is" : `${standing.unplaced} skills are`} not placed in a lecture yet.</p>
+					)}
+					{standing.linkError && !linking ? (
+						<ErrorNotice error={standing.linkError} what="Couldn't place the skills in the lectures." onRetry={link} testid="lectures-link-error" />
+					) : (
+						<button type="button" className={BTN} disabled={disabled || linking} aria-busy={linking} data-testid={linking ? "lectures-linking" : "lectures-link"} onClick={link}>
+							{linking && <Loader2Icon className="animate-spin" aria-hidden />}
+							{linking ? "Placing the skills…" : "Place skills in lectures"}
+						</button>
+					)}
+					{error?.where === "link" && <ErrorNotice error={error.text} what="Couldn't start placing the skills." onRetry={link} testid="lectures-link-start-error" />}
+				</div>
+			)}
 		</section>
 	);
 }

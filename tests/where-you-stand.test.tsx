@@ -662,7 +662,7 @@ describe("Short question edits everything about the class", () => {
 		assert.deepEqual(getCourse(courseId).skillWeights, { [d]: { w: 0, by: "learner" }, [c]: { w: 3, by: "learner" } });
 		assert.ok(courses.courseView(courseId)!.notExamined.includes(d), "Nyquist now sits under Not examined");
 		const change = (toolResults(chatId).find((r) => r.toolCallId === "w1")!.details as { change: unknown }).change;
-		assert.deepEqual(classChangeLines(change as never), { eyebrow: "Exam weights", title: "Nyquist, Bode", lines: ["Nyquist: never on the exam (was 2)", "Bode: nearly always on the exam"] });
+		assert.deepEqual(classChangeLines(change as never), { eyebrow: "Exam weights", title: "Nyquist, Bode", lines: ["Nyquist: not examined (was 2)", "Bode: nearly every exam"] });
 		assert.equal((await undo(chatId, "w1")).status, 200);
 		assert.deepEqual(getCourse(courseId).skillWeights, { [d]: { w: 2, by: "model", reason: "two past exams" } });
 		await runTurn(chatId, "x", oneCall("skill_weights_set", { weights: [{ skillId: "sk_nope", weight: 1 }] }, "w2"));
@@ -776,25 +776,27 @@ describe("the class page: the card and the lecture list in each state", () => {
 
 	it("standingLines: each line in each state", () => {
 		assert.equal(showsStanding(base), false, "no lectures, no assessment, no position: no block");
+		// the row labels (Class, You, Next) say whose line it is; the values do not repeat them (owner, round 8)
 		assert.deepEqual(standingLines(behind, NOW), {
-			classLine: "Class is at Lecture 3 · Tue 24 Nov",
-			youLine: "You've learned what Lecture 1 covers",
+			classLine: "Lecture 3 · Tue 24 Nov",
+			youLine: "Lecture 1 learned",
 			nextLine: "Quiz 3 · Fri · needs 3 skills: 1 learned, 2 not yet (Lecture 2, Lecture 4)",
 			verdict: { text: "Behind · 1 skill from lectures the class has covered", behind: true },
 		});
 		const onTrack = { ...behind, learnedThrough: { fromId: "l1", toId: "l2", label: "Lectures 1–2" }, behind: [], verdict: "on_track" as const, next: null };
-		assert.deepEqual(standingLines(onTrack, NOW), { classLine: "Class is at Lecture 3 · Tue 24 Nov", youLine: "You've learned what Lectures 1–2 cover", nextLine: null, verdict: { text: "On track", behind: false } });
+		assert.deepEqual(standingLines(onTrack, NOW), { classLine: "Lecture 3 · Tue 24 Nov", youLine: "Lectures 1–2 learned", nextLine: null, verdict: { text: "On track", behind: false } });
 		const unplaced = { ...base, lectures: L4.map((l) => ({ ...l, skillIds: [] })) };
-		assert.deepEqual(standingLines(unplaced, NOW), { classLine: "Where the class is: not known yet", youLine: "Skills aren't placed in lectures yet", nextLine: null, verdict: null });
+		assert.deepEqual(standingLines(unplaced, NOW), { classLine: "Not known yet", youLine: "Skills aren't placed in lectures yet", nextLine: null, verdict: null });
 		assert.equal(standingLines({ ...unplaced, linking: true }, NOW).youLine, "Placing the skills in the lectures…");
 		const noLectures = { ...base, next: { ...behind.next!, needs: null, basis: null, learned: [], missing: [], date: "2026-12-10" } };
 		assert.equal(standingLines(noLectures, NOW).nextLine, "Quiz 3 · Thu 10 Dec", "far off: the date; needs unknown: no count");
-		assert.equal(standingLines({ ...behind, position: { lectureId: "l2", how: "explicit", label: "Lecture 2", coveredThrough: "chapter 6" } }, NOW).classLine, "Class is at Lecture 2 · covered chapter 6");
+		assert.equal(standingLines({ ...behind, position: { lectureId: "l2", how: "explicit", label: "Lecture 2", coveredThrough: "chapter 6" } }, NOW).classLine, "Lecture 2 · covered chapter 6");
+		assert.equal(standingLines({ ...behind, position: { how: "explicit", coveredThrough: "chapter 6" } }, NOW).classLine, "Covered chapter 6");
 	});
 
 	it("the Next up card: the block above the one primary Start on the most urgent gap; without lectures it is as before", () => {
 		const html = section(behind);
-		assert.match(html, /data-testid="course-next-up"[\s\S]*Next up[\s\S]*data-testid="where-you-stand"[\s\S]*data-testid="standing-class"[\s\S]*Class is at Lecture 3 · Tue 24 Nov[\s\S]*data-testid="standing-you"[\s\S]*You&#x27;ve learned what Lecture 1 covers[\s\S]*data-testid="standing-next"[\s\S]*Quiz 3[\s\S]*data-testid="standing-verdict"[^>]*>Behind · 1 skill/);
+		assert.match(html, /data-testid="course-next-up"[\s\S]*Next up[\s\S]*data-testid="where-you-stand"[\s\S]*data-testid="standing-class"[\s\S]*>Class<[\s\S]*Lecture 3 · Tue 24 Nov[\s\S]*data-testid="standing-you"[\s\S]*>You<[\s\S]*Lecture 1 learned[\s\S]*data-testid="standing-next"[\s\S]*Quiz 3[\s\S]*data-testid="standing-verdict"[^>]*>Behind · 1 skill/);
 		assert.match(html, /data-testid="course-gap-b"[\s\S]*For Quiz 3[\s\S]*Poles[\s\S]*aria-label="Start learning Poles"/);
 		assert.equal((html.match(/lh-touch/g) ?? []).length >= 1, true);
 		const reviewToo = section(behind, { reviewDue: 2, reviewBatch: 2 });
@@ -806,19 +808,20 @@ describe("the class page: the card and the lecture list in each state", () => {
 		const locked = section({ ...behind, start: { skillId: "a", gapId: "b", why: "assessment" } });
 		assert.match(locked, /First, for Poles[\s\S]*Laplace/);
 		// the block alone, the class line as a button to correct it
-		assert.match(renderToStaticMarkup(<WhereYouStand courseId="c" standing={behind} now={NOW} />), /<button[^>]*title="Correct where the class is"[^>]*data-testid="standing-class-edit"/);
+		assert.match(renderToStaticMarkup(<WhereYouStand courseId="c" standing={behind} now={NOW} />), /<button[^>]*aria-label="Edit class position: Lecture 3 · Tue 24 Nov"[^>]*data-testid="standing-class-edit"[\s\S]*lucide-pencil/);
 	});
 
 	it("the lecture list: empty, items with the class's position and where they came from, linking, unplaced, failure", () => {
 		const render = (standing: CourseStandingView) => renderToStaticMarkup(<LectureList courseId="course_1" standing={standing} skills={[...names].map(([id, name]) => ({ id, name }))} onChanged={() => {}} />);
-		assert.match(render(base), /data-testid="lectures"[\s\S]*Lectures[\s\S]*data-testid="lecture-add"[\s\S]*data-testid="lectures-empty"[^>]*>No lectures yet\. Name files like “Lecture 8” or “L08”, find them in the syllabus, add one, or tell Short question\./);
+		assert.match(render(base), /data-testid="lectures"[\s\S]*Lectures[\s\S]*data-testid="lecture-add"[\s\S]*data-testid="lectures-empty"[^>]*>No lectures yet\. Add one with \+, name files like “Lecture 8” or “L08”, find them in the syllabus, or tell Short question\./);
 		const html = render(behind);
 		assert.match(html, /data-testid="lecture-item-l1"[^>]*data-covered="true"[\s\S]*Lecture 1[\s\S]*Tue 3 Nov[\s\S]*from the syllabus · 1 skill/);
 		assert.match(html, /data-testid="lecture-item-lf_lecture_3"[\s\S]*data-testid="lecture-here-lf_lecture_3"[\s\S]*from your files · no skills placed/);
 		assert.match(html, /data-testid="lecture-item-l4"[^>]*data-covered="false"/);
-		assert.match(html, /data-testid="lectures-unplaced"[\s\S]*1 skill is not placed in a lecture\.[\s\S]*Place skills/);
-		assert.match(render({ ...behind, linking: true }), /data-testid="lectures-linking"[\s\S]*Placing the skills in the lectures…/);
-		assert.match(render({ ...behind, linkError: "model down" }), /Placing skills failed: model down/);
+		assert.match(html, /data-testid="lectures-unplaced"[\s\S]*1 skill is not placed in a lecture yet\.[\s\S]*data-testid="lectures-link"[^>]*>Place skills in lectures</);
+		// the running state on its button (UI round 8), the failure as the shared notice with Try again
+		assert.match(render({ ...behind, linking: true }), /<button[^>]*disabled=""[^>]*aria-busy="true"[^>]*data-testid="lectures-linking"[^>]*>[\s\S]*Placing the skills…/);
+		assert.match(render({ ...behind, linkError: "model down" }), /data-testid="lectures-link-error"[\s\S]*Couldn&#x27;t place the skills in the lectures\.[\s\S]*model down[\s\S]*data-testid="lectures-link-error-retry"[^>]*>Try again</);
 		assert.doesNotMatch(render({ ...behind, unplaced: 0 }), /lectures-unplaced/);
 		// long titles stay short in one-line places (screenshot round r6)
 		const t1 = { n: 1, title: "Lecture 1: ATP and energy coupling" };
@@ -828,7 +831,7 @@ describe("the class page: the card and the lecture list in each state", () => {
 		assert.equal(L.lectureShortLabel({ title: "Guest talk" }), "Guest talk");
 		assert.equal(L.lectureRangeLabel({ n: 1, title: "Intro" }, t4), "Intro – Lecture 4");
 		const titled = { ...behind, lectures: behind.lectures.map((l) => (l.id === "lf_lecture_3" ? { ...l, title: "Lecture 3: Fermentation and the citric acid cycle" } : l)) };
-		assert.equal(standingLines(titled, NOW).classLine, "Class is at Lecture 3 · Tue 24 Nov");
+		assert.equal(standingLines(titled, NOW).classLine, "Lecture 3 · Tue 24 Nov");
 		assert.deepEqual(lectureBody({ n: "8", title: " Lecture 8 ", date: "", topics: "x", skillIds: ["a"] }, { skillIds: ["a"] }), { n: 8, title: "Lecture 8", date: null, topics: "x" }, "unchanged skills are not sent (they stay the model's)");
 		assert.deepEqual(lectureBody({ n: "", title: "T", date: "2026-12-01", topics: "", skillIds: ["b"] }, { skillIds: ["a"] }).skillIds, ["b"]);
 	});
@@ -854,7 +857,7 @@ describe("the class page: the card and the lecture list in each state", () => {
 
 	it("the transcript cards for each new change kind", () => {
 		const lecture = { kind: "lecture" as const, courseId: "c", action: "updated" as const, before: lec({ id: "l9", n: 9, title: "Lecture 9", date: "2026-11-26" }), after: lec({ id: "l9", n: 9, title: "Lecture 9", date: "2026-11-27", topics: "poles" }), skillNames: ["Poles"] };
-		assert.deepEqual(classChangeLines(lecture), { eyebrow: "Changed · Lecture", title: "Lecture 9", lines: ["Fri 27 Nov 2026 (was Thu 26 Nov 2026)", "poles", "Skills: Poles"] });
+		assert.deepEqual(classChangeLines(lecture, NOW), { eyebrow: "Changed · Lecture", title: "Lecture 9", lines: ["Fri 27 Nov (was Thu 26 Nov)", "poles", "Skills: Poles"] });
 		const setting = { kind: "setting" as const, courseId: "c", field: "folder" as const, before: null, after: "2026 Høst" };
 		assert.deepEqual(classChangeLines(setting), { eyebrow: "Folder", title: "2026 Høst", lines: ["Was: no folder"] });
 		const cleared = { kind: "position" as const, courseId: "c", before: { lectureId: "l9", updatedAt: T0 }, after: null, label: null, beforeLabel: "Lecture 9" };

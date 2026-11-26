@@ -81,8 +81,11 @@ describe("note fields", () => {
 		assert.equal(core.normalizeNoteTitle("  Taylor   series \n"), "Taylor series");
 		assert.equal(core.normalizeNoteTitle("   "), null);
 		assert.equal(core.normalizeNoteTitle("x".repeat(500))!.length, core.NOTE_TITLE_MAX);
-		assert.equal(core.defaultNoteTitle("2026-03-12"), "26.03.12");
-		assert.equal(core.autoTitle("2026-03-12", "Eigenvalues and Eigenvectors"), "26.03.12 - Eigenvalues and Eigenvectors");
+		// the one on-screen date (UI round 8, SPEC §9): "Thu 12 Mar", the year only outside the current one
+		const in2026 = Date.UTC(2026, 5, 1);
+		assert.equal(core.defaultNoteTitle("2026-03-12", in2026), "Thu 12 Mar");
+		assert.equal(core.defaultNoteTitle("2026-03-12", Date.UTC(2027, 0, 5)), "Thu 12 Mar 2026");
+		assert.equal(core.autoTitle("2026-03-12", "Eigenvalues and Eigenvectors", in2026), "Thu 12 Mar · Eigenvalues and Eigenvectors");
 		assert.match(core.todayDate(), /^\d{4}-\d{2}-\d{2}$/);
 	});
 
@@ -108,7 +111,10 @@ describe("titles from the notes", () => {
 		assert.ok(long.length <= 60 && !long.endsWith(" "));
 		assert.equal(core.noteLabel({ title: "26.03.12 - Limits", titleBy: "auto", topic: "Limits" }), "Limits");
 		assert.equal(core.noteLabel({ title: "My own", titleBy: "learner", topic: "Limits" }), "My own");
-		assert.equal(core.titleShowsDate({ title: "26.03.12 - Limits", date: "2026-03-12" }), true);
+		assert.equal(core.titleShowsDate({ title: "26.03.12 - Limits", date: "2026-03-12" }), true, "an older title still counts");
+		assert.equal(core.titleShowsDate({ title: "Thu 12 Mar · Limits", date: "2026-03-12" }), true);
+		assert.equal(core.titleShowsDate({ title: "Thu 12 Mar 2026", date: "2026-03-12" }), true);
+		assert.equal(core.titleShowsDate({ title: "Fri 13 Mar · Limits", date: "2026-03-12" }), false);
 		assert.equal(core.titleShowsDate({ title: "My own", date: "2026-03-12" }), false);
 	});
 });
@@ -157,7 +163,8 @@ describe("the service over the store", () => {
 		const a = svc.createLectureNote(course.id, { title: "  Limits ", date: "2026-11-10" })!;
 		const b = svc.createLectureNote(course.id, { date: "2026-11-12" })!;
 		assert.equal(a.title, "Limits");
-		assert.equal(b.title, "26.11.12");
+		assert.equal(b.title, core.defaultNoteTitle("2026-11-12"));
+		assert.match(b.title, /^Thu 12 Nov( 2026)?$/);
 		assert.equal(b.titleBy, "auto");
 		assert.equal(a.titleBy, "learner");
 		assert.match(a.id, core.NOTE_ID_RE);
@@ -181,11 +188,11 @@ describe("the service over the store", () => {
 		assert.deepEqual([auto.titleBy, typed.titleBy], ["auto", "learner"]);
 		notes.setNoteTopic(course.id, auto.id, "Eigenvalues and Eigenvectors");
 		notes.setNoteTopic(course.id, typed.id, "Eigenvalues and Eigenvectors");
-		assert.equal(notes.getNote(course.id, auto.id)!.title, "26.03.12 - Eigenvalues and Eigenvectors");
+		assert.match(notes.getNote(course.id, auto.id)!.title, /^Thu 12 Mar( 2026)? · Eigenvalues and Eigenvectors$/);
 		assert.equal(notes.getNote(course.id, typed.id)!.title, "My notes");
 		// redating an automatic title moves its date half; saving the dialog without a title keeps it automatic
 		const redated = svc.updateLectureNote(course.id, auto.id, { date: "2026-03-14" })!;
-		assert.equal(redated.title, "26.03.14 - Eigenvalues and Eigenvectors");
+		assert.match(redated.title, /^Sat 14 Mar( 2026)? · Eigenvalues and Eigenvectors$/);
 		assert.equal(redated.titleBy, "auto");
 		// a rename makes it the learner's own for good
 		const renamed = svc.updateLectureNote(course.id, auto.id, { title: "Eigen stuff" })!;

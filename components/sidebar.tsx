@@ -1120,7 +1120,8 @@ function SessionsSidebar() {
 							<LhMark className="size-6" />
 						</Link>
 					</Hint>
-					<Hint label="Close sidebar" action="toggle-sidebar">
+					{/* to the side (UI round 8, SPEC §9): above it there is no room, and below it covered the Practice button */}
+					<Hint label="Close sidebar" action="toggle-sidebar" side="right">
 						<Button
 							variant="ghost"
 							size="icon"
@@ -1168,6 +1169,8 @@ function SessionsSidebar() {
 				    sessions, which they are made of. */}
 				<CoursesSection onCourses={setCourses} query={query} />
 
+				{/* UI round 8 (SPEC §9 empty states): no search, filter or folder button over an empty list */}
+				{chats !== null && chats.length === 0 && !query ? null : (
 				<div className="mx-3 mb-2 flex flex-col gap-2">
 					<Hint label="Search sessions" action="sessions-search" side="bottom">
 					<span className="relative min-w-0 flex-1">
@@ -1275,6 +1278,7 @@ function SessionsSidebar() {
 				</div>
 
 				</div>
+				)}
 
 					{folderFailure && (
 					<div role="alert" data-testid="sidebar-folder-error" className="mx-3 mt-2 flex items-start gap-2 text-xs text-error">

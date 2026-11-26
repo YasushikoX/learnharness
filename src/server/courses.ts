@@ -610,6 +610,8 @@ export function todayCourses(timeZone?: string): TodayCourse[] {
 			title: course.title,
 			...(plan.examDate ? { examDate: plan.examDate } : {}),
 			...(plan.daysLeft !== undefined ? { daysLeft: plan.daysLeft } : {}),
+			// UI round 8: the countdown names its assessment ("Quiz 3"); the old single exam date stays "the exam"
+			...(plan.next && !plan.next.legacy ? { examTitle: plan.next.title } : {}),
 			reviewDue: plan.reviewDue,
 			reviewBatch: plan.reviewBatch,
 			lessons: plan.lessons.map((id) => ({ skillId: id, name: ctx.skills.get(id)?.name ?? id, weight: weightOf(weights, id) })),

@@ -14,7 +14,7 @@ import { LectureList } from "@/components/lecture-list";
 import type { CourseStandingView, UpcomingView } from "@/src/core";
 import type { MaterialsApi } from "@/components/use-materials";
 import { DeleteCourseDialog } from "@/components/course-row-actions";
-import { cn } from "@/lib/utils";
+import { ErrorNotice } from "@/components/ui/error-notice";
 
 /**
  * The class side panel (UI class page, 2026-11-25; owner: "class stuff (files, settings) goes on the side; the center
@@ -103,7 +103,7 @@ export function ClassPanel({
 	/** The class was deleted (the dialog's confirm). */
 	onDeleted: () => void;
 	/** The exam settings' props; absent until the class has a skill map. */
-	exam?: Pick<ExamPlanSectionProps, "examDate" | "hasWeights" | "weighing" | "canWeigh"> & { weightsSummary?: string; weightsAt?: string };
+	exam?: Pick<ExamPlanSectionProps, "examDate" | "hasWeights" | "weighing" | "canWeigh" | "weightsError"> & { weightsSummary?: string; weightsAt?: string };
 	/** WP8: the class's quizzes, exams and assignments (the old exam date included), and the syllabus pass. */
 	upcoming?: UpcomingView;
 	/** The approved skills, for mapping an assessment's topics. */
@@ -126,29 +126,25 @@ export function ClassPanel({
 			<>
 			<section className="lh-course-controls space-y-2 px-4 py-4" data-testid="course-curriculum" aria-label="Skill map">
 				<h2 className="text-body font-semibold text-foreground">Skill map</h2>
+				{/* Before the first map the setup checklist owns Draft, its running state and its error (UI round 8: one
+				    button, one error, not a copy here); the panel keeps the class's language. */}
 				<div className="flex flex-wrap items-center gap-2">
 					<LanguageControl courseId={courseId} />
-					<button type="button" className={BTN} disabled={!map.enabled} data-testid="course-draft-button" onClick={onDraft}>
-						{map.label}
-					</button>
+					{!setup && (
+						<button type="button" className={BTN} disabled={!map.enabled} aria-busy={drafting} data-testid={drafting ? "course-drafting" : "course-draft-button"} onClick={onDraft}>
+							{drafting && <Loader2Icon className="animate-spin" aria-hidden />}
+							{drafting ? "Drafting…" : map.label}
+						</button>
+					)}
 				</div>
-				{drafting && (
-					<p className="flex items-center gap-1.5 text-meta text-muted-foreground" data-testid="course-drafting">
-						<Loader2Icon className="size-3.5 shrink-0 animate-spin" aria-hidden />
-						Drafting the skill map…
-					</p>
-				)}
+				{setup && <p className="text-meta text-muted-foreground">The checklist drafts the first skill map.</p>}
 				{map.reason && !setup && (
 					<p className="text-meta text-muted-foreground" data-testid="course-draft-reason">
 						{map.reason}
 					</p>
 				)}
-				{courseError && !drafting && (
-					<p className="text-meta text-error" data-testid="course-error">
-						Drafting failed: {courseError}
-					</p>
-				)}
-				{error && <p className="text-meta text-error">{error}</p>}
+				{courseError && !drafting && !setup && <ErrorNotice error={courseError} what="Couldn't draft the skill map." onRetry={map.enabled ? onDraft : undefined} testid="course-error" />}
+				{error && <ErrorNotice error={error} testid="course-request-error" />}
 			</section>
 
 			{upcoming && <UpcomingList courseId={courseId} upcoming={upcoming} skills={skills} busy={busy} canFind={files.materials.length > 0} onChanged={() => onChanged?.()} />}
@@ -175,12 +171,8 @@ export function ClassPanel({
 			)}
 
 			<div className="px-4 py-3">
-				<button
-					type="button"
-					onClick={() => setDeleting(true)}
-					data-testid="course-delete"
-					className={cn(buttonVariants({ variant: "ghost" }), "-ml-2.5 text-muted-foreground hover:text-foreground")}
-				>
+				{/* UI round 8: a destructive small button on the section's edge (it read as disabled body text) */}
+				<button type="button" onClick={() => setDeleting(true)} data-testid="course-delete" className={buttonVariants({ variant: "destructive", size: "sm" })}>
 					Delete class…
 				</button>
 			</div>
