@@ -387,6 +387,40 @@ describe("Settings → PDF conversion", () => {
 		}
 	});
 
+	it("Google AI Studio (Gemini): no URL field, the provider key in use, a key link, the privacy note and a model to save", async () => {
+		const entry: ConverterEntry = {
+			id: "gemini", kind: "gemini", name: "Google AI Studio (Gemini)", local: false, unverified: true, origin: "https://generativelanguage.googleapis.com", baseUrl: "https://generativelanguage.googleapis.com",
+			fixedUrl: true, ready: true, key: "required", credential: { stored: false, provider: true }, keyUrl: "https://aistudio.google.com/apikey",
+			privacyNote: "Google's free tier may use uploaded files to improve its products; don't upload private documents.",
+			model: { default: "gemini-3.8-flash", suggestions: ["gemini-3.8-flash", "gemini-3.6-flash"] },
+		};
+		const ui = await mount({
+			"GET /api/converters": () => ({ json: view("pdfjs", [pdfjs, docling(), entry]) }),
+			"PUT /api/converters": (call) => ({ json: view("pdfjs", [pdfjs, docling(), { ...entry, model: { ...entry.model!, value: (call.body as { model: string }).model } }]) }),
+		});
+		try {
+			await ui.choose("gemini");
+			assert.match(ui.text("converter-select"), /Google AI Studio \(Gemini\) \(unverified\)/);
+			assert.match(ui.text("converter-unverified"), /this converter was written/);
+			assert.equal(ui.q("converter-url-row"), null);
+			assert.match(ui.text("converter-key-hint"), /Using your Google provider key/);
+			assert.equal(ui.q("converter-key-link")!.getAttribute("href"), "https://aistudio.google.com/apikey");
+			assert.equal(ui.q("converter-key-link")!.getAttribute("target"), "_blank");
+			assert.match(ui.text("converter-privacy"), /don't upload private documents/);
+			assert.equal(ui.text("converter-destination"), "If you use it, PDFs you upload will be sent to https://generativelanguage.googleapis.com. The built-in reader keeps PDFs on this computer.");
+			assert.equal(ui.q<HTMLInputElement>("converter-model-input")!.value, "gemini-3.8-flash");
+			assert.equal(ui.q<HTMLButtonElement>("converter-model-save")!.disabled, true);
+			assert.equal(document.querySelectorAll("#converter-model-suggestions option").length, 2);
+			await ui.type("converter-model-input", "gemini-3.6-flash");
+			await ui.click("converter-model-save");
+			assert.deepEqual(ui.calls.at(-1)?.body, { id: "gemini", model: "gemini-3.6-flash" });
+			assert.equal(ui.q<HTMLInputElement>("converter-model-input")!.value, "gemini-3.6-flash");
+			assert.equal(ui.q<HTMLButtonElement>("converter-model-save")!.disabled, true);
+		} finally {
+			ui.cleanup();
+		}
+	});
+
 	it("a load failure reads as a line of text", async () => {
 		const ui = await mount({ "GET /api/converters": () => ({ status: 500, json: { error: "Settings unavailable" } }) });
 		try {

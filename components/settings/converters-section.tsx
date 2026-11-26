@@ -11,7 +11,8 @@ import { ConverterWizard } from "./converter-wizard.tsx";
 
 /**
  * Settings → PDF conversion (fork addition, 2026-11-25): which converter turns uploaded PDFs into page-marked text.
- * The built-in reader (on this computer), a self-hosted Docling, a bundled preset (Mistral OCR) or your own profile.
+ * The built-in reader (on this computer), a self-hosted Docling, Google AI Studio (Gemini; a fixed address, a key that
+ * may be the Google model provider's, a model id and a privacy note), a bundled preset (Mistral OCR) or your own profile.
  * For a service: its URL, its key (sent once, never shown again: only whether one is stored), where PDFs go, and a
  * Test that runs the bundled test PDFs through it. Your own profile is imported as JSON (pasted or chosen);
  * the server validates it and nothing in it runs. The server does the work (src/server/converters/settings-service.ts).
@@ -30,6 +31,7 @@ const NOTE = "text-sm/5 text-muted-foreground";
 const MARK = { pass: "✓", fail: "✗", skipped: "–" } as const;
 
 function keyHint(entry: ConverterEntry): string {
+	if (!entry.credential.stored && entry.credential.provider) return "Using your Google provider key (from model providers). Paste a key here to use a separate one for PDFs.";
 	if (entry.credential.stored) return `A key is stored${entry.credential.hint ? ` (${entry.credential.hint})` : ""}`;
 	if (entry.credential.boundElsewhere) return "A key was saved for another URL; enter it again for this one";
 	return entry.key === "required" ? "Needed; not stored yet" : "Optional; not stored";
@@ -42,6 +44,7 @@ export function ConvertersSection() {
 	const [error, setError] = useState<string | null>(null);
 	const [url, setUrl] = useState("");
 	const [key, setKey] = useState("");
+	const [model, setModel] = useState("");
 	const [testing, setTesting] = useState(false);
 	const [report, setReport] = useState<ConverterValidationReport | null>(null);
 	/** The converter on screen (the list only shows; "Use for new PDFs" selects). */
@@ -74,6 +77,7 @@ export function ConvertersSection() {
 			const id = show === undefined ? current : show;
 			const entry = next.converters.find((c) => c.id === id) ?? next.converters.find((c) => c.id === next.selected) ?? next.converters[0];
 			setUrl(entry?.baseUrl ?? "");
+			setModel(entry?.model ? (entry.model.value ?? entry.model.default) : "");
 			return entry?.id ?? null;
 		});
 	}, []);
@@ -105,7 +109,9 @@ export function ConvertersSection() {
 		setError(null);
 		setKey("");
 		setShownId(id);
-		setUrl(overview?.converters.find((c) => c.id === id)?.baseUrl ?? "");
+		const entry = overview?.converters.find((c) => c.id === id);
+		setUrl(entry?.baseUrl ?? "");
+		setModel(entry?.model ? (entry.model.value ?? entry.model.default) : "");
 	};
 
 	async function test(): Promise<void> {
@@ -181,6 +187,8 @@ export function ConvertersSection() {
 	if (!overview || !selected) return <p data-testid="converters-loading" className={NOTE}>Loading…</p>;
 
 	const urlChanged = url.trim() !== (selected.baseUrl ?? "");
+	const savedModel = selected.model ? (selected.model.value ?? selected.model.default) : "";
+	const modelChanged = !!selected.model && model.trim() !== savedModel;
 
 	return (
 		<div className="flex flex-col gap-6" data-testid="converters-section">
@@ -238,11 +246,15 @@ export function ConvertersSection() {
 				)}
 				{selected.unverified && (
 					<p data-testid="converter-unverified" className="rounded-sm border border-border p-2 text-xs leading-relaxed text-muted-foreground">
-						Unverified: this preset was written from the service&apos;s documentation and has not been tried against the real service. Run Test before relying on it.
+						Unverified: this {selected.kind === "preset" ? "preset" : "converter"} was written from the service&apos;s documentation and has not been tried against the real service. Run Test before relying on it.
 					</p>
 				)}
 
-				{!selected.local && (
+				{selected.privacyNote && (
+					<p data-testid="converter-privacy" className={NOTE}>{selected.privacyNote}</p>
+				)}
+
+				{!selected.local && !selected.fixedUrl && (
 					<SettingsRow label="Service URL" hint={selected.defaultBaseUrl ? `Default: ${selected.defaultBaseUrl}` : "Where the service answers"} testid="converter-url-row">
 						<span className="flex w-80 max-w-full flex-wrap items-center justify-end gap-2">
 							<Input
@@ -266,12 +278,24 @@ export function ConvertersSection() {
 						</span>
 					</SettingsRow>
 				)}
-				{!selected.local && urlChanged && selected.credential.stored && (
+				{!selected.local && !selected.fixedUrl && urlChanged && selected.credential.stored && (
 					<p data-testid="converter-url-key-note" className={NOTE}>Saving another URL removes the stored key, so it is never sent to the new address. Enter the key again afterwards.</p>
 				)}
 
 				{selected.key !== "none" && (
-					<SettingsRow label="API key" hint={keyHint(selected)} testid="converter-key-row">
+					<SettingsRow label="API key" hint={
+						<span data-testid="converter-key-hint">
+							{keyHint(selected)}
+							{selected.keyUrl && (
+								<>
+									{" "}
+									<a href={selected.keyUrl} target="_blank" rel="noreferrer" data-testid="converter-key-link" className="text-primary underline-offset-2 hover:underline">
+										Get a key ↗
+									</a>
+								</>
+							)}
+						</span>
+					} testid="converter-key-row">
 						<span className="flex w-80 max-w-full flex-wrap items-center justify-end gap-2">
 							<Input
 								type="password"
@@ -295,6 +319,35 @@ export function ConvertersSection() {
 									Remove
 								</Button>
 							)}
+						</span>
+					</SettingsRow>
+				)}
+
+				{selected.model && (
+					<SettingsRow label="Model" hint={`Default: ${selected.model.default}. Choose a model with a free tier, or type another model id.`} testid="converter-model-row">
+						<span className="flex w-80 max-w-full flex-wrap items-center justify-end gap-2">
+							<Input
+								type="text"
+								value={model}
+								onChange={(e) => setModel(e.target.value)}
+								onKeyDown={(e) => {
+									if (e.key === "Enter" && modelChanged) void change({ id: selected.id, model });
+								}}
+								list="converter-model-suggestions"
+								placeholder={selected.model.default}
+								aria-label="Model"
+								data-testid="converter-model-input"
+								disabled={busy}
+								spellCheck={false}
+								autoCapitalize="off"
+								className="min-w-28 flex-1 font-mono"
+							/>
+							<datalist id="converter-model-suggestions">
+								{selected.model.suggestions.map((m) => <option key={m} value={m} />)}
+							</datalist>
+							<Button type="button" variant="outline" onClick={() => void change({ id: selected.id, model })} disabled={busy || !modelChanged} data-testid="converter-model-save">
+								Save
+							</Button>
 						</span>
 					</SettingsRow>
 				)}
