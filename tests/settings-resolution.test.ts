@@ -48,6 +48,9 @@ describe("resolveSettings", () => {
 			readAloudAuto: false,
 			readAloudRate: 1,
 			readAloudVoice: null,
+			readAloudEngine: null,
+			readAloudModel: "gemini-3.8-flash-tts",
+			readAloudVoices: {},
 			refuseFinishWithUnintroducedTerms: false,
 		});
 		assert.deepEqual(eff.agent.tools, {});

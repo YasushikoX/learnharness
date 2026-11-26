@@ -48,9 +48,9 @@ const KEY_STATE_LABEL: Readonly<Record<GoogleKeyState, string>> = {
 const LANGUAGE_NAMES: Readonly<Record<LessonLanguage, string>> = { en: "English", nb: "Norwegian" };
 
 function keySourceLine(status: ReadAloudStatus | null): string {
-	if (!status?.key.source) return "Google voices need a free Google AI Studio key.";
-	if (status.key.source === "provider") return "Using your Google provider key (from model providers).";
-	return `Using the key saved for Google AI Studio${status.key.hint ? ` (${status.key.hint})` : ""}, shared with PDF conversion.`;
+	if (!status?.key?.source) return "Google voices need a free Google AI Studio key.";
+	if (status.key?.source === "provider") return "Using your Google provider key (from model providers).";
+	return `Using the key saved for Google AI Studio${status.key?.hint ? ` (${status.key?.hint})` : ""}, shared with PDF conversion.`;
 }
 
 /**
@@ -172,7 +172,7 @@ export function ReadAloudSection({
 		if (alive.current) void runTest();
 	}, [client, keyInput, reloadStatus, runTest]);
 
-	const hasKey = !!status?.key.source;
+	const hasKey = !!status?.key?.source;
 	const keyState: GoogleKeyState = !loaded
 		? "checking"
 		: testing

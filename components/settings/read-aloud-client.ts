@@ -24,7 +24,10 @@ export const browserReadAloudClient: ReadAloudClient = {
 	async status() {
 		try {
 			const res = await fetch("/api/tts", { cache: "no-store" });
-			return res.ok ? ((await res.json()) as ReadAloudStatus) : null;
+			if (!res.ok) return null;
+			const body = (await res.json().catch(() => null)) as Partial<ReadAloudStatus> | null;
+			// anything without a key state is not an answer from this app's /api/tts
+			return body && typeof body.key === "object" && body.key !== null ? (body as ReadAloudStatus) : null;
 		} catch {
 			return null;
 		}
