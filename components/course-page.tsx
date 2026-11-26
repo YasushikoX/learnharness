@@ -785,6 +785,8 @@ export function CourseBody({
 					onRetest={offerPlacement ? undefined : onRetest}
 					onChanged={() => onChanged?.()}
 					afterNextUp={data.sessions.length > 0 ? <SessionsSection sessions={data.sessions} /> : undefined}
+					// WP9: where the class is, what you have learned of it, and the next test's readiness
+					{...(data.standing ? { standing: data.standing } : {})}
 				/>
 
 					{offerPlacement && (
@@ -1394,6 +1396,8 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 					}
 					// WP8: the Upcoming list (quizzes, exams; the old exam date as an "Exam") and the syllabus pass
 					{...(data.upcoming ? { upcoming: data.upcoming } : {})}
+					// WP9: the lecture timeline
+					{...(data.standing ? { standing: data.standing } : {})}
 					skills={data.skills.map((s) => ({ id: s.id, name: s.name }))}
 				/>
 			</aside>

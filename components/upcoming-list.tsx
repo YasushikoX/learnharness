@@ -5,7 +5,7 @@ import { Loader2Icon, PlusIcon, XIcon } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { FIELD_CLASS } from "@/components/ui/input";
 import { ThinSelect } from "@/components/settings/controls";
-import { ASSESSMENT_KINDS, daysUntil, examDateLabel, KIND_LABELS, type Assessment, type AssessmentKind, type AssessmentProposal, type ProposedAssessment, type UpcomingView } from "@/src/core";
+import { ASSESSMENT_KINDS, daysUntil, examDateLabel, KIND_LABELS, shortDate, type Assessment, type AssessmentKind, type AssessmentProposal, type ProposedAssessment, type ProposedLecture, type UpcomingView } from "@/src/core";
 import { cn } from "@/lib/utils";
 
 /**
@@ -42,6 +42,13 @@ export function upcomingRows(items: readonly Assessment[], now: number): { comin
 export function proposalRows(items: readonly ProposedAssessment[]): { pending: ProposedAssessment[]; already: number } {
 	const pending = items.filter((i) => i.status === "new" || i.status === "update");
 	return { pending, already: items.length - pending.length };
+}
+
+/** WP9: the proposal's lectures still to decide. Pure. */
+export function proposalLectureRows(lectures: readonly ProposedLecture[] | undefined): { pending: ProposedLecture[]; already: number } {
+	const all = lectures ?? [];
+	const pending = all.filter((l) => l.status === "new" || l.status === "update");
+	return { pending, already: all.length - pending.length };
 }
 
 /** A proposal action's body, naming the proposal the page shows (review 1, finding 1: the server refuses an action on
@@ -244,6 +251,8 @@ export function UpcomingList({
 	};
 	const { coming, undated, past } = upcomingRows(upcoming.items, now);
 	const proposal = upcoming.proposal ? proposalRows(upcoming.proposal.items) : null;
+	const proposalLectures = proposalLectureRows(upcoming.proposal?.lectures);
+	const pendingCount = (proposal?.pending.length ?? 0) + proposalLectures.pending.length;
 	const shown = upcoming.proposal ?? {};
 	const act = (action: Record<string, unknown>) => call(`${base}/proposal`, { method: "POST", body: proposalBody(shown, action) });
 	const disabled = busy || working;
@@ -338,13 +347,13 @@ export function UpcomingList({
 
 			{proposal && upcoming.proposal && (
 				<div className="space-y-2 rounded-lg border border-border p-3" data-testid="upcoming-proposal">
-					<div className="text-chrome font-medium">From the syllabus{proposal.pending.length > 0 ? ` · ${proposal.pending.length} to add` : ""}</div>
+					<div className="text-chrome font-medium">From the syllabus{pendingCount > 0 ? ` · ${pendingCount} to add` : ""}</div>
 					<p className="text-meta text-muted-foreground">
 						{upcoming.proposal.summary}
-						{proposal.already > 0 ? ` ${proposal.already} already in your list.` : ""}
+						{proposal.already + proposalLectures.already > 0 ? ` ${proposal.already + proposalLectures.already} already in your list.` : ""}
 						{upcoming.proposal.partial ? " It stopped early, so this may not be all of them." : ""}
 					</p>
-					{proposal.pending.length === 0 && <p className="text-meta text-muted-foreground">Nothing new to add.</p>}
+					{pendingCount === 0 && <p className="text-meta text-muted-foreground">Nothing new to add.</p>}
 					<div className="divide-y divide-border">
 						{proposal.pending.map((p) =>
 							proposalEdit === p.key ? (
@@ -386,14 +395,36 @@ export function UpcomingList({
 							),
 						)}
 					</div>
+					{/* WP9: the lecture schedule from the same run, added with the items */}
+					{proposalLectures.pending.length > 0 && (
+						<details className="group border-t border-border pt-1.5" data-testid="proposal-lectures">
+							<summary className="cursor-pointer text-meta text-muted-foreground hover:text-foreground">
+								Lecture schedule · {proposalLectures.pending.length} lecture{proposalLectures.pending.length === 1 ? "" : "s"}
+							</summary>
+							<div className="mt-1 divide-y divide-border">
+								{proposalLectures.pending.map((l) => (
+									<div key={l.key} className="flex items-baseline gap-2 py-1 text-meta" data-testid={`proposal-lecture-${l.key}`}>
+										<span className="min-w-0 flex-1 truncate" title={l.quote ? `${l.cite} · “${l.quote}”` : l.cite}>
+											{l.title}
+											{l.status === "update" ? " · changes the syllabus lecture" : ""}
+										</span>
+										<span className="shrink-0 text-muted-foreground tabular-nums">{l.date ? shortDate(l.date) : "no date"}</span>
+										<button type="button" className={GHOST} disabled={disabled} data-testid={`proposal-drop-${l.key}`} onClick={() => void act({ action: "drop", key: l.key })}>
+											Drop
+										</button>
+									</div>
+								))}
+							</div>
+						</details>
+					)}
 					<div className="flex items-center gap-2 pt-1">
-						{proposal.pending.length > 0 && (
+						{pendingCount > 0 && (
 							<button type="button" className={SMALL} disabled={disabled} data-testid="proposal-approve" onClick={() => void act({ action: "approve" })}>
-								{proposal.pending.length === 1 ? "Add it" : `Add all ${proposal.pending.length}`}
+								{pendingCount === 1 ? "Add it" : `Add all ${pendingCount}`}
 							</button>
 						)}
 						<button type="button" className={GHOST} disabled={disabled} data-testid="proposal-discard" onClick={() => void act({ action: "discard" })}>
-							{proposal.pending.length > 0 ? "Discard" : "Close"}
+							{pendingCount > 0 ? "Discard" : "Close"}
 						</button>
 					</div>
 				</div>

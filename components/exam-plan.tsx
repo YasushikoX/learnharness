@@ -8,6 +8,8 @@ import { examDateLabel, forecastLine, readinessBasis, readinessStep, understandi
 import { cn } from "@/lib/utils";
 import { PAGE_HEAD } from "@/components/section-heads";
 import { CourseSettingRow } from "@/components/course-pace";
+import { showsStanding, WhereYouStand } from "@/components/where-you-stand";
+import type { CourseStandingView } from "@/src/core";
 
 /**
  * The exam plan on the course page (owner, 2026-11-13 — core/exam-plan.ts): today's list and the exam card (the
@@ -207,6 +209,9 @@ export interface ExamPlanSectionProps {
 	onChanged: () => void;
 	/** What sits between Next up and the exam card: the class's recent sessions (UI class page, 2026-11-25). */
 	afterNextUp?: React.ReactNode;
+	/** WP9: "Where you stand" (the lectures, the class's position, the next assessment's readiness): the top of the Next
+	 *  up card, and its Start goes to the most urgent gap. */
+	standing?: CourseStandingView;
 }
 
 /**
@@ -218,14 +223,17 @@ export interface ExamPlanSectionProps {
  * course is weighed the card holds "Weigh by exams"; afterwards it says so in one line and "Weigh again" is a setting.
  */
 export function ExamPlanSection(props: ExamPlanSectionProps) {
-	const { courseId, plan, names, weightOf, nextUp, learningCount, examDate, readiness, hasWeights, weightsError, weighing, canWeigh, busy, onStart, onRetest, onChanged, afterNextUp } = props;
+	const { courseId, plan, names, weightOf, nextUp, learningCount, examDate, readiness, hasWeights, weightsError, weighing, canWeigh, busy, onStart, onRetest, onChanged, afterNextUp, standing } = props;
+	const stand = showsStanding(standing) ? standing : null;
+	// WP9: the most urgent gap takes the card's one primary Start (a review due then gets a quiet button)
+	const gap = stand?.start ?? null;
 	const { error, starting, patch, weigh } = useExamActions(courseId, onChanged);
 
 	const f = plan.forecast;
 	const more = nextUp.filter((id) => !plan.lessons.includes(id)).slice(0, MORE_NEXT_UP);
 	const practiceAll = learningCount > 1;
 	const retest = (plan.retestCount ?? 0) > 0 && onRetest !== undefined;
-	const boxHasItems = plan.reviewDue > 0 || plan.lessons.length > 0 || more.length > 0 || practiceAll || retest;
+	const boxHasItems = plan.reviewDue > 0 || plan.lessons.length > 0 || more.length > 0 || practiceAll || retest || stand !== null;
 	const learnRow = (id: string, testid: string) => (
 		<div key={id} className={ROW} data-testid={testid}>
 			<span className="min-w-0 flex-1 line-clamp-2 break-words sm:line-clamp-none sm:block sm:truncate">
@@ -239,8 +247,8 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 	);
 	// The hero: the review when one is due, else the first lesson to take (today's, else the next by exam priority). It
 	// carries the page's one primary Start; everything after it is a quiet row.
-	const heroLesson = plan.reviewDue > 0 ? undefined : (plan.lessons[0] ?? more[0]);
-	const heroIsToday = heroLesson !== undefined && plan.lessons[0] === heroLesson;
+	const heroLesson = gap ? gap.skillId : plan.reviewDue > 0 ? undefined : (plan.lessons[0] ?? more[0]);
+	const heroIsToday = !gap && heroLesson !== undefined && plan.lessons[0] === heroLesson;
 	const todayRows = plan.lessons.filter((id) => id !== heroLesson);
 	const moreRows = more.filter((id) => id !== heroLesson);
 	const fading = plan.reviewFading ?? 0;
@@ -255,6 +263,7 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 			{boxHasItems && (
 				<div data-testid="course-next-up" className={HERO_CARD}>
 					<div className={PAGE_HEAD}>Next up</div>
+					{stand && <WhereYouStand courseId={courseId} standing={stand} onChanged={onChanged} />}
 					{plan.reviewDue > 0 && (
 						<div className="flex items-center justify-between gap-4 pb-4" data-testid="course-today-review">
 							<span className="min-w-0">
@@ -268,16 +277,26 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 									</span>
 								)}
 							</span>
-							<button type="button" className={BTN_HERO} disabled={busy} onClick={() => onStart("review")}>
+							<button type="button" className={gap ? BTN : BTN_HERO} disabled={busy} onClick={() => onStart("review")}>
 								Start
 							</button>
 						</div>
 					)}
 					{heroLesson !== undefined && (
-						<div data-testid={heroIsToday ? "course-today" : "course-next-more"}>
-							<div className="flex items-center justify-between gap-4 pb-4" data-testid={heroIsToday ? `course-today-lesson-${heroLesson}` : `course-next-more-${heroLesson}`}>
+						<div data-testid={gap ? "course-gap" : heroIsToday ? "course-today" : "course-next-more"}>
+							<div className="flex items-center justify-between gap-4 pb-4" data-testid={gap ? `course-gap-${heroLesson}` : heroIsToday ? `course-today-lesson-${heroLesson}` : `course-next-more-${heroLesson}`}>
 								<span className="min-w-0">
-									<span className="block text-meta font-medium text-muted-foreground">{heroIsToday ? "Learn today" : "More to learn"}</span>
+									<span className="block text-meta font-medium text-muted-foreground">
+										{gap
+											? gap.skillId !== gap.gapId
+												? `First, for ${names.get(gap.gapId) ?? gap.gapId}`
+												: gap.why === "assessment"
+													? `For ${stand?.next?.title ?? "the next test"}`
+													: "Covered in class, not learned yet"
+											: heroIsToday
+												? "Learn today"
+												: "More to learn"}
+									</span>
 									<span className={cn(HERO_TITLE, "mt-0.5 block line-clamp-2 break-words")}>
 										{names.get(heroLesson) ?? heroLesson}
 										{weightOf(heroLesson) !== 1 && <span className="ml-2 text-meta font-normal text-muted-foreground">w{weightOf(heroLesson)}</span>}
