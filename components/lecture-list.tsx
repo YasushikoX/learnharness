@@ -7,6 +7,7 @@ import { FIELD_CLASS } from "@/components/ui/input";
 import { CheckRow, Field, FieldGroup, useOverflow } from "@/components/ui/field";
 import { ErrorNotice } from "@/components/ui/error-notice";
 import { InlineConfirm } from "@/components/ui/inline-confirm";
+import { shortRows, ShortList } from "@/components/ui/short-list";
 import { formDirty, useUnsavedGuard } from "@/components/use-unsaved-guard";
 import { dayLabel, shortDate, type CourseStandingView, type LectureView } from "@/src/core";
 import { cn } from "@/lib/utils";
@@ -54,6 +55,20 @@ export function lectureBody(v: FormValue, before?: Pick<LectureView, "skillIds">
 /** The next lecture number after the timeline's own (for the "e.g." hint). Pure. */
 export function nextLectureNumber(lectures: ReadonlyArray<Pick<LectureView, "n">>): number {
 	return lectures.reduce((m, l) => Math.max(m, l.n ?? 0), 0) + 1;
+}
+
+/** Collapsed, the lectures list shows this many rows: the class's current lecture and the two after it. */
+export const LECTURE_ROWS = 3;
+
+/**
+ * The Lectures list's collapsed rows (UI long lists, 2026-11-26; owner: "the same goes for lectures"): the lecture the
+ * class is at first, then the next two, so its position is always in view; with no position, the first lecture the class
+ * has not covered. Near the end of the term the window ends at the last lecture. A lecture being edited stays. Pure.
+ */
+export function lectureRows<L extends Pick<LectureView, "id">>(lectures: readonly L[], positionId: string | undefined, covered: ReadonlySet<string>, keep?: string): { items: L[]; preview: L[]; anchor: string | undefined } {
+	const at = positionId ? lectures.findIndex((l) => l.id === positionId) : -1;
+	const start = at >= 0 ? at : Math.max(0, lectures.findIndex((l) => !covered.has(l.id)));
+	return { ...shortRows(lectures, keep, start, LECTURE_ROWS), anchor: lectures[start]?.id };
 }
 
 /** The inline add / edit form (UI round 8, SPEC §9): labelled fields, whole skill rows, Remove behind an inline confirm,
@@ -164,6 +179,11 @@ function LectureForm({
 }
 
 
+/** The row's leading dot (UI round 12): the class's position in the accent, a covered lecture filled, one not covered
+ *  yet hollow. The dot carries "not yet covered", so every title keeps the normal text colour (SPEC §9: a muted title
+ *  read as disabled). */
+const DOT = "size-1.5 shrink-0 -translate-y-0.5 rounded-full";
+
 /** One lecture row: number and title, its date; the topics or where it came from, and how many skills it teaches. */
 function Row({ l, here, covered, onEdit }: { l: LectureView; here: boolean; covered: boolean; onEdit: () => void }) {
 	const sub = [l.derived || l.source === "files" ? "from your files" : l.source === "syllabus" ? "from the syllabus" : null, l.topics || null, l.skillIds.length > 0 ? `${l.skillIds.length} skill${l.skillIds.length === 1 ? "" : "s"}` : "no skills placed"].filter(Boolean);
@@ -171,13 +191,22 @@ function Row({ l, here, covered, onEdit }: { l: LectureView; here: boolean; cove
 		<button
 			type="button"
 			onClick={onEdit}
-			aria-label={`Edit ${l.title}`}
+			aria-label={`Edit ${l.title}${here ? " (the class is here)" : covered ? "" : " (not covered yet)"}`}
 			data-testid={`lecture-item-${l.id}`}
 			data-covered={covered ? "true" : "false"}
-			className={cn("-mx-2 block w-[calc(100%+1rem)] rounded-sm px-2 py-1.5 text-left hover:bg-raised", !covered && "text-muted-foreground")}
+			className="-mx-2 block w-[calc(100%+1rem)] rounded-sm px-2 py-1.5 text-left hover:bg-raised"
 		>
 			<span className="flex items-baseline gap-2 text-chrome">
-				{here && <span aria-label="the class is here" title="The class is here" className="size-1.5 shrink-0 -translate-y-0.5 rounded-full bg-primary" data-testid={`lecture-here-${l.id}`} />}
+				{here ? (
+					<span title="The class is here" className={cn(DOT, "bg-primary")} data-testid={`lecture-here-${l.id}`} />
+				) : (
+					<span
+						aria-hidden
+						title={covered ? "Covered" : "Not covered yet"}
+						className={cn(DOT, covered ? "bg-muted-foreground" : "border border-muted-foreground")}
+						data-testid={`lecture-dot-${l.id}`}
+					/>
+				)}
 				<span className={cn("min-w-0 flex-1 truncate", covered && "font-medium")}>{l.title}</span>
 				<span className="shrink-0 text-meta text-muted-foreground tabular-nums">{l.date ? shortDate(l.date) : "no date"}</span>
 			</span>
@@ -214,6 +243,7 @@ export function LectureList({ courseId, standing, skills, busy = false, onChange
 	const disabled = busy || working !== null;
 	const covered = new Set(standing.covered);
 	const nextN = nextLectureNumber(standing.lectures);
+	const rows = lectureRows(standing.lectures, standing.position?.lectureId, covered, editing ?? undefined);
 	const link = () => void call(`${base}/link`, { method: "POST" }, "link");
 	const formProps = (key: string) => ({ skills, busy: disabled, nextN, asking: guard.open === key && guard.asking, onDirty: guard.setDirty, onDiscard: guard.discard, onKeep: guard.keep, onCancel: guard.close });
 	return (
@@ -241,8 +271,16 @@ export function LectureList({ courseId, standing, skills, busy = false, onChange
 				</p>
 			)}
 			{standing.lectures.length > 0 && (
-				<div className="space-y-0.5" data-testid="lecture-list">
-					{standing.lectures.map((l) =>
+				<ShortList
+					{...rows}
+					keyOf={(l) => l.id}
+					text={(l) => `${l.title} ${l.topics}`}
+					noun="lectures"
+					storageKey={`${courseId}:lectures`}
+					unbounded={editing !== null && editing !== "new"}
+					testid="lecture-list"
+					rowsClassName="-mx-2 space-y-0.5 px-2"
+					render={(l) =>
 						editing === l.id ? (
 							<LectureForm
 								key={l.id}
@@ -259,9 +297,9 @@ export function LectureList({ courseId, standing, skills, busy = false, onChange
 							/>
 						) : (
 							<Row key={l.id} l={l} here={standing.position?.lectureId === l.id} covered={covered.has(l.id)} onEdit={() => guard.request(l.id)} />
-						),
-					)}
-				</div>
+						)
+					}
+				/>
 			)}
 			{error?.where === "form" && <ErrorNotice error={error.text} what="Couldn't save the lecture." testid="lectures-form-error" />}
 			{/* The linking step: its button carries the running state; its failure sits under it with Try again. */}

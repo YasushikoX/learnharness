@@ -42,7 +42,7 @@ const { ASK_TOOL_NAMES, createAskAgent } = await import("../src/agent/ask-agent.
 const { agentSystemPrompt, composeInstructions } = await import("../src/agent/teacher-agent.ts");
 const { allSegmentPaths, effectivePromptSegments } = await import("../src/agent/prompt-segments.ts");
 const { CourseBody } = await import("../components/course-page.tsx");
-const { courseModeStates, learnTarget } = await import("../components/course-modes.tsx");
+const { CourseModes, courseModeStates, learnTarget, SHORT_QUESTION_HINT } = await import("../components/course-modes.tsx");
 const { sectionedSegments } = await import("../components/settings/agent-section.tsx");
 const { initialPromptOwed } = await import("../components/chat.tsx");
 const { LEDGER_FILES } = await import("../config.ts");
@@ -451,10 +451,14 @@ describe("the course page: Learn, Ask, Practice", () => {
 		for (const id of ["learn", "ask", "practice"]) assert.ok(available(html, id), id);
 		assert.match(html, /data-testid="course-mode-learn-line"[^>]*>Next: B</);
 		assert.match(html, /data-testid="course-mode-practice-line"[^>]*>1 skill you are learning</);
-		// UI class page (owner, 2026-11-25): "Short question", with no description line while there is nothing to continue
+		// UI class page (owner, 2026-11-25): "Short question", no long description; UI round 12: one short hint as its
+		// second line, in the same style as the others
 		assert.match(html, />Short question</);
 		assert.doesNotMatch(html, /Ask about this class|Short answers from the class material/);
-		assert.doesNotMatch(html, /data-testid="course-mode-ask-line"/);
+		assert.match(html, /data-testid="course-mode-ask-line"[^>]*>Ask anything about this class</);
+		const lineClass = (id: string) => html.match(new RegExp(`class="([^"]*)" data-testid="course-mode-${id}-line"`))?.[1];
+		assert.ok(lineClass("ask"));
+		assert.equal(lineClass("ask"), lineClass("learn"), "the same style as Learn's line");
 		assert.ok(html.indexOf("course-modes") < html.indexOf("course-exam-plan"), "at the top of the page");
 	});
 
@@ -497,20 +501,50 @@ describe("the course page: Learn, Ask, Practice", () => {
 		assert.ok(available(html, "ask"));
 	});
 
-	it("lists Ask sessions with their own label, and the Ask card reopens the newest one with a New button beside it", () => {
+	it("lists Ask sessions with their own label; the Ask card is a plain card that always starts a new one", () => {
 		const data = payload({ sessions: [
 			{ id: "chat_ask2", title: "Questions: Calc", mode: "ask", updatedAt: "t2" },
 			{ id: "chat_1", title: "Learn: A", mode: "learn", updatedAt: "t" },
-			{ id: "chat_ask1", title: "Questions: Calc", mode: "ask", updatedAt: "t1" },
+			{ id: "chat_ask1", title: "Why ATP?", mode: "ask", updatedAt: "t1" },
 		] });
 		const html = renderBody(data);
 		assert.match(html, /data-testid="course-sessions"[\s\S]*Questions: Calc[\s\S]*>Short question</, "the list labels it");
-		assert.match(html, /data-testid="course-mode-ask-new"/);
-		assert.match(html, /data-testid="course-mode-ask-line"[^>]*>Continue the last one</, "the default title says nothing: only that there is one");
-		assert.equal(courseModeStates(payload({ sessions: [{ id: "chat_q", title: "Why ATP?", mode: "ask", updatedAt: "t" }] })).ask.line, "Continue: Why ATP?");
-		assert.equal(courseModeStates(data).ask.reopen, "chat_ask2", "the newest");
-		assert.equal(courseModeStates(payload()).ask.reopen, undefined, "no Ask session yet: the card starts one");
-		assert.doesNotMatch(renderBody(payload()), /course-mode-ask-new/);
+		// UI round 12 (owner: "Why does the Short question button have an add sign inside it?"): no button inside the
+		// card, no "Continue:" line, the same hint with or without earlier conversations
+		for (const shown of [html, renderBody(payload())]) {
+			assert.doesNotMatch(shown, /course-mode-ask-new|New short question/);
+			assert.doesNotMatch(shown, /Continue/);
+			assert.match(shown, /data-testid="course-mode-ask-line"[^>]*>Ask anything about this class</);
+			const card = shown.match(/<div[^>]*data-testid="course-mode-ask"[\s\S]*?<\/button><\/div>/)?.[0] ?? "";
+			assert.equal(card.match(/<button/g)?.length, 1, "one whole-card button, like Learn and Practice");
+		}
+		assert.deepEqual(courseModeStates(data).ask, { available: true, line: SHORT_QUESTION_HINT });
+		assert.deepEqual(courseModeStates(payload()).ask, courseModeStates(data).ask, "earlier conversations change nothing");
+	});
+
+	it("every mode card starts a new session: the click never names an existing one", () => {
+		const data = payload({ sessions: [
+			{ id: "chat_ask2", title: "Questions: Calc", mode: "ask", updatedAt: "t2" },
+			{ id: "chat_learn", title: "Learn: B", mode: "learn", updatedAt: "t1" },
+			{ id: "chat_practice", title: "Practice: Calc", mode: "practice", updatedAt: "t0" },
+		] });
+		const asks: unknown[][] = [], learns: unknown[][] = [], practices: unknown[][] = [];
+		const tree = CourseModes({ data, busy: false, onLearn: (...a) => learns.push(a), onPractice: (...a: unknown[]) => practices.push(a), onAsk: (...a: unknown[]) => asks.push(a) });
+		const buttons: { testid: string; onClick: () => void }[] = [];
+		const walk = (node: unknown) => {
+			if (!node || typeof node !== "object") return;
+			if (Array.isArray(node)) { node.forEach(walk); return; }
+			const props = (node as { props?: Record<string, unknown> }).props;
+			if (!props) return;
+			if (typeof props["data-testid"] === "string" && typeof props.onClick === "function") buttons.push({ testid: props["data-testid"], onClick: props.onClick as () => void });
+			walk(props.children);
+		};
+		walk(tree);
+		assert.deepEqual(buttons.map((b) => b.testid).sort(), ["course-mode-ask-start", "course-mode-learn-start", "course-mode-practice-start"]);
+		for (const b of buttons) b.onClick();
+		assert.deepEqual(asks, [[]], "Short question: a new conversation, never the newest one's id");
+		assert.deepEqual(learns, [["b"]], "Learn: the card's next skill (the page starts a new lesson through its pace dialog)");
+		assert.deepEqual(practices, [[]], "Practice: everything being learned, a new session");
 	});
 });
 

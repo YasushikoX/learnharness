@@ -6,7 +6,9 @@ import { buttonVariants } from "@/components/ui/button";
 import { FIELD_CLASS } from "@/components/ui/input";
 import { MaterialRow } from "@/components/materials-control";
 import { ErrorNotice } from "@/components/ui/error-notice";
+import { SHORT_LIST_ROWS, ShortList } from "@/components/ui/short-list";
 import type { MaterialsApi } from "@/components/use-materials";
+import type { LessonMaterial } from "@/src/core";
 import { cn } from "@/lib/utils";
 
 /**
@@ -18,10 +20,25 @@ import { cn } from "@/lib/utils";
 
 const BTN = buttonVariants({ variant: "outline" });
 
-/** "Files", "Files · 2", "Reading 1 of 2…" — the section's count. Pure. */
-export function filesCount(count: number, reading: number): string | null {
+/** The header's count and status beside "Files": "37", "37 · 3 reading", "37 · 1 failed". Pure. */
+export function filesCount(count: number, reading: number, failed = 0): string | null {
 	if (count === 0) return null;
-	return reading > 0 ? `reading ${reading} of ${count}` : String(count);
+	return [String(count), reading > 0 ? `${reading} reading` : null, failed > 0 ? `${failed} failed` : null].filter(Boolean).join(" · ");
+}
+
+/**
+ * The Files list's order and its collapsed rows (UI long lists, 2026-11-26): the files that failed, then those still
+ * being read, then the rest newest first. Collapsed shows the first SHORT_LIST_ROWS of that, and every failed file even
+ * when there are more, so a failure is never behind "Show all". Pure.
+ */
+export function fileRows<M extends Pick<LessonMaterial, "status" | "addedAt">>(materials: readonly M[]): { items: M[]; preview: M[] } {
+	const rank = (m: M) => (m.status === "error" ? 0 : m.status === "reading" ? 1 : 2);
+	const items = materials
+		.map((m, i) => ({ m, i }))
+		.sort((a, b) => rank(a.m) - rank(b.m) || (a.m.addedAt < b.m.addedAt ? 1 : a.m.addedAt > b.m.addedAt ? -1 : b.i - a.i))
+		.map((x) => x.m);
+	const failed = items.filter((m) => m.status === "error").length;
+	return { items, preview: items.slice(0, Math.max(SHORT_LIST_ROWS, failed)) };
 }
 
 /** The link field: Enter adds it. */
@@ -62,20 +79,32 @@ export function AddFilesRow({ files }: { files: MaterialsApi }) {
 }
 
 /** `setup`: the empty class's center holds the large drop zone and the errors, so the panel shows neither again. */
-export function ClassFiles({ files, dropping = false, setup = false }: { files: MaterialsApi; dropping?: boolean; setup?: boolean }) {
-	const count = filesCount(files.materials.length, files.reading);
+export function ClassFiles({ files, dropping = false, setup = false, courseId }: { files: MaterialsApi; dropping?: boolean; setup?: boolean; courseId?: string }) {
+	const failed = files.materials.filter((m) => m.status === "error").length;
+	const count = filesCount(files.materials.length, files.reading, failed);
+	const { items, preview } = fileRows(files.materials);
 	return (
 		<section data-testid="class-files" aria-label="Class files" className="space-y-2">
 			<h2 className="flex items-baseline text-body font-semibold text-foreground">
 				Files
 				{count && <span className="ml-2 font-normal tabular-nums text-muted-foreground" data-testid="class-files-count">{count}</span>}
 			</h2>
+			{/* the ways to add stay above the list, so a long list never pushes them down (UI long lists) */}
+			{files.materials.length > 0 && <AddFilesRow files={files} />}
+			{files.materials.length > 0 && files.error && !setup && <ErrorNotice error={files.error} what="Couldn't add the file." testid="materials-error" />}
 			{files.materials.length > 0 ? (
-				<div className="-mx-1 text-chrome" data-testid="class-files-list">
-					{files.materials.map((m) => (
-						<MaterialRow key={m.id} material={m} confirmRemove onRemove={() => void files.remove(m.id)} />
-					))}
-				</div>
+				<ShortList
+					items={items}
+					preview={preview}
+					keyOf={(m) => m.id}
+					text={(m) => m.name}
+					noun="files"
+					storageKey={courseId ? `${courseId}:files` : undefined}
+					testid="class-files-list"
+					className="text-chrome"
+					rowsClassName="-mx-1"
+					render={(m) => <MaterialRow material={m} confirmRemove onRemove={() => void files.remove(m.id)} />}
+				/>
 			) : setup ? null : (
 				<button
 					type="button"
@@ -90,8 +119,8 @@ export function ClassFiles({ files, dropping = false, setup = false }: { files: 
 					Drop PDFs, notes or photos
 				</button>
 			)}
-			<AddFilesRow files={files} />
-			{files.error && !setup && <ErrorNotice error={files.error} what="Couldn't add the file." testid="materials-error" />}
+			{files.materials.length === 0 && <AddFilesRow files={files} />}
+			{files.materials.length === 0 && files.error && !setup && <ErrorNotice error={files.error} what="Couldn't add the file." testid="materials-error" />}
 		</section>
 	);
 }

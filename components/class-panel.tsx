@@ -120,7 +120,7 @@ export function ClassPanel({
 	return (
 		<div className="flex flex-col divide-y divide-border" data-testid="class-panel" data-quiet={quiet ? "true" : "false"}>
 			<div className="px-4 pt-3 pb-4">
-				<ClassFiles files={files} dropping={dropping} setup={setup} />
+				<ClassFiles files={files} dropping={dropping} setup={setup} courseId={courseId} />
 			</div>
 
 			{!quiet && (

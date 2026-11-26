@@ -7,6 +7,41 @@ import { ids } from "./scenario.mjs";
  * status, a request still loading) comes from a per-shot request route; a failed pass is written into the class's
  * record for one visit (withCourse); the first-run states hide the seeded classes and sessions (withEmptyLibrary).
  */
+/** 39 more files for the class (with its one seeded file, 40): week slides and notes, lab photos and a link; Week 11
+ *  failed, the three newest still being read. Their ids and dates are fixed. */
+function semesterFiles(seed) {
+	const base = Date.parse(seed?.addedAt ?? "2026-09-01T09:00:00.000Z");
+	const files = [];
+	for (let i = 1; i <= 39; i++) {
+		const week = Math.ceil(i / 3);
+		const kind = i % 3 === 1 ? "pdf" : i % 3 === 2 ? "text" : i % 13 === 0 ? "web" : "image";
+		const name = kind === "pdf" ? `Week ${week} — lecture slides.pdf` : kind === "text" ? `Week ${week} notes.md` : kind === "web" ? `Week ${week} reading (OpenStax)` : `Week ${week} lab board.jpg`;
+		const reading = i >= 37;
+		const failed = i === 31;
+		files.push({
+			id: `mat_ui_long_${i}`, name, kind, file: kind === "pdf" ? "source.pdf" : kind === "image" ? "source.jpg" : "source.md", bytes: 1000 + i,
+			addedAt: new Date(base + i * 86_400_000).toISOString(),
+			status: reading ? "reading" : failed ? "error" : "ready",
+			...(kind === "pdf" && !reading && !failed ? { pages: 18 + (i % 9) } : {}),
+			...(kind === "web" ? { url: "https://openstax.org/books/biology-2e" } : {}),
+			...(failed ? { error: "the file is password-protected" } : {}),
+			...(i === 39 ? { conversionProgress: { stage: "reading pages", donePages: 6, totalPages: 22 } } : {}),
+		});
+	}
+	return files;
+}
+
+/** Lectures 7–14 after the fixture's six, a week apart. */
+function laterLectures(last) {
+	if (!last) return [];
+	const start = Date.parse(`${last.date}T12:00:00.000Z`);
+	const topics = ["Photosystems I and II", "Photorespiration and C4 plants", "Review: energy flow", "Cell signalling", "Signal transduction cascades", "The cell cycle", "Mitosis and its checkpoints", "Meiosis"];
+	return topics.map((topic, k) => ({
+		...last, id: `lc_ui_long_${k + 7}`, n: k + 7, title: `Lecture ${k + 7}: ${topic}`, topics: topic, skillIds: [],
+		date: new Date(start + (k + 1) * 7 * 86_400_000).toISOString().slice(0, 10),
+	}));
+}
+
 export async function captureSmallSurfaces(kit) {
 	const { page, theme, desktop, narrow, testId, visit, visible, click, scroll, settle, capture, route } = kit;
 	const { withLessonComposer, withCourse, withEmptyLibrary } = kit;
@@ -350,6 +385,54 @@ export async function captureSmallSurfaces(kit) {
 	await hover(testId("course-title"));
 	await capture("86a", "class-title-hover", "The class title on hover: a faint fill and a pencil (click to rename).", { around: [testId("course-title")], pad: 48 });
 	await page.mouse.move(700, 600);
+
+	// ── Long lists in the side panel (UI long lists, 2026-11-26) ────────────────────────────────────────────────
+	// A semester's worth of files (40: one failed, three still being read) and fourteen lectures. Files that are still
+	// being read cannot sit in the fixture (the server would start reading them), so both come from routes.
+	const longLists = [
+		route.patch("GET", at(`${api(ids.biology)}/materials`), body => ({ ...body, materials: [...body.materials, ...semesterFiles(body.materials[0])] })),
+		route.patch("GET", at(api(ids.biology)), view => ({ ...view, standing: { ...view.standing, lectures: [...view.standing.lectures, ...laterLectures(view.standing.lectures.at(-1))] } })),
+	];
+	const filesList = testId("class-files-list");
+	const filesToggle = testId("class-files-list-toggle");
+	const shootFiles = async (prefix, where) => {
+		await visible(filesToggle);
+		await capture(`${prefix}a`, `long-files-collapsed${where.name}`, `A class with 40 files${where.text}: the Files list shows 5 (the failed file and the three being read first, then the newest), “Show all 40” under them, the status in the header, and the rest of the panel in view.`, panel);
+		await click(filesToggle);
+		await visible(testId("class-files-list-filter"));
+		await capture(`${prefix}b`, `long-files-expanded${where.name}`, `The same list after Show all${where.text}: every file in a bounded scroll of whole rows, the Filter files field, and Show fewer.`, panel);
+		await page.type(testId("class-files-list-filter"), "lab board");
+		await capture(`${prefix}c`, `long-files-filtered${where.name}`, `The expanded list filtered by “lab board”${where.text}: only the lab photos.`, panel);
+		await click(filesToggle);
+		await page.waitForSelector(testId("class-files-list-filter"), { hidden: true });
+	};
+	await visit(course(ids.biology), testId("course-overview"));
+	await visible(filesList);
+	// The page starts from the server's render: a faked Discard on the syllabus proposal makes it read the class again,
+	// through the route (the routed view still has the proposal, so the panel looks as before, with 14 lectures).
+	const refetch = route.json("POST", at(`${api(ids.biology)}/assessments/proposal`), { ok: true });
+	await click(testId("proposal-discard"));
+	await page.waitForFunction(() => document.querySelector('[data-testid="lecture-list-toggle"]')?.textContent.includes("14"));
+	refetch();
+	await page.$eval(panel, element => element.scrollTo({ top: 0, behavior: "instant" }));
+	await settle();
+	await shootFiles("87", { name: "", text: "" });
+	await scroll(testId("lectures"), "start");
+	await visible(testId("lecture-list-toggle"));
+	await capture("87d", "long-lectures-collapsed", "Fourteen lectures, collapsed: the class's current lecture (Lecture 4, marked) and the next two, then “Show all 14”.", { around: [testId("lectures")], pad: 0 });
+	await click(testId("lecture-list-toggle"));
+	await capture("87e", "long-lectures-expanded", "The lectures expanded: the whole timeline in a bounded scroll that opens at the current lecture, the filter, and Show fewer.", { around: [testId("lectures")], pad: 0 });
+	await click(testId("lecture-list-toggle"));
+	await page.setViewport(narrow);
+	await settle();
+	await click(testId("class-panel-toggle"));
+	await visible(filesList);
+	await shootFiles("88", { name: "-1024", text: " at 1024 × 768 in the side panel sheet" });
+	await page.keyboard.press("Escape");
+	await hidden(testId("class-panel-backdrop"));
+	await page.setViewport(desktop);
+	await settle();
+	for (const remove of longLists) remove();
 
 	// ── Panels opening and closing ──────────────────────────────────────────────────────────────────────────────
 	await visit(course(ids.biology), testId("course-overview"));

@@ -818,6 +818,12 @@ describe("the class page: the card and the lecture list in each state", () => {
 		assert.match(html, /data-testid="lecture-item-l1"[^>]*data-covered="true"[\s\S]*Lecture 1[\s\S]*Tue 3 Nov[\s\S]*from the syllabus · 1 skill/);
 		assert.match(html, /data-testid="lecture-item-lf_lecture_3"[\s\S]*data-testid="lecture-here-lf_lecture_3"[\s\S]*from your files · no skills placed/);
 		assert.match(html, /data-testid="lecture-item-l4"[^>]*data-covered="false"/);
+		// UI round 12 (SPEC §9): a lecture not covered yet keeps the normal title colour; a hollow dot says it (a covered
+		// one has a filled dot), and the button's name says it too
+		assert.match(html, /aria-label="Edit [^"]*\(not covered yet\)"[^>]*data-testid="lecture-item-l4"[^>]*class="(?![^"]*text-muted-foreground)[^"]*"[\s\S]*?data-testid="lecture-dot-l4"/);
+		assert.match(html, /class="[^"]*rounded-full border border-muted-foreground"[^>]*data-testid="lecture-dot-l4"/);
+		assert.match(html, /class="[^"]*rounded-full bg-muted-foreground"[^>]*data-testid="lecture-dot-l1"/);
+		assert.doesNotMatch(html, /data-testid="lecture-item-[^"]*"[^>]*class="[^"]*text-muted-foreground/, "no row is muted as a whole");
 		assert.match(html, /data-testid="lectures-unplaced"[\s\S]*1 skill is not placed in a lecture yet\.[\s\S]*data-testid="lectures-link"[^>]*>Place skills in lectures</);
 		// the running state on its button (UI round 8), the failure as the shared notice with Try again
 		assert.match(render({ ...behind, linking: true }), /<button[^>]*disabled=""[^>]*aria-busy="true"[^>]*data-testid="lectures-linking"[^>]*>[\s\S]*Placing the skills…/);
