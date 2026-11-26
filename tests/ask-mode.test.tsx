@@ -500,7 +500,7 @@ describe("the course page: Learn, Ask, Practice", () => {
 			{ id: "chat_ask1", title: "Questions: Calc", mode: "ask", updatedAt: "t1" },
 		] });
 		const html = renderBody(data);
-		assert.match(html, /data-testid="course-sessions"[\s\S]*Questions: Calc[\s\S]*>Questions</, "the list labels it");
+		assert.match(html, /data-testid="course-sessions"[\s\S]*Questions: Calc[\s\S]*>Short question</, "the list labels it");
 		assert.match(html, /data-testid="course-mode-ask-new"/);
 		assert.match(html, /data-testid="course-mode-ask-line"[^>]*>Continue the last one</, "the default title says nothing: only that there is one");
 		assert.equal(courseModeStates(payload({ sessions: [{ id: "chat_q", title: "Why ATP?", mode: "ask", updatedAt: "t" }] })).ask.line, "Continue: Why ATP?");
