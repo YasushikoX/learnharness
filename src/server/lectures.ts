@@ -426,15 +426,16 @@ export function startLectureLinking(courseId: string): Result<CourseRecord> {
 }
 
 /** Write a run's placements to the timeline as it is NOW: never to a lecture the learner set, never a skill off the map.
- *  A stale lecture's model skills are replaced; any other lecture's are added to. A lecture read from the files is stored
+ *  A stale lecture's model skills are replaced (kept when the run failed: WP9 re-check 1); any other lecture's are added to. A lecture read from the files is stored
  *  under its id. Returns the entries, or null when nothing changed. */
-function withLinks(course: CourseRecord, plan: LinkPlan, add: ReadonlyMap<string, readonly string[]>): LectureEntry[] | null {
+function withLinks(course: CourseRecord, plan: LinkPlan, add: ReadonlyMap<string, readonly string[]>, keepStale = false): LectureEntry[] | null {
 	const own = new Set(course.skills);
 	let entries = readLectureEntries(course.lectures);
 	let changed = false;
 	for (const view of classLectures(course)) {
 		if (view.skillsBy === "learner") continue;
-		const stale = plan.stale.has(view.id);
+		// a failed run (no model, an error) keeps a stale lecture's skills: clearing them would lose placements nothing re-makes
+		const stale = !keepStale && plan.stale.has(view.id);
 		const base = stale ? [] : view.skillIds;
 		const next = [...new Set([...base, ...(add.get(view.id) ?? []).filter((s) => own.has(s))])];
 		if (!stale && next.length === view.skillIds.length) continue;
@@ -456,11 +457,11 @@ async function runLinking(courseId: string, controller: AbortController): Promis
 	if (!start) return false;
 	const plan = linkPlan(start);
 	/** Write the placements (unless the class changed since the plan) and record the fingerprint the class is left with. */
-	const settle = (links: ReadonlyMap<string, readonly string[]>, patch: Partial<CourseRecord>): boolean => {
+	const settle = (links: ReadonlyMap<string, readonly string[]>, patch: Partial<CourseRecord>, failed = false): boolean => {
 		const fresh = stores.courseStore.getCourse(courseId);
 		if (!fresh) return false;
 		if (linkPlan(fresh).key !== plan.key) return true; // obsolete: discarded, run again on the class as it is
-		const entries = withLinks(fresh, plan, links);
+		const entries = withLinks(fresh, plan, links, failed);
 		const written = entries ? stores.courseStore.updateCourse(courseId, { lectures: boundEntries(entries) })! : fresh;
 		stores.courseStore.updateCourse(courseId, { ...patch, lecturesLinkedKey: linkPlan(written).key, lecturesLinkedAt: new Date().toISOString() });
 		return false;
@@ -475,7 +476,7 @@ async function runLinking(courseId: string, controller: AbortController): Promis
 		if (plan.toModel.length === 0 || plan.lectures.length === 0) return settle(plan.cited, { lecturesLinkError: undefined });
 		const spec = linkerOverride ? null : resolveRoleSpec("coursePlanner", stores.settingsStore.readSettings());
 		if (!linkerOverride && !spec) {
-			return settle(plan.cited, { lecturesLinkError: "No model is configured for the class planner (Settings → Agent: the strong slot or a Class planner override)" });
+			return settle(plan.cited, { lecturesLinkError: "No model is configured for the class planner (Settings → Agent: the strong slot or a Class planner override)" }, true);
 		}
 		// 2. one model pass for the skills still not placed
 		const run = linkerOverride ?? linkSkillsToLectures;
@@ -489,7 +490,7 @@ async function runLinking(courseId: string, controller: AbortController): Promis
 		return settle(merged(byLecture), { lecturesLinkError: undefined });
 	} catch (err) {
 		if (controller.signal.aborted) return false;
-		return settle(plan.cited, { lecturesLinkError: err instanceof Error ? err.message : String(err) });
+		return settle(plan.cited, { lecturesLinkError: err instanceof Error ? err.message : String(err) }, true);
 	}
 }
 

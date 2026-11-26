@@ -306,6 +306,36 @@ describe("WP9 review 1", () => {
 		assert.deepEqual([l8().skillIds, l8().skillsBy], [[b], "learner"]);
 	});
 
+	it("re-check 1: a failed linking run keeps the model's placements; allSkills false on its own ends a cumulative final", async () => {
+		const { courseId, b } = approvedCourse();
+		let lectureId = "";
+		lectures.setLectureLinkerForTests(async () => {
+			await new Promise((r) => setTimeout(r, 1)); // lectureId is set once createLecture returns
+			return new Map([[b, [lectureId]]]);
+		});
+		const made = lectures.createLecture(courseId, { n: 8, title: "Lecture 8", topics: "Bode plots" });
+		assert.ok(made.ok);
+		lectureId = made.value.id;
+		await waitLinking(courseId);
+		const l8 = () => lectures.classLectures(getCourse(courseId)).find((l) => l.id === made.value.id)!;
+		assert.deepEqual(l8().skillIds, [b]);
+		// the topics change and the next run fails: the placement stays, the error is shown
+		lectures.setLectureLinkerForTests(async () => {
+			throw new Error("model down");
+		});
+		lectures.updateLecture(courseId, made.value.id, { topics: "Bode plots and margins" });
+		courses.courseView(courseId);
+		await waitLinking(courseId);
+		assert.deepEqual(l8().skillIds, [b], "not wiped by a failed run");
+		assert.equal(getCourse(courseId).lecturesLinkError, "model down");
+		// a cumulative final turned back with { allSkills: false } alone
+		const fin = assess.createAssessment(courseId, { kind: "final", title: "Final", date: inDays(10), allSkills: true });
+		assert.ok(fin.ok);
+		assert.equal(A.liveAssessments(getCourse(courseId).assessments).find((x) => x.id === fin.value.id)!.allSkills, true);
+		assert.ok(assess.updateAssessment(courseId, fin.value.id, { allSkills: false }).ok);
+		assert.notEqual(A.liveAssessments(getCourse(courseId).assessments).find((x) => x.id === fin.value.id)!.allSkills, true);
+	});
+
 	it("8. a cite of Lecture 10 places the skill in Lecture 10 only, never Lecture 1", () => {
 		const files = [
 			{ id: "m1", name: "Lecture 1.pdf" },
