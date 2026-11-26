@@ -156,6 +156,7 @@ import { LessonResultCard } from "@/components/lesson-result-card";
 import { ClassChangeCard, type ClassChangeData } from "@/components/class-change-card";
 import { CutOffReplyNotice, cutOffRecoveryDisabled, RetryOnFallback, RetryUnavailableNote, TurnErrorText } from "@/components/turn-error";
 import { ComposerEdge, ComposerToolbarSession } from "@/components/composer-edge";
+import { createSendScroll, nextDockReserve } from "@/components/send-scroll";
 import { currentUserThinkingOpen, setAllUserThinkingOpen } from "@/components/thinking-block";
 
 /**
@@ -194,6 +195,11 @@ const MARGIN_MIN_W = 220;
 // out prose and equations that still fit, and left a ~130px gap above the dock. The reserve adds exactly this band,
 // so at rest the last line sits just above the fade (the dock follows the content with a 24px gap).
 const GRADIENT_H = 24;
+// The learner inputs that land a row of theirs in the transcript (the send scroll moves the view to it). Retries,
+// continues and steers add no row there.
+const SEND_SCROLL_INPUTS: ReadonlySet<ChatInput["type"]> = new Set<ChatInput["type"]>([
+	"text", "answer", "thinking", "dispute", "next", "finish", "plugin-question-answer", "plugin-problem-submission",
+]);
 // Fold thresholds (owner, scroll round 1, tuned round 3): pixel distance
 // from the bottom — position, not velocity. Leave the bottom → the box
 // folds (visual only); reach it again → it re-opens. 96 (was 64, owner
@@ -385,8 +391,22 @@ export function Chat({
 	// (core/view.ts projectView); sends are ONE explicit input event each
 	// ({chatId, input} — the stash indirection died with the SDK), and the
 	// turn stream is the VERBATIM AgentEvent passthrough the server emits.
-	const { canonicalMessages, reconciliation, reconcile, pluginQuestionAvailability, pluginQuestionDraft, pluginProblemAvailability, pluginProblemDraft, dismissPluginQuestion, readRecord, readStats, messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, status, evaluating, activity, cutOffReply, droppedStream, retryingStream, retryBlocked, recoverReply, error, stop, clearError, resumeStream, setReattachSettled } =
+	const { canonicalMessages, reconciliation, reconcile, pluginQuestionAvailability, pluginQuestionDraft, pluginProblemAvailability, pluginProblemDraft, dismissPluginQuestion, readRecord, readStats, messages, nativeMessages, hasConfirmedConversation, contextTokens, send: sessionSend, continueIfOwed, steer, steerQueue, submitAnswer: sessionSubmitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, status, evaluating, activity, cutOffReply, droppedStream, retryingStream, retryBlocked, recoverReply, error, stop, clearError, resumeStream, setReattachSettled } =
 		useChatSession({ chatId, initialMessages, initialError, initiallyInFlight });
+	// The send scroll (components/send-scroll.ts): every learner input that
+	// lands a row in the transcript arms it; the commit with that row moves the
+	// view once, straight to it (the layout effect below the spacer wiring).
+	const [sendScroll] = useState(createSendScroll);
+	const messagesRef = useRef(messages);
+	messagesRef.current = messages;
+	const send = useCallback<typeof sessionSend>((input, ...rest) => {
+		if (SEND_SCROLL_INPUTS.has(input.type)) sendScroll.arm(messagesRef.current);
+		return sessionSend(input, ...rest);
+	}, [sessionSend, sendScroll]);
+	const submitAnswer = useCallback<typeof sessionSubmitAnswer>((...args) => {
+		sendScroll.arm(messagesRef.current);
+		return sessionSubmitAnswer(...args);
+	}, [sessionSubmitAnswer, sendScroll]);
 
 	const controller = useOptionalInteractionLayers();
 	const sessionFindScopeRef = useRef<HTMLDivElement | null>(null);
@@ -1539,6 +1559,22 @@ export function Chat({
 	// guess so the static paint has a sane tail. The first layout effect
 	// replaces it with the measured truth before paint.
 	const [dockReserve, setDockReserve] = useState(208);
+	// The reserve lands in the DOM in the same frame as the dock change that
+	// caused it (send-scroll round): DockOverlay also offers from a
+	// ResizeObserver, and a state update from there painted a frame late.
+	// The state follows for React's own render; both carry the same value.
+	const spacerRef = useRef<HTMLDivElement | null>(null);
+	const applyDockReserve = useCallback((height: number) => {
+		if (spacerRef.current) spacerRef.current.style.height = `${height}px`;
+		setDockReserve(height);
+	}, []);
+	// The send scroll's commit: runs after DockOverlay's layout effects (a
+	// parent's run after its children's), so the reserve for this commit is in
+	// place and the view moves once, before paint, straight to the new row.
+	useLayoutEffect(() => {
+		const context = scrollContextRef.current;
+		sendScroll.commit(messages, context?.scrollRef.current ?? null, (behavior) => { void context?.scrollToBottom(behavior); });
+	}, [messages, sendScroll]);
 	const statsRequest = useRef<AbortController | null>(null);
 	const syncTurns = useCallback(async () => {
 		statsRequest.current?.abort();
@@ -2226,6 +2262,7 @@ export function Chat({
 										    Rendered WITHOUT the Message wrapper — that is the bubble. */
 											<div
 										data-testid="user-message"
+										data-transcript-row=""
 										data-older-transcript-row={mi < newestTurnFrom ? "" : undefined}
 										/* THE DOCUMENT, ALL-IN (owner rounds two+three, 2026-10-07):
 										    no chat side — the user message is a full-width card, the
@@ -2246,7 +2283,7 @@ export function Chat({
 												<SubmittedImages images={m.parts.filter((part) => part.type === "image").map(part => ({ type: "image" as const, data: part.data as string, mimeType: part.mimeType as string }))} />
 											</div>
 									) : (
-									<Message from="assistant" className="max-w-full" data-older-transcript-row={mi < newestTurnFrom ? "" : undefined}>
+									<Message from="assistant" className="max-w-full" data-transcript-row="" data-older-transcript-row={mi < newestTurnFrom ? "" : undefined}>
 									<MessageContent className="w-full">
 											{m.parts.map((part, pi) => {
 												const pk = partKeyLists[mi]![pi]!;
@@ -2451,7 +2488,7 @@ export function Chat({
 						    the overlay — the flow-space replacement for the old
 						    sticky dock. Zero only pre-measurement (the first layout
 						    effect reports before paint). */}
-						<div aria-hidden data-testid="dock-spacer" style={{ height: dockReserve }} />
+						<div ref={spacerRef} aria-hidden data-testid="dock-spacer" style={{ height: dockReserve }} />
 				</ConversationContent>
 </SettledContext.Provider>
 				{/* The dock: an overlay sibling of the scroller (the
@@ -2520,7 +2557,7 @@ export function Chat({
 					contextTokens={contextTokens}
 					cliContextWindow={cliContextWindowOf(nativeMessages)}
 					pricing={pricing}
-					onReserve={setDockReserve}
+					onReserve={applyDockReserve}
 					dictationSlot={<DictationBar dictation={dictation} compact disabled={pluginOwnsDock && !pluginMicAvailable} />}
 					dictationCancel={dictation.cancel}
 					queuedSteers={visibleQueuedSteers(steerQueue, nativeMessages)}
@@ -3187,17 +3224,37 @@ export function DockOverlay({
 
 	// The reserve grows immediately, but never shrinks while a question or
 	// practice problem owns the dock: shrinking flow space could pin a nearby
-	// learner back to the bottom. Composer mode may give space back.
+	// learner back to the bottom. Composer mode may give space back, but only
+	// as far as the current view stays in range (send-scroll round: a question
+	// answered at the bottom, or the composer clearing after a send, clamped
+	// the transcript down under the reader). The rest is given back as new
+	// content fills it (the transcript observer below).
 	const reserveRef = useRef(0);
+	const reserveTargetRef = useRef(0);
 	const offer = useCallback((blockH: number) => {
-		const next = blockH + GRADIENT_H;
-		if (next <= reserveRef.current + 0.5 && pendingRef.current) return;
+		const target = blockH + GRADIENT_H;
+		reserveTargetRef.current = target;
+		const next = nextDockReserve({ target, current: reserveRef.current, hold: pendingRef.current, scroller: scrollRef.current });
+		if (Math.abs(next - reserveRef.current) <= 0.5) return;
 		// Stamp growth at the source, including child-only field resizes, so
 		// stick-to-bottom's catch-up is not mistaken for the learner leaving.
 		if (shouldStampGeometryMute(next, reserveRef.current, pendingRef.current)) geometryAtRef.current = Date.now();
 		reserveRef.current = next;
 		onReserve(next);
-	}, [onReserve]);
+	}, [onReserve, scrollRef]);
+	// Give a held reserve back as the transcript grows (the reply streaming
+	// in under a cleared composer): the shrink is then absorbed by the growth,
+	// and the scroll range never shrinks under the reader. In the observer's
+	// own frame, before paint (onReserve writes the spacer directly).
+	useEffect(() => {
+		const column = scrollRef.current?.firstElementChild?.firstElementChild;
+		if (!column) return;
+		const ro = new ResizeObserver(() => {
+			if (reserveRef.current > reserveTargetRef.current + 0.5) offer(reserveTargetRef.current - GRADIENT_H);
+		});
+		ro.observe(column);
+		return () => ro.disconnect();
+	}, [scrollRef, offer]);
 
 	// The overlay must not paint over the scroller's scrollbar (owner, scroll
 	// round 2): the scroller reserves symmetric gutters (scrollbar-gutter:
