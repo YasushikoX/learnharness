@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { PACES, isPace, paceInfo, type Pace } from "@/src/core";
 import { ThinSelect } from "@/components/settings/controls";
+import { cn } from "@/lib/utils";
 
 /**
  * A course's default pace (fork addition, 2026-11-09), beside its time note.
@@ -42,15 +43,16 @@ export function CoursePace({
 		}
 	};
 
-	// A course-settings row (UI round 1b, SPEC §7 "Settings"): label and description left, the one select style right.
+	// A row of the class side panel (UI class page, 2026-11-25): the label left, the one select style right; what the
+	// pace means is the label's tooltip, not a line of text.
 	return (
 		<CourseSettingRow
 			testid="course-pace"
 			label="Pace"
-			description="How fast this course's lessons go. A Learn start can still pick its own."
+			hint="How fast this class's lessons go. A Learn start can still pick its own."
 			note={error && <span role="alert" className="text-destructive">{error}</span>}
 		>
-			<span className="w-44 max-sm:w-full [&>span]:w-full">
+			<span className="w-40 [&>span]:w-full">
 				<ThinSelect testid="course-pace-select" ariaLabel="course default pace" value={pace ?? ""} onChange={(v) => void save(v)}>
 					<option value="">{`Global default${globalPace ? ` (${paceInfo(globalPace).label})` : ""}`}</option>
 					{PACES.map((p) => (
@@ -65,32 +67,37 @@ export function CoursePace({
 }
 
 /**
- * One row of the course settings (UI round 1b, SPEC §7 "Settings"): the label (14/500) and a 13px muted description on
- * the left, the controls right-aligned on the same line; under 640px the controls drop below. `note` is a line under the
- * row (an error, what the last weighing found).
+ * One settings row of the class side panel (UI class page, 2026-11-25; before, a row of the Course settings card): the
+ * label (13/500) left and the controls right on one line, wrapping under the label when they do not fit. `hint` is the
+ * label's tooltip; `description` and `note` are 12px lines under the row (what the last weighing found, an error).
+ * `stacked`: the label on its own line and the controls left-aligned under it (the exam's date, Clear, Weigh again).
  */
 export function CourseSettingRow({
 	label,
+	hint,
 	description,
 	note,
 	testid,
+	stacked = false,
 	children,
 }: {
 	label: string;
+	hint?: string;
+	stacked?: boolean;
 	description?: React.ReactNode;
 	note?: React.ReactNode;
 	testid?: string;
 	children?: React.ReactNode;
 }) {
 	return (
-		<section data-testid={testid} className="py-3">
-			<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-				<div className="min-w-0">
-					<div className="text-body font-medium text-foreground">{label}</div>
-					{description && <div className="mt-0.5 text-sm text-muted-foreground">{description}</div>}
+		<section data-testid={testid} className="py-1.5">
+			<div className={cn("flex flex-wrap gap-x-3 gap-y-2", stacked ? "flex-col" : "items-center justify-between")}>
+				<div className={cn("text-chrome font-medium text-foreground", stacked && "flex min-h-8 items-center")} title={hint}>
+					{label}
 				</div>
-				{children && <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">{children}</div>}
+				{children && <div className={cn("flex flex-wrap items-center gap-2", !stacked && "ml-auto justify-end")}>{children}</div>}
 			</div>
+			{description && <div className="mt-1 min-w-0 text-meta text-muted-foreground">{description}</div>}
 			{note && <div className="mt-1.5 text-meta">{note}</div>}
 		</section>
 	);

@@ -472,17 +472,13 @@ describe("the exam plan on the page", () => {
 		assert.ok(!html.includes("reads your past exams"), "no long explainer");
 	});
 
-	it("puts the Lecture notes row under the Exam card, in the same column, with the + card first (owner, 2026-11-19)", () => {
-		const html = renderToStaticMarkup(<examUi.ExamPlanSection {...props({ examDate: "2026-12-12", plan: { ...basePlan, examDate: "2026-12-12", daysLeft: 29 } })} />);
+	it("Next up, then what sits after it (the recent sessions), then the Exam card; the lecture notes moved to the side panel", () => {
+		const html = renderToStaticMarkup(<examUi.ExamPlanSection {...props({ examDate: "2026-12-12", plan: { ...basePlan, examDate: "2026-12-12", daysLeft: 29 }, afterNextUp: <div data-testid="after-next-up" /> })} />);
 		const column = html.indexOf('data-testid="course-exam-column"');
-		assert.ok(column > html.indexOf("course-next-up"), "the column follows Next up");
+		assert.ok(html.indexOf("after-next-up") > html.indexOf("course-next-up"), "the slot follows Next up");
+		assert.ok(column > html.indexOf("after-next-up"), "the exam card follows the slot");
 		assert.ok(html.indexOf("course-exam-countdown") > column, "the Exam card is in the column");
-		assert.ok(html.indexOf('data-testid="course-lecture-notes"') > html.indexOf("course-exam-countdown"), "the row is under the Exam card");
-		assert.match(html, /Lecture notes/);
-		assert.match(html, /data-testid="lecture-note-new"/);
-		const noBox = renderToStaticMarkup(<examUi.ExamPlanSection {...props({ plan: { skillsLeft: 0, reviewDue: 0, reviewBatch: 0, lessons: [] } })} />);
-		assert.ok(noBox.includes('data-testid="course-lecture-notes"'), "also when there is no Next up box");
-		assert.ok(!noBox.includes("md:grid-cols-[1.25fr_1fr]"), "the single column stays single");
+		assert.ok(!html.includes('data-testid="course-lecture-notes"'), "no lecture notes in the center");
 	});
 
 	it("shows how many skills fade before the exam and a retest row only when something is to check (owner, 2026-11-16)", () => {

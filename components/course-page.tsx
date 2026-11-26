@@ -5,7 +5,7 @@ import { FIELD_CLASS } from "@/components/ui/input";
 import { Children, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, Loader2Icon, LockIcon, SettingsIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, InfoIcon, LockIcon, PanelRightIcon } from "lucide-react";
 import {
 	COURSE_MODE_LABEL,
 	courseProgressPercent,
@@ -27,15 +27,17 @@ import {
 	type CourseSkillView,
 	type CourseView,
 	type DraftSkill,
-	type LessonMaterial,
 	type Pace,
 	type PlanNodeStatus,
 	type SkillSelection,
 	type SkillWeightValue,
 } from "@/src/core";
 import { DistributionStrip, DueChip, DueTimeline, UnderstandingBar, useNow } from "@/components/skill-visuals";
-import { CourseSettings } from "@/components/course-settings";
 import { CourseModes } from "@/components/course-modes";
+import { ClassPanel } from "@/components/class-panel";
+import { ClassSetup } from "@/components/class-setup";
+import { dragHasFiles, useMaterials, type MaterialsApi } from "@/components/use-materials";
+import { Hint } from "@/components/ui/hint";
 import { LearnPaceDialog } from "@/components/learn-pace-dialog";
 import { ExamPlanSection, WeightEditContext, WeightEditor, WeightNote } from "@/components/exam-plan";
 import { SkillMap } from "@/components/skill-map";
@@ -434,12 +436,15 @@ function SessionLink({ session }: { session: CourseView["sessions"][number] }) {
 	return (
 		<li>
 			{/* UI round 1b (SPEC §8): the hover fill bleeds 8px past the column (-mx-2 on the list) so the titles sit flush
-			    with the Sessions heading instead of 11px in. */}
+			    with the heading instead of 11px in. */}
 			<Link
 				href={`/chat/${session.id}`}
-				className="flex min-h-9 items-center gap-3 rounded-sm px-2 py-1.5 text-body outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised focus-visible:ring-2 focus-visible:ring-focus"
+				className={cn(
+					"flex min-h-9 items-center gap-3 rounded-sm px-2 py-1.5 text-body outline-none transition-colors duration-(--lh-duration-hover) ease-(--lh-ease) hover:bg-raised focus-visible:ring-2 focus-visible:ring-focus",
+					session.finished && "text-muted-foreground",
+				)}
 			>
-				<span className="min-w-0 flex-1 line-clamp-2 break-words sm:line-clamp-none sm:block sm:truncate">{session.title}</span>
+				<span className="min-w-0 flex-1 truncate">{session.title}</span>
 				<span className="shrink-0 text-meta text-muted-foreground">{COURSE_MODE_LABEL[session.mode]}</span>
 				{session.finished && <CheckIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Finished" />}
 			</Link>
@@ -447,49 +452,41 @@ function SessionLink({ session }: { session: CourseView["sessions"][number] }) {
 	);
 }
 
-/** The course's sessions (owner, 2026-10-25): the open ones first, the
- *  finished ones folded under their own toggle so they stop crowding
- *  what is still in progress. */
+/** Sessions the Recent sessions list shows before "Show all" (UI class page, 2026-11-25). */
+export const RECENT_SESSIONS = 5;
+
+/** The class's recent sessions (UI class page, 2026-11-25; owner: the center is for starting a session and the last
+ *  sessions): a compact list under Next up, newest first as the sidebar lists them, finished ones quiet with a check;
+ *  the rest behind "Show all". */
 function SessionsSection({ sessions }: { sessions: CourseView["sessions"] }) {
-	const [showFinished, setShowFinished] = useState(false);
-	const open = sessions.filter((s) => !s.finished);
-	const finished = sessions.filter((s) => s.finished);
+	const [all, setAll] = useState(false);
+	const shown = all ? sessions : sessions.slice(0, RECENT_SESSIONS);
 	return (
-		<section data-testid="course-sessions" className="border-t border-border pt-6">
-			<div className={PAGE_HEAD}>Sessions</div>
-			{open.length > 0 ? (
-				<ul className="-mx-2" data-testid="course-sessions-open">
-					{open.map((s) => (
-						<SessionLink key={s.id} session={s} />
-					))}
-				</ul>
-			) : (
-				<p className="text-sm text-muted-foreground">No session in progress.</p>
-			)}
-			{finished.length > 0 && (
-				<div className="mt-2">
-					<button
-						type="button"
-						onClick={() => setShowFinished((v) => !v)}
-						aria-expanded={showFinished}
-						data-testid="course-sessions-finished-toggle"
-						className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "-ml-2 text-muted-foreground hover:text-foreground")}
-					>
-						{showFinished ? <ChevronDownIcon /> : <ChevronRightIcon />}
-						Finished · {finished.length}
-					</button>
-					{showFinished && (
-						<ul className="-mx-2 text-muted-foreground" data-testid="course-sessions-finished">
-							{finished.map((s) => (
-								<SessionLink key={s.id} session={s} />
-							))}
-						</ul>
-					)}
-				</div>
+		<section data-testid="course-sessions" className="min-w-0">
+			<div className={PAGE_HEAD}>Recent sessions</div>
+			<ul className="-mx-2" data-testid="course-sessions-list">
+				{shown.map((s) => (
+					<SessionLink key={s.id} session={s} />
+				))}
+			</ul>
+			{sessions.length > RECENT_SESSIONS && (
+				<button
+					type="button"
+					onClick={() => setAll((v) => !v)}
+					aria-expanded={all}
+					data-testid="course-sessions-all"
+					className={cn(buttonVariants({ variant: "ghost" }), "mt-1 -ml-2.5 text-muted-foreground hover:text-foreground")}
+				>
+					{all ? "Show fewer" : `Show all ${sessions.length}`}
+					<ChevronRightIcon className={cn("size-3.5 transition-transform", all && "-rotate-90")} aria-hidden />
+				</button>
 			)}
 		</section>
 	);
 }
+
+/** What "learned" and "known" mean: the Understanding heading's help, not a paragraph on the page. */
+export const UNDERSTANDING_HELP = `Learned: a finished lesson or a placement credit; it unlocks the skills that build on it. Known: understanding ${KNOWN_UNDERSTANDING} or higher, about a month of memory, built by solving it on spaced days or a confident correct answer in the placement test.`;
 
 /** The page body — a pure function of the payload plus callbacks (render
  *  tests drive it directly). */
@@ -502,13 +499,13 @@ export function CourseBody({
 	onStart,
 	onRetest,
 	onPracticeSet,
-	onMaterials,
 	materialCount,
+	files,
+	title,
+	dropping = false,
 	placementSkipped = false,
 	onSkipPlacement,
 	onChanged,
-	settingsOpen,
-	onSettingsOpenChange,
 	onAsk,
 	onCoverage,
 }: {
@@ -522,17 +519,18 @@ export function CourseBody({
 	onRetest?: () => void;
 	/** Start one practice session on the chosen skills ("Choose skills" mode). */
 	onPracticeSet?: (skillIds: string[]) => void;
-	onMaterials?: (materials: LessonMaterial[]) => void;
 	materialCount: number;
+	/** The class's files (the page's useMaterials): the empty class's drop zone uploads through it. */
+	files?: MaterialsApi;
+	/** The editable class name: the empty class's setup card is headed by it (the page header then shows none). */
+	title?: React.ReactNode;
+	/** A file drag is over the page. */
+	dropping?: boolean;
 	/** The learner chose "Start from the beginning" (per-viewer). */
 	placementSkipped?: boolean;
 	onSkipPlacement?: () => void;
 	/** The exam date or a weight changed on the server: refetch. */
 	onChanged?: () => void;
-	/** The course settings panel, opened from the header's gear (owner, 2026-11-16). Absent: the panel keeps its own
-	 *  closed line at the top, as before. */
-	settingsOpen?: boolean;
-	onSettingsOpenChange?: (open: boolean) => void;
 	/** Open the course's Ask conversation (2026-11-25): `reopen` = an existing one's chat id, absent = a new one. */
 	onAsk?: (reopen?: string) => void;
 	/** The vocabulary coverage actions (WP5): edits, "Map the class's terms", approve leaving terms unassigned. */
@@ -662,35 +660,34 @@ export function CourseBody({
 		<CoverageContext.Provider value={coverage}>
 		<SkillListContext.Provider value={choose}>
 		<div className="space-y-8">
-			{/* Learn, Ask, Practice (2026-11-25): the three ways in, also before a skill map exists (then only Ask starts).
-			    UI round 2: before a skill map the setup (sources, then the draft) comes first and the modes sit quietly below it. */}
-			{skills.length > 0 && <CourseModes data={data} busy={busy} onLearn={(id) => onStart("learn", id)} onPractice={() => onStart("practice")} onAsk={onAsk} />}
-			<CourseSettings
-				courseId={course.id}
-				pace={course.pace}
-				hasSkills={skills.length > 0}
-				hasDraft={!!course.draft}
-				drafting={drafting}
-				courseError={course.error}
-				error={error}
-				materialCount={materialCount}
-				busy={busy}
-				onMaterials={onMaterials}
-				onDraft={() => onDraft()}
-				onChanged={onChanged}
-				onPlacement={() => onStart("placement")}
-				open={settingsOpen}
-				onOpenChange={onSettingsOpenChange}
-				exam={
-					skills.length > 0
-						? { examDate: course.examDate, hasWeights: weighed, weighing: data.weighing === true, canWeigh: !drafting && materialCount > 0, weightsSummary: course.weightsSummary, weightsAt: course.weightsAt }
-						: undefined
-				}
-			/>
-
-			{course.draft && !drafting && <DraftReview data={data} busy={busy} onFeedback={(f) => onDraft(f)} onApprove={onApprove} />}
-
-			{skills.length === 0 && <CourseModes quiet data={data} busy={busy} onLearn={(id) => onStart("learn", id)} onPractice={() => onStart("practice")} onAsk={onAsk} />}
+			{skills.length === 0 ? (
+				<>
+					{/* The empty / new class (UI class page, 2026-11-25): one setup card, then Short question once there is a
+					    file to ask about, and any sessions already had. Learn and Practice show once they can work. */}
+					<ClassSetup
+						title={title ?? <h1 className="lh-page-title">{course.title}</h1>}
+						files={files}
+						materialCount={materialCount}
+						dropping={dropping}
+						hasSkills={false}
+						hasDraft={!!course.draft}
+						drafting={drafting}
+						courseError={course.error}
+						busy={busy}
+						onDraft={() => onDraft()}
+					/>
+					{error && <p className="text-meta text-error">{error}</p>}
+					{course.draft && !drafting && <DraftReview data={data} busy={busy} onFeedback={(f) => onDraft(f)} onApprove={onApprove} />}
+					{materialCount > 0 && <CourseModes data={data} busy={busy} onLearn={(id) => onStart("learn", id)} onPractice={() => onStart("practice")} onAsk={onAsk} />}
+					{data.sessions.length > 0 && <SessionsSection sessions={data.sessions} />}
+				</>
+			) : (
+				<>
+					{/* Learn, Short question, Practice (2026-11-25): the ways in, at the top of the center column. */}
+					<CourseModes data={data} busy={busy} onLearn={(id) => onStart("learn", id)} onPractice={() => onStart("practice")} onAsk={onAsk} />
+					{course.draft && !drafting && <DraftReview data={data} busy={busy} onFeedback={(f) => onDraft(f)} onApprove={onApprove} />}
+				</>
+			)}
 
 		{skills.length > 0 && (
 			<>
@@ -711,6 +708,7 @@ export function CourseBody({
 					onStart={onStart}
 					onRetest={offerPlacement ? undefined : onRetest}
 					onChanged={() => onChanged?.()}
+					afterNextUp={data.sessions.length > 0 ? <SessionsSection sessions={data.sessions} /> : undefined}
 				/>
 
 					{offerPlacement && (
@@ -723,8 +721,13 @@ export function CourseBody({
 					<div className="@container border-t border-border pt-6">
 					<div className={cn("grid gap-x-12 gap-y-6", skills.some((s) => s.learned) && "@3xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]")}>
 						<section data-testid="course-overview" className="min-w-0 space-y-3">
-							<div className={PAGE_HEAD}>
+							<div className={cn(PAGE_HEAD, "flex items-center")}>
 								Understanding<span className={HEAD_COUNT}>{courseProgressPercent(skills.map((s) => s.understanding))}%</span>
+								<Hint label={UNDERSTANDING_HELP}>
+									<button type="button" aria-label="What learned and known mean" data-testid="understanding-help" className={cn(buttonVariants({ variant: "ghost", size: "icon-xs" }), "ml-1 text-muted-foreground hover:text-foreground")}>
+										<InfoIcon aria-hidden />
+									</button>
+								</Hint>
 							</div>
 							<DistributionStrip skills={skills} due={dueNow} active={selection.band} onPick={(band) => narrow({ ...selection, band })} />
 						</section>
@@ -976,7 +979,6 @@ export function CourseBody({
 				</div>
 			)}
 
-			{data.sessions.length > 0 && <SessionsSection sessions={data.sessions} />}
 		</div>
 		</SkillListContext.Provider>
 		</CoverageContext.Provider>
@@ -1002,14 +1004,17 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [title, setTitle] = useState(initial.course.title);
-	const [materialCount, setMaterialCount] = useState(0);
 	const [placementSkipped, setPlacementSkipped] = useState(false);
 	useEffect(() => setPlacementSkipped(readPlacementSkipped(courseId)), [courseId]);
-	// The course settings open from the header's gear (owner, 2026-11-16); open from the start while there is no skill
-	// map yet, a draft to review, drafting or a failure (the panel also opens itself when that happens later).
-	const [settingsOpen, setSettingsOpen] = useState(
-		() => initial.skills.length === 0 || !!initial.course.draft || initial.drafting || initial.course.status === "drafting" || !!initial.course.error,
-	);
+	// The class's files (UI class page, 2026-11-25): one list for the side panel, the empty class's drop zone and a drop
+	// anywhere on the page.
+	const files = useMaterials(courseId);
+	const materialCount = files.materials.length;
+	// The side panel always shows on a wide page; on a narrower one (1024) it is a toggle in the header, open from the
+	// start for an empty class, whose files and skill map live there.
+	const [panelOpen, setPanelOpen] = useState(() => initial.skills.length === 0);
+	const [dropping, setDropping] = useState(false);
+	const dragDepth = useRef(0);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [scrolled, setScrolled] = useState(false);
 
@@ -1076,7 +1081,7 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 		const { id, prompt } = (await res.json()) as { id: string; prompt: string };
 		router.push(`/chat/${id}?prompt=${encodeURIComponent(prompt)}`);
 	};
-	// Ask about this class (2026-11-25): reopen the newest Ask conversation, or start one. It opens on an empty composer.
+	// Short question (2026-11-25): reopen the newest Ask conversation, or start one. It opens on an empty composer.
 	const onAsk = async (reopen?: string) => {
 		if (reopen) {
 			router.push(`/chat/${reopen}`);
@@ -1096,7 +1101,6 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 	};
 	// A Learn start asks for its pace first (fork addition, 2026-11-09); every other mode starts straight away.
 	const [learnSkill, setLearnSkill] = useState<string | null>(null);
-	const onMaterials = useCallback((materials: LessonMaterial[]) => setMaterialCount(materials.length), []);
 	// A hand edit of a skill's exam weight (owner, 2026-11-13): 0-3, or null to reset it.
 	const editWeight = useCallback(
 		async (skillId: string, weight: SkillWeightValue | null) => {
@@ -1133,134 +1137,186 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 		void refresh();
 	};
 
-	const remove = async () => {
-		if (!window.confirm(`Delete the course "${data.course.title}"? Its skills stay in your knowledge graph, and its sessions stay in the sidebar.`)) return;
-		await fetch(`/api/courses/${courseId}`, { method: "DELETE" }).catch(() => {});
-		router.push("/");
-	};
-
 	const progress = courseProgress(data);
 	const hasSkills = data.skills.length > 0;
-	const toggleSettings = () => {
-		const next = !settingsOpen;
-		setSettingsOpen(next);
-		// the panel sits at the top of the page: bring it into view
-		if (next) scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+	const drafting = data.drafting || data.course.status === "drafting";
+	const weighed = !!data.course.weightsAt;
+	// The empty class (no skill map yet): the setup card in the center carries the class name as its H1.
+	const setup = !hasSkills;
+	const titleField = (className: string) => (
+		<FitTitleInput
+			value={title}
+			onChange={(e) => setTitle(e.target.value)}
+			onBlur={() => void commitTitle()}
+			onKeyDown={(e) => {
+				if (e.key === "Enter") e.currentTarget.blur();
+				if (e.key === "Escape") {
+					setTitle(data.course.title);
+					e.currentTarget.blur();
+				}
+			}}
+			placeholder="Class name"
+			aria-label="Class name"
+			data-testid="course-title"
+			className={cn("lh-no-drag resize-none overflow-y-auto bg-transparent lh-page-title outline-none", className)}
+		/>
+	);
+	// A file dropped anywhere on the class page becomes a class file (UI class page): the panel opens to show it land.
+	const dropHandlers = {
+		onDragEnter: (e: React.DragEvent) => {
+			if (!dragHasFiles(e)) return;
+			e.preventDefault();
+			e.stopPropagation();
+			dragDepth.current++;
+			setDropping(true);
+			setPanelOpen(true);
+		},
+		onDragOver: (e: React.DragEvent) => {
+			if (!dragHasFiles(e)) return;
+			e.preventDefault();
+			e.stopPropagation();
+			e.dataTransfer.dropEffect = "copy";
+		},
+		onDragLeave: (e: React.DragEvent) => {
+			if (!dragHasFiles(e)) return;
+			e.stopPropagation();
+			dragDepth.current = Math.max(0, dragDepth.current - 1);
+			if (dragDepth.current === 0) setDropping(false);
+		},
+		onDrop: (e: React.DragEvent) => {
+			if (!dragHasFiles(e)) return;
+			e.preventDefault();
+			e.stopPropagation();
+			dragDepth.current = 0;
+			setDropping(false);
+			void files.addFiles(Array.from(e.dataTransfer.files));
+		},
 	};
 	return (
-		<div ref={scrollRef} className="relative h-dvh overflow-y-auto" onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}>
-			{/* A solid band (UI round 1b, SPEC §8): content scrolling under the sticky header no longer shows through it. UI
-			    round 2: a bottom hairline once the page has scrolled, so content never shears against empty space. */}
-			<header className={cn("lh-drag z-10 border-b bg-background pb-2 pt-[calc(0.5rem+var(--lh-safe-top))] transition-colors duration-(--lh-duration-hover) sm:sticky sm:top-0", scrolled ? "border-border" : "border-transparent")}>
-				{/* the same column and padding as the page below, so the title lines up with the content (owner, 2026-11-16) */}
-				<div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-3 gap-y-1 px-4 sm:flex-nowrap sm:px-6">
-				<SidebarToggle />
-				<FitTitleInput
-					value={title}
-					onChange={(e) => setTitle(e.target.value)}
-					onBlur={() => void commitTitle()}
-					onKeyDown={(e) => {
-						if (e.key === "Enter") e.currentTarget.blur();
-						if (e.key === "Escape") {
-							setTitle(data.course.title);
-							e.currentTarget.blur();
-						}
-					}}
-					aria-label="Course title"
-					data-testid="course-title"
-					className="lh-no-drag order-last min-w-0 basis-full resize-none overflow-y-auto bg-transparent lh-page-title outline-none sm:order-none sm:basis-auto sm:flex-1"
-				/>
-				{/* One quiet group (UI round 1b): the known count as meta text, then 32px controls 8px apart. */}
-				<span className="lh-no-drag ml-auto flex shrink-0 items-center gap-2 sm:ml-0">
-					{progress && (
-						<span className="mr-1 whitespace-nowrap text-meta tabular-nums text-muted-foreground" data-testid="course-progress">
-							{progress}
+		// The class page (UI class page, 2026-11-25): the center column (header, start a session, recent sessions,
+		// progress) and the class side panel on the right (files, skill map, settings, lecture notes). A container query on
+		// the page's own width keeps the panel always shown when there is room (1440) and a header toggle below that (1024).
+		<div className="@container/class relative flex h-dvh min-w-0" data-testid="class-page" {...dropHandlers}>
+			{files.node}
+			<div ref={scrollRef} className="relative min-w-0 flex-1 overflow-y-auto" onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}>
+				{/* A solid band (UI round 1b, SPEC §8): content scrolling under the sticky header no longer shows through it. UI
+				    round 2: a bottom hairline once the page has scrolled, so content never shears against empty space. */}
+				<header className={cn("lh-drag sticky top-0 z-10 border-b bg-background pb-2 pt-[calc(0.5rem+var(--lh-safe-top))] transition-colors duration-(--lh-duration-hover)", scrolled ? "border-border" : "border-transparent")}>
+					{/* the same column and padding as the page below, so the title lines up with the content (owner, 2026-11-16) */}
+					<div className="mx-auto flex min-h-9 max-w-5xl items-center gap-3 px-6">
+						<SidebarToggle />
+						{setup ? <span className="flex-1" /> : titleField("min-w-0 flex-1")}
+						{/* One quiet group (UI round 1b): the known count as meta text, then 32px controls 8px apart. */}
+						<span className="lh-no-drag flex shrink-0 items-center gap-2">
+							{progress && (
+								<span className="mr-1 whitespace-nowrap text-meta tabular-nums text-muted-foreground" data-testid="course-progress">
+									{progress}
+								</span>
+							)}
+							{hasSkills && (
+								<button
+									type="button"
+									className={cn(HEAD_BTN, "lh-touch")}
+									disabled={busy || data.review.length === 0}
+									data-testid="course-review-button"
+									onClick={() => void onStart("review")}
+								>
+									{reviewLabel(data)}
+								</button>
+							)}
+							<button
+								type="button"
+								className={cn(HEAD_ICON_BTN, "lh-touch @6xl/class:hidden", panelOpen && "bg-raised text-foreground")}
+								aria-label={panelOpen ? "Hide class files and settings" : "Show class files and settings"}
+								title="Class files and settings"
+								aria-pressed={panelOpen}
+								data-testid="class-panel-toggle"
+								onClick={() => setPanelOpen((o) => !o)}
+							>
+								<PanelRightIcon strokeWidth={1.75} aria-hidden />
+							</button>
 						</span>
+					</div>
+				</header>
+				<div className="mx-auto max-w-5xl px-6 pb-16 pt-4">
+					{learnSkill && (
+						<LearnPaceDialog
+							courseId={courseId}
+							busy={busy}
+							onClose={() => setLearnSkill(null)}
+							onStart={(pace) => {
+								const skillId = learnSkill;
+								setLearnSkill(null);
+								void onStart("learn", skillId, pace);
+							}}
+						/>
 					)}
-					<button
-						type="button"
-						className={cn(HEAD_ICON_BTN, "lh-touch", settingsOpen && "bg-raised text-foreground")}
-						aria-label="Course settings"
-						title="Course settings"
-						aria-expanded={settingsOpen}
-						data-testid="course-settings-toggle"
-						onClick={toggleSettings}
-					>
-						<SettingsIcon strokeWidth={1.75} aria-hidden />
-					</button>
-					{hasSkills && (
-						<button
-							type="button"
-							className={cn(HEAD_BTN, "lh-touch")}
-							disabled={busy || data.review.length === 0}
-							data-testid="course-review-button"
-							onClick={() => void onStart("review")}
-						>
-							{reviewLabel(data)}
-						</button>
-					)}
-				</span>
-				</div>
-			</header>
-			<div className="mx-auto max-w-5xl px-4 pb-16 pt-4 sm:px-6">
-				{learnSkill && (
-					<LearnPaceDialog
-						courseId={courseId}
-						busy={busy}
-						onClose={() => setLearnSkill(null)}
-						onStart={(pace) => {
-							const skillId = learnSkill;
-							setLearnSkill(null);
-							void onStart("learn", skillId, pace);
-						}}
-					/>
-				)}
-				<WeightEditContext.Provider value={(id, w) => void editWeight(id, w)}>
-				<CourseBody
-data={data}
-					busy={busy}
-					error={error}
-					onDraft={onDraft}
-					onApprove={onApprove}
-					onStart={(mode, skillId) => {
-						if (mode === "learn" && skillId) setLearnSkill(skillId);
-						else void onStart(mode, skillId);
-					}}
-					onMaterials={onMaterials}
-					onPracticeSet={(ids) => void onPracticeSet(ids)}
-					onRetest={() => void onRetest()}
-					materialCount={materialCount}
-					placementSkipped={placementSkipped}
-					onSkipPlacement={() => {
-						writePlacementSkipped(courseId);
-						setPlacementSkipped(true);
-					}}
-					onChanged={() => void refresh()}
-					settingsOpen={settingsOpen}
-					onSettingsOpenChange={setSettingsOpen}
-					onAsk={(reopen) => void onAsk(reopen)}
-					onCoverage={{
-						edit: (target, edit) => void call(`/api/courses/${courseId}/coverage`, { target, ...edit }),
-						map: (target) => void call(`/api/courses/${courseId}/coverage`, { map: true, ...(target === "draft" ? { target: "draft" } : {}) }),
-						approveLeaving: () => void call(`/api/courses/${courseId}/approve`, { leaveUnassigned: true }),
-					}}
-				/>
-				</WeightEditContext.Provider>
-				<div className="mt-12 border-t border-border pt-4">
-					<button
-						type="button"
-						onClick={() => void remove()}
-						data-testid="course-delete"
-						className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "-ml-2.5 text-destructive")}
-					>
-						Delete course…
-					</button>
-					<p className="mt-1 text-xs text-muted-foreground">
-						Learned: a finished lesson or a placement credit — it unlocks the skills that build on it. Known: understanding {KNOWN_UNDERSTANDING} or higher — about a month of
-						memory, built by solving it on spaced days or a confident correct answer in the placement test.
-					</p>
+					<WeightEditContext.Provider value={(id, w) => void editWeight(id, w)}>
+						<CourseBody
+							data={data}
+							busy={busy}
+							error={setup ? error : null}
+							onDraft={onDraft}
+							onApprove={onApprove}
+							onStart={(mode, skillId) => {
+								if (mode === "learn" && skillId) setLearnSkill(skillId);
+								else void onStart(mode, skillId);
+							}}
+							onPracticeSet={(ids) => void onPracticeSet(ids)}
+							onRetest={() => void onRetest()}
+							materialCount={materialCount}
+							files={files}
+							title={titleField("w-full")}
+							dropping={dropping}
+							placementSkipped={placementSkipped}
+							onSkipPlacement={() => {
+								writePlacementSkipped(courseId);
+								setPlacementSkipped(true);
+							}}
+							onChanged={() => void refresh()}
+							onAsk={(reopen) => void onAsk(reopen)}
+							onCoverage={{
+								edit: (target, edit) => void call(`/api/courses/${courseId}/coverage`, { target, ...edit }),
+								map: (target) => void call(`/api/courses/${courseId}/coverage`, { map: true, ...(target === "draft" ? { target: "draft" } : {}) }),
+								approveLeaving: () => void call(`/api/courses/${courseId}/approve`, { leaveUnassigned: true }),
+							}}
+						/>
+					</WeightEditContext.Provider>
 				</div>
 			</div>
+			<aside
+				aria-label="Class files and settings"
+				data-testid="class-side-panel"
+				className={cn(
+					"w-84 shrink-0 overflow-y-auto border-l border-border bg-background pt-[var(--lh-safe-top)] transition-colors duration-(--lh-duration-hover)",
+					panelOpen ? "block" : "hidden @6xl/class:block",
+					dropping && "bg-raised/40",
+				)}
+			>
+				<ClassPanel
+					courseId={courseId}
+					courseTitle={data.course.title}
+					pace={data.course.pace}
+					files={files}
+					dropping={dropping}
+					setup={setup}
+					hasSkills={hasSkills}
+					hasDraft={!!data.course.draft}
+					drafting={drafting}
+					courseError={data.course.error}
+					error={setup ? null : error}
+					busy={busy}
+					onDraft={() => onDraft()}
+					onChanged={() => void refresh()}
+					onPlacement={() => void onStart("placement")}
+					onDeleted={() => router.push("/")}
+					exam={
+						hasSkills
+							? { examDate: data.course.examDate, hasWeights: weighed, weighing: data.weighing === true, canWeigh: !drafting && materialCount > 0, weightsSummary: data.course.weightsSummary, weightsAt: data.course.weightsAt }
+							: undefined
+					}
+				/>
+			</aside>
 		</div>
 	);
 }

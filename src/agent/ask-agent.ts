@@ -14,7 +14,7 @@ import { jobTools, type JobToolContext } from "./tools/jobs.ts";
  * It never probes, plans, quizzes, grades, finishes or tracks: no question tools, no plan, no finish tool, no gates, no
  * grader. Its sessions are never course evidence (core/mastery.ts skillEventsOf) and never feed the knowledge graph
  * (the chat handler skips extraction, and the pipeline refuses it). Named "ask" in code; the selection pill that opens
- * a side conversation is "clarify" (server/clarify.ts), and the UI calls this mode "Questions" / "Ask about this class".
+ * a side conversation is "clarify" (server/clarify.ts), and the UI calls this mode "Questions" / "Short question".
  *
  * Its registry, all of it:
  *   - the class-material lookups and the lecture-note lookups — NOT built here: they ride `opts.materials` (the turn's

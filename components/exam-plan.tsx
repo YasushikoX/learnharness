@@ -7,7 +7,6 @@ import { Loader2Icon } from "lucide-react";
 import { examDateLabel, forecastLine, readinessBasis, readinessStep, understandingColor, type Readiness, SKILL_WEIGHTS, WEIGHT_LABELS, type CoursePlan, type CourseMode, type CourseSkillView, type SkillWeightValue } from "@/src/core";
 import { cn } from "@/lib/utils";
 import { PAGE_HEAD } from "@/components/section-heads";
-import { LectureNotesRow } from "@/components/lecture-notes-row";
 import { CourseSettingRow } from "@/components/course-pace";
 
 /**
@@ -147,7 +146,7 @@ function ReadinessStrip({ readiness }: { readiness: Readiness }) {
 }
 
 /** The exam date's PATCH and the Weigh by exams POST, shared by the card and the settings. */
-function useExamActions(courseId: string, onChanged: () => void) {
+export function useExamActions(courseId: string, onChanged: () => void) {
 	const [error, setError] = useState<string | null>(null);
 	const [starting, setStarting] = useState(false);
 
@@ -206,6 +205,8 @@ export interface ExamPlanSectionProps {
 	/** Start a placement RETEST (owner, 2026-11-16); the row shows when `plan.retestCount` > 0. */
 	onRetest?: () => void;
 	onChanged: () => void;
+	/** What sits between Next up and the exam card: the class's recent sessions (UI class page, 2026-11-25). */
+	afterNextUp?: React.ReactNode;
 }
 
 /**
@@ -217,7 +218,7 @@ export interface ExamPlanSectionProps {
  * course is weighed the card holds "Weigh by exams"; afterwards it says so in one line and "Weigh again" is a setting.
  */
 export function ExamPlanSection(props: ExamPlanSectionProps) {
-	const { courseId, plan, names, weightOf, nextUp, learningCount, examDate, readiness, hasWeights, weightsError, weighing, canWeigh, busy, onStart, onRetest, onChanged } = props;
+	const { courseId, plan, names, weightOf, nextUp, learningCount, examDate, readiness, hasWeights, weightsError, weighing, canWeigh, busy, onStart, onRetest, onChanged, afterNextUp } = props;
 	const { error, starting, patch, weigh } = useExamActions(courseId, onChanged);
 
 	const f = plan.forecast;
@@ -244,8 +245,8 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 	const moreRows = more.filter((id) => id !== heroLesson);
 	const fading = plan.reviewFading ?? 0;
 	return (
-		// UI round 2: Next up first, at full width (the page's one dominant card); the exam card and the lecture notes share
-		// the row beneath it.
+		// UI round 2: Next up first, at full width (the page's one dominant card). UI class page: then the recent sessions,
+		// then the exam card.
 		<section data-testid="course-exam-plan" className="grid items-start gap-6">
 			{boxHasItems && (
 				<div data-testid="course-next-up" className={HERO_CARD}>
@@ -316,7 +317,9 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 					</div>
 				</div>
 			)}
-			<div className="grid min-w-0 items-start gap-6 md:grid-cols-2" data-testid="course-exam-column">
+			{afterNextUp}
+			{/* UI class page: the lecture notes moved to the class side panel; the exam card has the row to itself. */}
+			<div className="min-w-0" data-testid="course-exam-column">
 				<div className={SIDE_CARD}>
 					<div className="lh-section-title text-foreground">Exam</div>
 					{examDate ? (
@@ -363,14 +366,13 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 					)}
 					{error && <p className="text-meta text-error">{error}</p>}
 				</div>
-				<LectureNotesRow courseId={courseId} />
 			</div>
 		</section>
 	);
 }
 
 /**
- * The exam's settings, inside the closed Course settings: the date with Clear once one is set (before that the exam
+ * The exam's settings, in the class side panel (UI class page, 2026-11-25; before, in the Course settings card): the date with Clear once one is set (before that the exam
  * card holds the field), and "Weigh again" once the course is weighed (before that the exam card holds "Weigh by
  * exams"), with what the weighing found.
  */
@@ -382,6 +384,7 @@ export function ExamSettings(props: Pick<ExamPlanSectionProps, "courseId" | "exa
 		<CourseSettingRow
 			testid="course-exam-settings"
 			label="Exam"
+			stacked
 			description={
 				hasWeights && weightsSummary ? (
 					<p className="truncate" title={weightsSummary} data-testid="course-weights-found">

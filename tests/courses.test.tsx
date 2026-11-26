@@ -1526,10 +1526,12 @@ describe("the UI", () => {
 		});
 		const html = body(data);
 		assert.match(html, /data-testid="course-learning"[\s\S]*Learning<span[^>]*>2<[\s\S]*data-testid="practice-all"/);
-		assert.match(html, /data-testid="course-sessions-open"[\s\S]*Practice: A[\s\S]*aria-expanded="false"[^>]*data-testid="course-sessions-finished-toggle"[^>]*>[\s\S]*Finished · 1/);
-		assert.doesNotMatch(html, /data-testid="course-sessions-finished"/, "finished sessions fold away until opened");
-		const allDone = body({ ...data, sessions: [data.sessions[1]!] });
-		assert.match(allDone, /No session in progress/);
+		// UI class page (2026-11-25): Recent sessions, newest first; a finished one stays in the list, quiet, with a check
+		assert.match(html, /data-testid="course-sessions"[\s\S]*Recent sessions[\s\S]*data-testid="course-sessions-list"[\s\S]*Practice: A[\s\S]*text-muted-foreground[^"]*"[^>]*>[\s\S]*Learn: A[\s\S]*aria-label="Finished"/);
+		assert.doesNotMatch(html, /data-testid="course-sessions-all"/, "two sessions: no Show all");
+		const many = body({ ...data, sessions: Array.from({ length: 7 }, (_, n) => ({ id: `chat_${n}`, title: `Session ${n}`, mode: "learn" as const, updatedAt: "t" })) });
+		assert.equal((many.match(/href="\/chat\/chat_\d"/g) ?? []).length, 5, "the five newest");
+		assert.match(many, /data-testid="course-sessions-all"[^>]*>Show all 7/);
 	});
 
 	it("right after approval the placement test is offered first — until skipped or a session exists", () => {
@@ -1592,11 +1594,9 @@ describe("the UI", () => {
 		assert.doesNotMatch(html, /data-testid="course-map"/);
 	});
 
-	it("drafting shows the planner's progress and disables re-drafting", () => {
+	it("the page body holds no skill map controls: Draft / Re-draft lives in the class side panel (class-page.test.tsx)", () => {
 		const html = body(payload({ drafting: true }));
-		assert.match(html, /data-testid="course-drafting"/);
-		const button = html.match(/<button[^>]*data-testid="course-draft-button"[^>]*>/)![0];
-		assert.match(button, /disabled=""/);
+		assert.doesNotMatch(html, /course-draft-button|course-settings/);
 	});
 
 	it("skill state words", () => {
