@@ -13,6 +13,7 @@ import type {
 	CourseMode,
 	CourseRecord,
 	CourseSkillView,
+	CourseStandingView,
 	CourseSummary,
 	CourseView,
 	GraphEdge,
@@ -105,6 +106,8 @@ import { stampNewSession, titleFromPrompt } from "./chats.ts";
 import { abortAssessmentFind, allSelfReports, upcomingView } from "./assessments.ts";
 import { assessmentWhen, boundAssessments, countdownAssessment, courseAssessments, focusSkills, isTombstone, LEGACY_ITEM_ID, liveSelfReports, nextAssessment, readAssessmentEntries, targetDateFor, upsertEntry, type AssessmentEntry } from "../core/assessments.ts";
 import { removeCourseLectureNotes } from "./lecture-notes.ts";
+import { lectureToday, sanitizeClassPosition, standingGaps, whereYouStand } from "../core/lectures.ts";
+import { abortLectureLinking, classLectures, lectureLinking, maybeLinkLectures } from "./lectures.ts";
 import { listMaterials, removeMaterial, waitForMaterials } from "./materials.ts";
 import { effectiveSettings, stores } from "./stores.ts";
 
@@ -507,15 +510,37 @@ export function graphSkillLayer(): GraphSkillLayer | undefined {
 
 /** The exam plan of a course (core/exam-plan.ts): priorities, the ordered Next up, the countdown, the forecast and today's
  *  lessons. `ids` are the course's skills in topological order. */
-function examPlanOf(course: CourseRecord, p: SkillPartition, ctx: ReadContext): { plan: CoursePlan; nextUp: string[]; notExamined: string[]; priority: Map<string, number> } {
+/** WP9: "Where you stand" (core/lectures.ts whereYouStand): the lecture timeline (stored, plus what the files name), the
+ *  class's position, what the learner has learned of it, and the next assessment's readiness. Null before a skill map. */
+function standingOf(course: CourseRecord, p: SkillPartition, ctx: ReadContext): CourseStandingView | null {
+	if (course.skills.length === 0) return null;
+	const lectures = classLectures(course);
+	const standing = whereYouStand({
+		lectures,
+		explicit: sanitizeClassPosition(course.classPosition),
+		today: lectureToday(ctx.now),
+		skills: p.order.map((id) => ({ id, learned: p.states.get(id)?.learned ?? false, requires: ctx.skills.get(id)?.requires ?? [] })),
+		startable: new Set(p.nextUp),
+		next: nextAssessment(courseAssessments(course), ctx.now),
+	});
+	const files: Record<string, string> = {};
+	for (const m of stores.materialStore.list(course.id)) files[m.id] = m.name;
+	return { ...standing, linking: lectureLinking(course.id), ...(course.lecturesLinkError ? { linkError: course.lecturesLinkError } : {}), files };
+}
+
+function examPlanOf(course: CourseRecord, p: SkillPartition, ctx: ReadContext): { plan: CoursePlan; nextUp: string[]; notExamined: string[]; priority: Map<string, number>; standing: CourseStandingView | null } {
 	const weights = sanitizeWeights(course.skillWeights);
 	const priority = priorities(p.order, (id) => ctx.skills.get(id)?.requires ?? [], weights);
 	// WP8: the next dated assessment's skills come first; a skill the learner said they do not get leads its peers
 	const assessments = courseAssessments(course);
 	// the countdown's assessment: the next one, or the latest passed one when nothing dated is coming ("passed")
 	const next = countdownAssessment(assessments, ctx.now);
-	const focus = focusSkills(assessments, ctx.now);
-	const { nextUp, notExamined } = orderNextUp(p.nextUp, priority, { focus, needsWork: ctx.needsWork });
+	// WP9: the gaps lead: (1) what the next assessment needs (its skills, else its lectures' skills), (2) what the class
+	// has covered; then the old order. With no lectures this is exactly WP8's focus and nothing covered.
+	const standing = standingOf(course, p, ctx);
+	const gaps = standingGaps(standing);
+	const focus = standing?.next?.needs ? gaps.needs : focusSkills(assessments, ctx.now);
+	const { nextUp, notExamined } = orderNextUp(p.nextUp, priority, { focus, needsWork: ctx.needsWork, covered: gaps.covered });
 	// the skills left: the next assessment's own when it maps some, else every examined one
 	const skillsLeft = focus.size > 0
 		? p.order.filter((id) => focus.has(id) && !(p.states.get(id)?.learned ?? false)).length
@@ -544,7 +569,7 @@ function examPlanOf(course: CourseRecord, p: SkillPartition, ctx: ReadContext): 
 		reviewBatch: Math.min(p.review.length, REVIEW_SESSION_SIZE),
 		lessons,
 	};
-	return { plan, nextUp, notExamined, priority };
+	return { plan, nextUp, notExamined, priority, standing };
 }
 
 /** The review pick's ranking for a course with an upcoming exam (core/exam-plan.ts examReviewScore); undefined without one,
@@ -593,6 +618,9 @@ export function todayCourses(): TodayCourse[] {
 }
 
 export function courseView(courseId: string): CourseView | null {
+	// WP9: a lecture or a file added (here or by sync) places the skills again, in the background (before the read, so a
+	// run that settles at once shows)
+	maybeLinkLectures(courseId);
 	const found = stores.courseStore.getCourse(courseId);
 	if (!found) return null;
 	const course = healOrphanDraft(found);
@@ -671,6 +699,8 @@ export function courseView(courseId: string): CourseView | null {
 		...((v) => (v ? { coverage: v } : {}))(coverageView(course, courseLanguage(course), courseTermMapping(courseId))),
 		// WP8: the Upcoming list (the old exam date included as "Exam")
 		upcoming: upcomingView(course, ctx.now),
+		// WP9: the lectures, the class's position and where the learner stands
+		...(exam.standing ? { standing: exam.standing } : {}),
 	};
 }
 
@@ -790,6 +820,7 @@ export function deleteCourse(courseId: string): boolean {
 	weighRuns().get(courseId)?.abort();
 	abortCourseTermMapping(courseId);
 	abortAssessmentFind(courseId);
+	abortLectureLinking(courseId);
 	for (const m of stores.materialStore.list(courseId)) removeMaterial(courseId, m.id);
 	stores.materialStore.removeAll(courseId);
 	removeCourseLectureNotes(courseId);
@@ -1083,7 +1114,15 @@ export function approveCourse(courseId: string, opts: { leaveUnassigned?: boolea
 		coverage = { ...coverage, ...pruned.mapping, updatedAt: now, ...(displaced.length > 0 ? { displaced } : {}) };
 	}
 	stores.skillStore.appendSkillLines(lines);
-	const updated = stores.courseStore.updateCourse(courseId, { skills: skillIds, draft: undefined, status: "active", error: undefined, ...(coverage ? { coverage } : {}) })!;
+	// WP9: each skill's cite outlives the draft, for the "link skills to lectures" step
+	const skillCites: Record<string, string> = {};
+	for (const d of course.draft.skills) {
+		const id = idOf[d.key];
+		if (id && typeof d.cite === "string" && d.cite.trim()) skillCites[id] = d.cite.trim().slice(0, 200);
+	}
+	const updated = stores.courseStore.updateCourse(courseId, { skills: skillIds, draft: undefined, status: "active", error: undefined, skillCites: Object.keys(skillCites).length > 0 ? skillCites : undefined, ...(coverage ? { coverage } : {}) })!;
+	// WP9: place the new map's skills in the lectures (in the background; it never blocks anything)
+	maybeLinkLectures(courseId);
 	return { ok: true, value: updated };
 }
 

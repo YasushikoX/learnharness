@@ -49,13 +49,14 @@ import { readConvertedPages } from "../agent/tools/material-content.ts";
 import { DEFAULT_LESSON_LANGUAGE, type LessonLanguage } from "../core/language.ts";
 import { resolveRoleSpec } from "../core/settings-resolution.ts";
 import { mergeSkillLines } from "../core/skills.ts";
-import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { piEngineForSpec } from "../agent/models.ts";
 import { findAssessments, type MaterialSource } from "../agent/subagents/assessment-finder.ts";
 import { materialTools } from "../agent/tools/materials.ts";
-import { CLASS_CHANGE_TOOLS, type ClassChange, type ClassFactsPort } from "../agent/tools/class-facts.ts";
 import { listMaterials, waitForMaterials } from "./materials.ts";
 import { stores } from "./stores.ts";
+import { boundEntries } from "../core/assessments.ts";
+import { classifyLectures, LECTURES_MAX, liveLectures, PROPOSAL_LECTURES_MAX, readLectureEntries, type LectureEntry, type ProposedLecture } from "../core/lectures.ts";
+import { lectureFromProposal, lectureUpdateFromProposal, maybeLinkLectures } from "./lectures.ts";
 
 /**
  * Quizzes, exams and self-reports — the service seam (WP8, 2026-11-25; core/assessments.ts; docs/courses.md). Routes
@@ -67,7 +68,7 @@ import { stores } from "./stores.ts";
 type Result<T> = { ok: true; value: T } | { ok: false; status: number; error: string };
 
 /** An ISO stamp strictly after `prev` (two writes in one millisecond still order). */
-function stampAfter(prev?: string): string {
+export function stampAfter(prev?: string): string {
 	const now = Date.now();
 	const p = prev ? Date.parse(prev) : NaN;
 	return new Date(Number.isNaN(p) || now > p ? now : p + 1).toISOString();
@@ -76,6 +77,11 @@ function stampAfter(prev?: string): string {
 function courseSkills(course: CourseRecord): Array<{ id: string; name: string }> {
 	const all = new Map(mergeSkillLines(stores.skillStore.readSkillLines()).map((s: Skill) => [s.id, s]));
 	return course.skills.flatMap((id) => (all.has(id) ? [{ id, name: all.get(id)!.name }] : []));
+}
+
+/** Write the list (bounded) with any other fields in the same update (server/class-changes.ts Undo uses it too). */
+export function writeAssessmentEntries(courseId: string, entries: readonly AssessmentEntry[], extra: Partial<CourseRecord> = {}): CourseRecord {
+	return writeAssessments(courseId, entries, extra);
 }
 
 function writeAssessments(courseId: string, entries: readonly AssessmentEntry[], extra: Partial<CourseRecord> = {}): CourseRecord {
@@ -295,84 +301,6 @@ export function allSelfReports(courses: readonly CourseRecord[]): Array<SelfRepo
 	return courses.flatMap((c) => liveSelfReports(c.selfReports).filter((r) => r.skillIds.some((id) => c.skills.includes(id))).map((r) => ({ ...r, courseId: c.id })));
 }
 
-// ─── the chat's change cards and Undo ────────────────────────────────────────
-
-/** One tool result's change, read from the chat record (never from the client). */
-function changeIn(chatId: string, toolCallId: string): { courseId: string; change: ClassChange } | null {
-	const chat = stores.chatStore.getChat(chatId);
-	const courseId = chat?.course?.mode === "ask" ? chat.course.courseId : null;
-	if (!chat || !courseId) return null;
-	const result = chat.messages.find((m) => (m as { role?: string }).role === "toolResult" && (m as ToolResultMessage).toolCallId === toolCallId) as ToolResultMessage | undefined;
-	if (!result || result.isError || !CLASS_CHANGE_TOOLS.includes(result.toolName)) return null;
-	const change = (result.details as { change?: ClassChange } | undefined)?.change;
-	return change && typeof change === "object" ? { courseId, change } : null;
-}
-
-/** applied: the change is still what the list holds (Undo is offered) · changed: it was undone or changed since. */
-export type ChangeStatus = "applied" | "changed";
-
-/** Is the change still exactly what the class holds? Every field Undo would restore is compared (review 1, finding 4):
- *  the whole entry written (an item, field by field; a tombstone, by its stamp), and for a change to the old exam date
- *  also that `examDate` is still empty. */
-function changeStatus(course: CourseRecord, change: ClassChange): ChangeStatus {
-	if (change.kind === "self-report") {
-		const held = readSelfReportEntries(course.selfReports).find((e) => e.id === change.report.id);
-		return held && !isTombstone(held) && held.updatedAt === change.report.updatedAt ? "applied" : "changed";
-	}
-	if (!change.stamp) return "changed";
-	const held = readAssessmentEntries(course.assessments).find((e) => e.id === change.id);
-	const expected: AssessmentEntry | null = change.after ?? { id: change.id, deleted: true, updatedAt: change.stamp };
-	if (!sameEntry(held, expected)) return "changed";
-	if (change.before?.legacy && course.examDate) return "changed";
-	return "applied";
-}
-
-/** GET /api/chats/[id]/class-changes: every change card's status in one request. */
-export function classChangeStatuses(chatId: string): Record<string, ChangeStatus> {
-	const chat = stores.chatStore.getChat(chatId);
-	if (chat?.course?.mode !== "ask") return {};
-	const course = stores.courseStore.getCourse(chat.course.courseId);
-	const out: Record<string, ChangeStatus> = {};
-	for (const m of chat.messages) {
-		const r = m as ToolResultMessage;
-		if ((m as { role?: string }).role !== "toolResult" || r.isError || !CLASS_CHANGE_TOOLS.includes(r.toolName)) continue;
-		const change = (r.details as { change?: ClassChange } | undefined)?.change;
-		if (!change) continue;
-		out[r.toolCallId] = course ? changeStatus(course, change) : "changed";
-	}
-	return out;
-}
-
-/** Undo exactly one change a Short question card shows. Refused (409) when the item changed since: Undo never clobbers a
- *  later edit. */
-export function undoClassChange(chatId: string, toolCallId: string): Result<{ status: "undone" }> {
-	const found = changeIn(chatId, toolCallId);
-	if (!found) return { ok: false, status: 404, error: "No change to undo" };
-	const { courseId, change } = found;
-	const course = stores.courseStore.getCourse(courseId);
-	if (!course) return { ok: false, status: 404, error: "The class was deleted" };
-	if (changeStatus(course, change) !== "applied") return { ok: false, status: 409, error: "This was already undone or changed since" };
-	if (change.kind === "self-report") {
-		const out = deleteSelfReport(courseId, change.report.id);
-		return out.ok ? { ok: true, value: { status: "undone" } } : out;
-	}
-	const entries = readAssessmentEntries(course.assessments);
-	if (change.before?.legacy) {
-		// the old exam date comes back; the entry the change wrote (the item that replaced it, or the deletion's
-		// tombstone) is superseded by a newer tombstone, so this card no longer holds
-		const restored = upsertEntry<AssessmentEntry>(entries, { id: change.id, deleted: true, updatedAt: stampAfter(change.stamp) });
-		writeAssessments(courseId, restored, { examDate: change.before.date });
-		return { ok: true, value: { status: "undone" } };
-	}
-	const before = change.before ? sanitizeAssessment(change.before) : null;
-	if (change.action === "added") {
-		writeAssessments(courseId, upsertEntry<AssessmentEntry>(entries, { id: change.id, deleted: true, updatedAt: stampAfter(change.stamp) }));
-	} else if (before) {
-		writeAssessments(courseId, upsertEntry<AssessmentEntry>(entries, { ...before, id: change.id, updatedAt: stampAfter(change.stamp) }));
-	} else return { ok: false, status: 422, error: "This change cannot be undone" };
-	return { ok: true, value: { status: "undone" } };
-}
-
 // ─── "Find quizzes and exams" (agent/subagents/assessment-finder.ts) ─────────
 
 const FIND_KEY = Symbol.for("lh.courseAssessmentFindRuns");
@@ -492,12 +420,15 @@ async function runFind(courseId: string, controller: AbortController): Promise<v
 		if (!fresh || controller.signal.aborted) return;
 		// capped before it is stored, whatever the finder returned
 		const items = found.items.slice(0, PROPOSAL_ITEMS_MAX).map((it, i) => ({ ...it, key: `p${i + 1}` }));
+		// WP9: the lecture schedule the same run read, classified against the stored lectures
+		const lectures = (found.lectures ?? []).slice(0, PROPOSAL_LECTURES_MAX).map((it, i) => ({ ...it, key: `l${i + 1}` }));
 		const proposal: AssessmentProposal = {
 			id: `ap_${randomUUID().replace(/-/g, "").slice(0, 10)}`,
 			createdAt: new Date().toISOString(),
 			summary: cleanLine(found.summary, PROPOSAL_SUMMARY_MAX),
 			...(found.partial ? { partial: true as const } : {}),
 			items: classifyProposal(items, courseAssessments(fresh)),
+			...(lectures.length > 0 ? { lectures: classifyLectures(lectures, liveLectures(fresh.lectures)) } : {}),
 		};
 		settle({ assessmentProposal: proposal, assessmentsScannedAt: proposal.createdAt, assessmentsError: undefined });
 	} catch (err) {
@@ -526,14 +457,22 @@ export function actOnProposal(courseId: string, action: ProposalAction): Result<
 	if (!proposal || !Array.isArray(proposal.items)) return { ok: false, status: 409, error: "There is no proposal" };
 	if (proposal.id && action.proposalId !== proposal.id) return { ok: false, status: 409, error: "The proposal changed since this page showed it: look again" };
 	if (action.action === "discard") return { ok: true, value: { course: stores.courseStore.updateCourse(courseId, { assessmentProposal: undefined })!, skipped: 0 } };
-	const pendingOf = (items: readonly ProposedAssessment[]) => items.filter((i) => i.status === "new" || i.status === "update");
+	const pendingOf = <T extends { status: ProposedAssessment["status"] }>(items: readonly T[]) => items.filter((i) => i.status === "new" || i.status === "update");
+	// WP9: the lecture schedule rides the same proposal; its keys are "l1", "l2", …
+	const proposedLectures: ProposedLecture[] = Array.isArray(proposal.lectures) ? proposal.lectures : [];
+	const known = (k: string) => proposal.items.some((i) => i.key === k) || proposedLectures.some((l) => l.key === k);
+	/** What is left of the proposal: undefined when nothing is pending in either list. */
+	const leftOver = (items: readonly ProposedAssessment[], lectures: readonly ProposedLecture[]) =>
+		pendingOf(items).length + pendingOf(lectures).length > 0 ? { ...proposal, items: [...items], ...(lectures.length > 0 ? { lectures: [...lectures] } : { lectures: undefined }) } : undefined;
 	if (action.action === "drop") {
-		if (!proposal.items.some((i) => i.key === action.key)) return { ok: false, status: 404, error: "Unknown proposal item" };
+		if (!known(action.key)) return { ok: false, status: 404, error: "Unknown proposal item" };
 		const items = proposal.items.filter((i) => i.key !== action.key);
-		return { ok: true, value: { course: stores.courseStore.updateCourse(courseId, { assessmentProposal: pendingOf(items).length > 0 ? { ...proposal, items } : undefined })!, skipped: 0 } };
+		const lectures = proposedLectures.filter((l) => l.key !== action.key);
+		return { ok: true, value: { course: stores.courseStore.updateCourse(courseId, { assessmentProposal: leftOver(items, lectures) })!, skipped: 0 } };
 	}
-	if (action.keys?.some((k) => !proposal.items.some((i) => i.key === k))) return { ok: false, status: 404, error: "Unknown proposal item" };
+	if (action.keys?.some((k) => !known(k))) return { ok: false, status: 404, error: "Unknown proposal item" };
 	const chosen = pendingOf(proposal.items).filter((i) => !action.keys || action.keys.includes(i.key));
+	const chosenLectures = pendingOf(proposedLectures).filter((l) => !action.keys || action.keys.includes(l.key));
 	const own = new Set(course.skills);
 	let entries = readAssessmentEntries(course.assessments);
 	const startLive = liveCount(entries);
@@ -571,8 +510,40 @@ export function actOnProposal(courseId: string, action: ProposalAction): Result<
 	if (endLive > startLive && endLive > ASSESSMENTS_MAX) {
 		return { ok: false, status: 409, error: `Adding ${endLive - startLive} would take this class over ${ASSESSMENTS_MAX} assessments: remove some first, or add fewer` };
 	}
+	// WP9: the lectures, staged on the same snapshot and written in the same update; the same binding rules
+	let lectureEntries: LectureEntry[] = readLectureEntries(course.lectures);
+	const startLectures = lectureEntries.filter((e) => !isTombstone(e)).length;
+	let lectureStamp: string | undefined;
+	for (const item of chosenLectures) {
+		const live = liveLectures(lectureEntries);
+		if (item.status === "update" && item.match) {
+			const held = lectureEntries.find((e) => e.id === item.match);
+			if (!held || isTombstone(held) || (item.matchStamp !== undefined && held.updatedAt !== item.matchStamp)) {
+				skipped++;
+				continue;
+			}
+			lectureEntries = upsertEntry<LectureEntry>(lectureEntries, lectureUpdateFromProposal(held, item, own));
+			continue;
+		}
+		// new: unless the learner has entered it meanwhile (classifyLectures against the list as it is now)
+		if (classifyLectures([item], live)[0]!.status !== "new") {
+			skipped++;
+			continue;
+		}
+		const made = lectureFromProposal(item, own, lectureStamp);
+		lectureStamp = made.updatedAt;
+		lectureEntries = [...lectureEntries, made];
+	}
+	const endLectures = lectureEntries.filter((e) => !isTombstone(e)).length;
+	if (endLectures > startLectures && endLectures > LECTURES_MAX) {
+		return { ok: false, status: 409, error: `Adding ${endLectures - startLectures} lectures would take this class over ${LECTURES_MAX}: remove some first, or add fewer` };
+	}
 	const rest = pendingOf(proposal.items).filter((i) => !chosen.some((c) => c.key === i.key));
-	return { ok: true, value: { course: writeAssessments(courseId, entries, { assessmentProposal: rest.length > 0 ? { ...proposal, items: rest } : undefined }), skipped } };
+	const restLectures = pendingOf(proposedLectures).filter((l) => !chosenLectures.some((c) => c.key === l.key));
+	const lecturesChanged = chosenLectures.length > 0;
+	const written = writeAssessments(courseId, entries, { assessmentProposal: leftOver(rest, restLectures), ...(lecturesChanged ? { lectures: boundEntries(lectureEntries) } : {}) });
+	if (lecturesChanged) maybeLinkLectures(courseId);
+	return { ok: true, value: { course: written, skipped } };
 }
 
 // ─── the page's view ─────────────────────────────────────────────────────────
@@ -625,47 +596,4 @@ export function noteClientTimeZone(chatId: string, raw: unknown): void {
  *  own zone, which is the learner's when the app runs on their machine). */
 export function learnerTimeZone(chatId: string): string | undefined {
 	return zones().get(chatId);
-}
-
-/** The port the Ask agent's class tools use, bound to one Ask conversation. Null when the chat is not an Ask chat of a
- *  class that still exists. */
-export function classFactsPort(chatId: string): ClassFactsPort | null {
-	const chat = stores.chatStore.getChat(chatId);
-	if (chat?.course?.mode !== "ask") return null;
-	const courseId = chat.course.courseId;
-	const course = () => stores.courseStore.getCourse(courseId);
-	if (!course()) return null;
-	const names = (c: CourseRecord) => new Map(courseSkills(c).map((s) => [s.id, s.name]));
-	const withNames = (c: CourseRecord, a: Assessment | null) => (a ? a.skillIds.map((id) => names(c).get(id) ?? id) : []);
-	return {
-		now: () => Date.now(),
-		timeZone: () => learnerTimeZone(chatId),
-		hasSkills: () => (course()?.skills.length ?? 0) > 0,
-		list: () => {
-			const c = course();
-			return c ? { assessments: sortAssessments(courseAssessments(c)), skills: courseSkills(c) } : { assessments: [], skills: [] };
-		},
-		save: (id, input) => {
-			const out = id ? updateAssessment(courseId, id, input, "chat") : createAssessment(courseId, input, "chat");
-			if (!out.ok) return { ok: false, error: out.error };
-			const c = course()!;
-			return { ok: true, change: { kind: "assessment", courseId, ...out.value, skillNames: withNames(c, out.value.after ?? out.value.before) } };
-		},
-		remove: (id) => {
-			const out = deleteAssessment(courseId, id);
-			if (!out.ok) return { ok: false, error: out.error };
-			const c = course()!;
-			return { ok: true, change: { kind: "assessment", courseId, ...out.value, skillNames: withNames(c, out.value.before) } };
-		},
-		selfReport: (input) => {
-			const out = recordSelfReport(courseId, { ...input, chatId });
-			if (!out.ok) return { ok: false, error: out.error };
-			const n = names(course()!);
-			return { ok: true, change: { kind: "self-report", courseId, report: out.value, skillNames: out.value.skillIds.map((id) => n.get(id) ?? id) } };
-		},
-		findInSyllabus: () => {
-			const out = startAssessmentFind(courseId);
-			return out.ok ? { ok: true } : { ok: false, error: out.error };
-		},
-	};
 }
