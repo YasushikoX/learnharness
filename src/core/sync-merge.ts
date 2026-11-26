@@ -28,6 +28,7 @@
  */
 
 import { chatVersionFor } from "./contracts/chat.ts";
+import { mergeEntries } from "./assessments.ts";
 
 export type Side = "local" | "remote";
 
@@ -305,6 +306,8 @@ const COURSE_VERSION = 1;
 const COURSE_UNIT = ["status", "skills", "draft", "error", "coverage", "coverageError"] as const;
 /** The weighing pass's fields move together too (fork addition, 2026-11-13): weights, its summary, when and why it failed. */
 const COURSE_WEIGHTS_UNIT = ["skillWeights", "weightsSummary", "weightsAt", "pastExams", "weightsError"] as const;
+/** The "Find quizzes and exams" pass's pending proposal and its state (WP8). */
+const COURSE_PROPOSAL_UNIT = ["assessmentProposal", "assessmentsError", "assessmentsScannedAt"] as const;
 
 function mergeCourse(i: MergeInput & { local: string; remote: string }): MergeResult {
 	const l = parseObj(i.local);
@@ -362,6 +365,20 @@ function mergeCourse(i: MergeInput & { local: string; remote: string }): MergeRe
 	for (const k of COURSE_WEIGHTS_UNIT) delete out[k];
 	Object.assign(out, weights.value as Obj);
 	if (weights.conflict) overridden("exam weights");
+
+	// WP8: assessments and self-reports merge per item by id, the later updatedAt winning; a deletion is a tombstone in the
+	// list, so it outlives the other device's copy of the item. A side without the list (an older build) adds nothing and
+	// removes nothing.
+	for (const key of ["assessments", "selfReports"]) {
+		if (!Array.isArray(l[key]) && !Array.isArray(r[key])) continue;
+		out[key] = mergeEntries(newer === "local" ? l[key] : r[key], newer === "local" ? r[key] : l[key]);
+	}
+	// the pass's pending proposal and its state move as one unit, like the weights
+	const ppick = (side: Obj) => Object.fromEntries(COURSE_PROPOSAL_UNIT.filter((k) => k in side).map((k) => [k, side[k]]));
+	const proposal = threeWay(b ? ppick(b) : null, ppick(l), ppick(r), newer, b !== null);
+	for (const k of COURSE_PROPOSAL_UNIT) delete out[k];
+	Object.assign(out, proposal.value as Obj);
+	if (proposal.conflict) overridden("syllabus proposal");
 
 	out.drafts = unionBy(arr(l.drafts), arr(r.drafts), (d) => (isObj(d) ? str(d.startedAt) : null), (d) => (isObj(d) ? (str(d.startedAt) ?? "") : ""));
 	if (arr(out.drafts).length === 0) delete out.drafts;
