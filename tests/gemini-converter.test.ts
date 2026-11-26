@@ -73,12 +73,18 @@ interface FakeOptions {
 	generate?: (g: Generate) => Reply;
 	/** States the GET of the uploaded file answers, in turn (default: ACTIVE). */
 	states?: string[];
-	/** The state the upload answers with (default PROCESSING when `states` is given, else ACTIVE). */
-	uploadState?: string;
+	/** The state the upload answers with (default PROCESSING when `states` is given, else ACTIVE); null: omitted. */
+	uploadState?: string | null;
 	/** Answer the upload start with this instead. */
 	start?: () => Reply;
+	/**
+	 * The bytes request (upload, finalize), call n: whether the file is committed, and the answer (default: the
+	 * file). "hang-body": the status line and part of the body come, then the body never ends.
+	 */
+	finalize?: (n: number) => { commit: boolean; reply?: Reply | "hang-body" };
 }
 
+const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]);
 const pageText = (page: number) => `Text of page ${page}.`;
 /** The default answer: one marker and one line of text for each page asked. */
 const markedPages = (from: number, to: number, text = pageText) => Array.from({ length: to - from + 1 }, (_, i) => `${gemini.GEMINI_PAGE_MARKER(from + i)}\n${text(from + i)}`).join("\n\n");
@@ -89,6 +95,9 @@ function installFake(options: FakeOptions = {}) {
 	const generates: Generate[] = [];
 	const deleted: string[] = [];
 	const uploads = new Map<string, Uint8Array>();
+	/** The name each upload session was started with (the caller's File.name, else one Google picks). */
+	const sessions = new Map<string, string>();
+	let finalizeCalls = 0;
 	const states = [...(options.states ?? [])];
 	const original = globalThis.fetch;
 	const reply = async (r: Reply, signal?: AbortSignal | null): Promise<Response> => {
@@ -114,13 +123,32 @@ function installFake(options: FakeOptions = {}) {
 		if (init?.signal?.aborted) throw init.signal.reason;
 		if (method === "POST" && u.pathname === "/upload/v1beta/files" && headers.get("x-goog-upload-command") === "start") {
 			if (options.start) return reply(options.start(), init?.signal);
-			return reply({ json: {}, headers: { "x-goog-upload-url": `${u.origin}/upload/v1beta/files?upload_id=session-abc123&upload_protocol=resumable` } });
+			const requested = (JSON.parse(body ?? "{}") as { file?: { name?: string } }).file?.name;
+			const session = `session-abc123${sessions.size ? `-${sessions.size}` : ""}`;
+			sessions.set(session, requested ?? `files/upload${sessions.size + 1}`);
+			return reply({ json: {}, headers: { "x-goog-upload-url": `${u.origin}/upload/v1beta/files?upload_id=${session}&upload_protocol=resumable` } });
 		}
-		if (method === "POST" && u.pathname === "/upload/v1beta/files" && headers.get("x-goog-upload-command") === "upload, finalize") {
-			const name = `files/upload${uploads.size + 1}`;
-			uploads.set(name, bytes ?? new Uint8Array());
-			const state = options.uploadState ?? (options.states ? "PROCESSING" : "ACTIVE");
-			return reply({ json: { file: { name, uri: `${u.origin}/v1beta/${name}`, mimeType: "application/pdf", state } } });
+		const sessionName = sessions.get(u.searchParams.get("upload_id") ?? "");
+		if (method === "POST" && u.pathname === "/upload/v1beta/files" && headers.get("x-goog-upload-command") === "query" && sessionName) {
+			const committed = uploads.has(sessionName);
+			return reply({ headers: { "x-goog-upload-status": committed ? "final" : "active", "x-goog-upload-size-received": String(committed ? pdf.byteLength : 0) } });
+		}
+		if (method === "POST" && u.pathname === "/upload/v1beta/files" && headers.get("x-goog-upload-command") === "upload, finalize" && sessionName) {
+			const plan = options.finalize?.(++finalizeCalls) ?? { commit: true };
+			if (plan.commit) uploads.set(sessionName, bytes ?? new Uint8Array());
+			if (plan.reply === "hang-body") {
+				const signal = init?.signal;
+				const stream = new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(new TextEncoder().encode(`{"file":{"name":"${sessionName}","ur`));
+						signal?.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+					},
+				});
+				return new Response(stream, { status: 200, headers: { "content-type": "application/json" } });
+			}
+			if (plan.reply) return reply(plan.reply, init?.signal);
+			const state = options.uploadState === null ? undefined : (options.uploadState ?? (options.states ? "PROCESSING" : "ACTIVE"));
+			return reply({ json: { file: { name: sessionName, uri: `${u.origin}/v1beta/${sessionName}`, mimeType: "application/pdf", ...(state ? { state } : {}) } } });
 		}
 		const fileMatch = /^\/v1beta\/(files\/[a-z0-9-]+)$/.exec(u.pathname);
 		if (fileMatch && method === "GET") {
@@ -150,6 +178,8 @@ function installFake(options: FakeOptions = {}) {
 		generates,
 		deleted,
 		uploads,
+		/** The names of the committed uploads, in order. */
+		committed: () => [...uploads.keys()],
 		restore: () => {
 			globalThis.fetch = original;
 		},
@@ -165,7 +195,6 @@ const useFake = (options?: FakeOptions) => (fake = installFake(options));
 
 const quick = { baseUrl: BASE, processingPollMs: 1, backoffBaseMs: 1, maxRateLimitWaitMs: 1_000 };
 const converter = (over: Partial<import("../src/server/converters/gemini.ts").GeminiConverterOptions> = {}) => gemini.createGeminiConverter({ apiKey: KEY, ...quick, ...over });
-const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]);
 
 async function run(c: PdfConverter, pageCount: number, signal = new AbortController().signal) {
 	const progress: [string, number | undefined, number | undefined][] = [];
@@ -202,6 +231,10 @@ describe("Gemini converter: the flow", () => {
 		assert.equal(start!.headers.get("x-goog-upload-header-content-length"), String(pdf.byteLength));
 		assert.equal(start!.headers.get("x-goog-upload-header-content-type"), "application/pdf");
 		assert.match(JSON.parse(start!.body!).file.display_name, /^learnharness-[0-9a-f-]+\.pdf$/);
+		// the client names the upload itself (File.name), so it can delete it even when the finalize answer is lost
+		assert.match(JSON.parse(start!.body!).file.name, /^files\/lh-[0-9a-f-]{36}$/);
+		assert.equal(JSON.parse(start!.body!).file.name.length - "files/".length <= 40, true);
+		assert.deepEqual(f.committed(), [JSON.parse(start!.body!).file.name]);
 		assert.match(bytes!.url, /upload_id=session-abc123/);
 		assert.equal(bytes!.headers.get("x-goog-upload-offset"), "0");
 		assert.deepEqual([...f.uploads.values()][0], pdf);
@@ -210,14 +243,14 @@ describe("Gemini converter: the flow", () => {
 
 		assert.deepEqual(f.generates.map((g) => [g.from, g.to, g.total]), [[1, 2, 5], [3, 4, 5], [5, 5, 5]]);
 		const body = f.generates[0]!.body as { contents: { parts: Record<string, unknown>[] }[]; generationConfig: Record<string, unknown> };
-		assert.deepEqual(body.contents[0]!.parts[0], { fileData: { mimeType: "application/pdf", fileUri: `${BASE}/v1beta/files/upload1` }, documentMetadata: { startPage: 1, endPage: 2, contentLayers: ["PAGE_IMAGE", "PAGE_TEXT"] } });
+		assert.deepEqual(body.contents[0]!.parts[0], { fileData: { mimeType: "application/pdf", fileUri: `${BASE}/v1beta/${f.committed()[0]}` }, documentMetadata: { startPage: 1, endPage: 2, contentLayers: ["PAGE_IMAGE", "PAGE_TEXT"] } });
 		assert.match(String(body.contents[0]!.parts[1]!.text), /<<<PAGE 1>>>/);
 		assert.deepEqual(body.generationConfig, { maxOutputTokens: gemini.GEMINI_MAX_OUTPUT_TOKENS, thinkingConfig: { thinkingLevel: "LOW" } });
 		assert.match(f.seen.find((s) => s.url.includes(":generateContent"))!.url, new RegExp(`/v1beta/models/${gemini.GEMINI_DEFAULT_MODEL.replace(/\./g, "\\.")}:generateContent$`));
 
 		for (const s of f.seen) assert.equal(s.headers.get("x-goog-api-key"), KEY);
 		noKeyAnywhere(f);
-		assert.deepEqual(f.deleted, ["files/upload1"]);
+		assert.deepEqual(f.deleted, f.committed());
 		assert.equal(f.seen.at(-1)!.method, "DELETE");
 		assert.deepEqual(result.progress.map((p) => p[0]), ["uploading", "processing", "processing", "converting", "converting", "converting", "converting", "complete"]);
 		assert.deepEqual(result.progress.filter((p) => p[0] === "converting").map((p) => p[1]), [0, 2, 4, 5]);
@@ -237,7 +270,7 @@ describe("Gemini converter: the flow", () => {
 		const error = await failure(run(converter(), 2));
 		assert.equal(error.kind, "conversion_failed");
 		assert.match(error.message, /the file is damaged/);
-		assert.deepEqual(f.deleted, ["files/upload1"]);
+		assert.deepEqual(f.deleted, f.committed());
 	});
 
 	it("refuses an upload address on another host (the key would go with the bytes)", async () => {
@@ -259,7 +292,7 @@ describe("Gemini converter: the flow", () => {
 
 describe("Gemini converter: page markers", () => {
 	it("parses one marker per page, unwraps a fence, keeps blank pages empty", () => {
-		const parsed = gemini.parseGeminiPages("```markdown\n<<<PAGE 3>>>\n# Title\n\n| a | b |\n|---|---|\n<<< PAGE 4 >>>\n\n<<<PAGE 5>>>\n[blank page]\n```", 3, 5);
+		const parsed = gemini.parseGeminiPages("```markdown\n<<<PAGE 3>>>\n# Title\n\n| a | b |\n|---|---|\n<<< PAGE 4 >>>\n\n<<<PAGE 5>>>\n```", 3, 5);
 		assert.deepEqual(parsed, {
 			ok: true,
 			pages: [
@@ -268,6 +301,39 @@ describe("Gemini converter: page markers", () => {
 				{ page: 5, status: "empty", reason: gemini.GEMINI_EMPTY_REASON },
 			],
 		});
+	});
+
+	it("a page whose only text is \"Empty\" or \"Blank\" keeps it; only a page with nothing after its marker is empty", () => {
+		assert.deepEqual(gemini.parseGeminiPages("<<<PAGE 1>>>\nEmpty\n<<<PAGE 2>>>\n\n<<<PAGE 3>>>\n[Blank]", 1, 3), {
+			ok: true,
+			pages: [
+				{ page: 1, status: "ok", markdown: "Empty" },
+				{ page: 2, status: "empty", reason: gemini.GEMINI_EMPTY_REASON },
+				{ page: 3, status: "ok", markdown: "[Blank]" },
+			],
+		});
+	});
+
+	it("a marker line inside a code fence is page text, with backticks or tildes, also inside a wrapped reply", () => {
+		const example = (fence: string) => `Write this:\n${fence}text\n${gemini.GEMINI_PAGE_MARKER(2)}\n${fence}\nAfter the example.`;
+		for (const fence of ["```", "~~~", "````"]) {
+			assert.deepEqual(gemini.parseGeminiPages(`${gemini.GEMINI_PAGE_MARKER(1)}\n${example(fence)}\n${gemini.GEMINI_PAGE_MARKER(2)}\nPage two.`, 1, 2), {
+				ok: true,
+				pages: [
+					{ page: 1, status: "ok", markdown: example(fence) },
+					{ page: 2, status: "ok", markdown: "Page two." },
+				],
+			}, fence);
+			// without the real marker, the one in the example does not stand in for it
+			assert.deepEqual(gemini.parseGeminiPages(`${gemini.GEMINI_PAGE_MARKER(1)}\n${example(fence)}`, 1, 2), { ok: false, reason: "the reply stops after page 1 of 1–2" }, fence);
+		}
+		// a shorter or different fence does not close a fence
+		assert.equal(gemini.parseGeminiPages(`${gemini.GEMINI_PAGE_MARKER(1)}\n\`\`\`\`\n~~~\n\`\`\`\n${gemini.GEMINI_PAGE_MARKER(2)}\n\`\`\`\``, 1, 2).ok, false);
+		// the response-wide wrapper is removed first; the fence inside page 1 still holds its marker as text
+		const wrapped = `\`\`\`markdown\n${gemini.GEMINI_PAGE_MARKER(1)}\n${example("```")}\n${gemini.GEMINI_PAGE_MARKER(2)}\nPage two.\n\`\`\``;
+		assert.deepEqual(gemini.parseGeminiPages(wrapped, 1, 2), { ok: true, pages: [{ page: 1, status: "ok", markdown: example("```") }, { page: 2, status: "ok", markdown: "Page two." }] });
+		// a marker indented as a code block is text too
+		assert.equal(gemini.parseGeminiPages(`${gemini.GEMINI_PAGE_MARKER(1)}\n    ${gemini.GEMINI_PAGE_MARKER(2)}`, 1, 2).ok, false);
 	});
 
 	it("refuses missing, duplicated, out-of-range and shifted markers, and text before the first", () => {
@@ -367,7 +433,7 @@ describe("Gemini converter: rate limits", () => {
 		assert.match(error.message, /daily free-tier quota/);
 		assert.match(error.message, /midnight Pacific time, in about 12 hours/);
 		assert.equal(f.generates.length, 1, "no retry");
-		assert.deepEqual(f.deleted, ["files/upload1"]);
+		assert.deepEqual(f.deleted, f.committed());
 	});
 
 	it("the Interactions API's quota_exceeded code counts as the daily quota too", async () => {
@@ -391,6 +457,126 @@ describe("Gemini converter: rate limits", () => {
 	it("minutesUntilPacificMidnight counts to the next midnight in Los Angeles", () => {
 		assert.equal(gemini.minutesUntilPacificMidnight(new Date("2026-11-26T07:30:00Z")), 30); // 23:30 PST
 		assert.equal(gemini.minutesUntilPacificMidnight(new Date("2026-07-01T06:00:00Z")), 60); // 23:00 PDT
+	});
+});
+
+describe("Gemini converter: review fixes (2026-11-25)", () => {
+	const example = `Write this:\n\`\`\`text\n${gemini.GEMINI_PAGE_MARKER(2)}\n\`\`\`\nAfter the example.`;
+
+	it("a fenced example marker with the real page 2 marker missing: the batch is split, nothing moves to page 2", async () => {
+		const f = useFake({ generate: (g) => answer(g.from === 1 && g.to === 2 ? `${gemini.GEMINI_PAGE_MARKER(1)}\n${example}` : g.from === 1 ? `${gemini.GEMINI_PAGE_MARKER(1)}\n${example}` : markedPages(g.from, g.to)) });
+		const result = await run(converter({ batchPages: 2 }), 2);
+		assert.deepEqual(f.generates.map((g) => [g.from, g.to]), [[1, 2], [1, 1], [2, 2]]);
+		assert.deepEqual(result.pages, [
+			{ page: 1, status: "ok", markdown: example },
+			{ page: 2, status: "ok", markdown: pageText(2) },
+		]);
+	});
+
+	it("a fenced example marker with the real page 2 marker present: one call, each page keeps its own text", async () => {
+		const f = useFake({ generate: () => answer(`${gemini.GEMINI_PAGE_MARKER(1)}\n${example}\n${gemini.GEMINI_PAGE_MARKER(2)}\n${pageText(2)}`) });
+		const result = await run(converter({ batchPages: 2 }), 2);
+		assert.equal(f.generates.length, 1, "no retry for a correct transcription");
+		assert.deepEqual(result.pages, [
+			{ page: 1, status: "ok", markdown: example },
+			{ page: 2, status: "ok", markdown: pageText(2) },
+		]);
+	});
+
+	it("an abort while the finalize answer is read deletes the upload Google already committed", async () => {
+		const controller = new AbortController();
+		const f = useFake({
+			finalize: () => {
+				setTimeout(() => controller.abort(), 10);
+				return { commit: true, reply: "hang-body" };
+			},
+		});
+		const error = await failure(run(converter(), 2, controller.signal));
+		assert.equal(error.kind, "aborted");
+		assert.equal(f.committed().length, 1);
+		assert.deepEqual(f.deleted, f.committed(), "DELETE targets the committed name");
+		assert.equal(f.generates.length, 0);
+	});
+
+	it("a finalize answer with a valid name but no URI is bad_response, and the file is deleted", async () => {
+		const f = useFake({ finalize: () => ({ commit: true, reply: { json: { file: { name: "files/whatever", state: "ACTIVE" } } } }) });
+		const error = await failure(run(converter(), 1));
+		assert.equal(error.kind, "bad_response");
+		assert.match(error.message, /no valid file URI/);
+		// the name this client chose, and the one in the answer
+		assert.deepEqual(f.deleted, [...f.committed(), "files/whatever"]);
+	});
+
+	it("an omitted file state is polled (omitted → PROCESSING → ACTIVE); generation starts only after ACTIVE", async () => {
+		const f = useFake({ uploadState: null, states: ["PROCESSING", "ACTIVE"] });
+		const result = await run(converter(), 1);
+		assert.deepEqual(result.pages, [{ page: 1, status: "ok", markdown: pageText(1) }]);
+		const gets = f.seen.flatMap((s, i) => (s.method === "GET" ? [i] : []));
+		assert.equal(gets.length, 2);
+		const firstGenerate = f.seen.findIndex((s) => s.url.includes(":generateContent"));
+		assert.ok(firstGenerate > gets[1]!, "generateContent after the GET that answered ACTIVE");
+		// STATE_UNSPECIFIED is not ACTIVE either
+		f.restore();
+		const g = useFake({ uploadState: "STATE_UNSPECIFIED", states: ["ACTIVE"] });
+		await run(converter(), 1);
+		assert.ok(g.seen.findIndex((s) => s.url.includes(":generateContent")) > g.seen.findIndex((s) => s.method === "GET"));
+	});
+
+	it("a file precondition error is about the file, not the key; a location precondition still is about the key", async () => {
+		useFake({ generate: () => ({ status: 400, json: { error: { code: 400, message: "The File abc is not in an ACTIVE state and usage is not allowed.", status: "FAILED_PRECONDITION" } } }) });
+		const file = await failure(run(converter(), 1));
+		assert.equal(file.kind, "conversion_failed");
+		assert.doesNotMatch(file.message, /billing|country/);
+		fake!.restore();
+		useFake({ generate: () => ({ status: 400, json: { error: { code: 400, message: "User location is not supported for the API use.", status: "FAILED_PRECONDITION" } } }) });
+		const location = await failure(run(converter(), 1));
+		assert.equal(location.kind, "auth");
+		assert.match(location.message, /not offered in every country/);
+	});
+
+	it("an empty success answer is one call, bad_response, and the file is deleted; a documented block leaves only the page empty", async () => {
+		const f = useFake({ generate: () => ({ json: {} }) });
+		const error = await failure(run(converter({ batchPages: 10 }), 10));
+		assert.equal(error.kind, "bad_response");
+		assert.match(error.message, /no candidate, no block reason/);
+		assert.equal(f.generates.length, 1, "no split, no retry");
+		assert.deepEqual(f.deleted, f.committed());
+		f.restore();
+		useFake({ generate: (g) => (g.from === g.to && g.from === 2 ? { json: { promptFeedback: { blockReason: "SAFETY" } } } : g.from <= 2 && g.to >= 2 ? { json: { promptFeedback: { blockReason: "SAFETY" } } } : answer(markedPages(g.from, g.to))) });
+		const result = await run(converter({ batchPages: 3 }), 3);
+		assert.deepEqual(result.pages.map((p) => p.status), ["ok", "empty", "ok"]);
+		assert.match((result.pages[1] as { reason: string }).reason, /blocked the request \(SAFETY\)/);
+	});
+
+	it("a per-minute 429 on the bytes waits, asks the session how far it got, and sends the bytes again", async () => {
+		const f = useFake({ finalize: (n) => (n === 1 ? { commit: false, reply: quota429("PerMinute", "0.02s") } : { commit: true }) });
+		const result = await run(converter(), 1);
+		assert.deepEqual(result.pages, [{ page: 1, status: "ok", markdown: pageText(1) }]);
+		const commands = f.seen.map((s) => s.headers.get("x-goog-upload-command")).filter(Boolean);
+		assert.deepEqual(commands, ["start", "upload, finalize", "query", "upload, finalize"]);
+		assert.equal(f.seen.filter((s) => s.headers.get("x-goog-upload-command") === "upload, finalize").at(-1)!.headers.get("x-goog-upload-offset"), "0");
+		assert.deepEqual([...f.uploads.values()][0], pdf);
+		assert.deepEqual(f.deleted, f.committed());
+	});
+
+	it("a 429 after Google committed the bytes fetches the file instead of uploading twice", async () => {
+		const f = useFake({ finalize: () => ({ commit: true, reply: quota429("PerMinute", "0.01s") }) });
+		const result = await run(converter(), 1);
+		assert.deepEqual(result.pages, [{ page: 1, status: "ok", markdown: pageText(1) }]);
+		assert.equal(f.seen.filter((s) => s.headers.get("x-goog-upload-command") === "upload, finalize").length, 1, "the bytes were sent once");
+		assert.ok(f.seen.some((s) => s.method === "GET" && s.url === `${BASE}/v1beta/${f.committed()[0]}`));
+		assert.deepEqual(f.deleted, f.committed());
+	});
+
+	it("a daily-quota 429 on the bytes is rate_limit with the reset time, not \"a few minutes\", and is not retried", async () => {
+		const f = useFake({ finalize: () => ({ commit: false, reply: quota429("PerDay", "30s") }) });
+		const error = await failure(run(converter({ now: () => new Date("2026-11-25T20:00:00Z") }), 1));
+		assert.equal(error.kind, "rate_limit");
+		assert.match(error.message, /daily free-tier quota/);
+		assert.match(error.message, /midnight Pacific time, in about 12 hours/);
+		assert.doesNotMatch(error.message, /few minutes/);
+		assert.equal(f.seen.filter((s) => s.headers.get("x-goog-upload-command") === "upload, finalize").length, 1);
+		assert.equal(f.seen.some((s) => s.headers.get("x-goog-upload-command") === "query"), false);
 	});
 });
 
@@ -429,7 +615,7 @@ describe("Gemini converter: errors", () => {
 		const error = await failure(run(c, 2));
 		assert.equal(error.kind, "unreachable");
 		assert.equal(f.generates.length, 2, "one retry");
-		assert.deepEqual(f.deleted, ["files/upload1"]);
+		assert.deepEqual(f.deleted, f.committed());
 
 		const bytes = validationPdf();
 		const fell = await convertWithFallback({ converter: c, requestedId: "gemini", warnings: [] }, { bytes, filename: "t.pdf", pageCount: 2 }, { signal: new AbortController().signal, onProgress: () => {} });
@@ -461,14 +647,14 @@ describe("Gemini converter: errors", () => {
 		});
 		const error = await failure(run(converter(), 3, controller.signal));
 		assert.equal(error.kind, "aborted");
-		assert.deepEqual(f.deleted, ["files/upload1"]);
+		assert.deepEqual(f.deleted, f.committed());
 	});
 
 	it("the job deadline is timeout", async () => {
 		const f = useFake({ generate: () => "hang" });
 		const error = await failure(run(converter({ jobDeadlineMs: 30 }), 1));
 		assert.equal(error.kind, "timeout");
-		assert.deepEqual(f.deleted, ["files/upload1"]);
+		assert.deepEqual(f.deleted, f.committed());
 	});
 
 	it("the key never appears in an error, a URL or the pages, even when Google echoes it", async () => {
@@ -621,6 +807,22 @@ describe("Gemini converter: Settings API", () => {
 		assert.match((await put({ id: "gemini", apiKey: "short" })).json.error!, /at least 8 characters/);
 		assert.match((await put({ id: "docling", model: "gemini-3.8-flash" })).json.error!, /Only Google AI Studio \(Gemini\) has a model setting/);
 		assert.deepEqual(readSettings()!.pdfConversion ?? {}, {});
+	});
+
+	it("a malformed model id is refused and the saved model stays; only a blank field resets it", async () => {
+		await put({ id: "gemini", model: "gemini-3.6-flash" });
+		for (const typed of ["models/models/gemini-3.6-flash", "models/", " models/ "]) {
+			const r = await put({ id: "gemini", model: typed });
+			assert.equal(r.status, 400, typed);
+			assert.match(r.json.error!, /model id may hold only/, typed);
+			assert.deepEqual(readSettings()!.pdfConversion!.gemini, { model: "gemini-3.6-flash" }, typed);
+		}
+		const r = await put({ id: "gemini", model: " models/gemini-3.5-flash-lite " });
+		assert.equal(r.json.converters.find((c) => c.id === "gemini")!.model?.value, "gemini-3.5-flash-lite");
+		assert.deepEqual(sanitizeUserSettings(JSON.parse(readText(settingsFile())))!.pdfConversion!.gemini, { model: "gemini-3.5-flash-lite" }, "the saved value survives the sanitizer");
+		assert.equal(gemini.geminiModelId("models/"), undefined);
+		assert.equal(gemini.geminiModelId("models/models/gemini-3.6-flash"), undefined);
+		assert.equal(gemini.geminiModelId(" "), gemini.GEMINI_DEFAULT_MODEL);
 	});
 
 	it("can be selected with only the provider key", async () => {

@@ -1,6 +1,6 @@
 import type { ConverterEntry, ConvertersOverview, ConverterValidationReport } from "../../core/converter-settings.ts";
 import { customConverterId, customProfileIdOf, sameServiceUrl, serviceOrigin, type HttpConverterProfile } from "../../core/http-converter-spec.ts";
-import { CURRENT_SETTINGS_VERSION, normalizeBaseUrl, type PdfConversionSettings } from "../../core/settings.ts";
+import { CURRENT_SETTINGS_VERSION, GEMINI_MODEL_SETTING, normalizeBaseUrl, type PdfConversionSettings } from "../../core/settings.ts";
 import { writeDoclingAuth } from "../../store/auth.ts";
 import { readSettings, writeSettings } from "../../store/settings.ts";
 import { writeDoclingCredential } from "./auth.ts";
@@ -18,6 +18,7 @@ import {
 	GEMINI_PRIVACY_NOTE,
 	GEMINI_UNVERIFIED,
 	geminiModelId,
+	normalizeGeminiModel,
 } from "./gemini.ts";
 import { listCustomProfiles, loadCustomProfile, removeCustomProfile, saveCustomProfile } from "./custom-profiles.ts";
 import { API_KEY_MAX_LENGTH, apiKeyProblem } from "./http-common.ts";
@@ -214,9 +215,11 @@ function configureGemini(input: ConfigureConverterInput, settings: PdfConversion
 	}
 	const next: PdfConversionSettings = structuredClone(settings);
 	if (input.model !== undefined) {
-		const typed = input.model.trim().replace(/^models\//, "");
-		if (typed && !geminiModelId(typed)) return { ok: false, error: "The model id may hold only lowercase letters, digits, dots and dashes (for example gemini-3.8-flash). Nothing was saved." };
-		next.gemini = typed && typed !== GEMINI_DEFAULT_MODEL ? { ...settings.gemini, model: typed } : (({ model: _drop, ...rest }) => rest)(settings.gemini ?? {});
+		// normalized once, and that same value validated and saved; only a blank field resets to the default
+		const blank = !input.model.trim();
+		const typed = normalizeGeminiModel(input.model);
+		if (!blank && !GEMINI_MODEL_SETTING.test(typed)) return { ok: false, error: "The model id may hold only lowercase letters, digits, dots and dashes (for example gemini-3.8-flash). Nothing was saved." };
+		next.gemini = !blank && typed !== GEMINI_DEFAULT_MODEL ? { ...settings.gemini, model: typed } : (({ model: _drop, ...rest }) => rest)(settings.gemini ?? {});
 	}
 	if (input.select) {
 		const keyAfter = !!apiKey || (!input.removeKey && geminiKeySource() === "own") || readGoogleProviderKey() !== undefined;
