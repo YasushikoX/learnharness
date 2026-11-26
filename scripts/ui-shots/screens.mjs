@@ -380,22 +380,26 @@ export async function captureScreens({ page, origin, theme, stage, signal, withL
 		}
 
 		await click(testId("new-course"));
-		// a new class opens on an empty, focused "Class name" field in the top bar
+		// a new class (owner, UI round 8): no side panel; a labelled "Class name" field at the top of the setup card, empty
+		// and focused; "New class" muted in the top bar
 		await page.waitForFunction(() => {
-			const field = document.querySelector('[data-testid="course-title"]');
+			const field = document.querySelector('[data-testid="setup-name-input"]');
 			return location.pathname.startsWith("/course/") && field?.value === "" && document.activeElement === field;
 		});
 		await visible(testId("class-setup"));
-		await capture(27, "new-class", "A new class: the name field in the top bar, the setup checklist in the center, only Files and Delete class… in the side panel.");
+		await capture(27, "new-class", "A new class: the Class name field at the top of the setup card (focused), the checklist, Delete class… in its footer, no side panel.");
 		if (theme === "dark") {
 			await page.setViewport(narrow);
 			await settle();
-			await capture(32, "new-class-1024", "A new class at 1024 × 768, the side panel closed (the checklist holds the files).");
-			await click(testId("class-panel-toggle"));
-			await visible(testId("class-files"));
-			await capture(64, "new-class-1024-panel", "A new class at 1024 × 768 with the side panel opened: Files and Delete class… only.");
+			await capture(32, "new-class-1024", "A new class at 1024 × 768: no side panel and no panel toggle (the checklist holds the files).");
 			await page.setViewport(desktop);
+			await settle();
+			await page.focus('[data-testid="setup-name-input"]');
 		}
+		await page.keyboard.type("Linear Algebra");
+		await page.keyboard.press("Enter");
+		await visible(testId("setup-name-saved"));
+		await capture(64, "new-class-named", "The new class after typing its name and Enter: the quiet Saved tick, and the name in the top bar.");
 
 		await small();
 		return entries;

@@ -42,7 +42,7 @@ export function SearchMenuList<T>({
 	useEffect(() => { searchRef.current?.focus(); }, []);
 	// UI round 8: the menu opens on the current choice, not on the top of the list
 	const loaded = items !== undefined;
-	useEffect(() => { if (loaded) listRef.current?.querySelector("[data-selected]")?.scrollIntoView?.({ block: "nearest" }); }, [loaded]);
+	useEffect(() => { if (loaded) listRef.current?.querySelector("[data-selected]")?.scrollIntoView?.({ block: "center" }); }, [loaded]);
 	useEffect(() => {
 		if (menuIdx === null) return;
 		listRef.current?.querySelector(`[data-idx="${menuIdx}"]`)?.scrollIntoView({ block: "nearest" });

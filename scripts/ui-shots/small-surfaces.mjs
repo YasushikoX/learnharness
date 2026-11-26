@@ -196,12 +196,11 @@ export async function captureSmallSurfaces(kit) {
 		route.patch("GET", at(api(ids.biology)), view => ({ ...view, weighing: true })),
 	];
 	await visit(course(ids.biology), testId("course-overview"));
-	// a weighed class has its Weigh again in the side panel; the running line shows in the exam column
+	// a weighed class has its Weigh again in the side panel; since round 8 the running state is that button itself
 	await scroll(testId("course-exam-settings"), "center");
 	await click(`${testId("course-exam-settings")} ${testId("course-weigh-button")}`);
 	await visible(testId("course-weighing"));
-	await scroll(testId("course-exam-column"), "center");
-	await capture("80b", "weighing", "Weigh again running: “Reading the exams…” in the exam column beside Next up.", { around: [testId("course-exam-column")], pad: 16 });
+	await capture("80b", "weighing", "Weigh again running: the button itself shows “Weighing…” with its spinner, in the side panel.", { around: [testId("class-settings")], pad: 8 });
 	for (const remove of weighing) remove();
 
 	await withCourse(ids.biology, record => ({
@@ -217,17 +216,17 @@ export async function captureSmallSurfaces(kit) {
 		await scroll(testId("lectures"), "center");
 		await visible(testId("lectures-unplaced"));
 		await capture("82b", "lectures-link-error", "A failed linking step: “Placing skills failed: …” with Place skills, under the lectures.", { around: [testId("lectures")], pad: 0 });
-		await scroll(testId("course-exam-column"), "center");
+		await scroll(testId("course-exam-settings"), "center");
 		await visible(testId("course-weights-error"));
-		await capture("82c", "weights-error", "A failed weighing pass in the exam column.", { around: [testId("course-exam-column")], pad: 16 });
+		await capture("82c", "weights-error", "A failed weighing pass: the shared notice under Weigh again in the side panel, with Try again.", { around: [testId("class-settings")], pad: 8 });
 		const linking = [
 			route.json("POST", at(`${api(ids.biology)}/lectures/link`), { ok: true }),
 			route.patch("GET", at(api(ids.biology)), view => ({ ...view, standing: { ...view.standing, linking: true, linkError: undefined } })),
 		];
 		await scroll(testId("lectures"), "center");
-		await click(testId("lectures-link"));
+		await click(testId("lectures-link-error-retry"));
 		await visible(testId("lectures-linking"));
-		await capture("80c", "lectures-linking", "The linking step running: “Placing the skills in the lectures…”.", { around: [testId("lectures")], pad: 0 });
+		await capture("80c", "lectures-linking", "The linking step running: the button shows “Placing the skills…” with its spinner.", { around: [testId("lectures")], pad: 0 });
 		for (const remove of linking) remove();
 	});
 
@@ -346,6 +345,12 @@ export async function captureSmallSurfaces(kit) {
 		await capture("81c", "empty-library", "First run: no classes, no sessions in the sidebar, and the empty Today.");
 	});
 
+	// ── A named class's title: a fill and a pencil on hover (owner, round 8) ───────────────────────────────────
+	await visit(course(ids.biology), testId("course-overview"));
+	await hover(testId("course-title"));
+	await capture("86a", "class-title-hover", "The class title on hover: a faint fill and a pencil (click to rename).", { around: [testId("course-title")], pad: 48 });
+	await page.mouse.move(700, 600);
+
 	// ── Panels opening and closing ──────────────────────────────────────────────────────────────────────────────
 	await visit(course(ids.biology), testId("course-overview"));
 	await click('button[aria-label="Close sidebar"]');
@@ -356,8 +361,10 @@ export async function captureSmallSurfaces(kit) {
 	await capture("84b", "class-1024-sidebar-collapsed", "The class page at 1024 × 768 with the sidebar collapsed and the side panel closed.");
 	await click(testId("class-panel-toggle"));
 	await visible(testId("class-files"));
-	await capture("84c", "class-1024-panel-open", "At 1024 × 768 with the sidebar collapsed, the side panel opened from the header (beside the page, not over it).");
-	await click(testId("class-panel-toggle"));
+	await capture("84c", "class-1024-panel-open", "At 1024 × 768 with the sidebar collapsed, the side panel opened from the header: a sheet over the page (Esc or a click outside closes it).");
+	// the 1024 sheet closes with Esc (its backdrop covers the header's toggle)
+	await page.keyboard.press("Escape");
+	await hidden(testId("class-panel-backdrop"));
 	await click('button[aria-label="Open sidebar"]');
 	await visible('button[aria-label="Close sidebar"]');
 	await settle();

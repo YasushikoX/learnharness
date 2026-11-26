@@ -54,7 +54,7 @@ export function CoursePace({
 		>
 			<span className="w-40 [&>span]:w-full">
 				<ThinSelect testid="course-pace-select" ariaLabel="class default pace" value={pace ?? ""} onChange={(v) => void save(v)}>
-					<option value="">{`Default (${globalPace ? paceInfo(globalPace).label : "from Settings"})`}</option>
+					<option value="">{`Default${globalPace ? ` (${paceInfo(globalPace).label})` : ""}`}</option>
 					{PACES.map((p) => (
 						<option key={p.id} value={p.id}>
 							{p.label}

@@ -492,7 +492,8 @@
 
 /* A list inside a form shows whole 28px rows only (SPEC §9): 5 rows, then it scrolls under a soft bottom fade. */
 .lh-row-list {
-	max-height: 140px;
+	/* five 28px rows plus the box's 2px padding and 1px border on each side */
+	max-height: calc(140px + 6px);
 	overflow-y: auto;
 	scroll-snap-type: y proximity;
 }
