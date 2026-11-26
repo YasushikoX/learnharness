@@ -414,6 +414,89 @@ export function foldSkills(events: readonly SkillEvent[], requiresOf: (id: strin
 	return states;
 }
 
+// ─── self-reports (WP8, 2026-11-25; core/assessments.ts) ───────────────────
+
+/** A "know" report makes an unlearned skill learned with this much stability: a short check (the review queue) falls due
+ *  within two days, and understanding reads about 1.9. */
+export const SELF_KNOW_DAYS = 2;
+/** FSRS's starting difficulty for a "good" first review, used for a self-reported skill's state. */
+const SELF_KNOW_DIFFICULTY = algorithm.next_state(null, 0, 3).difficulty;
+
+export interface SelfReportInput {
+	id: string;
+	/** ms — when it was said. */
+	at: number;
+	skillIds: readonly string[];
+	stance: "know" | "shaky" | "dont_know";
+}
+
+/** A skill's self-report in force, for the page's marker. */
+export interface ActiveSelfReport {
+	id: string;
+	stance: SelfReportInput["stance"];
+	at: number;
+}
+
+/**
+ * THE SELF-REPORT RULE (WP8): what the learner SAID moves a skill a little; real evidence always wins. Applied after the
+ * fold (`states` must be the fold of `events`), never written as an event. Per skill, the newest report counts, and only
+ * while no real evidence on the skill is at or after it: any non-dismissed event on it (a graded problem, a finish, a
+ * placement answer, a miss), or credit the fold gave it through a skill above it (its folded `lastReview`). The first
+ * real result overrides it, whichever way it went.
+ *
+ *   know       an unlearned skill becomes learned with SELF_KNOW_DAYS of stability (it leaves Next up, unlocks what
+ *              builds on it, and is due for review within two days: the short check); a learned skill is unchanged.
+ *   shaky      a learned skill's review falls due twice as soon from the report on (its last review is moved back by
+ *              half the time that was left; stability, understanding and learned stay); an unlearned skill: no effect.
+ *   dont_know  a learned skill is due for review from the report on (its last review is moved back a whole stability and
+ *              an hour: recall reads just under 90% then and falls); an unlearned skill is returned in `needsWork`, which Next up puts first
+ *              among its peers (core/exam-plan.ts orderNextUp).
+ *
+ * Pure: returns new states (the input map is not changed).
+ */
+export function applySelfReports(
+	states: ReadonlyMap<string, SkillState>,
+	reports: readonly SelfReportInput[],
+	events: readonly Pick<SkillEvent, "skillId" | "at" | "outcome">[],
+): { states: Map<string, SkillState>; needsWork: Set<string>; active: Map<string, ActiveSelfReport> } {
+	const out = new Map(states);
+	const needsWork = new Set<string>();
+	const active = new Map<string, ActiveSelfReport>();
+	const lastEvidence = new Map<string, number>();
+	const saw = (skillId: string, at: number) => {
+		if ((lastEvidence.get(skillId) ?? -Infinity) < at) lastEvidence.set(skillId, at);
+	};
+	// direct evidence, negative included (a miss on an unlearned skill makes no FSRS state but is still evidence)
+	for (const e of events) if (e.outcome !== "dismissed") saw(e.skillId, e.at);
+	// and every skill the fold credited, inferred credit included (a prerequisite credited through placement on a skill
+	// above it: review 1, finding 8): its folded state's last review is evidence at that time
+	for (const [skillId, s] of states) saw(skillId, s.lastReview);
+	const newest = new Map<string, SelfReportInput>();
+	for (const r of reports) {
+		for (const id of r.skillIds) {
+			const held = newest.get(id);
+			if (!held || held.at < r.at) newest.set(id, r);
+		}
+	}
+	for (const [skillId, r] of newest) {
+		if ((lastEvidence.get(skillId) ?? -Infinity) >= r.at) continue; // real evidence since: it wins
+		active.set(skillId, { id: r.id, stance: r.stance, at: r.at });
+		const state = out.get(skillId);
+		if (r.stance === "know") {
+			if (!state) out.set(skillId, { stability: SELF_KNOW_DAYS, difficulty: SELF_KNOW_DIFFICULTY, lastReview: r.at });
+		} else if (r.stance === "shaky") {
+			if (!state) continue;
+			const due = reviewAt(state);
+			if (due > r.at) out.set(skillId, { ...state, lastReview: state.lastReview - (due - r.at) / 2 });
+		} else if (state) {
+			// an hour past the review line, so it is plainly due (not a rounding error away from 90%)
+			const shifted = r.at - state.stability * DAY_MS - 3_600_000;
+			if (shifted < state.lastReview) out.set(skillId, { ...state, lastReview: shifted });
+		} else needsWork.add(skillId);
+	}
+	return { states: out, needsWork, active };
+}
+
 /** The skills one course has evidence on: anything its own sessions
  *  learned (inferred placement credit included — a fold of the course's
  *  events alone) and anything they touched at all (a concluded check, a
@@ -500,9 +583,11 @@ export function partitionSkills(
 	 *  no context checks. */
 	inCourse?: ReadonlySet<string>,
 	/** The exam instant (ms), when an exam is coming (core/exam-plan.ts examInstant): a skill that will have faded below
-	 *  the target by then counts as needing review now. Absent = no exam. */
-	examAt?: number,
+	 *  the target by then counts as needing review now. Absent = no exam. WP8: or per skill, the instant of the nearest
+	 *  assessment that covers it (core/assessments.ts targetDateFor). */
+	examAt?: number | ((skillId: string) => number | undefined),
 ): SkillPartition {
+	const targetOf = typeof examAt === "function" ? examAt : () => examAt;
 	const ids = courseSkillIds.filter((id) => skillsById.has(id));
 	const requiresOf = (id: string) => skillsById.get(id)?.requires ?? [];
 	const order = topoOrder(ids, requiresOf) ?? ids;
@@ -512,7 +597,8 @@ export function partitionSkills(
 		const learned = state !== null;
 		const known = state !== null && isKnown(state);
 		const due = state !== null && needsReview(state, now);
-		const fading = state !== null && !due && examAt !== undefined && fadesBefore(state, examAt);
+		const target = state !== null && !due ? targetOf(id) : undefined;
+		const fading = state !== null && !due && target !== undefined && fadesBefore(state, target);
 		const missing = requiresOf(id).filter((req) => skillsById.has(req) && !skillStates.has(req));
 		out.states.set(id, { state, learned, known, needsReview: due, fading, missing });
 		if (learned && (due || fading)) out.review.push(id);

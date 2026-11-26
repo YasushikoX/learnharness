@@ -13,6 +13,7 @@
 import type { LessonLanguage } from "../language.ts";
 import type { Pace } from "../pace.ts";
 import type { CoursePlan, SkillWeights } from "../exam-plan.ts";
+import type { Assessment, AssessmentEntry, AssessmentProposal, SelfReport, SelfReportEntry } from "../assessments.ts";
 import type { ExtractionStageUsage } from "./chat.ts";
 
 // ─── Skills (the graph's second node kind) ──────────────────────────────────
@@ -173,6 +174,8 @@ export interface CourseDraftUsage {
 	startedAt: number;
 	at: string;
 	durationMs: number;
+	/** Which pass on the planner slot: absent = drafting the skill map; "find-assessments" = the syllabus pass (WP8). */
+	pass?: "find-assessments";
 	planner: ExtractionStageUsage;
 }
 
@@ -225,6 +228,18 @@ export interface CourseRecord {
 	coverage?: CourseCoverage;
 	/** Why the last "Map the class's terms" pass failed. */
 	coverageError?: string;
+	/** The class's quizzes, exams and assignments (WP8, core/assessments.ts), tombstones included (a deletion survives a
+	 *  sync). Read through `courseAssessments`, which also reads `examDate` as an "Exam". Merged per item in a sync. */
+	assessments?: AssessmentEntry[];
+	/** What the learner said they know or do not get (WP8), tombstones included. Merged per item in a sync. */
+	selfReports?: SelfReportEntry[];
+	/** The "Find quizzes and exams" pass's result, waiting for the learner's approval (nothing is in `assessments` until
+	 *  then). */
+	assessmentProposal?: AssessmentProposal;
+	/** Why the last "Find quizzes and exams" pass failed. */
+	assessmentsError?: string;
+	/** ISO — when the last "Find quizzes and exams" pass finished (the page's syllabus hint reads it). */
+	assessmentsScannedAt?: string;
 	/** Schema stamp — lazy v1, same rule as chat records. */
 	version?: number;
 }
@@ -333,6 +348,17 @@ export interface CourseSkillView {
 	priority: number;
 	/** What its last finished lesson said the learner showed and should practice (the finish_lesson summary). */
 	lessonNote?: { summary: string; at: string; chatId: string };
+	/** WP8: what the learner said about it in a Short question conversation, while it is still in force (no real evidence
+	 *  since). `at` ISO. */
+	selfReport?: {
+		id: string;
+		stance: SelfReport["stance"];
+		at: string;
+		/** The chat it was said in, while that chat exists. */
+		chatId?: string;
+		/** The class that holds it (a shared skill shows it in every class; Remove goes to this one). */
+		courseId?: string;
+	};
 	/** The propositions it rests on: stored links ∪ derived from Learn sessions. */
 	propositions: Array<{ id: string; name: string; statement: string; sessions: Array<{ id: string; title: string }> }>;
 }
@@ -481,4 +507,19 @@ export interface CourseView {
 	reused: Record<string, { name: string; statement: string }>;
 	/** The class's vocabulary coverage (WP5). Absent when the class has no indexed core term and no mapping. */
 	coverage?: CourseCoverageView;
+	/** WP8: every assessment (the old exam date included as an "Exam"), dated first by date; and the pass's state. */
+	upcoming?: UpcomingView;
+}
+
+/** WP8: the class page's Upcoming list. */
+export interface UpcomingView {
+	items: Assessment[];
+	/** The next dated one's id (the countdown's). */
+	nextId?: string;
+	/** A "Find quizzes and exams" pass is running. */
+	finding: boolean;
+	error?: string;
+	proposal?: AssessmentProposal;
+	/** A file whose profile reads like a syllabus, added since the last pass: the page suggests the pass once. */
+	syllabusHint?: { materialId: string; name: string };
 }

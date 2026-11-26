@@ -34,7 +34,7 @@ const { chatStore } = await import("../../src/store/chats.ts");
 const { courseStore } = await import("../../src/store/courses.ts");
 const { courseGlossary } = await import("../../src/server/material-indexing.ts");
 const { owesTutorReply } = await import("../../src/core/native-messages.ts");
-const { seedChats } = await import("./transcripts.ts");
+const { seedChats, stampClassFacts } = await import("./transcripts.ts");
 const { biology, calculus, coverageItems, seedCurriculum, skillLines } = await import("./curriculum.ts");
 
 const DAY_MS = 86_400_000;
@@ -56,6 +56,9 @@ writeFileSync(AUTH_FILE, "{}\n", { mode: 0o600, flag: "wx" });
 authStore.setAuthVar("ANTHROPIC_API_KEY", "synthetic-ui-screenshot-fixture-key");
 
 const weight = (w: SkillWeightValue) => ({ w, by: "model" as const });
+// WP8: Quiz 3 (said in Short question), the old exam date read as "Exam", an undated lab report, one self-report, and a
+// pending syllabus proposal, so the Upcoming list, its proposal and the Ask cards all show
+const { quiz3, calvinReport, dayIso } = stampClassFacts(day);
 const courses: CourseRecord[] = [
 	{
 		id: ids.biology, title: "AP Biology: Cellular Energetics", createdAt, updatedAt, status: "active",
@@ -68,6 +71,20 @@ const courses: CourseRecord[] = [
 		weightsSummary: "Practice tests emphasize tracking energy and electron flow, especially the role of the proton gradient.",
 		weightsAt: updatedAt, pastExams: 2,
 		coverage: { updatedAt, items: coverageItems, links: [] },
+		assessments: [
+			quiz3,
+			{ id: "as_ui_lab", kind: "assignment", title: "Lab report: yeast fermentation", topics: "CO₂ output at three temperatures", skillIds: ["sk_ferment"], source: "manual", updatedAt },
+		],
+		selfReports: [calvinReport],
+		assessmentProposal: {
+			createdAt: updatedAt,
+			summary: "Read the course schedule (Unit 3 syllabus).",
+			items: [
+				{ key: "p1", kind: "quiz", title: "Quiz 4", date: dayIso(10), topics: "Light reactions and the Calvin cycle", skillIds: ["sk_light", "sk_calvin"], cite: "Unit 3 syllabus.pdf p. 2", status: "new" },
+				{ key: "p2", kind: "quiz", title: "Quiz 3", date: quiz3.date, topics: "Glycolysis", skillIds: ["sk_glycolysis"], cite: "Unit 3 syllabus.pdf p. 2", status: "kept", match: quiz3.id },
+			],
+		},
+		assessmentsScannedAt: updatedAt,
 	},
 	{
 		id: ids.calculus, title: "Calculus I", createdAt, updatedAt: createdAt, status: "active",

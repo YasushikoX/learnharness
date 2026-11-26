@@ -168,7 +168,30 @@ function ask(start: number) {
 	log.assistant("### One cell, two energy jobs\n\n**Chloroplasts** use light energy to help build sugars. **Mitochondria** release usable energy from those sugars through respiration, including when the lights are off.\n\nA root cell illustrates the difference. It rarely sees light and may have no chloroplasts, but it still needs ATP to move ions across its membrane and build new tissue. Sugars made in the leaves can travel to the root and fuel respiration there.");
 	log.user("So a leaf respires while it's photosynthesizing, too?");
 	log.assistant("Yes. A leaf cell can **photosynthesize and respire at the same time**. In bright light, the leaf often consumes more CO₂ through photosynthesis than it releases through respiration. What you measure outside the leaf is the **net** exchange.\n\nThink of the two gas flows as entries in the same ledger. A net inflow of CO₂ tells you which flow is larger.");
+	// WP8: a fact about the class and one about the learner, written at once and shown as cards with Undo
+	log.user("Quiz 3 is next Friday and covers glycolysis and fermentation. And I still don't get the Calvin cycle.");
+	const save = call("call_quiz3", "assessment_save", { kind: "quiz", title: "Quiz 3", date: "next Friday", topics: "glycolysis and fermentation", skillIds: ["sk_glycolysis", "sk_ferment"] });
+	const report = call("call_calvin", "record_self_report", { skillIds: ["sk_calvin"], stance: "dont_know", note: "I still don't get the Calvin cycle" });
+	log.assistant(save, report);
+	log.result(save, "Added: Quiz 3 (quiz).", { change: { kind: "assessment", courseId: ids.biology, action: "added", before: null, after: quiz3, id: quiz3.id, stamp: quiz3.updatedAt, skillNames: ["Glycolysis", "Fermentation"] } });
+	log.result(report, "Recorded.", { change: { kind: "self-report", courseId: ids.biology, report: calvinReport, skillNames: ["Calvin cycle"] } });
+	log.assistant("Saved Quiz 3 for Friday, and noted that the Calvin cycle is unclear: it comes first among your next lessons.");
 	return log.messages;
+}
+
+/** The fixture's assessments and self-report (WP8), shared with fixture.ts so the cards' Undo state matches the class. */
+export let quiz3 = { id: "as_ui_quiz3", kind: "quiz" as const, title: "Quiz 3", date: "", topics: "glycolysis and fermentation", skillIds: ["sk_glycolysis", "sk_ferment"], source: "chat" as const, updatedAt: "" };
+export let calvinReport = { id: "sr_ui_calvin", chatId: ids.ask, at: "", skillIds: ["sk_calvin"], stance: "dont_know" as const, note: "I still don't get the Calvin cycle", updatedAt: "" };
+
+/** Stamp the fixture's assessment and report for the screenshot day (call before seedChats). */
+export function stampClassFacts(day: number) {
+	const dayIso = (n: number) => new Date(day + n * 86_400_000).toISOString().slice(0, 10);
+	const at = new Date(day - 3 * 3_600_000 + 5 * 90_000).toISOString();
+	// "next Friday", as the learner says in the transcript: the first Friday after the screenshot day
+	const friday = (5 - new Date(day).getUTCDay() + 7) % 7 || 7;
+	quiz3 = { ...quiz3, date: dayIso(friday), updatedAt: at };
+	calvinReport = { ...calvinReport, at, updatedAt: at };
+	return { quiz3, calvinReport, dayIso };
 }
 
 const history = [

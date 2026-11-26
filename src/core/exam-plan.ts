@@ -113,10 +113,19 @@ export function priorities(ids: readonly string[], requiresOf: (id: string) => r
 
 /** Next up, ordered: highest priority first, the course's topological order within a priority; a skill with priority 0
  *  (not examined, unlocking nothing examined) is split off. `ids` are in topological order. */
-export function orderNextUp(ids: readonly string[], priority: ReadonlyMap<string, SkillWeightValue>): { nextUp: string[]; notExamined: string[] } {
-	const indexed = ids.map((id, i) => ({ id, i, p: priority.get(id) ?? DEFAULT_WEIGHT }));
-	const examined = indexed.filter((x) => x.p > 0).sort((a, b) => b.p - a.p || a.i - b.i);
-	return { nextUp: examined.map((x) => x.id), notExamined: indexed.filter((x) => x.p === 0).map((x) => x.id) };
+export function orderNextUp(
+	ids: readonly string[],
+	priority: ReadonlyMap<string, SkillWeightValue>,
+	/** WP8: `focus` = the skills the next dated assessment covers (core/assessments.ts focusSkills): they come first, and
+	 *  are never "not examined" (that assessment examines them); `needsWork` = skills the learner said they do not get
+	 *  (core/mastery.ts applySelfReports): first among their peers (same focus and priority). Both absent = as before. */
+	opts: { focus?: ReadonlySet<string>; needsWork?: ReadonlySet<string> } = {},
+): { nextUp: string[]; notExamined: string[] } {
+	const focus = opts.focus ?? new Set<string>();
+	const needsWork = opts.needsWork ?? new Set<string>();
+	const indexed = ids.map((id, i) => ({ id, i, p: priority.get(id) ?? DEFAULT_WEIGHT, f: focus.has(id) ? 0 : 1, w: needsWork.has(id) ? 0 : 1 }));
+	const examined = indexed.filter((x) => x.p > 0 || x.f === 0).sort((a, b) => a.f - b.f || b.p - a.p || a.w - b.w || a.i - b.i);
+	return { nextUp: examined.map((x) => x.id), notExamined: indexed.filter((x) => x.p === 0 && x.f === 1).map((x) => x.id) };
 }
 
 // ─── exam readiness (owner, 2026-11-14) ─────────────────────────────────────
@@ -345,8 +354,10 @@ export function lessonsToday(neededPerDay: number | null, nextUpCount: number): 
 
 /** The plan the course page and the Today list read (src/server/courses.ts builds it). */
 export interface CoursePlan {
-	/** "YYYY-MM-DD", when the learner set one. */
+	/** "YYYY-MM-DD": the NEXT upcoming assessment's date (WP8; the old exam date when that is the next one). */
 	examDate?: string;
+	/** WP8: the next upcoming dated assessment the countdown, readiness and forecast are about. */
+	next?: { id: string; kind: string; title: string; date: string; topics: string; skillIds: string[]; legacy?: true };
 	daysLeft?: number;
 	/** Skills still to learn that the exams use (Next up and Locked, not examined ones left out). */
 	skillsLeft: number;
@@ -358,6 +369,9 @@ export interface CoursePlan {
 	retestCount?: number;
 	/** How many of `reviewDue` are only fading before the exam (fine today). */
 	reviewFading?: number;
+	/** WP8 review 1, finding 12: what they fade before, as the page words it: the next assessment's title ("the exam" for
+	 *  the old exam date) when every fading skill is timed for it, else "upcoming tests". Absent with none fading. */
+	reviewFadingBefore?: string;
 	reviewBatch: number;
 	/** The lessons to take today: the first of the ordered Next up. */
 	lessons: string[];

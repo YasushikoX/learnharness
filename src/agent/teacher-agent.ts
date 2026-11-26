@@ -207,6 +207,9 @@ export interface AgentBuildOptions {
 	/** The Ask agent's tool names this turn (2026-11-25, agent/ask-agent.ts sets it): its prompt mentions a tool only when
 	 *  it is offered (agent/ask-prompt.ts). Absent on an Ask prompt = no tools (a selection clarification). */
 	askTools?: readonly string[];
+	/** WP8 review 1, finding 3: the learner's time zone (the client's) for an Ask prompt's `<today>` line; absent = the
+	 *  machine's own. */
+	timeZone?: string;
 	/** The course section (fork addition — docs/courses.md §4): a course
 	 *  session's per-turn rules (core/course-session.ts), appended after
 	 *  the material, and its tools (a Learn session's finish_lesson —
@@ -317,13 +320,13 @@ function learnerFor(kind: AgentKind, learner: string | undefined): string {
  *  prompt (the clarification call, server/clarify.ts). */
 export function agentSystemPrompt(
 	kind: AgentKind,
-	opts: Pick<AgentBuildOptions, "promptSwitches" | "language" | "materials" | "course" | "pace" | "difficulty" | "learner" | "askTools">,
+	opts: Pick<AgentBuildOptions, "promptSwitches" | "language" | "materials" | "course" | "pace" | "difficulty" | "learner" | "askTools" | "timeZone">,
 ): string {
 	// Ask (2026-11-25): its own composition — no shared fragment, no lesson directive, only what this turn offers.
 	if (kind === "ask") {
 		const tools = opts.askTools ?? [];
 		const sources = opts.materials?.sources ?? { pdf: false, other: tools.includes("material_search"), notes: tools.includes("lecture_note_search") };
-		return askSystemPrompt({ caps: { tools, sources }, switches: opts.promptSwitches, language: opts.language, materials: opts.materials, course: opts.course });
+		return askSystemPrompt({ caps: { tools, sources }, switches: opts.promptSwitches, language: opts.language, materials: opts.materials, course: opts.course, ...(opts.timeZone ? { timeZone: opts.timeZone } : {}) });
 	}
 	const composed = opts.promptSwitches ? composeInstructions(kind, opts.promptSwitches) : composedInstructions[kind]!;
 	return withLanguageDirective(

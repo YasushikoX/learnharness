@@ -99,6 +99,16 @@ export interface SessionModelDeps {
 /** A local optimistic id (never a server stamp — absorption and the
  *  settle swap both key on this prefix). */
 let localSeq = 0;
+/** The browser's IANA time zone as the chat route's header (src/server/chat-handler.ts), or nothing when unknown. */
+export function clientTimeZoneHeader(): Record<string, string> {
+	try {
+		const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+		return tz ? { "X-LH-Time-Zone": tz } : {};
+	} catch {
+		return {};
+	}
+}
+
 function localId(): string {
 	return `c_${Date.now().toString(36)}_${(localSeq++).toString(36)}`;
 }
@@ -662,7 +672,8 @@ export class SessionModel {
 		const body = JSON.stringify({ chatId: this.chatId, input });
 		const init: RequestInit = {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
+			// WP8 review 1, finding 3: the learner's time zone rides every turn, for the dates a Short question resolves
+			headers: { "Content-Type": "application/json", ...clientTimeZoneHeader() },
 			body,
 			signal,
 		};

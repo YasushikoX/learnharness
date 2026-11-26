@@ -121,6 +121,15 @@ export function ChatSessionComposer({
 	);
 }
 
+/** The composer's placeholder for a conversation (WP8 review 1, finding 13): a Short question asks about the class, it
+ *  has no lesson to steer; the pause hint wins while Enter-on-empty takes the next problem; undefined = the default
+ *  lesson wording. Pure. */
+export function composerPlaceholder(opts: { nextReady: boolean; askSession: boolean }): string | undefined {
+	if (opts.nextReady) return "Ask anything, or press Enter for the next one.";
+	if (opts.askSession) return "Ask a question about this class…";
+	return undefined;
+}
+
 export function Composer({
 	busy,
 	value,

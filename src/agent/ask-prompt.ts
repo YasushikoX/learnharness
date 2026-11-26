@@ -1,6 +1,7 @@
 import { effectivePromptSegments } from "./prompt-segments.ts";
 import { DEFAULT_LESSON_LANGUAGE, lessonLanguageInfo, type LessonLanguage } from "../core/language.ts";
 import type { TurnSources } from "../core/materials.ts";
+import { todayLine } from "../core/assessments.ts";
 
 /**
  * The Ask agent's system prompt (2026-11-25, review 1 prompt assessment; agent/ask-agent.ts). Composed from its own
@@ -28,6 +29,9 @@ export const ASK_FRAGMENT_CONDITIONS: Readonly<Record<string, (c: AskPromptCapab
 	"ask/31-circuits.md": (c) => c.tools.includes("circuit_solve"),
 	"ask/32-visual.md": (c) => c.tools.includes("visual"),
 	"ask/33-demo.md": (c) => c.tools.includes("demo"),
+	// WP8: the class tools (quizzes and exams; what the learner says they know)
+	"ask/40-class-facts.md": (c) => c.tools.includes("assessment_save"),
+	"ask/41-self-reports.md": (c) => c.tools.includes("record_self_report"),
 };
 
 /** The fixed wording of the grounding rules, per course language (every language the fork supports). */
@@ -63,6 +67,14 @@ export function askSourcesLine(caps: AskPromptCapabilities): string {
 	return `<ask_sources>\nSources in this conversation: ${what}${reach}\n</ask_sources>`;
 }
 
+/** Today's date, only when the class tools are offered (WP8): relative dates the learner says are resolved against it, in
+ *  the learner's time zone (the client's when the request carries it, else the machine's). Pure. */
+export function askTodayLine(caps: AskPromptCapabilities, now: number, timeZone?: string): string | undefined {
+	if (!caps.tools.includes("assessment_save")) return undefined;
+	const t = todayLine(now, timeZone);
+	return `<today>\nToday is ${t.weekday} ${t.date}.\n</today>`;
+}
+
 /** Ask's language section: the lesson directive's rules that apply here, and the fixed wording in that language. */
 export function askLanguageSection(language: LessonLanguage): string {
 	const name = lessonLanguageInfo(language).promptName;
@@ -82,12 +94,17 @@ export function askSystemPrompt(opts: {
 	language?: LessonLanguage;
 	materials?: { section: string };
 	course?: { section: string };
+	/** ms — "today" for the class tools' dates (WP8); default now. */
+	now?: number;
+	/** The learner's time zone for that day; absent = the machine's. */
+	timeZone?: string;
 }): string {
 	return [
 		askInstructions(opts.caps, opts.switches),
 		opts.materials?.section,
 		opts.course?.section,
 		askSourcesLine(opts.caps),
+		askTodayLine(opts.caps, opts.now ?? Date.now(), opts.timeZone),
 		askLanguageSection(opts.language ?? DEFAULT_LESSON_LANGUAGE),
 	]
 		.filter(Boolean)
