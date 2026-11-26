@@ -27,7 +27,6 @@ import {
 	daysUntil,
 	examInstant,
 	examReviewScore,
-	examWhen,
 	forecast,
 	lessonsPerDay,
 	lessonsToday,
@@ -53,6 +52,7 @@ import {
 import { chainsForSelection, formatChainLine } from "../core/chains.ts";
 import { getGraph } from "../core/graph.ts";
 import {
+	applySelfReports,
 	courseProgressPercent,
 	foldSkills,
 	inCourseEvidence,
@@ -66,6 +66,7 @@ import {
 	reviewAt,
 	skillEventsOf,
 	understandingOf,
+	type ActiveSelfReport,
 	type SkillState,
 	type SkillEvent,
 	type SkillPartition,
@@ -101,6 +102,8 @@ import {
 	type ConceptIdReader,
 } from "./course-coverage.ts";
 import { stampNewSession, titleFromPrompt } from "./chats.ts";
+import { abortAssessmentFind, allSelfReports, upcomingView } from "./assessments.ts";
+import { assessmentWhen, countdownAssessment, courseAssessments, focusSkills, liveSelfReports, nextAssessment, targetDateFor } from "../core/assessments.ts";
 import { removeCourseLectureNotes } from "./lecture-notes.ts";
 import { listMaterials, removeMaterial, waitForMaterials } from "./materials.ts";
 import { effectiveSettings, stores } from "./stores.ts";
@@ -361,6 +364,10 @@ interface ReadContext {
 	notes: Map<string, LessonNote>;
 	/** Per course: its concluded practice, review and check problems (core/missed-problems.ts). */
 	problems: Map<string, ConcludedProblem[]>;
+	/** WP8: skills the learner said they do not get, not learned yet: first among their peers in Next up. */
+	needsWork: Set<string>;
+	/** WP8: each skill's self-report in force (core/mastery.ts applySelfReports). */
+	selfReports: Map<string, ActiveSelfReport & { chatId?: string }>;
 	now: number;
 }
 
@@ -369,8 +376,14 @@ function readContext(): ReadContext {
 	const nodeIds = new Set(graph.nodes.map((n) => n.id));
 	const skills = allSkills(nodeIds);
 	const { byCourse, notes, problems } = courseEvidence();
-	const skillStates = foldSkills([...byCourse.values()].flat(), (id) => skills.get(id)?.requires ?? []);
-	return { graph, nodeIds, skills, skillStates, byCourse, notes, problems, now: Date.now() };
+	const events = [...byCourse.values()].flat();
+	const folded = foldSkills(events, (id) => skills.get(id)?.requires ?? []);
+	// WP8: what the learner said in a Short question conversation moves a skill a little; real evidence always wins
+	const reports = allSelfReports(stores.courseStore.listCourses());
+	const applied = applySelfReports(folded, reports.map((r) => ({ id: r.id, at: Date.parse(r.at), skillIds: r.skillIds, stance: r.stance })), events);
+	const chatOf = new Map(reports.map((r) => [r.id, r.chatId]));
+	const selfReports = new Map([...applied.active].map(([id, a]) => [id, { ...a, ...(chatOf.get(a.id) ? { chatId: chatOf.get(a.id) } : {}) }]));
+	return { graph, nodeIds, skills, skillStates: applied.states, byCourse, notes, problems, needsWork: applied.needsWork, selfReports, now: Date.now() };
 }
 
 function checkContext(ctx = readContext()): DraftCheckContext {
@@ -405,7 +418,16 @@ function learnChatsBySkill(): Map<string, Set<string>> {
 
 function partitionOf(course: CourseRecord, ctx: ReadContext): SkillPartition {
 	const inCourse = inCourseEvidence(ctx.byCourse.get(course.id) ?? [], (id) => ctx.skills.get(id)?.requires ?? []);
-	return partitionSkills(course.skills, ctx.skills, ctx.skillStates, ctx.now, inCourse, examInstant(course.examDate, ctx.now));
+	// WP8: a skill the learner reported on in THIS class is this class's (never "from another course")
+	for (const r of liveSelfReports(course.selfReports)) for (const id of r.skillIds) if (ctx.selfReports.get(id)?.id === r.id) inCourse.add(id);
+	return partitionSkills(course.skills, ctx.skills, ctx.skillStates, ctx.now, inCourse, examTargetOf(course, ctx));
+}
+
+/** WP8: each skill's review is timed for the nearest upcoming assessment that covers it (core/assessments.ts targetDateFor;
+ *  the old exam date covers every skill, as before). */
+function examTargetOf(course: CourseRecord, ctx: ReadContext): (skillId: string) => number | undefined {
+	const list = courseAssessments(course);
+	return (id) => examInstant(targetDateFor(id, list, ctx.now), ctx.now);
 }
 
 export function listCourseSummaries(): CourseSummary[] {
@@ -426,7 +448,8 @@ export function listCourseSummaries(): CourseSummary[] {
 				return state ? understandingOf(state) : 0;
 			})),
 			needsReview: p.review.length,
-			...(course.examDate ? { examDate: course.examDate } : {}),
+			// WP8: the sidebar's days column counts down to the next assessment
+			...((next) => (next ? { examDate: next.date } : {}))(countdownAssessment(courseAssessments(course), ctx.now)),
 			...(course.folder ? { folder: course.folder } : {}),
 		};
 	});
@@ -479,16 +502,24 @@ export function graphSkillLayer(): GraphSkillLayer | undefined {
 function examPlanOf(course: CourseRecord, p: SkillPartition, ctx: ReadContext): { plan: CoursePlan; nextUp: string[]; notExamined: string[]; priority: Map<string, number> } {
 	const weights = sanitizeWeights(course.skillWeights);
 	const priority = priorities(p.order, (id) => ctx.skills.get(id)?.requires ?? [], weights);
-	const { nextUp, notExamined } = orderNextUp(p.nextUp, priority);
-	const skillsLeft = nextUp.length + p.locked.filter((id) => (priority.get(id) ?? 1) > 0).length;
+	// WP8: the next dated assessment's skills come first; a skill the learner said they do not get leads its peers
+	const assessments = courseAssessments(course);
+	// the countdown's assessment: the next one, or the latest passed one when nothing dated is coming ("passed")
+	const next = countdownAssessment(assessments, ctx.now);
+	const focus = focusSkills(assessments, ctx.now);
+	const { nextUp, notExamined } = orderNextUp(p.nextUp, priority, { focus, needsWork: ctx.needsWork });
+	// the skills left: the next assessment's own when it maps some, else every examined one
+	const skillsLeft = focus.size > 0
+		? p.order.filter((id) => focus.has(id) && !(p.states.get(id)?.learned ?? false)).length
+		: nextUp.length + p.locked.filter((id) => (priority.get(id) ?? 1) > 0).length;
 	const events = ctx.byCourse.get(course.id) ?? [];
 	const finishes = events.filter((e) => e.outcome === "finished").map((e) => e.at);
 	const firstActivity = events.length > 0 ? Math.min(...events.map((e) => e.at)) : undefined;
-	const daysLeft = course.examDate ? daysUntil(course.examDate, ctx.now) : undefined;
+	const daysLeft = next ? daysUntil(next.date, ctx.now) : undefined;
 	const f = daysLeft === undefined ? undefined : forecast({ skillsLeft, daysLeft, pacePerDay: lessonsPerDay(finishes, ctx.now, firstActivity) });
 	const lessons = nextUp.slice(0, lessonsToday(f ? f.neededPerDay : null, nextUp.length));
 	const plan: CoursePlan = {
-		...(course.examDate ? { examDate: course.examDate } : {}),
+		...(next ? { examDate: next.date, next: { id: next.id, kind: next.kind, title: next.title, date: next.date, topics: next.topics, skillIds: next.skillIds, ...(next.legacy ? { legacy: true as const } : {}) } } : {}),
 		...(daysLeft !== undefined ? { daysLeft } : {}),
 		skillsLeft,
 		...(f ? { forecast: f } : {}),
@@ -504,12 +535,13 @@ function examPlanOf(course: CourseRecord, p: SkillPartition, ctx: ReadContext): 
 /** The review pick's ranking for a course with an upcoming exam (core/exam-plan.ts examReviewScore); undefined without one,
  *  which leaves the pick exactly as it was (the lowest understanding first). */
 function examReviewScoreOf(course: CourseRecord, p: SkillPartition, ctx: ReadContext): ((id: string) => number) | undefined {
-	const examAt = examInstant(course.examDate, ctx.now);
-	if (examAt === undefined) return undefined;
+	const target = examTargetOf(course, ctx);
+	if (!p.order.some((id) => target(id) !== undefined)) return undefined;
 	const priority = priorities(p.order, (id) => ctx.skills.get(id)?.requires ?? [], sanitizeWeights(course.skillWeights));
 	return (id) => {
 		const state = p.states.get(id)?.state;
-		return state ? examReviewScore(priority.get(id) ?? 1, course.pastExams, retrievability(state, examAt)) : 0;
+		const examAt = target(id);
+		return state && examAt !== undefined ? examReviewScore(priority.get(id) ?? 1, course.pastExams, retrievability(state, examAt)) : 0;
 	};
 }
 
@@ -573,6 +605,8 @@ export function courseView(courseId: string): CourseView | null {
 			lastReview: s.state ? new Date(s.state.lastReview).toISOString() : null,
 			missing: s.missing,
 			...(ctx.notes.get(id) ? { lessonNote: { summary: ctx.notes.get(id)!.summary, at: new Date(ctx.notes.get(id)!.at).toISOString(), chatId: ctx.notes.get(id)!.chatId } } : {}),
+			// WP8: what the learner said about it, while no real evidence has overridden it
+			...((r) => (r ? { selfReport: { id: r.id, stance: r.stance, at: new Date(r.at).toISOString(), ...(r.chatId ? { chatId: r.chatId } : {}) } } : {}))(ctx.selfReports.get(id)),
 			weight: weightOf(weights, id),
 			...(weights?.[id] ? { weightBy: weights[id]!.by } : {}),
 			...(weights?.[id]?.reason ? { weightReason: weights[id]!.reason } : {}),
@@ -620,6 +654,8 @@ export function courseView(courseId: string): CourseView | null {
 		reused,
 		// vocabulary coverage (WP5): absent when the class has no indexed core term and no mapping
 		...((v) => (v ? { coverage: v } : {}))(coverageView(course, courseLanguage(course), courseTermMapping(courseId))),
+		// WP8: the Upcoming list (the old exam date included as "Exam")
+		upcoming: upcomingView(course, ctx.now),
 	};
 }
 
@@ -729,6 +765,7 @@ export function deleteCourse(courseId: string): boolean {
 	draftRuns().get(courseId)?.abort();
 	weighRuns().get(courseId)?.abort();
 	abortCourseTermMapping(courseId);
+	abortAssessmentFind(courseId);
 	for (const m of stores.materialStore.list(courseId)) removeMaterial(courseId, m.id);
 	stores.materialStore.removeAll(courseId);
 	removeCourseLectureNotes(courseId);
@@ -1388,7 +1425,8 @@ export function courseForTurn(
 	);
 	// The exam date becomes the teacher's exam line ("12 Dec 2026, 30 days left"), read fresh every turn so a changed
 	// date, and each passing day, reach the sessions already running. The course's stored time note is no longer read.
-	const exam = examWhen(course?.examDate, Date.now());
+	// WP8: the NEXT assessment (the old exam date reads exactly as before)
+	const exam = course ? assessmentWhen(nextAssessment(courseAssessments(course), Date.now()), Date.now()) : undefined;
 	// a lesson's one skill: the final problem is graded for it (core/final-problem.ts)
 	const lessonSkill = skills[0] ? { id: skills[0].id, name: skills[0].name } : undefined;
 	// the learned prerequisites of the lesson's skill: what its recall opener may test (core/final-problem.ts)

@@ -22,7 +22,11 @@ import { jobTools, type JobToolContext } from "./tools/jobs.ts";
  *     lecture_note_read when the course has notes), the same seam every conversation agent reads;
  *   - figure_guide and circuit_solve, for the inline figure blocks (docs/figures.md);
  *   - show_figure, and the background visual and demo jobs it shows (behind the learner's tool toggles);
- *   - [the glossary slot below].
+ *   - [the glossary slot below];
+ *   - WP8 (2026-11-25): the class tools, when the handler wires them: assessments_list, assessment_save,
+ *     assessment_remove, assessments_find_in_syllabus and (with an approved skill map) record_self_report. They are the
+ *     ONLY Ask tools that change anything: the class's assessments, and the learner's self-reports, which are the only
+ *     way an Ask conversation reaches understanding (core/mastery.ts applySelfReports; never graded evidence).
  * Plus plain reply text. Its prompt is prompts/ask/ only, each conditional fragment composed only when this turn offers
  * what it is about (agent/ask-prompt.ts).
  */
@@ -38,6 +42,12 @@ export const ASK_TOOL_NAMES = Object.freeze([
 	"show_figure",
 	"visual",
 	"demo",
+	// WP8: the class tools (agent/tools/class-facts.ts), when the handler wires them
+	"assessments_list",
+	"assessment_save",
+	"assessment_remove",
+	"assessments_find_in_syllabus",
+	"record_self_report",
 ] as const);
 
 export interface AskAgentContext {
@@ -51,6 +61,9 @@ export interface AskAgentContext {
 	 * mentions it only when it is offered. Not built: always absent.
 	 */
 	glossary?: AgentTool<any>;
+	/** WP8: the class tools (agent/tools/class-facts.ts classFactsTools over server/assessments.ts classFactsPort): the
+	 *  quizzes and exams the learner states, and what they say they know. Absent (bare agents, tests) = none. */
+	classFacts?: Record<string, AgentTool<any>>;
 }
 
 /** The figure tools' descriptions in Ask's terms (an answer, not a question to write options for). */
@@ -73,6 +86,7 @@ export function askTools(ctx: AskAgentContext, messages: () => readonly unknown[
 		...(jobs.visual ? { visual: jobs.visual } : {}),
 		...(jobs.demo ? { demo: jobs.demo } : {}),
 		...(ctx.glossary ? { [ctx.glossary.name]: ctx.glossary } : {}),
+		...(ctx.classFacts ?? {}),
 	});
 }
 

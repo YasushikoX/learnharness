@@ -146,6 +146,21 @@ export {
 	startCourseDraft,
 	startCourseTermMap,
 } from "./courses.ts";
+// Quizzes, exams and self-reports (WP8 — docs/courses.md "Quizzes, exams and what you say you know").
+export {
+	actOnProposal,
+	assessmentFinding,
+	classChangeStatuses,
+	createAssessment,
+	deleteAssessment,
+	deleteSelfReport,
+	startAssessmentFind,
+	undoClassChange,
+	updateAssessment,
+	upcomingView,
+	type AssessmentInput,
+	type ChangeStatus,
+} from "./assessments.ts";
 // Vocabulary coverage (WP5 — docs/courses.md "Vocabulary coverage").
 export { courseTermMapping, editCourseCoverage } from "./course-coverage.ts";
 export { startServerTiming, type ServerTiming } from "./server-timing.ts";

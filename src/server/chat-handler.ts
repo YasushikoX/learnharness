@@ -8,6 +8,8 @@ import {
 	type TeachingAgent,
 } from "../agent/teacher-agent.ts";
 import { createAskAgent } from "../agent/ask-agent.ts";
+import { classFactsTools } from "../agent/tools/class-facts.ts";
+import { classFactsPort } from "./assessments.ts";
 import { piEngineForSpec, type PiEngine } from "../agent/models.ts";
 import { connectionBackgroundAllowed as subscriptionBackgroundAllowed, connectionScopeCurrent, isSubscriptionProvider } from "../agent/subscription-connections.ts";
 import { nativeSubscriptionError } from "../agent/subscription-stream.ts";
@@ -979,7 +981,14 @@ export async function handleChatInput(
 		? buildAgent({ ...agentOpts, teaching })
 		// ASK (2026-11-25, agent/ask-agent.ts): the course's open-questions agent, from turn 1, on the session's own model.
 		: course?.mode === "ask"
-			? createAskAgent({ jobs: { chatId, jobStore: stores.jobStore, spawn: (job, input) => void jobRunner.runJob(job.id, input), searchAvailable, imageModel } }, agentOpts)
+			? createAskAgent(
+					{
+						jobs: { chatId, jobStore: stores.jobStore, spawn: (job, input) => void jobRunner.runJob(job.id, input), searchAvailable, imageModel },
+						// WP8: the class's quizzes and exams, and what the learner says they know (server/assessments.ts)
+						...((port) => (port ? { classFacts: classFactsTools(port) } : {}))(classFactsPort(chatId)),
+					},
+					agentOpts,
+				)
 		: course?.mode === "placement" && course.skills
 			? createPlacementAgent({ skills: course.skills, placementSkills: course.placementSkills, sessionModel: conversation }, agentOpts)
 		: record.kind === "practice"
