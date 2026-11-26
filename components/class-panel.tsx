@@ -9,6 +9,8 @@ import { CoursePace, CourseSettingRow } from "@/components/course-pace";
 import { ExamSettings, type ExamPlanSectionProps } from "@/components/exam-plan";
 import { LanguageControl } from "@/components/language-control";
 import { LectureNotesRow } from "@/components/lecture-notes-row";
+import { UpcomingList } from "@/components/upcoming-list";
+import type { UpcomingView } from "@/src/core";
 import type { MaterialsApi } from "@/components/use-materials";
 import { DeleteCourseDialog } from "@/components/course-row-actions";
 import { cn } from "@/lib/utils";
@@ -16,7 +18,8 @@ import { cn } from "@/lib/utils";
 /**
  * The class side panel (UI class page, 2026-11-25; owner: "class stuff (files, settings) goes on the side; the center
  * is for starting a session and the last sessions"). Top to bottom, calm sections on hairlines: the class's Files, the
- * Skill map (language, Draft / Re-draft and why it cannot start), the Exam, Starting point and Pace rows, the Lecture
+ * Skill map (language, Draft / Re-draft and why it cannot start), the Upcoming quizzes and exams (WP8: they replace the
+ * single exam-date field), the Exam (weighing), Starting point and Pace rows, the Lecture
  * notes, and a quiet Delete class… whose dialog holds the one destructive button. It replaces the Course settings card,
  * its header gear and the Sources popover.
  */
@@ -73,6 +76,8 @@ export function ClassPanel({
 	onPlacement,
 	onDeleted,
 	exam,
+	upcoming,
+	skills = [],
 }: {
 	courseId: string;
 	courseTitle: string;
@@ -96,6 +101,10 @@ export function ClassPanel({
 	onDeleted: () => void;
 	/** The exam settings' props; absent until the class has a skill map. */
 	exam?: Pick<ExamPlanSectionProps, "examDate" | "hasWeights" | "weighing" | "canWeigh"> & { weightsSummary?: string; weightsAt?: string };
+	/** WP8: the class's quizzes, exams and assignments (the old exam date included), and the syllabus pass. */
+	upcoming?: UpcomingView;
+	/** The approved skills, for mapping an assessment's topics. */
+	skills?: ReadonlyArray<{ id: string; name: string }>;
 }) {
 	const [deleting, setDeleting] = useState(false);
 	const map = skillMapButton({ hasSkills, hasDraft, drafting, materialCount: files.materials.length, reading: files.reading, busy });
@@ -132,8 +141,11 @@ export function ClassPanel({
 				{error && <p className="text-meta text-error">{error}</p>}
 			</section>
 
+			{upcoming && <UpcomingList courseId={courseId} upcoming={upcoming} skills={skills} busy={busy} canFind={files.materials.length > 0} onChanged={() => onChanged?.()} />}
+
 			<section className="px-4 py-2.5" aria-label="Class settings" data-testid="class-settings">
-				{exam && <ExamSettings courseId={courseId} busy={busy} onChanged={() => onChanged?.()} {...exam} />}
+				{/* the exam date itself is an item of the Upcoming list now (WP8): only the weighing stays here */}
+				{exam && <ExamSettings courseId={courseId} busy={busy} onChanged={() => onChanged?.()} {...exam} examDate={upcoming ? undefined : exam.examDate} />}
 				{hasSkills && (
 					<CourseSettingRow label="Starting point" hint="Credit what you already know, so lessons start at your weak spots.">
 						<button type="button" className={BTN} disabled={busy} data-testid="course-placement" onClick={onPlacement}>

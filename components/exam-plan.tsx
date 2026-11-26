@@ -124,7 +124,7 @@ export function skillsLeftLabel(skillsLeft: number): string {
  * The exam readiness score (owner, 2026-11-14, core/exam-plan.ts examReadiness): the percent, one bar with a tick where the
  * foundation and the most tested skills end, and what the score rests on.
  */
-function ReadinessStrip({ readiness }: { readiness: Readiness }) {
+function ReadinessStrip({ readiness, basis }: { readiness: Readiness; basis?: string }) {
 	const percent = Math.round(readiness.score * 100);
 	const key = Math.round(readiness.key * 100);
 	return (
@@ -138,7 +138,7 @@ function ReadinessStrip({ readiness }: { readiness: Readiness }) {
 				<span aria-hidden className="absolute -top-1 block h-3.5 w-px bg-foreground/70" style={{ left: `${key}%` }} data-testid="course-exam-readiness-key" />
 			</span>
 			<div className="flex items-baseline justify-between gap-2 text-meta text-muted-foreground">
-				<span>{readinessBasis(readiness)}</span>
+				<span>{basis ?? readinessBasis(readiness)}</span>
 				<span>key skills {key}%</span>
 			</div>
 		</div>
@@ -244,6 +244,10 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 	const todayRows = plan.lessons.filter((id) => id !== heroLesson);
 	const moreRows = more.filter((id) => id !== heroLesson);
 	const fading = plan.reviewFading ?? 0;
+	// WP8: the card is about the NEXT assessment (the old exam date reads "Exam" as before)
+	const next = plan.next;
+	const named = next && !next.legacy ? next : undefined;
+	const basis = next && next.skillIds.length > 0 ? `${next.skillIds.length === 1 ? "1 skill" : `${next.skillIds.length} skills`} on ${named ? named.title : "the exam"}` : undefined;
 	return (
 		// UI round 2: Next up first, at full width (the page's one dominant card). UI class page: then the recent sessions,
 		// then the exam card.
@@ -260,7 +264,7 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 								</span>
 								{fading > 0 && (
 									<span className="mt-0.5 block pl-4 text-sm text-muted-foreground" data-testid="course-review-fading">
-										{`${fading} fading before the exam`}
+										{`${fading} fading before ${named ? named.title : "the exam"}`}
 									</span>
 								)}
 							</span>
@@ -321,7 +325,9 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 			{/* UI class page: the lecture notes moved to the class side panel; the exam card has the row to itself. */}
 			<div className="min-w-0" data-testid="course-exam-column">
 				<div className={SIDE_CARD}>
-					<div className="lh-section-title text-foreground">Exam</div>
+					<div className="lh-section-title text-foreground" data-testid="course-exam-title">
+						{named ? named.title : "Exam"}
+					</div>
 					{examDate ? (
 						<div className="flex flex-wrap items-baseline gap-x-2" data-testid="course-exam-countdown">
 							<span className="lh-big-number">{examCountdown(plan.daysLeft ?? 0)}</span>
@@ -337,7 +343,12 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 							className={cn(FIELD_CLASS, "h-8 w-fit px-2.5")}
 						/>
 					)}
-					{readiness && <ReadinessStrip readiness={readiness} />}
+					{named?.topics && (
+						<p className="line-clamp-2 text-meta text-muted-foreground" data-testid="course-exam-topics">
+							{named.topics}
+						</p>
+					)}
+					{readiness && <ReadinessStrip readiness={readiness} basis={basis} />}
 					<div className="space-y-1 text-meta text-muted-foreground empty:hidden">
 						{(examDate || plan.skillsLeft > 0) && <p data-testid="course-plan-headline">{skillsLeftLabel(plan.skillsLeft)}</p>}
 						{f && (
@@ -352,7 +363,7 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 							</span>
 						)}
 						{hasWeights && !weighing && <p data-testid="course-weights-summary">Skills weighed by exam importance.</p>}
-						{!hasWeights && !weighing && !starting && <p data-testid="course-exam-readiness-prompt">Weigh by exams to get a readiness score.</p>}
+						{!hasWeights && !weighing && !starting && !readiness && <p data-testid="course-exam-readiness-prompt">Weigh by exams to get a readiness score.</p>}
 					</div>
 					{!hasWeights && (
 						<button type="button" className={cn(BTN, "w-fit")} disabled={!canWeigh || weighing || starting || busy} data-testid="course-weigh-button" onClick={() => void weigh()}>

@@ -33,6 +33,9 @@ const CONTENT_TOOLS: ReadonlySet<string> = new Set([
 	"finish_session",
 ]);
 
+/** WP8: the Short question tools whose result is a change card (components/class-change-card.tsx). */
+const CHANGE_TOOLS: ReadonlySet<string> = new Set(["assessment_save", "assessment_remove", "record_self_report"]);
+
 /** Tools that pose a question: the dock shows them live, the transcript only once answered. */
 const QUESTION_TOOLS: ReadonlySet<string> = new Set(["quiz", "probe", "explain", "recall", "ask_user_question"]);
 
@@ -45,6 +48,8 @@ export function partShows(p: RowPart): boolean {
 	const name = p.type.slice("tool-".length);
 	if (QUESTION_TOOLS.has(name)) return p.state === "output-available";
 	if (name === "finish_lesson" || name === "finish_session") return p.state === "output-available";
+	// WP8: a Short question change card shows once the change went through (a refused call shows nothing)
+	if (CHANGE_TOOLS.has(name)) return p.state === "output-available";
 	return CONTENT_TOOLS.has(name);
 }
 

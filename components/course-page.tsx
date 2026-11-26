@@ -203,6 +203,14 @@ const SkillListContext = createContext<{
 	toggle: (skillId: string) => void;
 } | null>(null);
 
+/** WP8: remove a self-report from a skill's detail; absent outside a course page. */
+const SelfReportContext = createContext<((reportId: string) => void) | null>(null);
+
+/** What the learner said, as the skill shows it: "you said you know this", "…this is unclear", "…you don't get this". Pure. */
+export function selfReportLabel(stance: "know" | "shaky" | "dont_know"): string {
+	return stance === "know" ? "you said you know this" : stance === "shaky" ? "you said this is unclear" : "you said you don't get this";
+}
+
 /**
  * One skill, one quiet line (owner, 2026-11-14): its name, a thin understanding bar and a dot when it is due. A tap opens
  * the detail: the state line, the Learn / Practice / Quick check buttons, the exam weight and everything below.
@@ -221,6 +229,7 @@ function SkillRow({
 	const [open, setOpen] = useState(false);
 	const [more, setMore] = useState(false);
 	const choose = useContext(SkillListContext);
+	const removeReport = useContext(SelfReportContext);
 	const choosing = choose?.choosing === true;
 	const can = choose?.canChoose(skill.id) === true;
 	const checked = choose?.chosen.has(skill.id) === true;
@@ -255,6 +264,12 @@ function SkillRow({
 				<span className={cn("min-w-0 flex-1 truncate", ROW_NAME)}>
 					<RichLine>{skill.name}</RichLine>
 				</span>
+				{skill.selfReport && (
+					// WP8: a quiet marker for what the learner said (the detail says it in words, with its date)
+					<span className="shrink-0 text-meta text-muted-foreground" title={selfReportLabel(skill.selfReport.stance)} data-testid={`skill-said-${skill.id}`}>
+						{skill.selfReport.stance === "know" ? "said: know" : skill.selfReport.stance === "shaky" ? "said: unsure" : "said: unclear"}
+					</span>
+				)}
 				{!skill.learned && skill.missing.length > 0 && <LockIcon role="img" aria-label="locked" data-testid={`skill-lock-${skill.id}`} className="size-3.5 shrink-0 text-muted-foreground" />}
 				{isDue(skill, now) && <DueChip />}
 				<span className="w-24 shrink-0">
@@ -287,6 +302,26 @@ function SkillRow({
 								<PrereqChip key={id} name={names.get(id) ?? id} learned={choose?.learned.has(id) === true} />
 							))}
 						</div>
+					)}
+					{skill.selfReport && (
+						<p className="flex flex-wrap items-center gap-x-2 text-muted-foreground" data-testid={`skill-self-report-${skill.id}`}>
+							<span>
+								{selfReportLabel(skill.selfReport.stance)[0]!.toUpperCase() + selfReportLabel(skill.selfReport.stance).slice(1)} ({skill.selfReport.at.slice(0, 10)})
+								{skill.selfReport.chatId && (
+									<>
+										{" · "}
+										<Link href={`/chat/${skill.selfReport.chatId}`} className="underline decoration-border underline-offset-2 hover:text-foreground">
+											where
+										</Link>
+									</>
+								)}
+							</span>
+							{removeReport && (
+								<button type="button" className="underline decoration-border underline-offset-2 hover:text-foreground" data-testid={`skill-self-report-remove-${skill.id}`} onClick={() => removeReport(skill.selfReport!.id)}>
+									Remove
+								</button>
+							)}
+						</p>
 					)}
 					<WeightEditor skill={skill} />
 					<SkillTerms skillId={skill.id} />
@@ -605,7 +640,11 @@ export function CourseBody({
 	const hasWeights = !!course.skillWeights && Object.keys(course.skillWeights).length > 0;
 	// A weighing pass ran (a hand edit does not set weightsAt): only then is there a readiness score (core/exam-plan.ts).
 	const weighed = !!course.weightsAt;
-	const readiness = weighed ? examReadiness(skills.map((s) => ({ priority: s.priority, credit: knownShare(s.understanding) })), course.pastExams) : null;
+	// WP8: readiness is about the NEXT assessment: with skills mapped to it, those skills (weighed or not); else the whole
+	// class once weighed
+	const nextSkills = new Set(data.plan.next?.skillIds ?? []);
+	const readinessSkills = nextSkills.size > 0 ? skills.filter((s) => nextSkills.has(s.id)) : skills;
+	const readiness = weighed || nextSkills.size > 0 ? examReadiness(readinessSkills.map((s) => ({ priority: s.priority, credit: knownShare(s.understanding) })), course.pastExams) : null;
 	const nextUpIds = new Set(data.nextUp);
 	const contextIds = new Set(data.contextCheck);
 	const learnPractice = (s: CourseSkillView) => (
@@ -656,9 +695,17 @@ export function CourseBody({
 	};
 	const draftNames = new Map((course.draft?.skills ?? []).map((s) => [s.key, s.name]));
 	const coverage = data.coverage ? { view: data.coverage, skillNames: names, draftNames, busy, ...(onCoverage ? { actions: onCoverage } : {}) } : null;
+	// WP8: "Remove" on a skill's self-report (a tombstone; the skill's state goes back to what the evidence says)
+	const removeReport = onChanged
+		? (reportId: string) =>
+				void fetch(`/api/courses/${course.id}/self-reports/${reportId}`, { method: "DELETE" })
+					.catch(() => undefined)
+					.finally(() => onChanged())
+		: null;
 	return (
 		<CoverageContext.Provider value={coverage}>
 		<SkillListContext.Provider value={choose}>
+		<SelfReportContext.Provider value={removeReport}>
 		<div className="space-y-8">
 			{skills.length === 0 ? (
 				<>
@@ -698,7 +745,7 @@ export function CourseBody({
 					weightOf={(id) => byId.get(id)?.weight ?? 1}
 					nextUp={data.nextUp}
 					learningCount={data.learning.length}
-					examDate={course.examDate}
+					examDate={data.plan.examDate}
 					readiness={readiness}
 					hasWeights={weighed}
 					weightsError={course.weightsError}
@@ -980,6 +1027,7 @@ export function CourseBody({
 			)}
 
 		</div>
+		</SelfReportContext.Provider>
 		</SkillListContext.Provider>
 		</CoverageContext.Provider>
 	);
@@ -1315,6 +1363,9 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 							? { examDate: data.course.examDate, hasWeights: weighed, weighing: data.weighing === true, canWeigh: !drafting && materialCount > 0, weightsSummary: data.course.weightsSummary, weightsAt: data.course.weightsAt }
 							: undefined
 					}
+					// WP8: the Upcoming list (quizzes, exams; the old exam date as an "Exam") and the syllabus pass
+					{...(data.upcoming ? { upcoming: data.upcoming } : {})}
+					skills={data.skills.map((s) => ({ id: s.id, name: s.name }))}
 				/>
 			</aside>
 		</div>

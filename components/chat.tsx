@@ -153,6 +153,7 @@ import {
 import { ReadingThinkingField } from "@/components/reading-thinking";
 import { FinishLessonButton, LessonFinishedLine, courseOfView } from "@/components/lesson-finish";
 import { LessonResultCard } from "@/components/lesson-result-card";
+import { ClassChangeCard, type ClassChangeData } from "@/components/class-change-card";
 import { CutOffReplyNotice, cutOffRecoveryDisabled, RetryOnFallback, RetryUnavailableNote, TurnErrorText } from "@/components/turn-error";
 import { ComposerEdge, ComposerToolbarSession } from "@/components/composer-edge";
 import { currentUserThinkingOpen, setAllUserThinkingOpen } from "@/components/thinking-block";
@@ -2319,6 +2320,13 @@ export function Chat({
 																{isLesson && part.type === "tool-finish_lesson" && <LessonResultCard chatId={chatId} />}
 															</div>
 														) : null;
+													case "tool-assessment_save":
+													case "tool-assessment_remove":
+													case "tool-record_self_report": {
+														// WP8: a Short question change, as a card with Undo; a refused call shows nothing
+														const change = (part.output as { change?: ClassChangeData } | undefined)?.change;
+														return part.state === "output-available" && change && part.toolCallId ? <ClassChangeCard key={pk} chatId={chatId} toolCallId={part.toolCallId} change={change} /> : null;
+													}
 													case "tool-quiz":
 													case "tool-probe":
 													case "tool-ask_user_question":
