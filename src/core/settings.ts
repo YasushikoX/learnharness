@@ -623,7 +623,12 @@ export interface PdfConversionSettings {
 	};
 	/** Profile converters (presets and `custom:<id>`), by converter id: the base URL when not the profile's default. */
 	services?: Record<string, { baseUrl?: string }>;
+	/** Google AI Studio (Gemini): the model id (absent: the converter's default). Its key is in auth.json, never here. */
+	gemini?: { model?: string };
 }
+
+/** A Gemini model id as the settings keep it (src/server/converters/gemini.ts uses the same rule). */
+export const GEMINI_MODEL_SETTING = /^[a-z0-9][a-z0-9.-]{0,79}$/;
 
 /** A converter id a profile converter can have in `services` (a preset id or `custom:<id>`). */
 export const PROFILE_CONVERTER_ID = /^(?:custom:)?[a-z0-9][a-z0-9-]{0,47}$/;
@@ -650,6 +655,10 @@ function sanitizePdfConversion(raw: Record<string, unknown>): PdfConversionSetti
 			Object.defineProperty(services, id, { value: baseUrl ? { baseUrl } : {}, enumerable: true, configurable: true, writable: true });
 		}
 		out.services = services;
+	}
+	if (raw.gemini !== null && typeof raw.gemini === "object" && !Array.isArray(raw.gemini)) {
+		const model = (raw.gemini as { model?: unknown }).model;
+		out.gemini = typeof model === "string" && GEMINI_MODEL_SETTING.test(model.trim()) ? { model: model.trim() } : {};
 	}
 	return out;
 }

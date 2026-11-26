@@ -159,7 +159,7 @@ describe("Settings API: /api/converters", () => {
 	it("lists every converter with where PDFs go, the unverified preset, and the key status only", async () => {
 		const view = await overview();
 		assert.equal(view.selected, "pdfjs");
-		assert.deepEqual(view.converters.map((c) => c.id), ["pdfjs", "docling", "mistral-ocr"]);
+		assert.deepEqual(view.converters.map((c) => c.id), ["pdfjs", "docling", "gemini", "mistral-ocr"]);
 		const mistral = view.converters.find((c) => c.id === "mistral-ocr")!;
 		assert.equal(mistral.unverified, true);
 		assert.equal(mistral.origin, "https://api.mistral.ai");

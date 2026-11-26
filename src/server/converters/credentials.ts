@@ -1,7 +1,9 @@
+import { AUTH_PROVIDER_KEYS } from "../../core/auth-keys.ts";
 import type { CredentialStatus } from "../../core/converter-settings.ts";
 import { normalizeBaseUrl } from "../../core/settings.ts";
-import { readConverterCredentials, readDoclingAuth, writeConverterCredentials } from "../../store/auth.ts";
+import { authStore, readConverterCredentials, readDoclingAuth, writeConverterCredentials } from "../../store/auth.ts";
 import { readDoclingCredential } from "./auth.ts";
+import { GEMINI_BASE_URL, GEMINI_CONVERTER_ID } from "./gemini.ts";
 import type { CredentialReader } from "./registry.ts";
 
 /**
@@ -33,9 +35,41 @@ export function writeProfileCredential(converterId: string, baseUrl: string, api
 	writeConverterCredentials(all);
 }
 
-/** The key reader conversions use: Docling's own record, every other converter's from the profile entry. */
-export const readConverterCredential: CredentialReader = (converterId, baseUrl) =>
-	converterId === "docling" ? readDoclingCredential(baseUrl) : readProfileCredential(converterId, baseUrl);
+/** The model provider key the Gemini converter may borrow (the "google" provider's env var, GEMINI_API_KEY). */
+export const GOOGLE_PROVIDER_ENV_VAR = AUTH_PROVIDER_KEYS.find((p) => p.id === "google")!.envVar;
+
+/**
+ * The Google model provider's key, read the way server/keys.ts keyValue reads it (the real environment first, then
+ * auth.json; with LH_IGNORE_ENV_KEYS=1 auth.json only), without importing that module (its import has side
+ * effects). Read only, at the moment of use: it is never copied into the converter credentials or anywhere else.
+ */
+export function readGoogleProviderKey(): string | undefined {
+	const fromFile = () => authStore.authVars()[GOOGLE_PROVIDER_ENV_VAR];
+	const value = process.env.LH_IGNORE_ENV_KEYS === "1" ? fromFile() : (process.env[GOOGLE_PROVIDER_ENV_VAR] ?? fromFile());
+	return value?.trim() ? value.trim() : undefined;
+}
+
+/** Where the Gemini converter's key comes from: its own (bound to the Gemini API's address), else the provider's. */
+export function geminiKeySource(baseUrl = GEMINI_BASE_URL): "own" | "provider" | undefined {
+	if (readProfileCredential(GEMINI_CONVERTER_ID, baseUrl) !== undefined) return "own";
+	return normalizeBaseUrl(baseUrl) === normalizeBaseUrl(GEMINI_BASE_URL) && readGoogleProviderKey() !== undefined ? "provider" : undefined;
+}
+
+/**
+ * The key reader conversions use: Docling's own record, every other converter's from the profile entry. Gemini
+ * without a key of its own uses the Google model provider's key (only for the Gemini API's own address).
+ */
+export const readConverterCredential: CredentialReader = Object.assign(
+	(converterId: string, baseUrl: string): string | undefined => {
+		if (converterId === "docling") return readDoclingCredential(baseUrl);
+		if (converterId === GEMINI_CONVERTER_ID) {
+			const source = geminiKeySource(baseUrl);
+			return source === "own" ? readProfileCredential(converterId, baseUrl) : source === "provider" ? readGoogleProviderKey() : undefined;
+		}
+		return readProfileCredential(converterId, baseUrl);
+	},
+	{ sourceOf: (converterId: string, baseUrl: string) => (converterId === GEMINI_CONVERTER_ID ? geminiKeySource(baseUrl) : undefined) },
+);
 
 function status(binding: string | undefined, apiKey: string | undefined, baseUrl: string | undefined): CredentialStatus {
 	if (apiKey === undefined || binding === undefined) return { stored: false };

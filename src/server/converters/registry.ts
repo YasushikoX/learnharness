@@ -2,6 +2,7 @@ import { ConverterError, type ConvertContext, type ConvertInput, type ConvertRes
 import type { PdfConversionSettings } from "../../core/settings.ts";
 import { customProfileIdOf, type HttpConverterProfile } from "../../core/http-converter-spec.ts";
 import { createDoclingConverter } from "./docling.ts";
+import { GEMINI_BASE_URL, GEMINI_CONVERTER_ID, GEMINI_NAME, createGeminiConverter } from "./gemini.ts";
 import { createHttpConverter, type HttpConverterOptions } from "./http-declarative.ts";
 import { pdfjsConverter } from "./pdfjs.ts";
 import { PRESET_PROFILES } from "./presets.ts";
@@ -25,6 +26,9 @@ import { selfOriginProblem } from "./self-origin.ts";
  * CustomProfileLoader its caller passes in (a missing or invalid file falls
  * back to pdfjs with a warning, like an unknown id).
  *
+ * Google AI Studio (gemini.ts, fork addition, 2026-11-25) is a code converter with one fixed address: it is set up
+ * once a key is available, its own (bound to the Gemini API's address) or the Google model provider's key.
+ *
  * NOTHING IS SENT BEFORE SETUP (review 1, finding 2). A service converter
  * sends nothing until the user has saved a service URL for it in the
  * settings (a preset's own address counts only once it has been saved, which
@@ -38,8 +42,13 @@ import { selfOriginProblem } from "./self-origin.ts";
  * arrives through the CredentialReader its caller passes in.
  */
 
-/** A converter's key for a base URL, from the credential store (converters/auth.ts), or undefined. */
-export type CredentialReader = (converterId: string, baseUrl: string) => string | undefined;
+/**
+ * A converter's key for a base URL, from the credential store (converters/auth.ts), or undefined. `sourceOf` says
+ * where a Gemini key came from (its own, or the Google model provider's), for messages only.
+ */
+export type CredentialReader = ((converterId: string, baseUrl: string) => string | undefined) & {
+	sourceOf?: (converterId: string, baseUrl: string) => "own" | "provider" | undefined;
+};
 
 /** A user's own profile by its id (custom-profiles.ts), validated on every call. */
 export type CustomProfileLoader = (profileId: string) => { ok: true; profile: HttpConverterProfile } | { ok: false; error: string };
@@ -111,6 +120,16 @@ registerPdfConverter({
 			ocr: settings.docling?.ocr,
 			formulaEnrichment: settings.docling?.formulaEnrichment,
 		});
+	},
+});
+registerPdfConverter({
+	id: GEMINI_CONVERTER_ID,
+	create(settings, readCredential) {
+		// a fixed address (no URL to set up); its own key, else the Google model provider's (credentials.ts)
+		const apiKey = readCredential(GEMINI_CONVERTER_ID, GEMINI_BASE_URL);
+		if (!apiKey) throw new ConverterError("not_configured", `${GEMINI_NAME} is not set up: no Gemini API key is saved in Settings → PDF conversion and no Google provider key is configured`, false);
+		const keySource = readCredential.sourceOf?.(GEMINI_CONVERTER_ID, GEMINI_BASE_URL);
+		return createGeminiConverter({ apiKey, model: settings.gemini?.model, ...(keySource ? { keySource } : {}) });
 	},
 });
 for (const preset of PRESET_PROFILES) {
