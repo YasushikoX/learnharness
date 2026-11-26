@@ -292,6 +292,55 @@ export async function captureScreens({ page, origin, theme, stage, signal, withL
 			await visible(testId(ready ?? `section-${tab}`));
 			await capture(number, `settings-${name}`, description);
 		}
+		// WP10: Settings → General → Read aloud with Google voices, in each key state. GET /api/tts is answered here (the
+		// fixture has no key); Test is answered too, so nothing reaches Google. Each state remounts the section.
+		{
+			const ttsStatus = (source, verified) => ({
+				key: source === "own" ? { source, hint: "…a1B2" } : { source },
+				verified,
+				keyUrl: "https://aistudio.google.com/apikey",
+				privacyNote: "With Google voices on, the text read aloud (questions and options) is sent to Google. On the free tier Google may use it to improve its products, and people may review it.",
+				models: [{ id: "gemini-3.8-flash-tts", label: "Natural" }, { id: "gemini-3.8-flash-lite-tts", label: "Faster" }],
+				voices: ["Achernar:Soft", "Erinome:Clear", "Iapetus:Clear", "Kore:Firm", "Puck:Upbeat"].map((v) => ({ name: v.split(":")[0], description: v.split(":")[1] })),
+				defaults: { model: "gemini-3.8-flash-tts", voices: { en: "Erinome", nb: "Iapetus" } },
+			});
+			const isStatus = (url) => url.pathname === "/api/tts";
+			const isTest = (url) => url.pathname === "/api/tts/test";
+			const readAloud = testId("group-read-aloud");
+			const reopenGeneral = async () => {
+				await click(testId("settings-nav-appearance"));
+				await visible(testId("section-appearance"));
+				await click(testId("settings-nav-general"));
+				await scroll(readAloud, "start");
+			};
+			let removeStatus = route.json("GET", isStatus, ttsStatus(null, false));
+			await reopenGeneral();
+			await page.select(testId("select-read-aloud-engine"), "google");
+			await visible(testId("read-aloud-key-input"));
+			await capture("26a", "settings-read-aloud-no-key", "Read aloud with Google chosen and no key: Not set, the key field with Get a key, the free-tier note, quality and a voice per language (▶ disabled).", readAloud);
+			removeStatus();
+			removeStatus = route.json("GET", isStatus, ttsStatus("own", false));
+			await reopenGeneral();
+			await visible(testId("read-aloud-key-test"));
+			await capture("26b", "settings-read-aloud-untested", "Read aloud with the key saved for PDF conversion: Not tried yet, Test, the unverified note.", readAloud);
+			const removeFailed = route.json("POST", isTest, { ok: false, kind: "auth", error: "Google refused the key (HTTP 403): API key not valid. Please pass a valid API key." });
+			await click(testId("read-aloud-key-test"));
+			await visible(testId("read-aloud-test-error"));
+			await capture("26c", "settings-read-aloud-failed", "A failed Test: Failed, and the shared error notice with the raw reason and Try again.", readAloud);
+			removeFailed();
+			removeStatus();
+			removeStatus = route.json("GET", isStatus, ttsStatus("own", true));
+			const removeOk = route.json("POST", isTest, { ok: true });
+			await click(testId("read-aloud-test-error-retry"));
+			await visible(`${testId("read-aloud-key-state")}[data-state="working"]`);
+			await capture("26d", "settings-read-aloud-working", "Read aloud after a successful Test: Working, Google voices per language with ▶ samples.", readAloud);
+			removeOk();
+			removeStatus();
+			await page.select(testId("select-read-aloud-engine"), "system");
+			await settle();
+			await click(testId("settings-nav-pdf"));
+			await visible(testId("converters-section"));
+		}
 		await click(testId("converter-wizard-open"));
 		await scroll(testId("wizard-name-row"), "center");
 		await capture(50, "settings-converter-wizard", "Converter wizard with its documentation source and service fields.");

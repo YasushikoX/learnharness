@@ -53,9 +53,12 @@ export function ErrorNotice({
 	retryLabel = "Try again",
 	className,
 	testid,
+	sentence: sentenceOverride,
 }: {
 	/** The raw failure text. */
 	error: string;
+	/** The plain sentence, when the caller knows better than the mapping (the raw text is still the details line). */
+	sentence?: string;
 	/** What failed, as the sentence's start ("Couldn't draft the skill map."). */
 	what?: string;
 	/** Offer "Try again" (only where retrying makes sense). */
@@ -66,7 +69,9 @@ export function ErrorNotice({
 	className?: string;
 	testid?: string;
 }) {
-	const { sentence, detail } = plainError(error, what);
+	const mapped = plainError(error, what);
+	const sentence = sentenceOverride ?? mapped.sentence;
+	const detail = sentenceOverride ? error.trim() || null : mapped.detail;
 	return (
 		<div role="alert" data-testid={testid} data-slot="error-notice" className={cn("flex items-start gap-2 rounded-md bg-destructive/[0.06] p-2 text-chrome", className)}>
 			<CircleAlertIcon className="mt-0.5 size-3.5 shrink-0 text-destructive" strokeWidth={2} aria-hidden />

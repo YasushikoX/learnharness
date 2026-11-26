@@ -38,6 +38,8 @@ import { PACES, PACE_NOTE_MAX, isPace, normalizePaceNote, type Pace } from "../c
 import { DIFFICULTIES, isDifficulty, type Difficulty } from "../core/difficulty.ts";
 import { isSearchEngineId, SEARCH_ENGINES } from "../core/search.ts";
 import { isDictationLanguage } from "../core/dictation.ts";
+import { GOOGLE_TTS_MODELS, isGoogleTtsModel, isReadAloudEngine } from "../core/tts.ts";
+import { sanitizeReadAloudVoices } from "../core/settings.ts";
 import { parseFileAccessSettings } from "../core/file-access.ts";
 import { LEARNER_NOTE_MAX, normalizeLearnerNote, parseLearnerApplied, type LearnerSettings } from "../core/learner.ts";
 
@@ -199,6 +201,25 @@ export function parseGeneralSettingsBody(body: unknown): SettingsBodyResult<Gene
 			return { ok: false, error: "readAloudVoice must be a non-empty string or null" };
 		}
 		settings.readAloudVoice = raw.readAloudVoice === null ? null : (raw.readAloudVoice as string).trim();
+	}
+	if (raw.readAloudEngine !== undefined) {
+		if (raw.readAloudEngine !== null && !isReadAloudEngine(raw.readAloudEngine)) {
+			return { ok: false, error: "readAloudEngine must be google, system or null" };
+		}
+		settings.readAloudEngine = raw.readAloudEngine;
+	}
+	if (raw.readAloudModel !== undefined) {
+		if (!isGoogleTtsModel(raw.readAloudModel)) {
+			return { ok: false, error: `readAloudModel must be one of: ${GOOGLE_TTS_MODELS.map((m) => m.id).join(", ")}` };
+		}
+		settings.readAloudModel = raw.readAloudModel;
+	}
+	if (raw.readAloudVoices !== undefined) {
+		const voices = sanitizeReadAloudVoices(raw.readAloudVoices);
+		if (!voices || Object.keys(voices).length !== Object.keys(raw.readAloudVoices as object).length) {
+			return { ok: false, error: "readAloudVoices must map en/nb to Google voice names" };
+		}
+		settings.readAloudVoices = voices;
 	}
 	if (raw.refuseFinishWithUnintroducedTerms !== undefined) {
 		if (typeof raw.refuseFinishWithUnintroducedTerms !== "boolean") {

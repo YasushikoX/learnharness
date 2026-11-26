@@ -24,6 +24,7 @@ Features that exist only in this fork:
 - [Courses](courses.md) — a curriculum turned into skills and a route, with placement and spaced practice.
 - [GitHub sync](sync.md) — keep the learning data in step across devices through a private repo.
 - [Figures](figures.md) — text-described diagrams the app draws.
+- [Read aloud](read-aloud.md) — Google's natural voices (free AI Studio key) or the system voices, the free tier's data note and limits.
 - [Android app](android/STATUS.md) — the standalone phone build: status, plans and device notes.
 
 ## Teaching method
