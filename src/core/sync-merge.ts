@@ -303,7 +303,9 @@ const COURSE_VERSION = 1;
  *  (WP5) rides the unit because its items name the approved skills and approval writes both: a mapping edit on one device
  *  and an approval or another edit on the other is a conflict of the unit, so the newer side wins and the other is kept
  *  as a conflict copy with a note; neither is dropped silently. */
-const COURSE_UNIT = ["status", "skills", "draft", "error", "coverage", "coverageError"] as const;
+const COURSE_UNIT = ["status", "skills", "draft", "error", "coverage", "coverageError", "skillCites"] as const;
+/** WP9: the "link skills to lectures" step's state moves together. */
+const COURSE_LINK_UNIT = ["lecturesLinkError", "lecturesLinkedAt", "lecturesLinkedKey"] as const;
 /** The weighing pass's fields move together too (fork addition, 2026-11-13): weights, its summary, when and why it failed. */
 const COURSE_WEIGHTS_UNIT = ["skillWeights", "weightsSummary", "weightsAt", "pastExams", "weightsError"] as const;
 /** The "Find quizzes and exams" pass's pending proposal and its state (WP8). */
@@ -326,6 +328,15 @@ function mergeCourse(i: MergeInput & { local: string; remote: string }): MergeRe
 		notes.push(`the course's ${what} was changed on both devices; kept the newer`);
 	};
 
+	// WP9: the class position is one value with its own stamp: three-way, and when both devices changed it the one said
+	// later wins (no conflict copy: the class moved on, nothing is lost)
+	{
+		const m = threeWay(b?.classPosition, l.classPosition, r.classPosition, newer, b !== null);
+		const stampOf = (v: unknown) => (isObj(v) && typeof v.updatedAt === "string" ? v.updatedAt : "");
+		const value = m.conflict ? (stampOf(l.classPosition) >= stampOf(r.classPosition) ? l.classPosition : r.classPosition) : m.value;
+		if (value === undefined) delete out.classPosition;
+		else out.classPosition = value;
+	}
 	for (const key of ["title", "language", "note", "pace", "examDate", "folder"]) {
 		const m = threeWay(b?.[key], l[key], r[key], newer, b !== null);
 		if (m.value === undefined) delete out[key];
@@ -370,10 +381,15 @@ function mergeCourse(i: MergeInput & { local: string; remote: string }): MergeRe
 	// list, so it outlives the other device's copy of the item. Three-way against the base (review 1, finding 5): an item
 	// the base had that a side no longer lists at all (its tombstone dropped by the count cap) stays deleted. A side
 	// without the list (an older build) adds nothing and removes nothing.
-	for (const key of ["assessments", "selfReports"]) {
+	// WP9: the lecture timeline merges exactly the same way
+	for (const key of ["assessments", "selfReports", "lectures"]) {
 		if (!Array.isArray(l[key]) && !Array.isArray(r[key])) continue;
 		out[key] = mergeEntries(newer === "local" ? l[key] : r[key], newer === "local" ? r[key] : l[key], b?.[key]);
 	}
+	const lpick = (side: Obj) => Object.fromEntries(COURSE_LINK_UNIT.filter((k) => k in side).map((k) => [k, side[k]]));
+	const linking = threeWay(b ? lpick(b) : null, lpick(l), lpick(r), newer, b !== null);
+	for (const k of COURSE_LINK_UNIT) delete out[k];
+	Object.assign(out, linking.value as Obj);
 	// the pass's pending proposal and its state move as one unit, like the weights
 	const ppick = (side: Obj) => Object.fromEntries(COURSE_PROPOSAL_UNIT.filter((k) => k in side).map((k) => [k, side[k]]));
 	const proposal = threeWay(b ? ppick(b) : null, ppick(l), ppick(r), newer, b !== null);

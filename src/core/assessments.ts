@@ -29,6 +29,7 @@
  */
 
 import { daysUntil, examDateLabel, parseExamDate } from "./exam-plan.ts";
+import type { ProposedLecture } from "./lectures.ts";
 
 export type AssessmentKind = "quiz" | "exam" | "midterm" | "final" | "assignment" | "other";
 export const ASSESSMENT_KINDS: readonly AssessmentKind[] = ["quiz", "exam", "midterm", "final", "assignment", "other"];
@@ -170,8 +171,9 @@ export function sanitizeSelfReport(raw: unknown): SelfReport | null {
 	};
 }
 
-/** A stored list read defensively: each entry a valid item or a tombstone, one per id (the later write wins). */
-function readEntries<T extends { id: string; updatedAt: string }>(raw: unknown, item: (r: unknown) => T | null): Array<T | Tombstone> {
+/** A stored list read defensively: each entry a valid item or a tombstone, one per id (the later write wins). Shared with
+ *  the lecture timeline (WP9, core/lectures.ts). */
+export function readEntries<T extends { id: string; updatedAt: string }>(raw: unknown, item: (r: unknown) => T | null): Array<T | Tombstone> {
 	if (!Array.isArray(raw)) return [];
 	const byId = new Map<string, T | Tombstone>();
 	for (const r of raw) {
@@ -363,7 +365,7 @@ export function todayIn(now: number, timeZone?: string): string {
 }
 
 /** Calendar arithmetic on "YYYY-MM-DD" (UTC noon underneath: no DST step can move a day). */
-function addDays(date: string, days: number): string {
+export function addDays(date: string, days: number): string {
 	const [y, m, d] = date.split("-").map(Number) as [number, number, number];
 	return new Date(Date.UTC(y, m - 1, d + days, 12)).toISOString().slice(0, 10);
 }
@@ -539,6 +541,9 @@ export interface AssessmentProposal {
 	/** The pass stopped at its call or token cap: what it found so far (review 1, finding 10). */
 	partial?: true;
 	items: ProposedAssessment[];
+	/** WP9: the lecture schedule the same pass read (core/lectures.ts), approved together with the items. Absent on a
+	 *  proposal from before, and when the syllabus lists no lectures. */
+	lectures?: ProposedLecture[];
 }
 
 /** Proposal items at most, and the summary's length (review 1, finding 10). */

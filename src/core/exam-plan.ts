@@ -119,12 +119,17 @@ export function orderNextUp(
 	/** WP8: `focus` = the skills the next dated assessment covers (core/assessments.ts focusSkills): they come first, and
 	 *  are never "not examined" (that assessment examines them); `needsWork` = skills the learner said they do not get
 	 *  (core/mastery.ts applySelfReports): first among their peers (same focus and priority). Both absent = as before. */
-	opts: { focus?: ReadonlySet<string>; needsWork?: ReadonlySet<string> } = {},
+	/** WP9: `covered` = the skills of the lectures the class has covered (core/lectures.ts standingGaps): after the next
+	 *  assessment's, before the rest. Absent or empty (a class with no lectures) = as before. Next up holds only skills not
+	 *  learned yet, so these are exactly the gaps: (1) what the next assessment needs, (2) what the class has covered,
+	 *  (3) the old order. */
+	opts: { focus?: ReadonlySet<string>; needsWork?: ReadonlySet<string>; covered?: ReadonlySet<string> } = {},
 ): { nextUp: string[]; notExamined: string[] } {
 	const focus = opts.focus ?? new Set<string>();
 	const needsWork = opts.needsWork ?? new Set<string>();
-	const indexed = ids.map((id, i) => ({ id, i, p: priority.get(id) ?? DEFAULT_WEIGHT, f: focus.has(id) ? 0 : 1, w: needsWork.has(id) ? 0 : 1 }));
-	const examined = indexed.filter((x) => x.p > 0 || x.f === 0).sort((a, b) => a.f - b.f || b.p - a.p || a.w - b.w || a.i - b.i);
+	const covered = opts.covered ?? new Set<string>();
+	const indexed = ids.map((id, i) => ({ id, i, p: priority.get(id) ?? DEFAULT_WEIGHT, f: focus.has(id) ? 0 : 1, c: covered.has(id) ? 0 : 1, w: needsWork.has(id) ? 0 : 1 }));
+	const examined = indexed.filter((x) => x.p > 0 || x.f === 0).sort((a, b) => a.f - b.f || a.c - b.c || b.p - a.p || a.w - b.w || a.i - b.i);
 	return { nextUp: examined.map((x) => x.id), notExamined: indexed.filter((x) => x.p === 0 && x.f === 1).map((x) => x.id) };
 }
 

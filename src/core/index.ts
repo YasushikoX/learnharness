@@ -91,6 +91,8 @@ export * from "./turn-fallback.ts";
 export * from "./exam-plan.ts";
 // Quizzes, exams and self-reports (WP8, 2026-11-25).
 export * from "./assessments.ts";
+// The lecture timeline and "where you stand" (WP9, 2026-11-25).
+export * from "./lectures.ts";
 export * from "./course-folders.ts";
 // The Hint button on a lesson question (fork addition, 2026-11-13).
 export * from "./hints.ts";

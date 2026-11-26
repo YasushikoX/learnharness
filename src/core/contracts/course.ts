@@ -14,6 +14,7 @@ import type { LessonLanguage } from "../language.ts";
 import type { Pace } from "../pace.ts";
 import type { CoursePlan, SkillWeights } from "../exam-plan.ts";
 import type { Assessment, AssessmentEntry, AssessmentProposal, SelfReport, SelfReportEntry } from "../assessments.ts";
+import type { ClassPosition, LectureEntry, StandingView } from "../lectures.ts";
 import type { ExtractionStageUsage } from "./chat.ts";
 
 // ─── Skills (the graph's second node kind) ──────────────────────────────────
@@ -240,6 +241,19 @@ export interface CourseRecord {
 	assessmentsError?: string;
 	/** ISO — when the last "Find quizzes and exams" pass finished (the page's syllabus hint reads it). */
 	assessmentsScannedAt?: string;
+	/** WP9: the class's lecture timeline (core/lectures.ts), tombstones included. Lectures named by the class's file names
+	 *  are derived on read and stored only once edited or removed. Merged per item in a sync, like `assessments`. */
+	lectures?: LectureEntry[];
+	/** WP9: how far the CLASS has got, when the learner said so (absent: derived from the lecture dates). */
+	classPosition?: ClassPosition;
+	/** WP9: each approved skill's `cite` from the draft it was approved from (approval clears the draft): the lecture
+	 *  linking step reuses them. Moves with the approval unit in a sync. */
+	skillCites?: Record<string, string>;
+	/** WP9: the "link skills to lectures" step: why its last run failed, when it last ran, and what it saw (a run starts
+	 *  again only when the lectures, their files or the skills change). Move together in a sync. */
+	lecturesLinkError?: string;
+	lecturesLinkedAt?: string;
+	lecturesLinkedKey?: string;
 	/** Schema stamp — lazy v1, same rule as chat records. */
 	version?: number;
 }
@@ -509,6 +523,17 @@ export interface CourseView {
 	coverage?: CourseCoverageView;
 	/** WP8: every assessment (the old exam date included as an "Exam"), dated first by date; and the pass's state. */
 	upcoming?: UpcomingView;
+	/** WP9: the lecture timeline, the class's position and where the learner stands (core/lectures.ts whereYouStand). */
+	standing?: CourseStandingView;
+}
+
+/** WP9: "Where you stand", with the linking step's state. */
+export interface CourseStandingView extends StandingView {
+	/** The "link skills to lectures" step is running. */
+	linking: boolean;
+	linkError?: string;
+	/** Material id → name, for the lecture rows. */
+	files: Record<string, string>;
 }
 
 /** WP8: the class page's Upcoming list. */
