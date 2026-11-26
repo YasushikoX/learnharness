@@ -156,7 +156,8 @@ function checkInput(input: AssessmentInput, course: CourseRecord, partial: boole
 		out.skillIds = ids;
 		out.allSkills = false;
 	}
-	if (input.allSkills !== undefined && input.allSkills !== false) {
+	if (input.allSkills === false) out.allSkills = false; // on its own too: no longer cumulative (WP9 re-check 1)
+	else if (input.allSkills !== undefined) {
 		if (input.allSkills !== true) return { ok: false, status: 400, error: "allSkills must be true or false" };
 		if (course.skills.length === 0) return { ok: false, status: 409, error: "The class has no approved skill map yet" };
 		out.allSkills = true;
