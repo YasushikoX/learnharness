@@ -77,6 +77,8 @@ export function ReadAloudSection({
 	const [loaded, setLoaded] = useState(false);
 	const [testing, setTesting] = useState(false);
 	const [testError, setTestError] = useState<string | null>(null);
+	/** A refused key: the notice says so, instead of the generic mapping (which points at Settings → Providers). */
+	const [testRefused, setTestRefused] = useState(false);
 	const [testedOk, setTestedOk] = useState(false);
 	const [keyInput, setKeyInput] = useState("");
 	const [savingKey, setSavingKey] = useState(false);
@@ -150,6 +152,7 @@ export function ReadAloudSection({
 			void reloadStatus();
 		} else {
 			setTestedOk(false);
+			setTestRefused(result.kind === "auth");
 			setTestError(result.error);
 		}
 	}, [client, reloadStatus]);
@@ -305,7 +308,7 @@ export function ReadAloudSection({
 					{keyError && <div><ErrorNotice error={keyError} what="Couldn't save the key." testid="read-aloud-key-error" /></div>}
 					{testError && (
 						<div>
-							<ErrorNotice error={testError} what="Google couldn't read the test sentence." onRetry={() => void runTest()} retrying={testing} testid="read-aloud-test-error" />
+							<ErrorNotice error={testError} what="Google couldn't read the test sentence." sentence={testRefused ? "Google refused the key. Check it, or create a new one with Get a key." : undefined} onRetry={() => void runTest()} retrying={testing} testid="read-aloud-test-error" />
 						</div>
 					)}
 					{hasKey && keyState !== "working" && (

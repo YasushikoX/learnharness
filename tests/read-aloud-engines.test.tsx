@@ -423,6 +423,8 @@ describe("Settings → Read aloud with Google voices", () => {
 		assert.equal(q("read-aloud-key-state")!.getAttribute("data-state"), "failed");
 		assert.ok(q("read-aloud-test-error"));
 		assert.match(q("read-aloud-test-error-detail")!.textContent ?? "", /403/);
+		assert.match(q("read-aloud-test-error")!.textContent ?? "", /Google refused the key/);
+		assert.doesNotMatch(q("read-aloud-test-error")!.textContent ?? "", /Providers/);
 		await act(async () => q<HTMLButtonElement>("read-aloud-test-error-retry")!.click());
 		await act(async () => flush());
 		assert.equal(q("read-aloud-key-state")!.getAttribute("data-state"), "working");
