@@ -55,7 +55,9 @@ const READ_DOT: Record<LectureNoteItem["read"], { label: string; dot: string } |
 	error: { label: "Could not be read to text", dot: "bg-error" },
 };
 
-export function LectureNotesRow({ courseId }: { courseId: string }) {
+/** `compact`: the class side panel's section (UI class page, 2026-11-25): the panel's 14/600 heading, a 32px New note and
+ *  narrower cards. */
+export function LectureNotesRow({ courseId, compact = false }: { courseId: string; compact?: boolean }) {
 	const [notes, setNotes] = useState<LectureNoteItem[] | null>(null);
 	const [openId, setOpenId] = useOpenNote();
 	const [dialog, setDialog] = useState<{ kind: "create" } | { kind: "edit"; note: LectureNoteItem } | null>(null);
@@ -78,7 +80,7 @@ export function LectureNotesRow({ courseId }: { courseId: string }) {
 		<section data-testid="course-lecture-notes" className="min-w-0">
 			{/* UI round 2: "New note" is a normal secondary button beside the heading, not a dashed tile in the strip. */}
 			<div className="flex items-center justify-between gap-3 pb-2">
-				<h2 className={cn(PAGE_HEAD, "pb-0")}>
+				<h2 className={compact ? "text-body font-semibold text-foreground" : cn(PAGE_HEAD, "pb-0")}>
 					Lecture notes
 					{count > 0 && <span className={HEAD_COUNT}>{count}</span>}
 				</h2>
@@ -87,7 +89,7 @@ export function LectureNotesRow({ courseId }: { courseId: string }) {
 					data-testid="lecture-note-new"
 					aria-label="New lecture note"
 					onClick={() => setDialog({ kind: "create" })}
-					className={buttonVariants({ variant: "secondary", size: "sm", className: "lh-touch shrink-0" })}
+					className={buttonVariants({ variant: compact ? "outline" : "secondary", size: compact ? "default" : "sm", className: "lh-touch shrink-0" })}
 				>
 					<PlusIcon aria-hidden />
 					New note
@@ -95,7 +97,7 @@ export function LectureNotesRow({ courseId }: { courseId: string }) {
 			</div>
 			<div data-testid="lecture-notes-strip" className="lh-no-scrollbar -mx-1 flex snap-x gap-3 overflow-x-auto px-1 pb-1 empty:hidden">
 				{(notes ?? []).map((n) => (
-					<div key={n.id} data-testid="lecture-note-card" className={cn(CARD_W, "group relative")}>
+					<div key={n.id} data-testid="lecture-note-card" className={cn(compact ? "w-32 shrink-0 snap-start" : CARD_W, "group relative")}>
 						<button type="button" onClick={() => setOpenId(n.id)} className="block w-full text-left">
 							<div className="relative aspect-[4/3] overflow-hidden rounded-lg border border-border/60 bg-white">
 								{READ_DOT[n.read] && <span data-testid="lecture-note-read" data-read={n.read} title={READ_DOT[n.read]!.label} className={cn("absolute bottom-1.5 right-1.5 size-2.5 rounded-full ring-2 ring-white", READ_DOT[n.read]!.dot)} />}

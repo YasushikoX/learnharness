@@ -446,8 +446,11 @@ describe("the course page: Learn, Ask, Practice", () => {
 		assert.match(html, /data-testid="course-modes"[\s\S]*course-mode-learn[\s\S]*course-mode-ask[\s\S]*course-mode-practice/, "in that order");
 		for (const id of ["learn", "ask", "practice"]) assert.ok(available(html, id), id);
 		assert.match(html, /data-testid="course-mode-learn-line"[^>]*>Next: B</);
-		assert.match(html, /data-testid="course-mode-practice-line"[^>]*>The 1 skill you are learning\.</);
-		assert.match(html, />Ask about this class</);
+		assert.match(html, /data-testid="course-mode-practice-line"[^>]*>1 skill you are learning</);
+		// UI class page (owner, 2026-11-25): "Short question", with no description line while there is nothing to continue
+		assert.match(html, />Short question</);
+		assert.doesNotMatch(html, /Ask about this class|Short answers from the class material/);
+		assert.doesNotMatch(html, /data-testid="course-mode-ask-line"/);
 		assert.ok(html.indexOf("course-modes") < html.indexOf("course-exam-plan"), "at the top of the page");
 	});
 
@@ -458,33 +461,36 @@ describe("the course page: Learn, Ask, Practice", () => {
 		assert.equal(learnTarget(payload({ nextUp: [] })), undefined);
 	});
 
-	it("before a skill map exists, in every such state: Ask is available, Learn and Practice say what is needed first", () => {
-		const states: Array<[string, CoursePayload, RegExp]> = [
-			["new", noMap(), /add the class&#x27;s sources and draft one in Course settings/],
-			["drafting", noMap({ drafting: true }), /being drafted now/],
-			// review 1: the Approve button is in the draft review below the card, not in Course settings
-			["draft", noMap({ course: { id: "course_a", title: "Calc", createdAt: "t", updatedAt: "t", status: "draft", skills: [], draft: { createdAt: "t", summary: "s", skills: [] } } }), /review and approve the draft below/],
-			["error", noMap({ course: { id: "course_a", title: "Calc", createdAt: "t", updatedAt: "t", status: "error", skills: [], error: "boom" } }), /drafting failed, see Course settings/],
+	it("before a skill map exists, in every such state: only Short question shows (once there is a file), never a 'Waits for' line", () => {
+		const states: Array<[string, CoursePayload]> = [
+			["new", noMap()],
+			["drafting", noMap({ drafting: true })],
+			["draft", noMap({ course: { id: "course_a", title: "Calc", createdAt: "t", updatedAt: "t", status: "draft", skills: [], draft: { createdAt: "t", summary: "s", skills: [] } } })],
+			["error", noMap({ course: { id: "course_a", title: "Calc", createdAt: "t", updatedAt: "t", status: "error", skills: [], error: "boom" } })],
 		];
-		for (const [name, data, reason] of states) {
+		for (const [name, data] of states) {
 			const html = renderBody(data);
-			assert.ok(available(html, "ask"), `${name}: Ask works`);
-			assert.ok(!available(html, "learn") && !available(html, "practice"), `${name}: Learn and Practice wait`);
-			assert.match(html, /<button[^>]*disabled=""[^>]*data-testid="course-mode-learn-start"/, name);
-			assert.doesNotMatch(html, /<button[^>]*disabled=""[^>]*data-testid="course-mode-ask-start"/, name);
-			assert.match(html, new RegExp(`data-testid="course-mode-learn-line"[^>]*>[^<]*${reason.source}`), name);
-			assert.match(html, new RegExp(`data-testid="course-mode-practice-line"[^>]*>[^<]*${reason.source}`), name);
+			assert.ok(available(html, "ask"), `${name}: Short question works`);
+			assert.doesNotMatch(html, /course-mode-learn|course-mode-practice/, `${name}: Learn and Practice are hidden until they can work`);
+			assert.doesNotMatch(html, /Waits for|course-modes-reason/, name);
+			const states = courseModeStates(data);
+			assert.equal(states.learn.available, false, name);
+			assert.equal(states.practice.available, false, name);
 		}
+		const noFiles = renderToStaticMarkup(<CourseBody data={noMap()} busy={false} error={null} onDraft={() => {}} onApprove={() => {}} onStart={() => {}} materialCount={0} onAsk={() => {}} />);
+		assert.doesNotMatch(noFiles, /course-modes/, "no file yet: nothing to ask about, the setup card is the whole center");
 	});
 
 	it("nothing left to learn, nothing learned yet, everything known: the unavailable card says why", () => {
 		const fresh = courseModeStates(payload({ learning: [], skills: [skillView("a"), skillView("b", { requires: ["a"] })], nextUp: ["a"] }));
 		assert.equal(fresh.practice.available, false);
-		assert.match(fresh.practice.line, /Finish a lesson first/);
 		const known = courseModeStates(payload({ learning: [], nextUp: [], known: ["a", "b"] }));
 		assert.equal(known.learn.available, false);
-		assert.match(known.learn.line, /Every skill is learned/);
-		assert.match(known.practice.line, /Every skill is known/);
+		assert.equal(known.practice.available, false);
+		// UI class page: a way in that cannot start is not on the page (no disabled card with an explanation)
+		const html = renderBody(payload({ learning: [], nextUp: [], known: ["a", "b"] }));
+		assert.doesNotMatch(html, /course-mode-learn|course-mode-practice/);
+		assert.ok(available(html, "ask"));
 	});
 
 	it("lists Ask sessions with their own label, and the Ask card reopens the newest one with a New button beside it", () => {
@@ -496,7 +502,8 @@ describe("the course page: Learn, Ask, Practice", () => {
 		const html = renderBody(data);
 		assert.match(html, /data-testid="course-sessions"[\s\S]*Questions: Calc[\s\S]*>Questions</, "the list labels it");
 		assert.match(html, /data-testid="course-mode-ask-new"/);
-		assert.match(html, /Continue your questions/);
+		assert.match(html, /data-testid="course-mode-ask-line"[^>]*>Continue the last one</, "the default title says nothing: only that there is one");
+		assert.equal(courseModeStates(payload({ sessions: [{ id: "chat_q", title: "Why ATP?", mode: "ask", updatedAt: "t" }] })).ask.line, "Continue: Why ATP?");
 		assert.equal(courseModeStates(data).ask.reopen, "chat_ask2", "the newest");
 		assert.equal(courseModeStates(payload()).ask.reopen, undefined, "no Ask session yet: the card starts one");
 		assert.doesNotMatch(renderBody(payload()), /course-mode-ask-new/);
@@ -1001,8 +1008,9 @@ describe("review 1 item 9: draft card copy and conversation titles", () => {
 
 	it("the draft-state card points to the draft review below", () => {
 		const data = noMap({ course: { id: "course_a", title: "Calc", createdAt: "t", updatedAt: "t", status: "draft", skills: [], draft: { createdAt: "t", summary: "s", skills: [] } } });
-		assert.equal(courseModeStates(data).learn.line, "Waits for the skill map: review and approve the draft below.");
-		assert.doesNotMatch(courseModeStates(data).learn.line, /Course settings/);
+		// UI class page: the setup card's skill map step says it; Learn is simply not shown yet
+		assert.equal(courseModeStates(data).learn.available, false);
+		assert.match(renderBody(data), /data-testid="setup-step-map"[\s\S]*Review the draft below, then approve it\./);
 	});
 
 	it("a new Ask conversation is titled by its first question (trimmed), once asked; later questions and a chosen title are kept", async () => {

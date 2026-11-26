@@ -139,24 +139,21 @@ export async function captureScreens({ page, origin, theme, stage, signal, withL
 		await capture(4, "class-skill-map", "Expanded prerequisite map for eight approved AP Biology skills.");
 		await click(testId("map-toggle"));
 
-		await click(testId("course-settings-toggle"));
 		await visible(testId("course-pace"));
-		await capture(5, "class-settings", "Course settings with pace, curriculum, exam, and placement controls.");
-		await click(testId("stats-materials"));
-		await visible(testId(`material-${ids.material}`));
-		await capture(6, "class-materials", "Course curriculum popover with an indexed cellular energetics PDF.");
-		await click(testId("stats-materials"));
-		await page.waitForSelector(testId(`material-${ids.material}`), { hidden: true });
-		await click(testId("course-settings-toggle"));
+		await capture(5, "class-panel", "Class side panel: files, skill map, exam, starting point, pace, lecture notes.", testId("class-side-panel"));
+		await click(testId(`material-remove-${ids.material}`));
+		await visible(testId(`material-remove-confirm-${ids.material}`));
+		await capture(6, "class-files", "Class files in the side panel with the remove confirm open.", testId("class-files"));
+		await click(testId(`material-remove-cancel-${ids.material}`));
+		await page.waitForSelector(testId(`material-remove-confirm-${ids.material}`), { hidden: true });
 
 		await click(testId("coverage-toggle"));
 		await scroll(testId("course-coverage"), "center");
 		await visible(testId("coverage-detail"));
 		await capture(7, "class-coverage", "Vocabulary coverage showing a newly indexed term awaiting assignment.");
-		await click(testId("course-sessions-finished-toggle"));
 		await scroll(testId("course-sessions"));
-		await visible(testId("course-sessions-finished"));
-		await capture(8, "class-sessions", "Course session history with active and finished sessions.");
+		if (await page.$(testId("course-sessions-all"))) await click(testId("course-sessions-all"));
+		await capture(8, "class-sessions", "Recent sessions of the class under Next up, all shown.");
 
 		await visit(lesson, firstMessage);
 		await scroll(firstMessage, "center");
@@ -299,13 +296,22 @@ export async function captureScreens({ page, origin, theme, stage, signal, withL
 			await capture(29, "lesson-1024", "Lesson opening at 1024 × 768.");
 			await visit(course, matchesCourse);
 			await capture(30, "class-1024", "Class overview at 1024 × 768.");
+			await click(testId("class-panel-toggle"));
+			await visible(testId("class-files"));
+			await capture(31, "class-1024-panel", "Class overview at 1024 × 768 with the side panel opened from the header.");
 			await page.setViewport(desktop);
 		}
 
 		await click(testId("new-course"));
 		await page.waitForFunction(() => document.querySelector('[data-testid="course-title"]')?.value === "Untitled course");
-		await visible(testId("course-curriculum"));
-		await capture(27, "new-class", "First step of a new class, with title and curriculum setup.");
+		await visible(testId("class-setup"));
+		await capture(27, "new-class", "A new class: the setup checklist in the center, files and settings in the side panel.");
+		if (theme === "dark") {
+			await page.setViewport(narrow);
+			await settle();
+			await capture(32, "new-class-1024", "A new class at 1024 × 768, the side panel open by default.");
+			await page.setViewport(desktop);
+		}
 		return entries;
 	} catch (error) {
 		await checkPage();

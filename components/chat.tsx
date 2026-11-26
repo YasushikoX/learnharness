@@ -2124,7 +2124,7 @@ export function Chat({
 						<div data-session-find-root="" className={`${TRANSCRIPT_COLUMN} relative flex flex-1 flex-col gap-4 pt-4`}>
 							{messages.length === 0 && !busy && (
 								<ConversationEmptyState
-									title={askSession ? "Ask about this class" : "New session"}
+									title={askSession ? "Short question" : "New session"}
 									description={
 										askSession
 											? "Ask anything about the class. Answers come from its material, with page references. Nothing here counts toward your progress."

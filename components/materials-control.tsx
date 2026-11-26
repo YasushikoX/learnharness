@@ -1,11 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { BookOpenIcon, CameraIcon, FileTextIcon, ImageIcon, LinkIcon, Loader2Icon, XIcon } from "lucide-react";
 import { usePopoverDismiss } from "./popover-dismiss.ts";
-import { MATERIAL_ACCEPT, indexingProgressLine, isMaterialUrl, type LessonMaterial } from "@/src/core";
+import { indexingProgressLine, type LessonMaterial } from "@/src/core";
 import { MenuShell } from "@/components/menu-shell";
-import { useCamera } from "@/components/use-camera";
 import { Hint } from "@/components/ui/hint";
 import { CONTROL_CLASS, type ControlVariant } from "@/components/control-variant";
 import { buttonVariants } from "@/components/ui/button";
@@ -15,16 +14,7 @@ import { cn } from "@/lib/utils";
 /** UI round 1b (SPEC §3): the popover's actions are 28px outline Buttons beside a 28px field; remove is a ghost icon. */
 const ADD_BTN = buttonVariants({ variant: "outline", size: "sm", className: "text-xs" });
 const REMOVE_BTN = buttonVariants({ variant: "ghost", size: "icon-xs", className: "text-muted-foreground hover:text-foreground" });
-import {
-	addLink,
-	draftKey,
-	draftMaterials,
-	fetchMaterials,
-	materialsPath,
-	uploadFiles,
-	useDraftMaterials,
-	type DraftMaterial,
-} from "@/components/materials-client";
+import { useMaterials } from "@/components/use-materials";
 
 /**
  * The Sources pill (fork addition, 2026-10-24) — the stats bar's source
@@ -39,10 +29,13 @@ import {
  *   course mode         a course's curriculum (courseId — fork addition,
  *                       docs/courses.md): the chat mode against the course's
  *                       endpoint; `onChange` tells the course page.
+ *
+ * UI class page (2026-11-25): the class page no longer opens this popover; its files sit in the class side panel
+ * (class-files.tsx). Both read and write through useMaterials (use-materials.tsx) and show the same MaterialRow.
  */
 
 /** What the user should know about a material's conversion and indexing. Pure. */
-function materialNotes(m: LessonMaterial): string[] {
+export function materialNotes(m: LessonMaterial): string[] {
 	return [m.conversionError?.message, ...(m.conversionWarnings ?? []), m.indexingError?.message, ...(m.indexingWarnings ?? [])].filter((s): s is string => Boolean(s));
 }
 
@@ -55,8 +48,13 @@ export function materialStatusLine(m: LessonMaterial): string {
 	const notes = materialNotes(m);
 	const note = notes.length > 0 ? ` · ${notes.join(" · ")}` : "";
 	if (m.status === "error") return `not read${m.error ? ` — ${m.error}` : ""}${note}`;
-	const base = m.kind === "pdf" && m.pages ? `${m.pages} pages` : m.kind === "web" ? "web page" : m.kind === "image" ? "image" : "text";
+	const base = m.kind === "pdf" && m.pages ? pagesLabel(m.pages) : m.kind === "web" ? "web page" : m.kind === "image" ? "image" : "text";
 	return `${m.originalElsewhere ? `${base} · original on another device` : base}${note}`;
+}
+
+/** "1 page", "12 pages". Pure. */
+export function pagesLabel(pages: number): string {
+	return pages === 1 ? "1 page" : `${pages} pages`;
 }
 
 /** The pill's label. Pure. */
@@ -65,11 +63,50 @@ export function sourcesLabel(count: number, reading: number): string {
 	return count === 0 ? "Sources" : `Sources · ${count}`;
 }
 
-function KindIcon({ kind }: { kind: LessonMaterial["kind"] | "file" | "link" }) {
+export function KindIcon({ kind }: { kind: LessonMaterial["kind"] | "file" | "link" }) {
 	const cls = "size-3.5 shrink-0 text-muted-foreground";
 	if (kind === "web" || kind === "link") return <LinkIcon className={cls} />;
 	if (kind === "image") return <ImageIcon className={cls} />;
 	return <FileTextIcon className={cls} />;
+}
+
+/**
+ * One material as a row: its kind, its name, its status line (conversion and indexing progress, errors in the error
+ * colour) and a remove button. With `confirmRemove` the first press asks ("Remove?") and only the second removes.
+ */
+export function MaterialRow({ material: m, onRemove, confirmRemove = false }: { material: LessonMaterial; onRemove: () => void; confirmRemove?: boolean }) {
+	const [asking, setAsking] = useState(false);
+	return (
+		<div className="flex items-center gap-2 rounded-md px-1 py-1" data-testid={`material-${m.id}`} onMouseLeave={() => setAsking(false)}>
+			{m.status === "reading" ? <Loader2Icon className="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-label="Reading" /> : <KindIcon kind={m.kind} />}
+			<span className="min-w-0 flex-1">
+				<span className="block truncate text-foreground" title={m.url ?? m.name}>
+					{m.name}
+				</span>
+				<span
+					className={`block truncate text-meta ${m.status === "error" ? "text-error" : "text-muted-foreground"}`}
+					data-testid={`material-status-${m.id}`}
+					title={m.conversionProgress || m.indexingProgress ? materialStatusLine(m) : ([m.error, ...materialNotes(m)].filter(Boolean).join(" · ") || undefined)}
+				>
+					{materialStatusLine(m)}
+				</span>
+			</span>
+			{confirmRemove && asking ? (
+				<span className="flex shrink-0 items-center gap-1">
+					<button type="button" data-testid={`material-remove-cancel-${m.id}`} onClick={() => setAsking(false)} className={buttonVariants({ variant: "ghost", size: "xs" })}>
+						Keep
+					</button>
+					<button type="button" data-testid={`material-remove-confirm-${m.id}`} onClick={onRemove} className={buttonVariants({ variant: "destructiveSolid", size: "xs" })}>
+						Remove
+					</button>
+				</span>
+			) : (
+				<button type="button" aria-label={`Remove ${m.name}`} data-testid={`material-remove-${m.id}`} onClick={() => (confirmRemove ? setAsking(true) : onRemove())} className={REMOVE_BTN}>
+					<XIcon />
+				</button>
+			)}
+		</div>
+	);
 }
 
 export function MaterialsControl({
@@ -82,85 +119,22 @@ export function MaterialsControl({
 	courseId?: string;
 	/** Course mode: the materials as read, after every refresh. */
 	onChange?: (materials: LessonMaterial[]) => void;
-	/** pill: the floating chrome (the course page) · edge: the quiet
-	 *  button on the composer shell's bottom edge (owner, 2026-10-25). */
+	/** pill: the floating chrome · edge: the quiet button on the composer shell's bottom edge (owner, 2026-10-25). */
 	variant?: ControlVariant;
 }) {
 	// One owner id for the requests: the course's, else the lesson's.
 	const chatId = courseId ?? lessonId;
-	const draft = useDraftMaterials();
-	const [materials, setMaterials] = useState<LessonMaterial[]>([]);
+	const files = useMaterials(chatId, onChange);
+	const { materials, draft, reading, busy, error } = files;
 	const [open, setOpen] = useState(false);
 	const [url, setUrl] = useState("");
-	const [busy, setBusy] = useState(false);
-	const [error, setError] = useState<string | null>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
-	const fileRef = useRef<HTMLInputElement>(null);
-
-	const read = useCallback(() => {
-		if (chatId)
-			void fetchMaterials(chatId)
-				.then((list) => {
-					setMaterials(list);
-					onChange?.(list);
-				})
-				.catch(() => {});
-	}, [chatId, onChange]);
-	useEffect(read, [read]);
-	// poll while anything is still being read
-	const reading = materials.filter((m) => m.status === "reading").length;
-	useEffect(() => {
-		if (!chatId || reading === 0) return;
-		const id = setInterval(read, 2000);
-		return () => clearInterval(id);
-	}, [chatId, reading, read]);
 
 	// Outside pointerdown, Esc and the Android back close it through the shared popup layer (interaction-layers.tsx).
 	usePopoverDismiss(containerRef, open, () => setOpen(false));
 
-	const addFiles = async (files: File[]) => {
-		if (files.length === 0) return;
-		setError(null);
-		if (!chatId) {
-			draftMaterials.add(files.map((file): DraftMaterial => ({ key: draftKey(), kind: "file", file })));
-			return;
-		}
-		setBusy(true);
-		const err = await uploadFiles(chatId, files).catch(() => "upload failed");
-		setBusy(false);
-		if (err) setError(err);
-		read();
-	};
-
-	const camera = useCamera(addFiles);
-
 	const submitLink = async () => {
-		const value = url.trim();
-		if (!isMaterialUrl(value)) {
-			setError("Enter an http(s) link");
-			return;
-		}
-		setError(null);
-		if (!chatId) {
-			draftMaterials.add([{ key: draftKey(), kind: "link", url: value }]);
-			setUrl("");
-			return;
-		}
-		setBusy(true);
-		const err = await addLink(chatId, value).catch(() => "could not add the link");
-		setBusy(false);
-		if (err) setError(err);
-		else setUrl("");
-		read();
-	};
-
-	const remove = async (id: string) => {
-		if (!chatId) {
-			draftMaterials.remove(id);
-			return;
-		}
-		await fetch(`${materialsPath(chatId)}/${id}`, { method: "DELETE" }).catch(() => {});
-		read();
+		if (await files.addUrl(url)) setUrl("");
 	};
 
 	const count = chatId ? materials.length : draft.length;
@@ -173,76 +147,36 @@ export function MaterialsControl({
 					aria-expanded={open}
 					onClick={() => {
 						setOpen((o) => !o);
-						setError(null);
+						files.clearError();
 					}}
 					className={CONTROL_CLASS[variant]}
 				>
 					{reading > 0 ? <Loader2Icon className="size-3.5 animate-spin" /> : <BookOpenIcon className="size-3.5 text-muted-foreground" />}
-					<span className="text-card-foreground">{sourcesLabel(count, chatId ? reading : 0)}</span>
+					<span className="text-card-foreground">{sourcesLabel(count, reading)}</span>
 				</button>
 			</Hint>
-			{camera.node}
-			<input
-				ref={fileRef}
-			type="file"
-			multiple
-				accept={MATERIAL_ACCEPT}
-				className="hidden"
-				data-testid="materials-file-input"
-				onChange={(e) => {
-					const files = Array.from(e.currentTarget.files ?? []);
-					e.currentTarget.value = ""; // the same file can be picked again
-					void addFiles(files);
-				}}
-			/>
+			{files.node}
 			{open && (
-				// UI round 1b (SPEC §8): on the course page the popover opens DOWN and LEFT-aligned to the Sources button (it
-				// spilled over the sidebar when right-aligned), 8px below it (the shell's 4px gap + mt-1).
-				<MenuShell
-					anchorRef={containerRef}
-					testid="materials-menu"
-					preferredSide={courseId ? "down" : "up"}
-					align={courseId ? "left" : "right"}
-					menuClass={cn("flex w-80 flex-col gap-1 lh-menu p-2", courseId && "mt-1")}
-				>
-					<div className="px-1 pb-1 text-xs text-muted-foreground">
-						{courseId
-							? "The curriculum: everything the course should teach. The course planner turns it into the skill map; every course session can read it."
-							: "The material sets the lesson's target; teaching uses its definitions, notation and terms and cites it."}
-					</div>
+				<MenuShell anchorRef={containerRef} testid="materials-menu" preferredSide="up" align="right" menuClass="flex w-80 flex-col gap-1 lh-menu p-2">
+					<div className="px-1 pb-1 text-xs text-muted-foreground">The material sets the lesson&apos;s target; teaching uses its definitions, notation and terms and cites it.</div>
 					{chatId
-						? materials.map((m) => (
-								<div key={m.id} className="flex items-center gap-2 rounded-md px-1 py-1" data-testid={`material-${m.id}`}>
-									<KindIcon kind={m.kind} />
-									<span className="min-w-0 flex-1">
-										<span className="block truncate text-foreground" title={m.url ?? m.name}>
-											{m.name}
-										</span>
-										<span className={`block truncate ${m.status === "error" ? "text-error" : "text-muted-foreground"}`} title={m.conversionProgress || m.indexingProgress ? materialStatusLine(m) : ([m.error, ...materialNotes(m)].filter(Boolean).join(" · ") || undefined)}>
-											{materialStatusLine(m)}
-										</span>
-									</span>
-									<button type="button" aria-label={`Remove ${m.name}`} onClick={() => void remove(m.id)} className={REMOVE_BTN}>
-										<XIcon />
-									</button>
-								</div>
-							))
+						? materials.map((m) => <MaterialRow key={m.id} material={m} onRemove={() => void files.remove(m.id)} />)
 						: draft.map((d) => (
 								<div key={d.key} className="flex items-center gap-2 rounded-md px-1 py-1" data-testid={`draft-material-${d.key}`}>
 									<KindIcon kind={d.kind === "link" ? "link" : "file"} />
 									<span className="min-w-0 flex-1 truncate text-foreground">{d.kind === "file" ? d.file.name : d.url}</span>
-									<button type="button" aria-label="Remove" onClick={() => void remove(d.key)} className={REMOVE_BTN}>
+									<button type="button" aria-label="Remove" onClick={() => void files.remove(d.key)} className={REMOVE_BTN}>
 										<XIcon />
 									</button>
 								</div>
 							))}
 					{count === 0 && <div className="px-1 py-1 text-muted-foreground">No source material yet.</div>}
 					<div className="mt-1 flex items-center gap-1.5 border-t border-border pt-2">
-						<button type="button" disabled={busy} data-testid="materials-add-files" onClick={() => fileRef.current?.click()} className={ADD_BTN}>
+						<button type="button" disabled={busy} data-testid="materials-add-files" onClick={files.pickFiles} className={ADD_BTN}>
 							Add files…
 						</button>
-						{camera.available && (
-							<button type="button" disabled={busy} data-testid="materials-camera" onClick={camera.open} className={ADD_BTN}>
+						{files.camera.available && (
+							<button type="button" disabled={busy} data-testid="materials-camera" onClick={files.camera.open} className={ADD_BTN}>
 								<CameraIcon />
 								Camera
 							</button>
