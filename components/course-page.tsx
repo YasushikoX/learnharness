@@ -33,7 +33,7 @@ import {
 	type SkillWeightValue,
 } from "@/src/core";
 import { DistributionStrip, DueChip, DueTimeline, UnderstandingBar, useNow } from "@/components/skill-visuals";
-import { CourseModes } from "@/components/course-modes";
+import { CourseModes, SHORT_QUESTION } from "@/components/course-modes";
 import { ClassPanel } from "@/components/class-panel";
 import { ClassSetup } from "@/components/class-setup";
 import { dragHasFiles, useMaterials, type MaterialsApi } from "@/components/use-materials";
@@ -445,7 +445,7 @@ function SessionLink({ session }: { session: CourseView["sessions"][number] }) {
 				)}
 			>
 				<span className="min-w-0 flex-1 truncate">{session.title}</span>
-				<span className="shrink-0 text-meta text-muted-foreground">{COURSE_MODE_LABEL[session.mode]}</span>
+				<span className="shrink-0 text-meta text-muted-foreground">{session.mode === "ask" ? SHORT_QUESTION : COURSE_MODE_LABEL[session.mode]}</span>
 				{session.finished && <CheckIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Finished" />}
 			</Link>
 		</li>
