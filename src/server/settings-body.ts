@@ -29,7 +29,7 @@ import type {
 	PdfConversionSettings,
 	RoleModelOverride,
 } from "../core/settings.ts";
-import { BACKGROUND_MODEL_ROLES, CACHE_RETENTIONS, COMPACTION_THRESHOLD_FLOOR, CONFIDENCE_CONTROLS, CUSTOM_MODEL_PIN_FLOOR, EXTRACTION_CHUNK_TOKENS_FLOOR, isConfidenceControl, isTranscriptMaxWidth, MODEL_SLOTS, normalizeBaseUrl, PROFILE_CONVERTER_ID, READ_ALOUD_RATE_MAX, READ_ALOUD_RATE_MIN, TRANSCRIPT_WIDTH_MAX_REM, TRANSCRIPT_WIDTH_MIN_REM } from "../core/settings.ts";
+import { BACKGROUND_MODEL_ROLES, CACHE_RETENTIONS, COMPACTION_THRESHOLD_FLOOR, CONFIDENCE_CONTROLS, CUSTOM_MODEL_PIN_FLOOR, EXTRACTION_CHUNK_TOKENS_FLOOR, GEMINI_MODEL_SETTING, isConfidenceControl, isTranscriptMaxWidth, MODEL_SLOTS, normalizeBaseUrl, PROFILE_CONVERTER_ID, READ_ALOUD_RATE_MAX, READ_ALOUD_RATE_MIN, TRANSCRIPT_WIDTH_MAX_REM, TRANSCRIPT_WIDTH_MIN_REM } from "../core/settings.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
 import { parseRepo } from "./sync/service.ts";
 import { isRegisteredPdfConverter, registeredPdfConverterIds } from "./converters/registry.ts";
@@ -717,6 +717,16 @@ export function parsePdfConversionSettingsBody(body: unknown): SettingsBodyResul
 			Object.defineProperty(out, id, { value: baseUrl ? { baseUrl } : {}, enumerable: true, configurable: true, writable: true });
 		}
 		settings.services = out;
+	}
+	if (raw.gemini !== undefined) {
+		const gemini = asRecord(raw.gemini);
+		if (!gemini) return { ok: false, error: "gemini must be an object" };
+		const out: NonNullable<PdfConversionSettings["gemini"]> = {};
+		if (gemini.model !== undefined) {
+			if (typeof gemini.model !== "string" || (gemini.model.trim() && !GEMINI_MODEL_SETTING.test(gemini.model.trim()))) return { ok: false, error: "gemini.model must be a model id (lowercase letters, digits, dots and dashes)" };
+			if (gemini.model.trim()) out.model = gemini.model.trim();
+		}
+		settings.gemini = out;
 	}
 	return { ok: true, settings };
 }

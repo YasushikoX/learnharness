@@ -32,6 +32,8 @@ export interface ConverterChange {
 	removeKey?: boolean;
 	ocr?: boolean;
 	formulaEnrichment?: boolean;
+	/** Google AI Studio's model id ("" goes back to the default). */
+	model?: string;
 }
 
 export const saveConverter = (change: ConverterChange) => call<ConvertersOverview>("/api/converters", json("PUT", change), "Could not save");

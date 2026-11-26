@@ -1,10 +1,25 @@
 import type { ConverterEntry, ConvertersOverview, ConverterValidationReport } from "../../core/converter-settings.ts";
 import { customConverterId, customProfileIdOf, sameServiceUrl, serviceOrigin, type HttpConverterProfile } from "../../core/http-converter-spec.ts";
-import { CURRENT_SETTINGS_VERSION, normalizeBaseUrl, type PdfConversionSettings } from "../../core/settings.ts";
+import { CURRENT_SETTINGS_VERSION, GEMINI_MODEL_SETTING, normalizeBaseUrl, type PdfConversionSettings } from "../../core/settings.ts";
 import { writeDoclingAuth } from "../../store/auth.ts";
 import { readSettings, writeSettings } from "../../store/settings.ts";
 import { writeDoclingCredential } from "./auth.ts";
-import { credentialStatus, readConverterCredential, writeProfileCredential } from "./credentials.ts";
+import { credentialStatus, geminiKeySource, readConverterCredential, readGoogleProviderKey, writeProfileCredential } from "./credentials.ts";
+import {
+	GEMINI_BASE_URL,
+	GEMINI_CONVERTER_ID,
+	GEMINI_DEFAULT_MODEL,
+	GEMINI_DOCS_URL,
+	GEMINI_KEY_URL,
+	GEMINI_MAX_BYTES,
+	GEMINI_MAX_PAGES,
+	GEMINI_MODEL_SUGGESTIONS,
+	GEMINI_NAME,
+	GEMINI_PRIVACY_NOTE,
+	GEMINI_UNVERIFIED,
+	geminiModelId,
+	normalizeGeminiModel,
+} from "./gemini.ts";
 import { listCustomProfiles, loadCustomProfile, removeCustomProfile, saveCustomProfile } from "./custom-profiles.ts";
 import { API_KEY_MAX_LENGTH, apiKeyProblem } from "./http-common.ts";
 import { pdfjsConverter } from "./pdfjs.ts";
@@ -28,6 +43,10 @@ export type { ConverterEntry, ConvertersOverview };
  * address is saved as its URL when the user chooses the preset (`select`) or saves its key, on the screen that shows
  * that address. `select` (Settings: "Use for new PDFs") refuses a converter that is not ready, with the step that is
  * missing. A key shorter than API_KEY_MIN_LENGTH, or with characters a header cannot carry, is refused when saved.
+ *
+ * GOOGLE AI STUDIO (gemini.ts, 2026-11-25) has one fixed address and no URL field. Its own key is stored like a
+ * profile's, bound to that address; without one, the Google model provider's key (GEMINI_API_KEY) is used and the
+ * overview says so (`credential.provider`), never copying it. Its model id is the one other setting.
  */
 
 function section(): PdfConversionSettings {
@@ -81,6 +100,33 @@ function profileEntry(id: string, kind: "preset" | "custom", profile: HttpConver
 	};
 }
 
+function geminiEntry(settings: PdfConversionSettings): ConverterEntry {
+	const own = credentialStatus(GEMINI_CONVERTER_ID, GEMINI_BASE_URL);
+	const source = geminiKeySource();
+	const model = geminiModelId(settings.gemini?.model) ? settings.gemini?.model : undefined;
+	const setup = source ? undefined : "Save a Gemini API key first (or add a Google key under model providers).";
+	return {
+		id: GEMINI_CONVERTER_ID,
+		kind: "gemini",
+		name: GEMINI_NAME,
+		description: "Google's Gemini models read the PDF itself: scanned pages, tables, formulas and diagrams. Free tier with daily limits; needs an AI Studio API key.",
+		local: false,
+		...(GEMINI_UNVERIFIED ? { unverified: true } : {}),
+		docsUrl: GEMINI_DOCS_URL,
+		baseUrl: GEMINI_BASE_URL,
+		origin: GEMINI_BASE_URL,
+		fixedUrl: true,
+		ready: setup === undefined,
+		...(setup ? { setup } : {}),
+		key: "required",
+		credential: { ...own, ...(source === "provider" ? { provider: true } : {}) },
+		keyUrl: GEMINI_KEY_URL,
+		privacyNote: GEMINI_PRIVACY_NOTE,
+		model: { ...(model ? { value: model } : {}), default: GEMINI_DEFAULT_MODEL, suggestions: [...GEMINI_MODEL_SUGGESTIONS] },
+		limits: { maxBytes: GEMINI_MAX_BYTES, maxPages: GEMINI_MAX_PAGES },
+	};
+}
+
 export function convertersOverview(): ConvertersOverview {
 	const settings = section();
 	const doclingUrl = settings.docling?.baseUrl;
@@ -104,6 +150,7 @@ export function convertersOverview(): ConvertersOverview {
 				credential: credentialStatus("docling", doclingUrl),
 				options: { ocr: settings.docling?.ocr ?? true, formulaEnrichment: settings.docling?.formulaEnrichment ?? false },
 			},
+			geminiEntry(settings),
 			...PRESET_PROFILES.map((p) => profileEntry(p.id, "preset", p, settings)),
 			...custom.profiles.map((p) => profileEntry(customConverterId(p.id), "custom", p, settings)),
 		],
@@ -123,6 +170,8 @@ export interface ConfigureConverterInput {
 	/** Docling only. */
 	ocr?: boolean;
 	formulaEnrichment?: boolean;
+	/** Google AI Studio only: the model id ("" goes back to the default). */
+	model?: string;
 }
 
 export type ServiceResult<T> = { ok: true; value: T } | { ok: false; error: string; status?: number };
@@ -140,7 +189,7 @@ function profileFor(id: string): HttpConverterProfile | undefined | null {
 export function parseConfigureBody(body: unknown): ServiceResult<ConfigureConverterInput> {
 	if (body === null || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "Invalid JSON body" };
 	const raw = body as Record<string, unknown>;
-	const allowed = new Set(["id", "select", "baseUrl", "apiKey", "removeKey", "ocr", "formulaEnrichment"]);
+	const allowed = new Set(["id", "select", "baseUrl", "apiKey", "removeKey", "ocr", "formulaEnrichment", "model"]);
 	const unknown = Object.keys(raw).find((k) => !allowed.has(k));
 	if (unknown) return { ok: false, error: `unknown field ${unknown}` };
 	if (typeof raw.id !== "string" || !raw.id) return { ok: false, error: "id must be a converter id" };
@@ -151,12 +200,43 @@ export function parseConfigureBody(body: unknown): ServiceResult<ConfigureConver
 	if (raw.apiKey !== undefined) {
 		if (typeof raw.apiKey !== "string" || raw.apiKey.length > API_KEY_MAX_LENGTH || /[\r\n\0]/.test(raw.apiKey)) return { ok: false, error: "apiKey must be one line of text" };
 	}
+	if (raw.model !== undefined && (typeof raw.model !== "string" || raw.model.length > 100)) return { ok: false, error: "model must be a model id" };
 	return { ok: true, value: raw as unknown as ConfigureConverterInput };
+}
+
+/** Google AI Studio: its key (bound to the fixed address), its model, `select`. */
+function configureGemini(input: ConfigureConverterInput, settings: PdfConversionSettings): ServiceResult<ConvertersOverview> {
+	if (input.baseUrl !== undefined) return { ok: false, error: `${GEMINI_NAME} has a fixed address; there is no URL to set` };
+	if (input.ocr !== undefined || input.formulaEnrichment !== undefined) return { ok: false, error: "Only Docling has OCR and formula options" };
+	const apiKey = input.apiKey?.trim() || undefined;
+	if (apiKey) {
+		const problem = apiKeyProblem(apiKey);
+		if (problem) return { ok: false, error: `${problem}. Nothing was saved.` };
+	}
+	const next: PdfConversionSettings = structuredClone(settings);
+	if (input.model !== undefined) {
+		// normalized once, and that same value validated and saved; only a blank field resets to the default
+		const blank = !input.model.trim();
+		const typed = normalizeGeminiModel(input.model);
+		if (!blank && !GEMINI_MODEL_SETTING.test(typed)) return { ok: false, error: "The model id may hold only lowercase letters, digits, dots and dashes (for example gemini-3.8-flash). Nothing was saved." };
+		next.gemini = !blank && typed !== GEMINI_DEFAULT_MODEL ? { ...settings.gemini, model: typed } : (({ model: _drop, ...rest }) => rest)(settings.gemini ?? {});
+	}
+	if (input.select) {
+		const keyAfter = !!apiKey || (!input.removeKey && geminiKeySource() === "own") || readGoogleProviderKey() !== undefined;
+		if (!keyAfter) return { ok: false, error: `${GEMINI_NAME} cannot be used yet: Save a Gemini API key first (or add a Google key under model providers).`, status: 409 };
+		next.converter = GEMINI_CONVERTER_ID;
+	}
+	if (apiKey) writeProfileCredential(GEMINI_CONVERTER_ID, GEMINI_BASE_URL, apiKey);
+	else if (input.removeKey) writeProfileCredential(GEMINI_CONVERTER_ID, GEMINI_BASE_URL, undefined);
+	writeSection(next);
+	return { ok: true, value: convertersOverview() };
 }
 
 export function configureConverter(input: ConfigureConverterInput): ServiceResult<ConvertersOverview> {
 	const { id } = input;
 	const settings = section();
+	if (id === GEMINI_CONVERTER_ID) return configureGemini(input, settings);
+	if (input.model !== undefined) return { ok: false, error: `Only ${GEMINI_NAME} has a model setting` };
 	const isDocling = id === "docling";
 	const bundled = presetProfile(id) !== undefined;
 	const profile = isDocling || id === "pdfjs" ? null : profileFor(id);
@@ -296,7 +376,7 @@ export async function testConverter(id: string, signal: AbortSignal, deadlineMs 
 	} else {
 		const result = resolvePdfConverter(settings, readConverterCredential);
 		if (result.converter.id !== id) return { ok: false, error: result.warnings[0]?.replace(/; the built-in reader \(pdfjs\) was used instead\.$/, ".") ?? `Unknown converter ${id}` };
-		const url = id === "docling" ? settings.docling?.baseUrl : presetProfile(id) ? settings.services?.[id]?.baseUrl : undefined;
+		const url = id === "docling" ? settings.docling?.baseUrl : id === GEMINI_CONVERTER_ID ? GEMINI_BASE_URL : presetProfile(id) ? settings.services?.[id]?.baseUrl : undefined;
 		resolved = { converter: result.converter, secret: url ? readConverterCredential(id, url) : undefined };
 	}
 	const report = await validateConverter(resolved.converter, { signal, secrets: resolved.secret ? [resolved.secret] : [], deadlineMs });

@@ -12,9 +12,11 @@ export interface CredentialStatus {
 	hint?: string;
 	/** A key is stored, but for another URL (it is not sent until it is entered again). */
 	boundElsewhere?: boolean;
+	/** No key of its own is stored, and the Google model provider's key is used instead (Gemini only; never copied). */
+	provider?: boolean;
 }
 
-export type ConverterKind = "builtin" | "docling" | "preset" | "custom";
+export type ConverterKind = "builtin" | "docling" | "preset" | "custom" | "gemini";
 
 export interface ConverterEntry {
 	id: string;
@@ -44,6 +46,14 @@ export interface ConverterEntry {
 	/** Docling's options. */
 	options?: { ocr: boolean; formulaEnrichment: boolean };
 	limits?: { maxBytes?: number; maxPages?: number };
+	/** The service has one fixed address (no Service URL field). */
+	fixedUrl?: boolean;
+	/** Where to create a key. */
+	keyUrl?: string;
+	/** One line about what the service may do with uploaded files. */
+	privacyNote?: string;
+	/** A model choice (Gemini): the saved id (absent: the default), the default and a short list to pick from. */
+	model?: { value?: string; default: string; suggestions: string[] };
 }
 
 export interface ConvertersOverview {
