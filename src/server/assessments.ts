@@ -519,18 +519,18 @@ export type ProposalAction = ({ action: "approve"; keys?: string[]; edits?: Reco
  *  nothing is written. An update is bound to the item it matched when the pass ran (`match` and `matchStamp`, review 1
  *  finding 6): deleted or edited since, it is left alone, never recreated or re-matched by its old fields. A new item
  *  that the learner has meanwhile entered themselves (same kind and title, or kind and date) is left alone too. */
-export function actOnProposal(courseId: string, action: ProposalAction): Result<CourseRecord> {
+export function actOnProposal(courseId: string, action: ProposalAction): Result<{ course: CourseRecord; skipped: number }> {
 	const course = stores.courseStore.getCourse(courseId);
 	if (!course) return { ok: false, status: 404, error: "Unknown course" };
 	const proposal = course.assessmentProposal;
 	if (!proposal || !Array.isArray(proposal.items)) return { ok: false, status: 409, error: "There is no proposal" };
 	if (proposal.id && action.proposalId !== proposal.id) return { ok: false, status: 409, error: "The proposal changed since this page showed it: look again" };
-	if (action.action === "discard") return { ok: true, value: stores.courseStore.updateCourse(courseId, { assessmentProposal: undefined })! };
+	if (action.action === "discard") return { ok: true, value: { course: stores.courseStore.updateCourse(courseId, { assessmentProposal: undefined })!, skipped: 0 } };
 	const pendingOf = (items: readonly ProposedAssessment[]) => items.filter((i) => i.status === "new" || i.status === "update");
 	if (action.action === "drop") {
 		if (!proposal.items.some((i) => i.key === action.key)) return { ok: false, status: 404, error: "Unknown proposal item" };
 		const items = proposal.items.filter((i) => i.key !== action.key);
-		return { ok: true, value: stores.courseStore.updateCourse(courseId, { assessmentProposal: pendingOf(items).length > 0 ? { ...proposal, items } : undefined })! };
+		return { ok: true, value: { course: stores.courseStore.updateCourse(courseId, { assessmentProposal: pendingOf(items).length > 0 ? { ...proposal, items } : undefined })!, skipped: 0 } };
 	}
 	if (action.keys?.some((k) => !proposal.items.some((i) => i.key === k))) return { ok: false, status: 404, error: "Unknown proposal item" };
 	const chosen = pendingOf(proposal.items).filter((i) => !action.keys || action.keys.includes(i.key));
@@ -538,6 +538,8 @@ export function actOnProposal(courseId: string, action: ProposalAction): Result<
 	let entries = readAssessmentEntries(course.assessments);
 	const startLive = liveCount(entries);
 	let prevStamp: string | undefined;
+	// items left alone because the learner changed the list since the pass ran: the page says how many (re-check 1, N4)
+	let skipped = 0;
 	for (const item of chosen) {
 		const edit = action.edits?.[item.key];
 		const input: AssessmentInput = { kind: item.kind, title: item.title, date: item.date ?? null, topics: item.topics, skillIds: item.skillIds.filter((s) => own.has(s)), ...(edit ?? {}) };
@@ -548,13 +550,19 @@ export function actOnProposal(courseId: string, action: ProposalAction): Result<
 		if (item.status === "update" && item.match) {
 			const held = entries.find((e) => e.id === item.match);
 			// deleted, or changed since the pass saw it: the learner's later edit or deletion wins
-			if (!held || isTombstone(held) || (item.matchStamp !== undefined && held.updatedAt !== item.matchStamp)) continue;
+			if (!held || isTombstone(held) || (item.matchStamp !== undefined && held.updatedAt !== item.matchStamp)) {
+				skipped++;
+				continue;
+			}
 			const merged = applyInput(held, checked.value, source);
 			entries = upsertEntry<AssessmentEntry>(entries, merged);
 			continue;
 		}
 		// new: unless the learner has entered it meanwhile
-		if (sameAssessment(live, { kind: checked.value.kind!, title: checked.value.title!, ...(checked.value.date ? { date: checked.value.date } : {}) }).length > 0) continue;
+		if (sameAssessment(live, { kind: checked.value.kind!, title: checked.value.title!, ...(checked.value.date ? { date: checked.value.date } : {}) }).length > 0) {
+			skipped++;
+			continue;
+		}
 		const made = newItem(checked.value, source, item.cite, prevStamp);
 		prevStamp = made.updatedAt;
 		entries = [...entries, made];
@@ -564,7 +572,7 @@ export function actOnProposal(courseId: string, action: ProposalAction): Result<
 		return { ok: false, status: 409, error: `Adding ${endLive - startLive} would take this class over ${ASSESSMENTS_MAX} assessments: remove some first, or add fewer` };
 	}
 	const rest = pendingOf(proposal.items).filter((i) => !chosen.some((c) => c.key === i.key));
-	return { ok: true, value: writeAssessments(courseId, entries, { assessmentProposal: rest.length > 0 ? { ...proposal, items: rest } : undefined }) };
+	return { ok: true, value: { course: writeAssessments(courseId, entries, { assessmentProposal: rest.length > 0 ? { ...proposal, items: rest } : undefined }), skipped } };
 }
 
 // ─── the page's view ─────────────────────────────────────────────────────────

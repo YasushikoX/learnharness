@@ -145,16 +145,28 @@ const WEEKDAY_WORDS: readonly (readonly string[])[] = [
 ];
 const word = (w: string) => new RegExp(`(^|[^\\p{L}])${w}([^\\p{L}]|$)`, "u");
 
-/** Does the quote itself state this calendar date (its day and month; a year, when it has one, the same)? Pure. */
+/** Does the quote itself state this calendar date (its day and month; a year, when it has one, the same)? Pure.
+ *  The day and the month must stand together ("6 February", "Feb 6th", "6. februar", "20/2"): a day number elsewhere in
+ *  the quote ("Week 6, Feb 20", "Quiz 3: 12 March") does not count. A numeric date that reads both ways ("6/2": 6 Feb or
+ *  2 Jun) is never taken as checked (WP8 re-check 1, N1). */
 export function quoteStatesDate(quote: string, date: string): boolean {
 	const q = fold(quote);
 	if (q.includes(date)) return true;
 	const [y, m, d] = date.split("-").map(Number) as [number, number, number];
 	const years = q.match(/(?<!\d)(19|20)\d{2}(?!\d)/g) ?? [];
 	if (years.some((yr) => Number(yr) !== y)) return false;
-	const day = new RegExp(`(^|[^\\d])0?${d}(st|nd|rd|th|\\.)?([^\\d]|$)`);
-	if (day.test(q) && MONTH_WORDS[m - 1]!.some((w) => word(w).test(q))) return true;
-	return new RegExp(`(^|[^\\d])0?${d}[./-]0?${m}([^\\d]|$)`).test(q) || new RegExp(`(^|[^\\d])0?${m}/0?${d}([^\\d]|$)`).test(q);
+	const months = MONTH_WORDS[m - 1]!.join("|");
+	const day = `0?${d}(?:st|nd|rd|th)?\\.?`;
+	if (new RegExp(`(^|[^\\d])${day}\\s*(?:of\\s+)?(?:${months})\\.?([^\\p{L}]|$)`, "u").test(q)) return true;
+	if (new RegExp(`(^|[^\\p{L}])(?:${months})\\.?\\s*${day}([^\\d]|$)`, "u").test(q)) return true;
+	for (const [, a, b] of q.matchAll(/(?<!\d)(\d{1,2})[./-](\d{1,2})(?!\d)/g)) {
+		const x = Number(a);
+		const z = Number(b);
+		if (!((x === d && z === m) || (x === m && z === d))) continue;
+		if (x !== z && x <= 12 && z <= 12) continue; // reads both ways: unchecked
+		return true;
+	}
+	return false;
 }
 
 /** Does the quote name this term week and weekday (1 Monday .. 7 Sunday)? Pure. */

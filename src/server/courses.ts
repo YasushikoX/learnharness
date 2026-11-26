@@ -103,7 +103,7 @@ import {
 } from "./course-coverage.ts";
 import { stampNewSession, titleFromPrompt } from "./chats.ts";
 import { abortAssessmentFind, allSelfReports, upcomingView } from "./assessments.ts";
-import { assessmentWhen, countdownAssessment, courseAssessments, focusSkills, liveSelfReports, nextAssessment, targetDateFor } from "../core/assessments.ts";
+import { assessmentWhen, boundAssessments, countdownAssessment, courseAssessments, focusSkills, isTombstone, LEGACY_ITEM_ID, liveSelfReports, nextAssessment, readAssessmentEntries, targetDateFor, upsertEntry, type AssessmentEntry } from "../core/assessments.ts";
 import { removeCourseLectureNotes } from "./lecture-notes.ts";
 import { listMaterials, removeMaterial, waitForMaterials } from "./materials.ts";
 import { effectiveSettings, stores } from "./stores.ts";
@@ -737,7 +737,16 @@ export function parseExamDateField(raw: unknown): { ok: true; date: string | und
 
 /** Set or clear a course's exam date (fork addition, 2026-11-13 — core/exam-plan.ts). */
 export function setCourseExamDate(courseId: string, examDate: string | undefined): CourseRecord | null {
-	return stores.courseStore.updateCourse(courseId, { examDate });
+	const course = stores.courseStore.getCourse(courseId);
+	if (!course) return null;
+	// The old exam date's item (LEGACY_ITEM_ID) is absent or deleted: a fresh tombstone stamp, so a chat card that removed
+	// it earlier no longer reads as current once this date is cleared again (WP8 re-check 1, N2).
+	const entries = readAssessmentEntries(course.assessments);
+	const held = entries.find((e) => e.id === LEGACY_ITEM_ID);
+	if (held && !isTombstone(held)) return stores.courseStore.updateCourse(courseId, { examDate });
+	const stamp = new Date(Math.max(Date.now(), held ? Date.parse(held.updatedAt) + 1 : 0)).toISOString();
+	const assessments = boundAssessments(upsertEntry<AssessmentEntry>(entries, { id: LEGACY_ITEM_ID, deleted: true, updatedAt: stamp }));
+	return stores.courseStore.updateCourse(courseId, { examDate, assessments });
 }
 
 /** Parse the PATCH body's `weights`: { skillId: 0-3 | null }, null clearing a skill's entry. */

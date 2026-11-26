@@ -241,7 +241,7 @@ describe("assessments: the data", () => {
 		const wed = new Date(2026, 10, 25, 9).getTime(); // Wednesday 25 Nov 2026
 		assert.equal(A.resolveDateText("next Friday", wed), null, "ambiguous on a Wednesday (review 1, finding 3)");
 		assert.equal(A.resolveDateText("Friday", wed), "2026-11-27");
-		assert.equal(A.resolveDateText("on wednesday", wed), "2026-12-02", "a weekday is always after today");
+		assert.equal(A.resolveDateText("on wednesday", wed), null, "said on that weekday: today or a week from today, so it asks (re-check 1, N3)");
 		assert.equal(A.resolveDateText("friday next week", wed), "2026-12-04");
 		assert.equal(A.resolveDateText("tomorrow", wed), "2026-11-26");
 		assert.equal(A.resolveDateText("in 2 weeks", wed), "2026-12-09");
@@ -899,7 +899,8 @@ describe("review 1 fixes", () => {
 		// the quote check itself
 		assert.ok(finder.quoteStatesDate("Friday 6 February", "2026-02-06"));
 		assert.ok(finder.quoteStatesDate("fredag 6. februar", "2026-02-06"));
-		assert.ok(finder.quoteStatesDate("6/2", "2026-02-06"));
+		assert.ok(finder.quoteStatesDate("20/2", "2026-02-20"), "a numeric date that reads one way only");
+		assert.ok(finder.quoteStatesDate("Feb 6th", "2026-02-06"));
 		assert.ok(!finder.quoteStatesDate("Friday 13 February", "2026-02-06"));
 		assert.ok(!finder.quoteStatesDate("6 February 2025", "2026-02-06"), "another year");
 		// a source this device cannot read gives no date and no problem
@@ -948,6 +949,45 @@ describe("review 1 fixes", () => {
 		assert.equal(assess.learnerTimeZone(chatId), "America/Los_Angeles");
 		assert.equal(assess.classFactsPort(chatId)!.timeZone(), "America/Los_Angeles");
 		assert.match(askSystemPrompt({ caps: { tools: ["assessment_save"], sources: { pdf: false, other: false, notes: false } }, now: utcMorning, timeZone: "America/Los_Angeles" }), /Today is Wednesday 2026-11-25\./);
+	});
+
+	it("re-check 1: day and month stand together; a cleared exam date keeps a removal card stale; a weekday said on that day asks; skipped approvals are counted", async () => {
+		// N1: a day number elsewhere in the quote, or a numeric date that reads both ways, is not a stated date
+		assert.ok(!finder.quoteStatesDate("Week 6, Feb 20", "2026-02-06"));
+		assert.ok(!finder.quoteStatesDate("Quiz 3: 12 March", "2026-03-03"));
+		assert.ok(!finder.quoteStatesDate("6/2", "2026-02-06"), "6 Feb or 2 Jun");
+		assert.ok(!finder.quoteStatesDate("6/2", "2026-06-02"));
+		assert.ok(finder.quoteStatesDate("Quiz 3: 12 March", "2026-03-12"));
+		// N2: Ask removes the old exam date; the page then sets a date and clears it: the card stays stale
+		const { courseId } = approvedCourse();
+		courses.setCourseExamDate(courseId, inDays(30));
+		const removed = assess.deleteAssessment(courseId, A.LEGACY_EXAM_ID);
+		assert.ok(removed.ok);
+		const chatId = askChat(courseId);
+		chatStore.saveMessages(chatId, [
+			{ id: "rma", role: "assistant", content: [{ type: "toolCall", id: "rm", name: "assessment_remove", arguments: {} }], ...ASSISTANT_BASE, timestamp: Date.now() },
+			{ id: "rmr", role: "toolResult", toolCallId: "rm", toolName: "assessment_remove", content: [{ type: "text", text: "ok" }], isError: false, details: { change: { kind: "assessment", courseId, ...removed.value, skillNames: [] } }, timestamp: Date.now() },
+		] as unknown as LhMessage[]);
+		assert.equal(assess.classChangeStatuses(chatId).rm, "applied");
+		courses.setCourseExamDate(courseId, inDays(40));
+		courses.setCourseExamDate(courseId, undefined);
+		assert.equal(assess.classChangeStatuses(chatId).rm, "changed");
+		assert.equal(assess.undoClassChange(chatId, "rm").ok, false);
+		assert.equal(getCourse(courseId).examDate, undefined, "the old date does not come back");
+		// N3: a bare weekday said on that weekday could be today or a week from today
+		const fri = new Date(2026, 10, 27, 12).getTime();
+		assert.deepEqual(A.readLearnerDate("Friday", fri), { kind: "ambiguous", options: ["2026-11-27", "2026-12-04"] });
+		assert.deepEqual(A.readLearnerDate("this Friday", fri), { kind: "date", date: "2026-11-27" });
+		// N4: an approval that leaves an item alone says how many
+		const other = approvedCourse().courseId;
+		const made = assess.createAssessment(other, { kind: "quiz", title: "Quiz 1", date: inDays(5), topics: "ch 1" }, "syllabus");
+		assert.ok(made.ok);
+		const p = await propose(other, [{ key: "p1", kind: "quiz", title: "Quiz 1", date: inDays(6), topics: "ch 1", skillIds: [], cite: "Syllabus.md" }]);
+		assert.equal(p.items[0]!.status, "update");
+		assess.deleteAssessment(other, made.value.id);
+		const res = await proposalRoute.POST(json({ action: "approve", proposalId: p.id }), params({ id: other }));
+		assert.equal(res.status, 200);
+		assert.deepEqual(await res.json(), { ok: true, skipped: 1 });
 	});
 
 	it("4: the old exam date converts to one stable id on every device; Undo checks every field it restores", async () => {

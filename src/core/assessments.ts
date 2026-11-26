@@ -391,7 +391,8 @@ export type DateReading = { kind: "date"; date: string } | { kind: "ambiguous"; 
  *
  *   "YYYY-MM-DD" · "today" · "tomorrow" · "in N days/weeks"     as written
  *   "this Friday"                     the coming Friday, today included
- *   "Friday", "on Friday"             the coming Friday after today
+ *   "Friday", "on Friday"             the coming Friday after today; said ON a Friday: today or a week from today,
+ *                                     ambiguous (ask)
  *   "next Friday"                     the coming Friday when it falls in next calendar week; when it falls in THIS
  *                                     week the words admit both it and the one a week later: ambiguous (ask "Friday 27
  *                                     Nov or Friday 4 Dec?")
@@ -427,6 +428,8 @@ export function readLearnerDate(raw: string, now: number, timeZone?: string): Da
 		const prefix = weekday[1];
 		const ahead = (target - todayDow + 7) % 7;
 		if (prefix === "this" || prefix === "denne" || prefix === "nå på") return plus(ahead); // today included
+		// a bare weekday on that same weekday: today or a week from today (WP8 re-check 1, N3)
+		if (ahead === 0 && prefix !== "next" && prefix !== "neste") return { kind: "ambiguous", options: [today, addDays(today, 7)] };
 		const coming = ahead || 7;
 		if (prefix === "next" || prefix === "neste") {
 			const sameWeek = mondayOffset + coming <= 6;

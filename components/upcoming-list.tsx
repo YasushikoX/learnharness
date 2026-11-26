@@ -187,6 +187,7 @@ export function UpcomingList({
 	const [editing, setEditing] = useState<string | null>(null);
 	const [proposalEdit, setProposalEdit] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [notice, setNotice] = useState<string | null>(null);
 	const [working, setWorking] = useState(false);
 	const [showPast, setShowPast] = useState(false);
 	const names = new Map(skills.map((s) => [s.id, s.name]));
@@ -208,6 +209,7 @@ export function UpcomingList({
 
 	const call = async (url: string, init: RequestInit): Promise<boolean> => {
 		setError(null);
+		setNotice(null);
 		setWorking(true);
 		try {
 			const res = await fetch(url, { ...init, headers: { "Content-Type": "application/json" } });
@@ -217,6 +219,9 @@ export function UpcomingList({
 				if (res.status === 409) onChanged();
 				return false;
 			}
+			// an approval leaves alone what the learner changed since the pass ran: say how many (WP8 re-check 1, N4)
+			const skipped = ((await res.json().catch(() => ({}))) as { skipped?: unknown }).skipped;
+			if (typeof skipped === "number" && skipped > 0) setNotice(`${skipped === 1 ? "1 item was" : `${skipped} items were`} left as you have ${skipped === 1 ? "it" : "them"}: you changed the list after the syllabus was read.`);
 			onChanged();
 			return true;
 		} catch {
@@ -398,6 +403,11 @@ export function UpcomingList({
 				<button type="button" className={BTN} disabled={disabled || !canFind} data-testid="upcoming-find" onClick={find} title={canFind ? undefined : "Add the syllabus or another class file first"}>
 					Find in syllabus
 				</button>
+			)}
+			{notice && (
+				<p className="text-meta text-muted-foreground" data-testid="upcoming-notice">
+					{notice}
+				</p>
 			)}
 			{error && <p className="text-meta text-error">{error}</p>}
 		</section>

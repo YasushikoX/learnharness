@@ -3,6 +3,7 @@
  *
  *   POST { action: "approve", keys?: string[], edits?: { [key]: { kind?, title?, date?, topics?, skillIds? } } }
  *        → writes the chosen new and update items (all of them without `keys`); an edited item becomes the learner's own
+ *        → { ok: true, skipped }: how many items were left alone because the list changed since the pass ran
  *   POST { action: "drop", key } → drops one item · POST { action: "discard" } → drops the whole proposal
  *   Every action carries `proposalId`, the proposal the page shows; another one is refused with 409 (WP8 review 1,
  *   finding 1) and the page refreshes. An approval writes all of its items or none.
@@ -39,5 +40,5 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 	} else return Response.json({ error: "action must be approve, drop or discard" }, { status: 400 });
 	const out = actOnProposal(id, action);
 	if (!out.ok) return Response.json({ error: out.error }, { status: out.status });
-	return Response.json({ ok: true });
+	return Response.json({ ok: true, skipped: out.value.skipped });
 }
