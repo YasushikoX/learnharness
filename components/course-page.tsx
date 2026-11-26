@@ -605,8 +605,8 @@ export function CourseBody({
 	onSkipPlacement?: () => void;
 	/** The exam date or a weight changed on the server: refetch. */
 	onChanged?: () => void;
-	/** Open the course's Ask conversation (2026-11-25): `reopen` = an existing one's chat id, absent = a new one. */
-	onAsk?: (reopen?: string) => void;
+	/** Start a new Ask conversation on the course (2026-11-25; always a new one since UI round 12). */
+	onAsk?: () => void;
 	/** The vocabulary coverage actions (WP5): edits, "Map the class's terms", approve leaving terms unassigned. */
 	onCoverage?: CoverageActions;
 }) {
@@ -1181,12 +1181,9 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 		const { id, prompt } = (await res.json()) as { id: string; prompt: string };
 		router.push(`/chat/${id}?prompt=${encodeURIComponent(prompt)}`);
 	};
-	// Short question (2026-11-25): reopen the newest Ask conversation, or start one. It opens on an empty composer.
-	const onAsk = async (reopen?: string) => {
-		if (reopen) {
-			router.push(`/chat/${reopen}`);
-			return;
-		}
+	// Short question (2026-11-25): a new Ask conversation, every time (UI round 12; the earlier ones are in Recent
+	// sessions). It opens on an empty composer.
+	const onAsk = async () => {
 		const res = await call(`/api/courses/${courseId}/sessions`, { mode: "ask" });
 		if (!res) return;
 		const { id } = (await res.json()) as { id: string };
@@ -1413,7 +1410,7 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 								setPlacementSkipped(true);
 							}}
 							onChanged={() => void refresh()}
-							onAsk={(reopen) => void onAsk(reopen)}
+							onAsk={() => void onAsk()}
 							setupName={
 								bare ? (
 									<ClassNameField
