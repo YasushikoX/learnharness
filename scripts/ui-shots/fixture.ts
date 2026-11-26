@@ -32,6 +32,7 @@ const { skillStore } = await import("../../src/store/skills.ts");
 const { graphStore } = await import("../../src/store/graph.ts");
 const { chatStore } = await import("../../src/store/chats.ts");
 const { courseStore } = await import("../../src/store/courses.ts");
+const { sourceOrganizationStore } = await import("../../src/store/source-organization.ts");
 const { courseGlossary } = await import("../../src/server/material-indexing.ts");
 const { owesTutorReply } = await import("../../src/core/native-messages.ts");
 const { seedChats, stampClassFacts, uiLectures } = await import("./transcripts.ts");
@@ -95,6 +96,11 @@ const courses: CourseRecord[] = [
 		id: ids.calculus, title: "Calculus I", createdAt, updatedAt: createdAt, status: "active",
 		skills: calculus.map(skill => skill.id), language: "en", pace: "thorough",
 	},
+	// UI round 8: one read file, no skill map yet, in a sidebar folder
+	{
+		id: ids.chemistry, title: "Organic Chemistry", createdAt, updatedAt: createdAt, status: "active",
+		skills: [], language: "en", folder: ids.chemistryFolder,
+	},
 ];
 
 // The public create methods mint random IDs and wall-clock dates. Use the
@@ -115,7 +121,9 @@ for (const chat of chats) {
 	if (chat.id !== ids.lesson) continue;
 	const beforeQuestion = chat.messages.at(-1);
 	if (beforeQuestion?.role !== "assistant") throw new Error("Expected the lesson to end with a question call");
-	const prose = { ...beforeQuestion, stopReason: "stop", content: beforeQuestion.content.filter(part => part.type === "text") };
+	// UI round 8: the composer's turn carries usage, so the toolbar shows the context figure and its stats popover
+	const usage = { input: 9_800, output: 1_240, cacheRead: 7_400, cacheWrite: 0, totalTokens: 18_440, cost: { input: 0.0294, output: 0.0186, cacheRead: 0.0022, cacheWrite: 0, total: 0.0502 } };
+	const prose = { ...beforeQuestion, stopReason: "stop", usage, content: beforeQuestion.content.filter(part => part.type === "text") };
 	writeFileAtomicSync(join(profile, "lesson-before-question.json"), JSON.stringify({
 		...stored, messages: [...chat.messages.slice(0, -1), prose],
 	}, null, "\t"));
@@ -148,6 +156,13 @@ for (const [premises, conclusion] of chains) {
 	graphStore.appendChain({ id: `arg_ui_${conclusion}`, premises: [...premises], conclusion, createdAt, provenance });
 }
 skillStore.appendSkillLines(skillLines(createdAt));
+
+// UI round 8: a session folder holding two older sessions (its menu, and the graph's folder filter)
+sourceOrganizationStore.write({
+	version: 1,
+	folders: [{ id: ids.sessionFolder, name: "Extra reading", parentId: null, createdAt }],
+	placements: Object.fromEntries(ids.foldered.map(id => [id, { folderId: ids.sessionFolder }])),
+});
 
 // WP9: the "link skills to lectures" step already ran for these lectures (so the server starts no model call)
 {
