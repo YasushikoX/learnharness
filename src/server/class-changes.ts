@@ -1,15 +1,28 @@
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { CourseRecord } from "../core/contracts.ts";
 import { courseAssessments, isTombstone, readAssessmentEntries, readSelfReportEntries, sameEntry, sanitizeAssessment, sortAssessments, upsertEntry, isUpcoming, type Assessment, type AssessmentEntry } from "../core/assessments.ts";
-import { assessmentReadiness, classPositionOf, coveredLectures, lectureToday, readLectureEntries, sameLectureEntry, sanitizeClassPosition, type ClassPosition } from "../core/lectures.ts";
+import { assessmentReadiness, classPositionOf, coveredLectures, lectureToday, positionRecord, readLectureEntries, sameLectureEntry, sanitizeClassPosition } from "../core/lectures.ts";
 import { isLessonLanguage } from "../core/language.ts";
 import { PACES, type Pace } from "../core/pace.ts";
 import { sanitizeWeights, type SkillWeights } from "../core/exam-plan.ts";
 import { mergeSkillLines } from "../core/skills.ts";
-import { CLASS_CHANGE_TOOLS, type ClassChange, type ClassFactsPort, type ClassField, type WeightEntry } from "../agent/tools/class-facts.ts";
-import { createAssessment, deleteAssessment, deleteSelfReport, learnerTimeZone, recordSelfReport, startAssessmentFind, updateAssessment, writeAssessmentEntries } from "./assessments.ts";
-import { courseView, parseFolderField, renameCourse, setCourseFolder, setCourseLanguage, setCoursePace, setCourseSkillWeights } from "./courses.ts";
-import { classLectures, createLecture, deleteLecture, revertLectureChange, setClassPosition, updateLecture } from "./lectures.ts";
+import { CLASS_CHANGE_TOOLS, type ClassChange, type ClassFactsPort, type ClassField, type NoteFields, type WeightEntry } from "../agent/tools/class-facts.ts";
+import {
+	createAssessment,
+	deleteAssessment,
+	deleteSelfReport,
+	learnerTimeZone,
+	recordSelfReport,
+	retractSelfReports,
+	revertSelfReportRetraction,
+	sameSelfReportEntry,
+	startAssessmentFind,
+	updateAssessment,
+	writeAssessmentEntries,
+} from "./assessments.ts";
+import { courseView, parseFolderField, parseTitleField, renameCourse, setCourseFolder, setCourseLanguage, setCoursePace, setCourseSkillWeights } from "./courses.ts";
+import { classLectures, createLecture, deleteLecture, lectureLinksStale, revertLectureChange, revertPositionChange, setClassPosition, updateLecture } from "./lectures.ts";
+import { getLectureNote, listLectureNotes, restoreLectureNoteFields, updateLectureNote } from "./lecture-notes.ts";
 import { stores } from "./stores.ts";
 
 /**
@@ -40,17 +53,21 @@ function settingOf(course: CourseRecord, field: ClassField): string | null {
 	}
 }
 
-/** Write one class setting through the class page's own setter. */
-function writeSetting(courseId: string, field: ClassField, value: string | null): Result<CourseRecord> {
+/** Write one class setting through the class page's own setter, with the page's own checks (review 1, finding 14: the
+ *  title kept whole, no public language clear). `restore`: Undo putting back a value the page cannot set (a class that had
+ *  no language stamp). */
+function writeSetting(courseId: string, field: ClassField, value: string | null, restore = false): Result<CourseRecord> {
 	const fail = (error: string): Result<CourseRecord> => ({ ok: false, status: 400, error });
 	let out: CourseRecord | null;
 	switch (field) {
-		case "title":
-			if (typeof value !== "string" || value.trim() === "") return fail("a title cannot be empty");
-			out = renameCourse(courseId, value.trim().slice(0, 120));
+		case "title": {
+			const parsed = parseTitleField(value);
+			if (!parsed.ok) return fail(parsed.error);
+			out = renameCourse(courseId, parsed.title);
 			break;
+		}
 		case "language":
-			if (value === null) out = stores.courseStore.updateCourse(courseId, { language: undefined });
+			if (value === null && restore) out = stores.courseStore.updateCourse(courseId, { language: undefined });
 			else if (!isLessonLanguage(value)) return fail("language must be en or nb");
 			else out = setCourseLanguage(courseId, value);
 			break;
@@ -75,6 +92,8 @@ const weightEntry = (weights: SkillWeights | undefined, id: string): WeightEntry
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
+const noteFields = (n: { title: string; titleBy?: "auto" | "learner"; date: string }): NoteFields => ({ title: n.title, ...(n.titleBy ? { titleBy: n.titleBy } : {}), date: n.date });
+
 // ─── status and Undo ─────────────────────────────────────────────────────────
 
 /** applied: the change is still what the class holds (Undo is offered) · changed: it was undone or changed since. */
@@ -97,16 +116,36 @@ export function changeStatus(course: CourseRecord, change: ClassChange): ChangeS
 		}
 		case "lecture": {
 			const held = readLectureEntries(course.lectures).find((e) => e.id === change.id);
-			return sameLectureEntry(held, change.after ?? { id: change.id, deleted: true, updatedAt: change.stamp }) ? "applied" : "changed";
+			if (!sameLectureEntry(held, change.after ?? { id: change.id, deleted: true, updatedAt: change.stamp })) return "changed";
+			// review 1, finding 1: the position it moved must still be what it wrote; and undoing an addition the position
+			// has since been set to would leave the position on a lecture that is gone
+			if (change.position && !same(positionRecord(course.classPosition), change.position.after)) return "changed";
+			if (change.action === "added" && sanitizeClassPosition(course.classPosition)?.lectureId === change.id) return "changed";
+			return "applied";
 		}
-		case "position":
-			return same(sanitizeClassPosition(course.classPosition), change.after) ? "applied" : "changed";
+		case "position": {
+			// review 1, finding 4: the revision it wrote (a clear has one too); a card from before compares what is shown
+			if (change.afterRev !== undefined ? !same(positionRecord(course.classPosition), change.afterRev) : !same(sanitizeClassPosition(course.classPosition), change.after)) return "changed";
+			// the position it would restore names a lecture that is gone: no dangling Undo
+			const back = change.beforeRev !== undefined ? change.beforeRev : change.before;
+			const lectureId = back && "lectureId" in back ? back.lectureId : undefined;
+			if (lectureId && !classLectures(course).some((l) => l.id === lectureId)) return "changed";
+			return "applied";
+		}
 		case "weights": {
 			const weights = sanitizeWeights(course.skillWeights);
 			return Object.entries(change.after).every(([id, e]) => same(weightEntry(weights, id), e)) ? "applied" : "changed";
 		}
 		case "setting":
 			return settingOf(course, change.field) === change.after ? "applied" : "changed";
+		case "self-report-retract": {
+			const entries = readSelfReportEntries(course.selfReports);
+			return change.after.every((e) => sameSelfReportEntry(entries.find((h) => h.id === e.id), e)) ? "applied" : "changed";
+		}
+		case "note": {
+			const note = getLectureNote(course.id, change.noteId);
+			return note && same(noteFields(note), change.after) ? "applied" : "changed";
+		}
 	}
 }
 
@@ -156,9 +195,10 @@ export function undoClassChange(chatId: string, toolCallId: string): Result<{ st
 			const out = revertLectureChange(courseId, change);
 			return out.ok ? done : out;
 		}
-		case "position":
-			stores.courseStore.updateCourse(courseId, { classPosition: change.before ?? undefined });
-			return done;
+		case "position": {
+			const out = revertPositionChange(courseId, { beforeRev: change.beforeRev !== undefined ? change.beforeRev : change.before });
+			return out.ok ? done : out;
+		}
 		case "weights": {
 			const next: SkillWeights = { ...(sanitizeWeights(course.skillWeights) ?? {}) };
 			for (const [id, e] of Object.entries(change.before)) {
@@ -169,9 +209,15 @@ export function undoClassChange(chatId: string, toolCallId: string): Result<{ st
 			return done;
 		}
 		case "setting": {
-			const out = writeSetting(courseId, change.field, change.before);
+			const out = writeSetting(courseId, change.field, change.before, true);
 			return out.ok ? done : out;
 		}
+		case "self-report-retract": {
+			const out = revertSelfReportRetraction(courseId, change);
+			return out.ok ? done : out;
+		}
+		case "note":
+			return restoreLectureNoteFields(courseId, change.noteId, change.before) ? done : { ok: false, status: 404, error: "The lecture note was deleted" };
 		case "assessment":
 			break;
 	}
@@ -257,11 +303,12 @@ export function classFactsPort(chatId: string): ClassFactsPort | null {
 			return { ok: true, change: { kind: "lecture", courseId, ...out.value, skillNames: withNames(course()!, out.value.before?.skillIds ?? []) } };
 		},
 		setPosition: (input) => {
-			const out = setClassPosition(courseId, input);
+			// the day it was said is the learner's (review 1, finding 10)
+			const out = setClassPosition(courseId, input, learnerTimeZone(chatId));
 			if (!out.ok) return { ok: false, error: out.error };
 			const c = course()!;
-			const { before, after } = out.value as { before: ClassPosition | null; after: ClassPosition | null };
-			return { ok: true, change: { kind: "position", courseId, before, after, label: lectureTitle(c, after?.lectureId), beforeLabel: lectureTitle(c, before?.lectureId) } };
+			const { before, after, beforeRev, afterRev } = out.value;
+			return { ok: true, change: { kind: "position", courseId, before, after, label: lectureTitle(c, after?.lectureId), beforeLabel: lectureTitle(c, before?.lectureId), beforeRev, afterRev } };
 		},
 		setWeights: (edits) => {
 			const c = course()!;
@@ -282,7 +329,9 @@ export function classFactsPort(chatId: string): ClassFactsPort | null {
 			return { ok: true, change: { kind: "setting", courseId, field, before, after: settingOf(out.value, field) } };
 		},
 		overview: () => {
-			const view = courseView(courseId);
+			// review 1, finding 5: strictly read-only: no write, no job start (not even the page's own), no model call
+			const tz = learnerTimeZone(chatId);
+			const view = courseView(courseId, { readOnly: true, ...(tz ? { timeZone: tz } : {}) });
 			const standing = view?.standing ?? null;
 			const learned = new Set((view?.skills ?? []).filter((s) => s.learned).map((s) => s.id));
 			const order = (view?.skills ?? []).map((s) => s.id);
@@ -291,10 +340,25 @@ export function classFactsPort(chatId: string): ClassFactsPort | null {
 			if (!c || !standing) return { standing, upcoming: [], names };
 			const covered = coveredLectures(standing.lectures, standing.position);
 			const upcoming = courseAssessments(c)
-				.filter((a): a is Assessment & { date: string } => isUpcoming(a, Date.now()))
+				.filter((a): a is Assessment & { date: string } => isUpcoming(a, Date.now(), tz))
 				.slice(0, 3)
 				.map((a) => assessmentReadiness(a, standing.lectures, covered, (id) => learned.has(id), order));
-			return { standing, upcoming, names };
+			return { standing, upcoming, names, ...(lectureLinksStale(c) ? { linksStale: true } : {}) };
+		},
+		// review 1, finding 13
+		retractSelfReport: (skillIds) => {
+			const out = retractSelfReports(courseId, skillIds);
+			if (!out.ok) return { ok: false, error: out.error };
+			const ids = [...new Set(out.value.before.flatMap((r) => r.skillIds).filter((id) => skillIds.includes(id)))];
+			return { ok: true, change: { kind: "self-report-retract", courseId, ...out.value, skillNames: withNames(course()!, ids) } };
+		},
+		notes: () => (listLectureNotes(courseId) ?? []).map((n) => ({ id: n.id, title: n.title, date: n.date })),
+		updateNote: (noteId, input) => {
+			const before = getLectureNote(courseId, noteId);
+			if (!before) return { ok: false, error: "Unknown lecture note" };
+			const after = updateLectureNote(courseId, noteId, input);
+			if (!after) return { ok: false, error: "the title must have some text and the date must be a real date" };
+			return { ok: true, change: { kind: "note", courseId, noteId, before: noteFields(before), after: noteFields(after) } };
 		},
 	};
 }

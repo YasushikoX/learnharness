@@ -6,7 +6,7 @@
  *   PUT null, or DELETE → { classPosition: null } (back to the lecture dates)
  *   400 a bad field · 404 unknown course · 413 a body over 4 KB
  */
-import { CustomBodyLimitError, readBoundedJson, setClassPosition } from "@/src/server";
+import { CustomBodyLimitError, readBoundedJson, requestTimeZone, setClassPosition } from "@/src/server";
 
 export const dynamic = "force-dynamic";
 
@@ -22,14 +22,15 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 		return Response.json({ error: "The body must be JSON" }, { status: 400 });
 	}
 	if (body !== null && (typeof body !== "object" || Array.isArray(body))) return Response.json({ error: "The body must be an object or null" }, { status: 400 });
-	const out = setClassPosition(id, body as Record<string, unknown> | null);
+	// the day it was said is the learner's (X-LH-Time-Zone; WP9 review 1, finding 10)
+	const out = setClassPosition(id, body as Record<string, unknown> | null, requestTimeZone(req));
 	if (!out.ok) return Response.json({ error: out.error }, { status: out.status });
 	return Response.json({ classPosition: out.value.after });
 }
 
-export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
 	const { id } = await params;
-	const out = setClassPosition(id, null);
+	const out = setClassPosition(id, null, requestTimeZone(req));
 	if (!out.ok) return Response.json({ error: out.error }, { status: out.status });
 	return Response.json({ classPosition: null });
 }

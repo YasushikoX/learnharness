@@ -99,15 +99,9 @@ export interface SessionModelDeps {
 /** A local optimistic id (never a server stamp — absorption and the
  *  settle swap both key on this prefix). */
 let localSeq = 0;
-/** The browser's IANA time zone as the chat route's header (src/server/chat-handler.ts), or nothing when unknown. */
-export function clientTimeZoneHeader(): Record<string, string> {
-	try {
-		const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-		return tz ? { "X-LH-Time-Zone": tz } : {};
-	} catch {
-		return {};
-	}
-}
+/** The browser's IANA time zone as the chat route's header (one helper for every route that reads it). */
+import { clientTimeZoneHeader } from "./time-zone.ts";
+export { clientTimeZoneHeader };
 
 function localId(): string {
 	return `c_${Date.now().toString(36)}_${(localSeq++).toString(36)}`;

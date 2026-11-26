@@ -47,6 +47,10 @@ export interface Assessment {
 	topics: string;
 	/** The approved skills it covers; [] before a skill map exists or when nothing maps. */
 	skillIds: string[];
+	/** It covers every approved skill of the class ("the final is cumulative", WP9 review 1 finding 12): a flag, not a
+	 *  list, so it is never capped and follows later skill-map changes. `skillIds` is [] then. An older build reads an
+	 *  item with no skills, which it already treats as covering the whole class. */
+	allSkills?: true;
 	source: AssessmentSource;
 	/** ISO — the last write; the sync merge keeps the later one per id. */
 	updatedAt: string;
@@ -148,11 +152,18 @@ export function sanitizeAssessment(raw: unknown): Assessment | null {
 		title,
 		...(date ? { date } : {}),
 		topics: cleanText(raw.topics, TOPICS_MAX),
-		skillIds: cleanSkillIds(raw.skillIds),
+		skillIds: raw.allSkills === true ? [] : cleanSkillIds(raw.skillIds),
+		...(raw.allSkills === true ? { allSkills: true as const } : {}),
 		source,
 		updatedAt: raw.updatedAt,
 		...(cite ? { cite } : {}),
 	};
+}
+
+/** The skills an assessment covers, out of the class's (`all`, in the class's order): every one for a cumulative item.
+ *  Pure. */
+export function assessmentSkills(a: Pick<Assessment, "skillIds" | "allSkills">, all: readonly string[]): string[] {
+	return a.allSkills ? [...all] : a.skillIds;
 }
 
 export function sanitizeSelfReport(raw: unknown): SelfReport | null {
@@ -173,11 +184,12 @@ export function sanitizeSelfReport(raw: unknown): SelfReport | null {
 
 /** A stored list read defensively: each entry a valid item or a tombstone, one per id (the later write wins). Shared with
  *  the lecture timeline (WP9, core/lectures.ts). */
-export function readEntries<T extends { id: string; updatedAt: string }>(raw: unknown, item: (r: unknown) => T | null): Array<T | Tombstone> {
+export function readEntries<T extends { id: string; updatedAt: string }, D extends Tombstone = Tombstone>(raw: unknown, item: (r: unknown) => T | null, tomb?: (t: Tombstone, raw: Record<string, unknown>) => D): Array<T | D> {
 	if (!Array.isArray(raw)) return [];
-	const byId = new Map<string, T | Tombstone>();
+	const byId = new Map<string, T | D>();
 	for (const r of raw) {
-		const e = isTombstone(r) ? sanitizeTombstone(r as unknown as Record<string, unknown>) : item(r);
+		const t = isTombstone(r) ? sanitizeTombstone(r as unknown as Record<string, unknown>) : null;
+		const e = isTombstone(r) ? (t && tomb ? tomb(t, r as unknown as Record<string, unknown>) : (t as D | null)) : item(r);
 		if (!e) continue;
 		const held = byId.get(e.id);
 		if (!held || held.updatedAt < e.updatedAt) byId.set(e.id, e);
@@ -297,20 +309,20 @@ function kindRank(kind: AssessmentKind): number {
 	return ["final", "exam", "midterm", "quiz", "assignment", "other"].indexOf(kind);
 }
 
-/** Is this assessment today or later? */
-export function isUpcoming(a: Pick<Assessment, "date">, now: number): a is Assessment & { date: string } {
-	return !!a.date && daysUntil(a.date, now) >= 0;
+/** Is this assessment today or later? "Today" is the machine's, or `timeZone`'s (the learner's: WP9 review 1, finding 10). */
+export function isUpcoming(a: Pick<Assessment, "date">, now: number, timeZone?: string): a is Assessment & { date: string } {
+	return !!a.date && daysUntil(a.date, now, timeZone) >= 0;
 }
 
 /** The nearest assessment with a date today or later; undefined when none. */
-export function nextAssessment(list: readonly Assessment[], now: number): (Assessment & { date: string }) | undefined {
-	return sortAssessments(list.filter((a) => isUpcoming(a, now)))[0] as (Assessment & { date: string }) | undefined;
+export function nextAssessment(list: readonly Assessment[], now: number, timeZone?: string): (Assessment & { date: string }) | undefined {
+	return sortAssessments(list.filter((a) => isUpcoming(a, now, timeZone)))[0] as (Assessment & { date: string }) | undefined;
 }
 
 /** What the countdown shows: the next upcoming dated assessment, or, when none is coming, the latest one that has passed
  *  (the card says "passed" until the learner adds the next, as it did for the old exam date). Undefined with no dates. */
-export function countdownAssessment(list: readonly Assessment[], now: number): (Assessment & { date: string }) | undefined {
-	const next = nextAssessment(list, now);
+export function countdownAssessment(list: readonly Assessment[], now: number, timeZone?: string): (Assessment & { date: string }) | undefined {
+	const next = nextAssessment(list, now, timeZone);
 	if (next) return next;
 	const past = sortAssessments(list.filter((a) => !!a.date)) as Array<Assessment & { date: string }>;
 	return past.at(-1);
@@ -318,13 +330,15 @@ export function countdownAssessment(list: readonly Assessment[], now: number): (
 
 /** The date a skill's review is timed for: the nearest upcoming dated assessment that lists it, or that lists no skills
  *  (it covers the whole class, as the old exam date did). Undefined when none. */
-export function targetDateFor(skillId: string, list: readonly Assessment[], now: number): string | undefined {
-	return sortAssessments(list.filter((a) => isUpcoming(a, now) && (a.skillIds.length === 0 || a.skillIds.includes(skillId))))[0]?.date;
+export function targetDateFor(skillId: string, list: readonly Assessment[], now: number, timeZone?: string): string | undefined {
+	return sortAssessments(list.filter((a) => isUpcoming(a, now, timeZone) && (a.allSkills || a.skillIds.length === 0 || a.skillIds.includes(skillId))))[0]?.date;
 }
 
-/** The skills that come first in Next up: the next dated assessment's mapped skills (empty when it maps none). */
-export function focusSkills(list: readonly Assessment[], now: number): Set<string> {
-	return new Set(nextAssessment(list, now)?.skillIds ?? []);
+/** The skills that come first in Next up: the next dated assessment's mapped skills (empty when it maps none, or covers
+ *  every skill: then nothing is "first"). */
+export function focusSkills(list: readonly Assessment[], now: number, timeZone?: string): Set<string> {
+	const next = nextAssessment(list, now, timeZone);
+	return new Set(next?.allSkills ? [] : (next?.skillIds ?? []));
 }
 
 export const KIND_LABELS: Record<AssessmentKind, string> = { quiz: "Quiz", exam: "Exam", midterm: "Midterm", final: "Final", assignment: "Assignment", other: "Other" };
@@ -560,7 +574,7 @@ export function classifyProposal(found: ReadonlyArray<Omit<ProposedAssessment, "
 		if (!match) return { ...f, status: "new" };
 		claimed.add(match.id);
 		if (match.source !== "syllabus") return { ...f, status: "kept", match: match.id };
-		const same = match.title === f.title && match.date === f.date && match.topics === f.topics && sameSet(match.skillIds, f.skillIds);
+		const same = match.title === f.title && match.date === f.date && match.topics === f.topics && !match.allSkills && sameSet(match.skillIds, f.skillIds);
 		return same ? { ...f, status: "same", match: match.id } : { ...f, status: "update", match: match.id, matchStamp: match.updatedAt };
 	});
 }

@@ -23,6 +23,7 @@ import {
 	sameAssessment,
 	sameEntry,
 	sanitizeAssessment,
+	sanitizeSelfReport,
 	SELF_REPORT_STANCES,
 	sortAssessments,
 	TITLE_MAX,
@@ -102,6 +103,9 @@ export interface AssessmentInput {
 	date?: unknown;
 	topics?: unknown;
 	skillIds?: unknown;
+	/** true: it covers every approved skill of the class (a cumulative final; WP9 review 1, finding 12), stored as a flag.
+	 *  Giving `skillIds` instead makes it a list again. */
+	allSkills?: unknown;
 }
 
 /** One change to the list, as the chat cards and Undo read it. */
@@ -116,7 +120,7 @@ export interface AssessmentChange {
 	stamp: string;
 }
 
-type CheckedInput = { kind?: AssessmentKind; title?: string; date?: string | null; topics?: string; skillIds?: string[] };
+type CheckedInput = { kind?: AssessmentKind; title?: string; date?: string | null; topics?: string; skillIds?: string[]; allSkills?: boolean };
 
 /** Check an input's fields against the class (skills on its approved map). `partial`: only the fields present. */
 function checkInput(input: AssessmentInput, course: CourseRecord, partial: boolean): Result<CheckedInput> {
@@ -150,6 +154,13 @@ function checkInput(input: AssessmentInput, course: CourseRecord, partial: boole
 		const stranger = ids.find((id) => !own.has(id));
 		if (stranger) return { ok: false, status: 400, error: `${stranger} is not a skill on this class's approved map` };
 		out.skillIds = ids;
+		out.allSkills = false;
+	}
+	if (input.allSkills !== undefined && input.allSkills !== false) {
+		if (input.allSkills !== true) return { ok: false, status: 400, error: "allSkills must be true or false" };
+		if (course.skills.length === 0) return { ok: false, status: 409, error: "The class has no approved skill map yet" };
+		out.allSkills = true;
+		out.skillIds = [];
 	}
 	return { ok: true, value: out };
 }
@@ -167,6 +178,7 @@ function newItem(v: CheckedInput, source: AssessmentSource, cite?: string, prevS
 		...(v.date ? { date: v.date } : {}),
 		topics: v.topics ?? "",
 		skillIds: v.skillIds ?? [],
+		...(v.allSkills ? { allSkills: true as const } : {}),
 		source,
 		updatedAt: stampAfter(prevStamp),
 		...(cite ? { cite: cleanLine(cite, CITE_MAX) } : {}),
@@ -186,6 +198,8 @@ function applyInput(before: Assessment, v: CheckedInput, source: AssessmentSourc
 	};
 	if (v.date === null) delete merged.date;
 	else if (v.date) merged.date = v.date;
+	if (v.allSkills === true) merged.allSkills = true;
+	else if (v.allSkills === false) delete merged.allSkills;
 	delete merged.legacy;
 	return merged;
 }
@@ -293,6 +307,60 @@ export function deleteSelfReport(courseId: string, id: string): Result<Tombstone
 	const tomb: Tombstone = { id, deleted: true, updatedAt: stampAfter(held.updatedAt) };
 	writeSelfReports(courseId, upsertEntry<SelfReportEntry>(entries, tomb));
 	return { ok: true, value: tomb };
+}
+
+/** One retraction (Short question's self_report_retract, WP9 review 1 finding 13): the class's reports it changed as
+ *  they were (`before`) and the entries it wrote (`after`: the report without those skills, or its tombstone). */
+export interface SelfReportRetraction {
+	before: SelfReport[];
+	after: SelfReportEntry[];
+}
+
+/** Take back what the learner said about some skills ("actually I do get X now"): every live report of this class about
+ *  them, whichever chat (or none) made it, loses those skills; a report left with none is removed (a tombstone). 404 when
+ *  no report of the class is about them. */
+export function retractSelfReports(courseId: string, skillIds: unknown): Result<SelfReportRetraction> {
+	const course = stores.courseStore.getCourse(courseId);
+	if (!course) return { ok: false, status: 404, error: "Unknown course" };
+	const ids = new Set(cleanSkillIds(skillIds));
+	if (ids.size === 0) return { ok: false, status: 400, error: "name at least one skill id" };
+	let entries = readSelfReportEntries(course.selfReports);
+	const before: SelfReport[] = [];
+	const after: SelfReportEntry[] = [];
+	for (const e of entries) {
+		if (isTombstone(e) || !e.skillIds.some((s) => ids.has(s))) continue;
+		before.push(e);
+		const rest = e.skillIds.filter((s) => !ids.has(s));
+		const next: SelfReportEntry = rest.length > 0 ? { ...e, skillIds: rest, updatedAt: stampAfter(e.updatedAt) } : { id: e.id, deleted: true, updatedAt: stampAfter(e.updatedAt) };
+		after.push(next);
+		entries = upsertEntry<SelfReportEntry>(entries, next);
+	}
+	if (before.length === 0) return { ok: false, status: 404, error: "The learner has said nothing in this class about those skills" };
+	writeSelfReports(courseId, entries);
+	return { ok: true, value: { before, after } };
+}
+
+/** Undo a retraction (the caller checked the list still holds exactly what it wrote): each report as it was, with a
+ *  fresh revision so the Undo wins a sync. */
+export function revertSelfReportRetraction(courseId: string, change: SelfReportRetraction): Result<true> {
+	const course = stores.courseStore.getCourse(courseId);
+	if (!course) return { ok: false, status: 404, error: "The class was deleted" };
+	let entries = readSelfReportEntries(course.selfReports);
+	for (const r of change.before) {
+		const held = entries.find((e) => e.id === r.id);
+		entries = upsertEntry<SelfReportEntry>(entries, { ...r, updatedAt: stampAfter(held?.updatedAt ?? r.updatedAt) });
+	}
+	writeSelfReports(courseId, entries);
+	return { ok: true, value: true };
+}
+
+/** Is the stored self-report entry exactly this one? */
+export function sameSelfReportEntry(held: unknown, expected: SelfReportEntry): boolean {
+	if (!held) return false;
+	if (isTombstone(expected) || isTombstone(held)) return isTombstone(held) && isTombstone(expected) && (held as Tombstone).updatedAt === expected.updatedAt;
+	const a = sanitizeSelfReport(held);
+	const b = sanitizeSelfReport(expected);
+	return a !== null && b !== null && JSON.stringify(a) === JSON.stringify(b);
 }
 
 /** Every course's live self-reports with the class that holds them, for the mastery fold (core/mastery.ts
@@ -551,9 +619,9 @@ export function actOnProposal(courseId: string, action: ProposalAction): Result<
 const SYLLABUS_RE = /syllab|course outline|course plan|schedule|semesterplan|emneplan|timeplan|undervisningsplan|exam dates|eksamensdato/i;
 
 /** The Upcoming list's view (CourseView.upcoming). */
-export function upcomingView(course: CourseRecord, now = Date.now()): UpcomingView {
+export function upcomingView(course: CourseRecord, now = Date.now(), timeZone?: string): UpcomingView {
 	const items = courseAssessments(course);
-	const next = nextAssessment(items, now);
+	const next = nextAssessment(items, now, timeZone);
 	const proposal = course.assessmentProposal && Array.isArray(course.assessmentProposal.items) ? course.assessmentProposal : undefined;
 	// a newly added file that reads like a syllabus, added since the last pass: suggested once (the page can dismiss it)
 	let syllabusHint: UpcomingView["syllabusHint"];
@@ -596,4 +664,10 @@ export function noteClientTimeZone(chatId: string, raw: unknown): void {
  *  own zone, which is the learner's when the app runs on their machine). */
 export function learnerTimeZone(chatId: string): string | undefined {
 	return zones().get(chatId);
+}
+
+/** The learner's time zone a page request carries (the X-LH-Time-Zone header, as the chat's), or undefined (the
+ *  machine's). The class page's read, its position edit and the Today list use it (WP9 review 1, finding 10). */
+export function requestTimeZone(req: Request): string | undefined {
+	return cleanTimeZone(req.headers.get("x-lh-time-zone"));
 }

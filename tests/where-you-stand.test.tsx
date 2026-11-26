@@ -467,9 +467,11 @@ describe("the class position", () => {
 	it("explicit: what the learner said holds until a later lecture dated after that day has passed; words alone keep the dated lecture", () => {
 		const list = [view({ id: "l1", n: 1, title: "Lecture 1", date: "2026-11-10" }), view({ id: "l2", n: 2, title: "Lecture 2", date: "2026-11-17" }), view({ id: "l3", n: 3, title: "Lecture 3", date: "2026-11-24" }), view({ id: "l4", n: 4, title: "Lecture 4", date: "2026-12-01" })];
 		const said = { lectureId: "l2", note: "a week behind the syllabus", updatedAt: "2026-11-25T09:00:00.000Z" };
-		assert.deepEqual(L.classPositionOf(list, said, "2026-11-25"), { lectureId: "l2", how: "explicit", note: "a week behind the syllabus", at: said.updatedAt });
+		// a position from before WP9 review 1 has no saidOn: the day is that of its stamp on this machine
+		const legacyDay = A.todayIn(Date.parse(said.updatedAt));
+		assert.deepEqual(L.classPositionOf(list, said, "2026-11-25"), { lectureId: "l2", how: "explicit", note: "a week behind the syllabus", at: legacyDay });
 		assert.deepEqual(L.classPositionOf(list, said, "2026-12-02"), { lectureId: "l4", how: "dated" }, "lecture 4 (dated after it was said) has passed: the dates rule again");
-		assert.deepEqual(L.classPositionOf(list, { coveredThrough: "chapter 6", updatedAt: "2026-11-25T09:00:00.000Z" }, "2026-11-25"), { lectureId: "l3", how: "explicit", coveredThrough: "chapter 6", at: "2026-11-25T09:00:00.000Z" });
+		assert.deepEqual(L.classPositionOf(list, { coveredThrough: "chapter 6", updatedAt: "2026-11-25T09:00:00.000Z" }, "2026-11-25"), { lectureId: "l3", how: "explicit", coveredThrough: "chapter 6", at: legacyDay });
 		assert.deepEqual(L.classPositionOf(list, { lectureId: "l_gone", updatedAt: "2026-11-25T09:00:00.000Z" }, "2026-11-25"), { lectureId: "l3", how: "dated" }, "a position naming a removed lecture falls back to the dates");
 	});
 
@@ -484,12 +486,12 @@ describe("the class position", () => {
 		assert.deepEqual([set.classPosition.lectureId, set.classPosition.coveredThrough], [made.value.id, "chapter 2"]);
 		assert.equal(courses.courseView(courseId)!.standing!.position!.how, "explicit");
 		assert.equal((await positionRoute.DELETE(new Request("http://x"), params({ id: courseId }))).status, 200);
-		assert.equal(getCourse(courseId).classPosition, undefined);
+		assert.equal(L.sanitizeClassPosition(getCourse(courseId).classPosition), undefined, "cleared (stored as a revision: review 1, finding 4)");
 		assert.equal(courses.courseView(courseId)!.standing!.position!.how, "dated");
 		// removing the lecture the position names clears that part of it
 		lectures.setClassPosition(courseId, { lectureId: made.value.id });
 		lectures.deleteLecture(courseId, made.value.id);
-		assert.equal(getCourse(courseId).classPosition, undefined);
+		assert.equal(L.sanitizeClassPosition(getCourse(courseId).classPosition), undefined);
 	});
 });
 
@@ -614,13 +616,14 @@ describe("Short question edits everything about the class", () => {
 		await runTurn(chatId, "Lecture 10 is cancelled.", oneCall("lecture_remove", { id: added.id }, "lrm"));
 		assert.ok(!lectures.classLectures(getCourse(courseId)).some((l) => l.n === 10));
 		assert.deepEqual(await statuses(chatId), { lsave: "applied", ladd: "changed", lrm: "applied" }, "the add was removed since");
-		// Undo, newest first: the removal brings lecture 10 back; the edit returns lecture 9 to what the files say
+		// Undo, newest first: the removal brings lecture 10 back; the edit returns lecture 9 to what it was, stored under its
+		// id with a newer revision (review 1, finding 2: so the Undo survives a sync)
 		assert.equal((await undo(chatId, "lrm")).status, 200);
 		assert.ok(lectures.classLectures(getCourse(courseId)).some((l) => l.id === added.id));
 		assert.equal((await undo(chatId, "ladd")).status, 409, "restored with a newer stamp: the add's card stays stale (WP8's rule)");
 		assert.equal((await undo(chatId, "lsave")).status, 200);
 		const back = lectures.classLectures(getCourse(courseId)).find((l) => l.id === "lf_lecture_9")!;
-		assert.deepEqual([back.derived, back.date, back.skillIds], [true, undefined, []]);
+		assert.deepEqual([back.derived, back.date, back.skillIds, back.source, back.materialIds.length], [undefined, undefined, [], "files", 1]);
 		assert.equal((await undo(chatId, "lsave")).status, 409, "once");
 		// an unreadable date asks
 		await runTurn(chatId, "Lecture 9 is after the break.", oneCall("lecture_save", { n: 9, date: "after the break" }, "lbad", "When exactly?"));
@@ -643,7 +646,7 @@ describe("Short question edits everything about the class", () => {
 		assert.equal((await undo(chatId, "pos2")).status, 200);
 		assert.equal(getCourse(courseId).classPosition?.coveredThrough, undefined, "back to lecture 9 without the chapter");
 		await runTurn(chatId, "Actually just follow the schedule.", oneCall("class_position_set", { followSchedule: true }, "pos3"));
-		assert.equal(getCourse(courseId).classPosition, undefined);
+		assert.equal(L.sanitizeClassPosition(getCourse(courseId).classPosition), undefined);
 		assert.equal(courses.courseView(courseId)!.standing!.position!.lectureId, l8.value.id, "the dates: lecture 8");
 		assert.equal((await undo(chatId, "pos3")).status, 200);
 		assert.equal(getCourse(courseId).classPosition?.lectureId, l9.value.id);
@@ -704,7 +707,10 @@ describe("Short question edits everything about the class", () => {
 		await runTurn(chatId, "Quiz 3 also covers chapter 6.", oneCall("assessment_save", { id: q3.value.id, topics: "chapters 4 and 5, and chapter 6" }, "s2"));
 		assert.equal(A.liveAssessments(getCourse(courseId).assessments).find((x) => x.id === q3.value.id)!.topics, "chapters 4 and 5, and chapter 6");
 		await runTurn(chatId, "The final is cumulative.", oneCall("assessment_save", { id: fin.value.id, allSkills: true }, "s3"));
-		assert.deepEqual(A.liveAssessments(getCourse(courseId).assessments).find((x) => x.id === fin.value.id)!.skillIds.sort(), [a, b, c, d].sort());
+		// cumulative is a flag, not a list (review 1, finding 12); readiness reads every skill of the class
+		const cumulative = A.liveAssessments(getCourse(courseId).assessments).find((x) => x.id === fin.value.id)!;
+		assert.deepEqual([cumulative.allSkills, cumulative.skillIds], [true, []]);
+		assert.deepEqual(A.assessmentSkills(cumulative, [a, b, c, d]).sort(), [a, b, c, d].sort());
 		await runTurn(chatId, "The midterm got cancelled.", oneCall("assessment_remove", { id: mid.value.id }, "s4"));
 		assert.ok(!A.liveAssessments(getCourse(courseId).assessments).some((x) => x.id === mid.value.id));
 		assert.deepEqual(await statuses(chatId), { s1: "changed", s2: "applied", s3: "applied", s4: "applied" }, "s2 changed the same quiz after s1");

@@ -30,7 +30,8 @@ import { jobTools, type JobToolContext } from "./tools/jobs.ts";
  *   - WP9 (2026-11-25): the rest of what the class page lets the learner change: lectures_list, lecture_save,
  *     lecture_remove, class_position_set, skill_weights_set (with a map), class_update (title, language, pace, folder),
  *     and the read-only class_overview ("where you stand"). Deleting the class or its files, approving or re-drafting the
- *     skill map and Settings outside the class have no tool.
+ *     skill map and Settings outside the class have no tool. Review 1 (finding 13): self_report_retract (with a map) and
+ *     lecture_note_update (when the class has handwritten lecture notes: rename or redate one).
  * Plus plain reply text. Its prompt is prompts/ask/ only, each conditional fragment composed only when this turn offers
  * what it is about (agent/ask-prompt.ts).
  */
@@ -60,6 +61,9 @@ export const ASK_TOOL_NAMES = Object.freeze([
 	"skill_weights_set",
 	"class_update",
 	"class_overview",
+	// WP9 review 1, finding 13: taking back a self-report; renaming or redating a lecture note (when the class has notes)
+	"self_report_retract",
+	"lecture_note_update",
 ] as const);
 
 export interface AskAgentContext {

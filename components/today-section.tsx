@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { CalendarCheckIcon, ChevronRightIcon } from "lucide-react";
 import type { TodayCourse } from "@/src/core";
 import { useServerEvent, useServerResync } from "@/components/server-events";
+import { clientTimeZoneHeader } from "@/components/time-zone";
 import { cn } from "@/lib/utils";
 
 /**
@@ -69,7 +70,7 @@ export function useTodayCourses(initial: TodayCourse[] | null = null) {
 	const [courses, setCourses] = useState<TodayCourse[] | null>(initial);
 	const refresh = useCallback(async () => {
 		try {
-			const res = await fetch("/api/today", { cache: "no-store" });
+			const res = await fetch("/api/today", { cache: "no-store", headers: clientTimeZoneHeader() });
 			const d = (await res.json()) as { courses: TodayCourse[] };
 			setCourses(d.courses);
 		} catch {

@@ -32,9 +32,11 @@ function formOf(l: LectureView): FormValue {
 	return { n: l.n === undefined ? "" : String(l.n), title: l.title, date: l.date ?? "", topics: l.topics, skillIds: [...l.skillIds] };
 }
 
-/** The PATCH/POST body; skills only when they changed (so an edit of the date never marks the skills as the learner's). Pure. */
+/** The PATCH/POST body; skills only when they changed (so an edit of the date never marks the skills as the learner's).
+ *  A new lecture with no skill ticked sends none, so the linking step still places its skills (WP9 review 1, finding 6);
+ *  clearing them on an existing lecture is sent. Pure. */
 export function lectureBody(v: FormValue, before?: Pick<LectureView, "skillIds">): Record<string, unknown> {
-	const sameSkills = before && before.skillIds.length === v.skillIds.length && before.skillIds.every((s) => v.skillIds.includes(s));
+	const sameSkills = before ? before.skillIds.length === v.skillIds.length && before.skillIds.every((s) => v.skillIds.includes(s)) : v.skillIds.length === 0;
 	return {
 		n: v.n.trim() === "" ? null : Number(v.n),
 		title: v.title.trim(),

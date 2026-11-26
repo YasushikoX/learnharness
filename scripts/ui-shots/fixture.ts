@@ -35,8 +35,7 @@ const { courseStore } = await import("../../src/store/courses.ts");
 const { courseGlossary } = await import("../../src/server/material-indexing.ts");
 const { owesTutorReply } = await import("../../src/core/native-messages.ts");
 const { seedChats, stampClassFacts, uiLectures } = await import("./transcripts.ts");
-const { courseLectures, lectureLinkKey } = await import("../../src/core/lectures.ts");
-const { materialStore } = await import("../../src/store/materials.ts");
+const { lectureLinkKeyOf } = await import("../../src/server/lectures.ts");
 const { biology, calculus, coverageItems, seedCurriculum, skillLines } = await import("./curriculum.ts");
 
 const DAY_MS = 86_400_000;
@@ -153,7 +152,6 @@ skillStore.appendSkillLines(skillLines(createdAt));
 // WP9: the "link skills to lectures" step already ran for these lectures (so the server starts no model call)
 {
 	const course = courseStore.getCourse(ids.biology)!;
-	const files = materialStore.list(ids.biology).map((m) => ({ id: m.id, name: m.name, ...(m.profile ? { profile: m.profile } : {}), addedAt: m.addedAt }));
-	const key = lectureLinkKey(courseLectures(course, files), course.skills);
+	const key = lectureLinkKeyOf(ids.biology)!;
 	writeFileAtomicSync(join(PATHS.courses, `${ids.biology}.json`), JSON.stringify({ ...course, lecturesLinkedKey: key, lecturesLinkedAt: updatedAt }, null, "\t"));
 }

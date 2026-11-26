@@ -44,6 +44,9 @@ const CHANGE_TOOLS: ReadonlySet<string> = new Set([
 	"class_position_set",
 	"skill_weights_set",
 	"class_update",
+	// WP9 review 1, finding 13: taking back a self-report, renaming or redating a lecture note
+	"self_report_retract",
+	"lecture_note_update",
 ]);
 
 /** Tools that pose a question: the dock shows them live, the transcript only once answered. */

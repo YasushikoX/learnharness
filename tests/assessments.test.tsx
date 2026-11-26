@@ -507,7 +507,7 @@ describe("Short question writes what the learner states", () => {
 		const tools = classFactsTools(changes.classFactsPort(chatId)!);
 		// WP9 added the rest of the class page's edits (tests/where-you-stand.test.tsx pins those)
 		assert.deepEqual(
-			Object.keys(tools).filter((n) => !["lectures_list", "lecture_save", "lecture_remove", "class_position_set", "skill_weights_set", "class_update", "class_overview"].includes(n)).sort(),
+			Object.keys(tools).filter((n) => !["lectures_list", "lecture_save", "lecture_remove", "class_position_set", "skill_weights_set", "class_update", "class_overview", "self_report_retract"].includes(n)).sort(),
 			["assessment_remove", "assessment_save", "assessments_find_in_syllabus", "assessments_list", "record_self_report"],
 		);
 		for (const name of Object.keys(tools)) assert.ok((ASK_TOOL_NAMES as readonly string[]).includes(name), name);

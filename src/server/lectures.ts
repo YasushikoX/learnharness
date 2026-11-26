@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { CourseRecord } from "../core/contracts.ts";
-import { cleanLine, cleanSkillIds, isTombstone, upsertEntry, boundEntries, type Tombstone } from "../core/assessments.ts";
+import { cleanLine, cleanSkillIds, isTombstone, todayIn, upsertEntry, boundEntries } from "../core/assessments.ts";
 import { parseExamDate } from "../core/exam-plan.ts";
 import {
 	courseLectures,
@@ -12,21 +12,24 @@ import {
 	linksFromCites,
 	parseLectureNumber,
 	POSITION_TEXT_MAX,
+	positionRecord,
 	readLectureEntries,
 	sanitizeClassPosition,
 	sanitizeLecture,
 	type ClassPosition,
+	type ClearedPosition,
 	type FileForLectures,
 	type Lecture,
 	type LectureEntry,
 	type LectureSource,
+	type LectureTombstone,
 	type LectureView,
 } from "../core/lectures.ts";
 import { DEFAULT_LESSON_LANGUAGE, type LessonLanguage } from "../core/language.ts";
 import { resolveRoleSpec } from "../core/settings-resolution.ts";
 import { mergeSkillLines } from "../core/skills.ts";
 import { piEngineForSpec } from "../agent/models.ts";
-import { linkSkillsToLectures } from "../agent/subagents/lecture-linker.ts";
+import { linkSkillsToLectures, type LinkerInput } from "../agent/subagents/lecture-linker.ts";
 import { stores } from "./stores.ts";
 
 /**
@@ -72,6 +75,9 @@ export interface LectureInput {
 	skillIds?: unknown;
 }
 
+/** The stored class position as one revision (a cleared one included), or null when none is stored. */
+export type PositionRevision = ClassPosition | ClearedPosition | null;
+
 /** One change to the timeline, as the chat cards and Undo read it. */
 export interface LectureChange {
 	action: "added" | "updated" | "removed";
@@ -79,8 +85,11 @@ export interface LectureChange {
 	after: Lecture | null;
 	id: string;
 	stamp: string;
-	/** The lecture was read from the class's files before this change: Undo returns it to that (the stored entry goes). */
+	/** The lecture was read from the class's files before this change (the card says so). */
 	fromFiles?: true;
+	/** The class position this change moved too (a removed lecture the position named): Undo restores it in the same
+	 *  write, and only while the position is still exactly `after` (review 1, finding 1). */
+	position?: { before: PositionRevision; after: PositionRevision };
 }
 
 type CheckedLecture = { n?: number | null; title?: string; date?: string | null; topics?: string; materialIds?: string[]; skillIds?: string[] };
@@ -163,7 +172,8 @@ export function createLecture(courseId: string, input: LectureInput, source: Lec
 	if (liveCount(entries) >= LECTURES_MAX) return { ok: false, status: 409, error: FULL };
 	const base: Lecture = { id: newId(), title: checked.value.title!, topics: "", materialIds: [], skillIds: [], source, updatedAt: stampAfter(), ...(cite ? { cite: cleanLine(cite, 200) } : {}) };
 	const item = applyLecture(base, checked.value, source, base.updatedAt);
-	if (!checked.value.skillIds) delete item.skillsBy;
+	// review 1, finding 6: a new lecture with no skills chosen is not the learner's "no skills": the linking step places them
+	if (!checked.value.skillIds?.length) delete item.skillsBy;
 	writeLectures(courseId, [...entries, item]);
 	maybeLinkLectures(courseId);
 	return { ok: true, value: { action: "added", before: null, after: item, id: item.id, stamp: item.updatedAt } };
@@ -188,7 +198,9 @@ export function updateLecture(courseId: string, id: string, input: LectureInput,
 	return { ok: true, value: { action: "updated", before, after, id, stamp: after.updatedAt, ...(view.derived ? { fromFiles: true as const } : {}) } };
 }
 
-/** Delete a lecture: a tombstone (for a lecture read from the files too: it stays removed while the file is there). */
+/** Delete a lecture: a tombstone (for a lecture read from the files too: it stays removed while the file is there). The
+ *  lectures its files' names also read as (the same number) are hidden by the tombstone, so it does not come straight
+ *  back under a file's id (review 1, finding 3); the files themselves are untouched. */
 export function deleteLecture(courseId: string, id: string): Result<LectureChange> {
 	const course = stores.courseStore.getCourse(courseId);
 	if (!course) return { ok: false, status: 404, error: "Unknown course" };
@@ -196,36 +208,48 @@ export function deleteLecture(courseId: string, id: string): Result<LectureChang
 	if (!view) return { ok: false, status: 404, error: "Unknown lecture" };
 	const entries = readLectureEntries(course.lectures);
 	const held = entries.find((e) => e.id === id);
-	const tomb: Tombstone = { id, deleted: true, updatedAt: stampAfter(held?.updatedAt ?? view.updatedAt) };
-	const { derived, ...plain } = view;
-	writeLectures(courseId, upsertEntry<LectureEntry>(entries, tomb), clearedPosition(course, id));
-	return { ok: true, value: { action: "removed", before: sanitizeLecture(plain)!, after: null, id, stamp: tomb.updatedAt, ...(derived ? { fromFiles: true as const } : {}) } };
+	const tomb: LectureTombstone = { id, deleted: true, updatedAt: stampAfter(held?.updatedAt ?? view.updatedAt), ...(view.joined?.length ? { files: view.joined } : {}) };
+	const { derived, joined: _joined, ...plain } = view;
+	const moved = clearedPosition(course, id);
+	writeLectures(courseId, upsertEntry<LectureEntry>(entries, tomb), moved ? { classPosition: moved.after as ClassPosition } : {});
+	return { ok: true, value: { action: "removed", before: sanitizeLecture(plain)!, after: null, id, stamp: tomb.updatedAt, ...(derived ? { fromFiles: true as const } : {}), ...(moved ? { position: moved } : {}) } };
 }
 
-/** A removed lecture the class position named: the position goes back to the dates. */
-function clearedPosition(course: CourseRecord, lectureId: string): Partial<CourseRecord> {
+/** A removed lecture the class position named: the position keeps the learner's words without it, or is cleared (a
+ *  revision, so it wins a sync over an older statement). Null when the position does not name it. */
+function clearedPosition(course: CourseRecord, lectureId: string): { before: PositionRevision; after: PositionRevision } | null {
+	const before = positionRecord(course.classPosition) ?? null;
 	const p = sanitizeClassPosition(course.classPosition);
-	if (p?.lectureId !== lectureId) return {};
+	if (!before || p?.lectureId !== lectureId) return null;
 	const { lectureId: _gone, ...rest } = p;
-	return { classPosition: rest.coveredThrough || rest.note ? { ...rest, updatedAt: stampAfter(p.updatedAt) } : undefined };
+	const updatedAt = stampAfter(p.updatedAt);
+	return { before, after: rest.coveredThrough || rest.note ? { ...rest, saidOn: rest.saidOn ?? todayIn(Date.parse(p.updatedAt)), updatedAt } : { updatedAt } };
 }
 
-/** Undo a lecture change (the caller checked the timeline still holds exactly what it wrote). `fromFiles`: the lecture
- *  was read from the files, so undoing restores that by removing the stored entry. */
+/** A position revision written again with a fresh merge stamp (Undo): what was said keeps the day it was said
+ *  (`saidOn`); "none" becomes a cleared revision. Review 1, finding 4. */
+function restoredPosition(rev: PositionRevision, prev: string | undefined): ClassPosition | ClearedPosition {
+	const updatedAt = stampAfter(prev);
+	const said = rev ? sanitizeClassPosition(rev) : undefined;
+	return said ? { ...said, saidOn: said.saidOn ?? todayIn(Date.parse(said.updatedAt)), updatedAt } : { updatedAt };
+}
+
+/** Undo a lecture change (the caller checked the timeline, and the position when the change moved it, still hold exactly
+ *  what it wrote). The lecture and the position are restored in ONE write with fresh revisions, so the Undo wins a sync
+ *  over the change it undoes (review 1, findings 1 and 2). A lecture read from the files comes back as it was shown,
+ *  stored under its id: it does not depend on the file still being named the same. */
 export function revertLectureChange(courseId: string, change: LectureChange): Result<true> {
 	const course = stores.courseStore.getCourse(courseId);
 	if (!course) return { ok: false, status: 404, error: "The class was deleted" };
 	const entries = readLectureEntries(course.lectures);
 	const stamp = stampAfter(change.stamp);
+	const position = change.position ? { classPosition: restoredPosition(change.position.before, positionRecord(course.classPosition)?.updatedAt) as ClassPosition } : {};
 	if (change.action === "added") {
-		writeLectures(courseId, upsertEntry<LectureEntry>(entries, { id: change.id, deleted: true, updatedAt: stamp }));
-	} else if (change.fromFiles) {
-		// back to "read from the files": the stored entry (an edit or the removal's tombstone) goes
-		writeLectures(courseId, entries.filter((e) => e.id !== change.id));
+		writeLectures(courseId, upsertEntry<LectureEntry>(entries, { id: change.id, deleted: true, updatedAt: stamp }), position);
 	} else if (change.before) {
 		const restored = sanitizeLecture({ ...change.before, id: change.id, updatedAt: stamp });
 		if (!restored) return { ok: false, status: 422, error: "This change cannot be undone" };
-		writeLectures(courseId, upsertEntry<LectureEntry>(entries, restored));
+		writeLectures(courseId, upsertEntry<LectureEntry>(entries, restored), position);
 	} else return { ok: false, status: 422, error: "This change cannot be undone" };
 	return { ok: true, value: true };
 }
@@ -238,14 +262,27 @@ export interface PositionInput {
 	note?: unknown;
 }
 
-/** Set the class position (what the learner said), or clear it (null: back to the lecture dates). */
-export function setClassPosition(courseId: string, input: PositionInput | null): Result<{ before: ClassPosition | null; after: ClassPosition | null }> {
+/** One position change, as the chat card and Undo read it: what is shown (`before`, `after`) and the revisions written
+ *  (`beforeRev`, `afterRev`; a clear has one too). */
+export interface PositionChange {
+	before: ClassPosition | null;
+	after: ClassPosition | null;
+	beforeRev: PositionRevision;
+	afterRev: ClassPosition | ClearedPosition;
+}
+
+/** Set the class position (what the learner said), or clear it (null: back to the lecture dates). `timeZone`: the
+ *  learner's (the request's X-LH-Time-Zone, the chat's), for the day it was said (review 1, finding 10). Every write is a
+ *  fresh revision, a clear included (finding 4). */
+export function setClassPosition(courseId: string, input: PositionInput | null, timeZone?: string): Result<PositionChange> {
 	const course = stores.courseStore.getCourse(courseId);
 	if (!course) return { ok: false, status: 404, error: "Unknown course" };
+	const beforeRev = positionRecord(course.classPosition) ?? null;
 	const before = sanitizeClassPosition(course.classPosition) ?? null;
 	if (input === null) {
-		stores.courseStore.updateCourse(courseId, { classPosition: undefined });
-		return { ok: true, value: { before, after: null } };
+		const afterRev: ClearedPosition = { updatedAt: stampAfter(beforeRev?.updatedAt) };
+		stores.courseStore.updateCourse(courseId, { classPosition: afterRev as ClassPosition });
+		return { ok: true, value: { before, after: null, beforeRev, afterRev } };
 	}
 	let lectureId: string | undefined;
 	if (input.lectureId !== undefined && input.lectureId !== null && input.lectureId !== "") {
@@ -255,9 +292,19 @@ export function setClassPosition(courseId: string, input: PositionInput | null):
 	const coveredThrough = cleanLine(input.coveredThrough, POSITION_TEXT_MAX);
 	const note = cleanLine(input.note, POSITION_TEXT_MAX);
 	if (!lectureId && !coveredThrough && !note) return { ok: false, status: 400, error: "give a lecture, what the class covered, or a note (or null to follow the lecture dates)" };
-	const after: ClassPosition = { ...(lectureId ? { lectureId } : {}), ...(coveredThrough ? { coveredThrough } : {}), ...(note ? { note } : {}), updatedAt: stampAfter(before?.updatedAt) };
+	const now = Date.now();
+	const after: ClassPosition = { ...(lectureId ? { lectureId } : {}), ...(coveredThrough ? { coveredThrough } : {}), ...(note ? { note } : {}), saidOn: todayIn(now, timeZone), updatedAt: stampAfter(beforeRev?.updatedAt) };
 	stores.courseStore.updateCourse(courseId, { classPosition: after });
-	return { ok: true, value: { before, after } };
+	return { ok: true, value: { before, after, beforeRev, afterRev: after } };
+}
+
+/** Undo a position change (the caller checked the position is still exactly `afterRev`): `beforeRev` again, with a fresh
+ *  revision and the day it was first said. */
+export function revertPositionChange(courseId: string, change: Pick<PositionChange, "beforeRev">): Result<true> {
+	const course = stores.courseStore.getCourse(courseId);
+	if (!course) return { ok: false, status: 404, error: "The class was deleted" };
+	stores.courseStore.updateCourse(courseId, { classPosition: restoredPosition(change.beforeRev, positionRecord(course.classPosition)?.updatedAt) as ClassPosition });
+	return { ok: true, value: true };
 }
 
 // ─── "link skills to lectures" ──────────────────────────────────────────────
@@ -287,18 +334,80 @@ function languageOf(course: CourseRecord): LessonLanguage {
 	return course.language ?? stores.settingsStore.readSettings()?.general?.language ?? DEFAULT_LESSON_LANGUAGE;
 }
 
-/** Start linking when the lectures, their files or the skills changed since the last run (never in a loop: the run
- *  records what it saw, success or not). Quiet: nothing happens for a class with no skills or no lectures. */
+/** What one linking run reads and would write, for the class as it is now (review 1, finding 7).
+ *  - `key`: the fingerprint of everything the run reads AND the placements as they stand. A run starts only when it
+ *    differs from the one the last run settled with; a reply whose class changed while it ran is discarded.
+ *  - `stale`: lectures whose model-placed skills were placed from evidence that has changed since (their title, date,
+ *    topics, files, or the skills' names and statements): their skills are placed again. The learner's never are.
+ *  - `cited`, `toModel`: the draft's cites for the skills not placed, and the rest, for the one model call. */
+interface LinkPlan {
+	key: string;
+	lectures: LinkerInput["lectures"];
+	toModel: Array<{ id: string; name: string; statement: string }>;
+	cited: Map<string, string[]>;
+	stale: Set<string>;
+	lectureKey: (l: LectureView, skillIds: readonly string[]) => string;
+}
+
+function linkPlan(course: CourseRecord): LinkPlan {
+	const files = lectureFiles(course.id);
+	const byFile = new Map(files.map((f) => [f.id, f]));
+	const lectures = classLectures(course);
+	const own = new Set(course.skills);
+	const info = new Map(
+		mergeSkillLines(stores.skillStore.readSkillLines())
+			.filter((s) => own.has(s.id))
+			.map((s) => [s.id, { id: s.id, name: s.name, statement: s.statement }]),
+	);
+	const payload = (l: LectureView): LinkerInput["lectures"][number] => ({
+		id: l.id,
+		label: l.title,
+		...(l.date ? { date: l.date } : {}),
+		topics: l.topics,
+		files: l.materialIds.flatMap((m) => (byFile.has(m) ? [{ name: byFile.get(m)!.name, excerpt: (byFile.get(m)!.profile ?? "").slice(0, 600) }] : [])).slice(0, 3),
+	});
+	const lectureKey = (l: LectureView, skillIds: readonly string[]) => lectureLinkKey({ lecture: payload(l), skills: skillIds.map((id) => info.get(id) ?? id) });
+	const stale = new Set(lectures.filter((l) => l.skillsBy === "model" && l.skillsKey !== undefined && l.skillsKey !== lectureKey(l, l.skillIds)).map((l) => l.id));
+	const placed = new Set(lectures.filter((l) => !stale.has(l.id)).flatMap((l) => l.skillIds));
+	const cites = Object.fromEntries(Object.entries(course.skillCites ?? {}).filter(([id]) => own.has(id) && !placed.has(id)));
+	const open = lectures.filter((l) => l.skillsBy !== "learner");
+	const cited = linksFromCites(cites, open, files);
+	const citedSkills = new Set([...cited.values()].flat());
+	const toModel = course.skills.filter((id) => !placed.has(id) && !citedSkills.has(id) && info.has(id)).map((id) => info.get(id)!);
+	const key = lectureLinkKey({
+		lectures: lectures.map(payload),
+		skills: course.skills.map((id) => info.get(id) ?? id),
+		cites: Object.entries(course.skillCites ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+		placed: lectures.map((l) => [l.id, l.skillsBy ?? "", l.skillIds, l.skillsKey ?? ""]),
+	});
+	return { key, lectures: lectures.map(payload), toModel, cited, stale, lectureKey };
+}
+
+/** The current fingerprint (the screenshot fixture settles a class with it). */
+export function lectureLinkKeyOf(courseId: string): string | null {
+	const course = stores.courseStore.getCourse(courseId);
+	return course ? linkPlan(course).key : null;
+}
+
+/** Start linking when anything the step reads, or the placements, changed since the last run (never in a loop: the run
+ *  records the fingerprint of the class as it left it, success or not). Quiet: nothing happens for a class with no skills
+ *  or no lectures. Started by the page's read of the class and by a lecture or approval write, never by Short question's
+ *  read-only overview (review 1, finding 5). */
 export function maybeLinkLectures(courseId: string): void {
 	const course = stores.courseStore.getCourse(courseId);
 	if (!course || course.skills.length === 0 || linkRuns().has(courseId)) return;
-	const lectures = classLectures(course);
-	if (lectures.length === 0) return;
-	if (lectureLinkKey(lectures, course.skills) === course.lecturesLinkedKey) return;
+	if (classLectures(course).length === 0) return;
+	if (linkPlan(course).key === course.lecturesLinkedKey) return;
 	startLectureLinking(courseId);
 }
 
-/** Start the step now (the page's "Place skills again"). Returns at once. */
+/** Has anything the linking step reads changed since its last run (Short question's overview says so, read-only)? */
+export function lectureLinksStale(course: CourseRecord): boolean {
+	return course.skills.length > 0 && classLectures(course).length > 0 && (linkRuns().has(course.id) || linkPlan(course).key !== course.lecturesLinkedKey);
+}
+
+/** Start the step now (the page's "Place skills again"). Returns at once. A run whose reply came back for a class that has
+ *  changed since starts again on the class as it is now. */
 export function startLectureLinking(courseId: string): Result<CourseRecord> {
 	const course = stores.courseStore.getCourse(courseId);
 	if (!course) return { ok: false, status: 404, error: "Unknown course" };
@@ -306,83 +415,81 @@ export function startLectureLinking(courseId: string): Result<CourseRecord> {
 	if (linkRuns().has(courseId)) return { ok: false, status: 409, error: "The skills are already being placed" };
 	const controller = new AbortController();
 	linkRuns().set(courseId, controller);
-	void runLinking(courseId, controller).finally(() => linkRuns().delete(courseId));
+	void runLinking(courseId, controller).then(
+		(again) => {
+			linkRuns().delete(courseId);
+			if (again && !controller.signal.aborted) maybeLinkLectures(courseId);
+		},
+		() => linkRuns().delete(courseId),
+	);
 	return { ok: true, value: course };
 }
 
-/** Add links (lecture id → skill ids) to the timeline as it is NOW: never to a lecture the learner set, never a skill off
- *  the map. A lecture read from the files is stored under its id. Returns the entries, or null when nothing changed. */
-function withLinks(course: CourseRecord, add: ReadonlyMap<string, readonly string[]>): LectureEntry[] | null {
+/** Write a run's placements to the timeline as it is NOW: never to a lecture the learner set, never a skill off the map.
+ *  A stale lecture's model skills are replaced; any other lecture's are added to. A lecture read from the files is stored
+ *  under its id. Returns the entries, or null when nothing changed. */
+function withLinks(course: CourseRecord, plan: LinkPlan, add: ReadonlyMap<string, readonly string[]>): LectureEntry[] | null {
 	const own = new Set(course.skills);
 	let entries = readLectureEntries(course.lectures);
 	let changed = false;
 	for (const view of classLectures(course)) {
-		const extra = (add.get(view.id) ?? []).filter((s) => own.has(s) && !view.skillIds.includes(s));
-		if (extra.length === 0 || view.skillsBy === "learner") continue;
-		const { derived: _d, ...plain } = view;
+		if (view.skillsBy === "learner") continue;
+		const stale = plan.stale.has(view.id);
+		const base = stale ? [] : view.skillIds;
+		const next = [...new Set([...base, ...(add.get(view.id) ?? []).filter((s) => own.has(s))])];
+		if (!stale && next.length === view.skillIds.length) continue;
+		const { derived: _d, joined: _j, ...plain } = view;
 		const held = entries.find((e) => e.id === view.id);
-		const next = sanitizeLecture({ ...plain, skillIds: [...view.skillIds, ...extra], skillsBy: "model", updatedAt: stampAfter(held?.updatedAt ?? view.updatedAt) });
-		if (!next) continue;
-		entries = upsertEntry<LectureEntry>(entries, next);
+		const item = sanitizeLecture({ ...plain, skillIds: next, skillsBy: next.length > 0 ? "model" : undefined, skillsKey: undefined, updatedAt: stampAfter(held?.updatedAt ?? view.updatedAt) });
+		if (!item) continue;
+		if (item.skillIds.length > 0) item.skillsKey = plan.lectureKey(view, item.skillIds);
+		if (!held && item.skillIds.length === 0) continue; // a derived lecture with nothing placed stays derived
+		entries = upsertEntry<LectureEntry>(entries, item);
 		changed = true;
 	}
 	return changed ? entries : null;
 }
 
-async function runLinking(courseId: string, controller: AbortController): Promise<void> {
+/** One run. Returns true when its reply was discarded because the class changed while it ran (the caller starts again). */
+async function runLinking(courseId: string, controller: AbortController): Promise<boolean> {
 	const start = stores.courseStore.getCourse(courseId);
-	if (!start) return;
-	const key = lectureLinkKey(classLectures(start), start.skills);
-	const settle = (patch: Partial<CourseRecord>) => {
-		if (stores.courseStore.getCourse(courseId)) stores.courseStore.updateCourse(courseId, { ...patch, lecturesLinkedKey: key, lecturesLinkedAt: new Date().toISOString() });
+	if (!start) return false;
+	const plan = linkPlan(start);
+	/** Write the placements (unless the class changed since the plan) and record the fingerprint the class is left with. */
+	const settle = (links: ReadonlyMap<string, readonly string[]>, patch: Partial<CourseRecord>): boolean => {
+		const fresh = stores.courseStore.getCourse(courseId);
+		if (!fresh) return false;
+		if (linkPlan(fresh).key !== plan.key) return true; // obsolete: discarded, run again on the class as it is
+		const entries = withLinks(fresh, plan, links);
+		const written = entries ? stores.courseStore.updateCourse(courseId, { lectures: boundEntries(entries) })! : fresh;
+		stores.courseStore.updateCourse(courseId, { ...patch, lecturesLinkedKey: linkPlan(written).key, lecturesLinkedAt: new Date().toISOString() });
+		return false;
+	};
+	const merged = (extra: ReadonlyMap<string, readonly string[]>) => {
+		const out = new Map<string, string[]>([...plan.cited].map(([k, v]) => [k, [...v]]));
+		for (const [id, skills] of extra) out.set(id, [...new Set([...(out.get(id) ?? []), ...skills])]);
+		return out;
 	};
 	try {
-		// 1. the draft's cites (no model call)
-		const files = lectureFiles(courseId);
-		const cited = linksFromCites(start.skillCites ?? {}, classLectures(start), files);
-		const afterCites = withLinks(start, cited);
-		if (afterCites) stores.courseStore.updateCourse(courseId, { lectures: boundEntries(afterCites) });
-		// 2. one model pass for the skills still not placed
-		const course = stores.courseStore.getCourse(courseId);
-		if (!course || controller.signal.aborted) return;
-		const lectures = classLectures(course);
-		const placed = new Set(lectures.flatMap((l) => l.skillIds));
-		const skills = mergeSkillLines(stores.skillStore.readSkillLines()).filter((s) => course.skills.includes(s.id) && !placed.has(s.id));
-		if (skills.length === 0 || lectures.length === 0) {
-			settle({ lecturesLinkError: undefined });
-			return;
-		}
+		// 1. the draft's cites (no model call), and the stale lectures' skills, when nothing is left for the model
+		if (plan.toModel.length === 0 || plan.lectures.length === 0) return settle(plan.cited, { lecturesLinkError: undefined });
 		const spec = linkerOverride ? null : resolveRoleSpec("coursePlanner", stores.settingsStore.readSettings());
 		if (!linkerOverride && !spec) {
-			settle({ lecturesLinkError: "No model is configured for the class planner (Settings → Agent: the strong slot or a Class planner override)" });
-			return;
+			return settle(plan.cited, { lecturesLinkError: "No model is configured for the class planner (Settings → Agent: the strong slot or a Class planner override)" });
 		}
-		const byFile = new Map(files.map((f) => [f.id, f]));
+		// 2. one model pass for the skills still not placed
 		const run = linkerOverride ?? linkSkillsToLectures;
 		const links = await run(
-			{
-				title: course.title,
-				language: languageOf(course),
-				lectures: lectures.map((l) => ({
-					id: l.id,
-					label: l.title,
-					...(l.date ? { date: l.date } : {}),
-					topics: l.topics,
-					files: l.materialIds.flatMap((m) => (byFile.has(m) ? [{ name: byFile.get(m)!.name, excerpt: (byFile.get(m)!.profile ?? "").slice(0, 600) }] : [])).slice(0, 3),
-				})),
-				skills: skills.map((s) => ({ id: s.id, name: s.name, statement: s.statement })),
-			},
+			{ title: start.title, language: languageOf(start), lectures: plan.lectures, skills: plan.toModel },
 			{ engine: spec ? piEngineForSpec(spec) : undefined, signal: controller.signal, onStep: () => {}, courseId },
 		);
-		const fresh = stores.courseStore.getCourse(courseId);
-		if (!fresh || controller.signal.aborted) return;
+		if (controller.signal.aborted) return false;
 		const byLecture = new Map<string, string[]>();
 		for (const [skill, ids] of links) for (const id of ids) byLecture.set(id, [...(byLecture.get(id) ?? []), skill]);
-		const entries = withLinks(fresh, byLecture);
-		settle({ ...(entries ? { lectures: boundEntries(entries) } : {}), lecturesLinkError: undefined });
+		return settle(merged(byLecture), { lecturesLinkError: undefined });
 	} catch (err) {
-		if (controller.signal.aborted) return;
-		settle({ lecturesLinkError: err instanceof Error ? err.message : String(err) });
+		if (controller.signal.aborted) return false;
+		return settle(plan.cited, { lecturesLinkError: err instanceof Error ? err.message : String(err) });
 	}
 }
 

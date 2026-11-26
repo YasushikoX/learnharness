@@ -22,8 +22,10 @@ import {
 	parseFolderField,
 	parsePaceField,
 	parsePaceNoteField,
+	parseTitleField,
 	parseWeightsField,
 	renameCourse,
+	requestTimeZone,
 	setCourseExamDate,
 	setCourseFolder,
 	setCourseLanguage,
@@ -35,10 +37,12 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
 	const timing = startServerTiming();
 	const { id } = await params;
-	const view = timing.measure("course", () => courseView(id));
+	// every "today" of the page (the class position, the next assessment) is the learner's (WP9 review 1, finding 10)
+	const timeZone = requestTimeZone(req);
+	const view = timing.measure("course", () => courseView(id, timeZone ? { timeZone } : {}));
 	if (!view) return timing.json({ error: "Unknown course" }, { status: 404 });
 	return timing.json({ ...view, drafting: courseDrafting(id), weighing: courseWeighing(id) });
 }
@@ -54,8 +58,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 	const hasFolder = body?.folder !== undefined;
 	// A body with none of the other fields keeps the original rejection (a rename needs a title).
 	if (body?.title !== undefined || (!hasNote && !hasLanguage && !hasPace && !hasExamDate && !hasWeights && !hasFolder)) {
-		if (typeof body?.title !== "string" || body.title.trim() === "") {
-			return Response.json({ error: "title must be a non-empty string" }, { status: 400 });
+		// the same check Short question's class_update makes (WP9 review 1, finding 14)
+		const parsed = parseTitleField(body?.title);
+		if (!parsed.ok) {
+			return Response.json({ error: parsed.error }, { status: 400 });
 		}
 	}
 	let note: string | undefined;

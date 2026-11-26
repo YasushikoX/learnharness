@@ -47,6 +47,7 @@ import { useServerEvent, useServerResync } from "@/components/server-events";
 import { cn } from "@/lib/utils";
 import { HEAD_COUNT, PAGE_HEAD, SECTION_HEAD } from "@/components/section-heads";
 import { FitTitleInput } from "@/components/fit-title-input";
+import { clientTimeZoneHeader } from "@/components/time-zone";
 import { RichLine, RichText } from "@/components/rich-text";
 import { CoverageContext, CoverageSummary, DraftCoverageReview, DraftTerms, SkillTerms, type CoverageActions } from "@/components/course-coverage";
 
@@ -1103,7 +1104,8 @@ export function CoursePage({ courseId, initial }: { courseId: string; initial: C
 
 	const refresh = useCallback(async () => {
 		try {
-			const res = await fetch(`/api/courses/${courseId}`, { cache: "no-store" });
+			// the learner's time zone: every "today" of the class (WP9 review 1, finding 10)
+			const res = await fetch(`/api/courses/${courseId}`, { cache: "no-store", headers: clientTimeZoneHeader() });
 			if (res.status === 404) {
 				router.push("/");
 				return;

@@ -63,9 +63,11 @@ interface FormValue {
 	date: string;
 	topics: string;
 	skillIds: string[];
+	/** Covers every skill of the class (cumulative; WP9 review 1, finding 12). */
+	allSkills: boolean;
 }
 
-const EMPTY: FormValue = { kind: "quiz", title: "", date: "", topics: "", skillIds: [] };
+const EMPTY: FormValue = { kind: "quiz", title: "", date: "", topics: "", skillIds: [], allSkills: false };
 
 /** The small add / edit form. */
 function AssessmentForm({
@@ -111,9 +113,13 @@ function AssessmentForm({
 			{skills.length > 0 && (
 				<fieldset className="max-h-32 space-y-0.5 overflow-y-auto rounded-md border border-border px-2 py-1.5 text-meta" data-testid={`${testid}-skills`}>
 					<legend className="px-1 text-muted-foreground">Skills it covers</legend>
+					<label className="flex items-center gap-2 py-0.5">
+						<input type="checkbox" checked={v.allSkills} onChange={() => setV((x) => ({ ...x, allSkills: !x.allSkills }))} data-testid={`${testid}-all-skills`} />
+						<span className="truncate">Every skill (cumulative)</span>
+					</label>
 					{skills.map((s) => (
-						<label key={s.id} className="flex items-center gap-2 py-0.5">
-							<input type="checkbox" checked={v.skillIds.includes(s.id)} onChange={() => toggle(s.id)} />
+						<label key={s.id} className={cn("flex items-center gap-2 py-0.5", v.allSkills && "opacity-60")}>
+							<input type="checkbox" disabled={v.allSkills} checked={v.allSkills || v.skillIds.includes(s.id)} onChange={() => toggle(s.id)} />
 							<span className="truncate">{s.name}</span>
 						</label>
 					))}
@@ -136,12 +142,13 @@ function AssessmentForm({
 	);
 }
 
-function formOf(a: Pick<Assessment, "kind" | "title" | "date" | "topics" | "skillIds">): FormValue {
-	return { kind: a.kind, title: a.title, date: a.date ?? "", topics: a.topics, skillIds: [...a.skillIds] };
+function formOf(a: Pick<Assessment, "kind" | "title" | "date" | "topics" | "skillIds" | "allSkills">): FormValue {
+	return { kind: a.kind, title: a.title, date: a.date ?? "", topics: a.topics, skillIds: [...a.skillIds], allSkills: a.allSkills === true };
 }
 
-function bodyOf(v: FormValue) {
-	return { kind: v.kind, title: v.title.trim(), date: v.date || null, topics: v.topics, skillIds: v.skillIds };
+/** The POST/PATCH body: a cumulative one keeps its flag (never a list of every skill). Pure (exported for tests). */
+export function bodyOf(v: FormValue) {
+	return { kind: v.kind, title: v.title.trim(), date: v.date || null, topics: v.topics, ...(v.allSkills ? { allSkills: true } : { skillIds: v.skillIds }) };
 }
 
 /** One assessment row: title and kind, the date with its countdown, the topics. */
@@ -165,7 +172,7 @@ function Row({ a, now, next, names, onEdit }: { a: Assessment; now: number; next
 			<span className="block text-meta text-muted-foreground">
 				{KIND_LABELS[a.kind]}
 				{a.topics ? ` · ${a.topics}` : ""}
-				{a.skillIds.length > 0 ? ` · ${a.skillIds.map((id) => names.get(id) ?? id).join(", ")}` : ""}
+				{a.allSkills ? " · every skill" : a.skillIds.length > 0 ? ` · ${a.skillIds.map((id) => names.get(id) ?? id).join(", ")}` : ""}
 			</span>
 		</button>
 	);

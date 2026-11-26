@@ -25,7 +25,10 @@ export type ClassChangeData =
 	| { kind: "lecture"; courseId: string; action: "added" | "updated" | "removed"; before: Lecture | null; after: Lecture | null; fromFiles?: true; skillNames: string[] }
 	| { kind: "position"; courseId: string; before: ClassPosition | null; after: ClassPosition | null; label: string | null; beforeLabel: string | null }
 	| { kind: "weights"; courseId: string; before: Record<string, { w: number } | null>; after: Record<string, { w: number } | null>; names: Record<string, string> }
-	| { kind: "setting"; courseId: string; field: "title" | "language" | "pace" | "folder"; before: string | null; after: string | null };
+	| { kind: "setting"; courseId: string; field: "title" | "language" | "pace" | "folder"; before: string | null; after: string | null }
+	// WP9 review 1, finding 13
+	| { kind: "self-report-retract"; courseId: string; before: Array<{ stance: "know" | "shaky" | "dont_know"; skillIds: string[] }>; skillNames: string[] }
+	| { kind: "note"; courseId: string; noteId: string; before: { title: string; date: string }; after: { title: string; date: string } };
 
 const WEIGHT_WORDS = ["never on the exam", "sometimes on the exam", "often on the exam", "nearly always on the exam"];
 const FIELD_LABELS: Record<"title" | "language" | "pace" | "folder", string> = { title: "Class name", language: "Class language", pace: "Class pace", folder: "Folder" };
@@ -71,6 +74,14 @@ export function classChangeLines(change: ClassChangeData): { eyebrow: string; ti
 	}
 	if (change.kind === "setting") {
 		return { eyebrow: FIELD_LABELS[change.field], title: settingValue(change.field, change.after), lines: [`Was: ${settingValue(change.field, change.before)}`] };
+	}
+	if (change.kind === "self-report-retract") {
+		const was = [...new Set(change.before.map((r) => STANCE[r.stance]))];
+		return { eyebrow: "Taken back", title: change.skillNames.join(", "), lines: [`Was: ${was.join("; ")}`, "Your practice results decide it again."] };
+	}
+	if (change.kind === "note") {
+		const moved = change.before.date !== change.after.date ? [`Was ${dateWithWeekday(change.before.date)}`] : [];
+		return { eyebrow: "Lecture note", title: change.after.title, lines: [dateWithWeekday(change.after.date), ...(change.before.title !== change.after.title ? [`Was: ${change.before.title}`] : []), ...moved] };
 	}
 	const a = change.after ?? change.before!;
 	const verb = change.action === "added" ? "Added" : change.action === "updated" ? "Changed" : "Removed";

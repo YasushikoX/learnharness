@@ -56,6 +56,10 @@ export interface Lecture {
 	/** Who set `skillIds`: the linking pass ("model") or the learner (the page, or Short question). The pass never changes
 	 *  a lecture the learner set. Absent = nobody yet. */
 	skillsBy?: "model" | "learner";
+	/** With `skillsBy` "model" from the linking pass: the fingerprint of what the pass read for this lecture (its title,
+	 *  date, topics, files, and its skills' names and statements). When that changes, the pass places this lecture's skills
+	 *  again (review 1, finding 7). Absent (the syllabus's, or from before): kept as they are. */
+	skillsKey?: string;
 	source: LectureSource;
 	/** ISO — the last write; the sync merge keeps the later one per id. */
 	updatedAt: string;
@@ -63,7 +67,15 @@ export interface Lecture {
 	cite?: string;
 }
 
-export type LectureEntry = Lecture | Tombstone;
+/** A lecture's deletion. `files`: the ids of the lectures read from the class's file names that had joined it (the same
+ *  number, or date) when it was removed: they stay hidden while this tombstone holds, so the removed lecture does not
+ *  come straight back under a file's id (WP9 review 1, finding 3). Restoring the lecture (Undo) replaces the tombstone
+ *  and lifts them with it. An older build drops `files` and shows them, as it did. */
+export interface LectureTombstone extends Tombstone {
+	files?: string[];
+}
+
+export type LectureEntry = Lecture | LectureTombstone;
 
 /** How far the class has got, when the learner said so. */
 export interface ClassPosition {
@@ -73,7 +85,17 @@ export interface ClassPosition {
 	coveredThrough?: string;
 	/** Anything else they said about it ("a week behind the syllabus"). */
 	note?: string;
-	/** ISO — when it was said. */
+	/** "YYYY-MM-DD": the day the learner said it, in THEIR time zone (WP9 review 1, finding 10). Kept when Undo restores
+	 *  it. Absent on a position from before: the day of `updatedAt` on this machine. */
+	saidOn?: string;
+	/** ISO — the merge revision: every write (a new position, a correction, a clear, an Undo) takes a fresh one, and a
+	 *  sync keeps the later (WP9 review 1, finding 4). */
+	updatedAt: string;
+}
+
+/** A cleared position, stored as a revision with nothing said (`{ updatedAt }`), so a later "follow the dates" wins a
+ *  sync over an earlier statement on another device. Every reader (and an older build) reads it as no position. */
+export interface ClearedPosition {
 	updatedAt: string;
 }
 
@@ -81,6 +103,8 @@ export interface ClassPosition {
 export interface LectureView extends Lecture {
 	/** Read from the class's file names and not stored (yet). */
 	derived?: true;
+	/** The ids of the lectures read from the file names that joined this one (their files are its files). */
+	joined?: string[];
 }
 
 export const LECTURES_MAX = 200;
@@ -113,6 +137,7 @@ export function sanitizeLecture(raw: unknown): Lecture | null {
 	const source: LectureSource = raw.source === "syllabus" || raw.source === "files" || raw.source === "chat" ? raw.source : "manual";
 	const cite = cleanLine(raw.cite, 200);
 	const skillsBy = raw.skillsBy === "model" || raw.skillsBy === "learner" ? raw.skillsBy : undefined;
+	const skillsKey = skillsBy === "model" && typeof raw.skillsKey === "string" && raw.skillsKey.length <= 80 ? raw.skillsKey : undefined;
 	return {
 		id: raw.id,
 		...(n !== undefined ? { n } : {}),
@@ -122,13 +147,20 @@ export function sanitizeLecture(raw: unknown): Lecture | null {
 		materialIds: cleanSkillIds(raw.materialIds).slice(0, LECTURE_MATERIALS_MAX),
 		skillIds: cleanSkillIds(raw.skillIds),
 		...(skillsBy ? { skillsBy } : {}),
+		...(skillsKey ? { skillsKey } : {}),
 		source,
 		updatedAt: raw.updatedAt,
 		...(cite ? { cite } : {}),
 	};
 }
 
-export const readLectureEntries = (raw: unknown): LectureEntry[] => readEntries(raw, sanitizeLecture);
+/** A lecture tombstone keeps the file-derived ids it hides (`files`). */
+function lectureTombstone(t: Tombstone, raw: Record<string, unknown>): LectureTombstone {
+	const files = Array.isArray(raw.files) ? [...new Set(raw.files.filter((f): f is string => typeof f === "string" && f.startsWith("lf_") && f.length <= 80))].slice(0, 20) : [];
+	return files.length > 0 ? { ...t, files } : t;
+}
+
+export const readLectureEntries = (raw: unknown): LectureEntry[] => readEntries<Lecture, LectureTombstone>(raw, sanitizeLecture, lectureTombstone);
 
 /** The live lectures of a stored list (tombstones dropped). */
 export function liveLectures(raw: unknown): Lecture[] {
@@ -146,14 +178,22 @@ export function sameLectureEntry(held: unknown, expected: unknown): boolean {
 	return a !== null && b !== null && JSON.stringify(a) === JSON.stringify(b);
 }
 
-/** The stored class position read defensively; undefined when it cannot be read or says nothing. */
+/** The stored class position read defensively; undefined when it cannot be read or says nothing (a cleared one too). */
 export function sanitizeClassPosition(raw: unknown): ClassPosition | undefined {
+	const rec = positionRecord(raw);
+	return rec && ("lectureId" in rec || "coveredThrough" in rec || "note" in rec) ? (rec as ClassPosition) : undefined;
+}
+
+/** The stored position as a revision: what was said, a cleared revision (`{ updatedAt }`), or undefined (none, or
+ *  unreadable). Undo and the change cards compare these, so a clear has a revision too. Pure. */
+export function positionRecord(raw: unknown): ClassPosition | ClearedPosition | undefined {
 	if (!isObj(raw) || !isIso(raw.updatedAt)) return undefined;
-	const lectureId = typeof raw.lectureId === "string" && raw.lectureId !== "" ? raw.lectureId : undefined;
+	const lectureId = typeof raw.lectureId === "string" && raw.lectureId !== "" && raw.lectureId.length <= 80 ? raw.lectureId : undefined;
 	const coveredThrough = cleanLine(raw.coveredThrough, POSITION_TEXT_MAX);
 	const note = cleanLine(raw.note, POSITION_TEXT_MAX);
-	if (!lectureId && !coveredThrough && !note) return undefined;
-	return { ...(lectureId ? { lectureId } : {}), ...(coveredThrough ? { coveredThrough } : {}), ...(note ? { note } : {}), updatedAt: raw.updatedAt };
+	if (!lectureId && !coveredThrough && !note) return { updatedAt: raw.updatedAt };
+	const saidOn = raw.saidOn === undefined ? null : parseExamDate(raw.saidOn);
+	return { ...(lectureId ? { lectureId } : {}), ...(coveredThrough ? { coveredThrough } : {}), ...(note ? { note } : {}), ...(saidOn ? { saidOn } : {}), updatedAt: raw.updatedAt };
 }
 
 // ─── lectures from the class's files (no model call) ───────────────────────
@@ -240,16 +280,32 @@ export function lecturesFromFiles(files: readonly FileForLectures[], language: "
 
 // ─── the merged timeline ────────────────────────────────────────────────────
 
-/** Timeline order: by number when both have one, else by date when both have one, numbered before unnumbered, then
- *  dated before undated, then by title. Pure. */
-export function sortLectures<T extends Pick<Lecture, "n" | "date" | "title">>(list: readonly T[]): T[] {
-	return [...list].sort((a, b) => {
-		if (a.n !== undefined && b.n !== undefined && a.n !== b.n) return a.n - b.n;
-		if (a.date && b.date && a.date !== b.date) return a.date.localeCompare(b.date);
-		if ((a.n === undefined) !== (b.n === undefined)) return a.n === undefined ? 1 : -1;
-		if (!!a.date !== !!b.date) return a.date ? -1 : 1;
-		return a.title.localeCompare(b.title);
-	});
+/**
+ * Timeline order (WP9 review 1, finding 9: the same on every device, whatever order the list is stored in). Two runs, each
+ * totally ordered: the numbered lectures by number (then date, title, id), and the unnumbered ones by date, undated last
+ * (then title, id). They are merged by date: an unnumbered lecture goes before the next numbered one only when both have
+ * dates and its date is earlier. The result depends only on the set, never on the input order. Pure.
+ */
+export function sortLectures<T extends Pick<Lecture, "n" | "date" | "title"> & { id?: string }>(list: readonly T[]): T[] {
+	const tie = (a: T, b: T) => (a.title < b.title ? -1 : a.title > b.title ? 1 : (a.id ?? "") < (b.id ?? "") ? -1 : (a.id ?? "") > (b.id ?? "") ? 1 : 0);
+	const byDate = (a: T, b: T) => (a.date && b.date ? (a.date < b.date ? -1 : a.date > b.date ? 1 : 0) : a.date ? -1 : b.date ? 1 : 0);
+	const numbered = list.filter((l) => l.n !== undefined).sort((a, b) => a.n! - b.n! || byDate(a, b) || tie(a, b));
+	const loose = list.filter((l) => l.n === undefined).sort((a, b) => byDate(a, b) || tie(a, b));
+	const out: T[] = [];
+	let i = 0;
+	let j = 0;
+	while (i < numbered.length || j < loose.length) {
+		const n = numbered[i];
+		const u = loose[j];
+		if (u && (!n || (u.date && n.date && u.date < n.date))) {
+			out.push(u);
+			j++;
+		} else {
+			out.push(n!);
+			i++;
+		}
+	}
+	return out;
 }
 
 /**
@@ -261,19 +317,19 @@ export function courseLectures(course: { lectures?: unknown; language?: string }
 	const entries = readLectureEntries(course.lectures);
 	const byId = new Map(entries.map((e) => [e.id, e]));
 	const live: LectureView[] = entries.filter((e): e is Lecture => !isTombstone(e)).map((l) => ({ ...l, materialIds: [...l.materialIds] }));
+	// review 1, finding 3: a removed lecture's tombstone hides the file-derived lectures that had joined it
+	const hidden = new Set(entries.flatMap((e) => (isTombstone(e) ? ((e as LectureTombstone).files ?? []) : [])));
 	const liveFiles = new Set(files.map((f) => f.id));
 	for (const d of lecturesFromFiles(files, course.language === "nb" ? "nb" : "en")) {
 		const held = byId.get(d.id);
-		const into = held
-			? isTombstone(held)
-				? null
-				: live.find((l) => l.id === d.id)
-			: live.find((l) => (d.n !== undefined ? l.n === d.n : l.n === undefined && !!d.date && l.date === d.date));
 		if (held && isTombstone(held)) continue;
+		const into = held ? live.find((l) => l.id === d.id) : live.find((l) => (d.n !== undefined ? l.n === d.n : l.n === undefined && !!d.date && l.date === d.date));
 		if (into) {
 			for (const m of d.materialIds) if (!into.materialIds.includes(m)) into.materialIds.push(m);
+			if (into.id !== d.id) into.joined = [...(into.joined ?? []), d.id];
 			continue;
 		}
+		if (hidden.has(d.id)) continue;
 		live.push({ ...d, derived: true });
 	}
 	// a file deleted since it was linked no longer counts as the lecture's file
@@ -291,7 +347,7 @@ export interface PositionView {
 	how: "explicit" | "dated" | "files";
 	coveredThrough?: string;
 	note?: string;
-	/** ISO — when the learner said it (explicit only). */
+	/** "YYYY-MM-DD" — the day the learner said it, in their zone (explicit only). */
 	at?: string;
 }
 
@@ -304,11 +360,13 @@ export interface PositionView {
  */
 export function classPositionOf(lectures: readonly LectureView[], explicit: ClassPosition | undefined, today: string): PositionView | null {
 	const dated = lectures.filter((l) => !!l.date);
-	const lastDated = [...dated].filter((l) => l.date! <= today).sort((a, b) => a.date!.localeCompare(b.date!) || (a.n ?? 0) - (b.n ?? 0)).at(-1);
-	const withFile = lectures.filter((l) => l.n !== undefined && l.materialIds.length > 0).sort((a, b) => a.n! - b.n!).at(-1);
+	// the latest of the timeline (already in a stable order) that qualifies
+	const lastDated = dated.filter((l) => l.date! <= today).reduce<LectureView | undefined>((best, l) => (!best || l.date! >= best.date! ? l : best), undefined);
+	const withFile = lectures.filter((l) => l.n !== undefined && l.materialIds.length > 0).reduce<LectureView | undefined>((best, l) => (!best || l.n! >= best.n! ? l : best), undefined);
 	const derived: PositionView | null = dated.length > 0 ? (lastDated ? { lectureId: lastDated.id, how: "dated" } : null) : withFile ? { lectureId: withFile.id, how: "files" } : null;
 	if (explicit) {
-		const said = todayIn(Date.parse(explicit.updatedAt));
+		// the day the learner said it, in their zone (review 1, finding 10); a position from before: this machine's day
+		const said = explicit.saidOn ?? todayIn(Date.parse(explicit.updatedAt));
 		const at = explicit.lectureId ? lectures.find((l) => l.id === explicit.lectureId) : undefined;
 		const idx = at ? lectures.indexOf(at) : -1;
 		// the class moved on: a lecture after the stated one (or any, with no stated lecture) was dated after that day and
@@ -322,7 +380,7 @@ export function classPositionOf(lectures: readonly LectureView[], explicit: Clas
 				how: "explicit",
 				...(explicit.coveredThrough ? { coveredThrough: explicit.coveredThrough } : {}),
 				...(explicit.note ? { note: explicit.note } : {}),
-				at: explicit.updatedAt,
+				at: said,
 			};
 		}
 	}
@@ -405,7 +463,11 @@ export function assessmentReadiness(
 	const inClass = new Set(order);
 	let needs: string[] | null = null;
 	let basis: AssessmentReadiness["basis"] = null;
-	if (a.skillIds.length > 0) {
+	if (a.allSkills) {
+		// cumulative: every skill of the class, however many (review 1, finding 12)
+		needs = [...order];
+		basis = "assessment";
+	} else if (a.skillIds.length > 0) {
 		needs = a.skillIds.filter((s) => inClass.has(s));
 		basis = "assessment";
 	} else {
@@ -558,14 +620,36 @@ export function whereYouStand(input: StandingInput): StandingView {
 }
 
 /** Next up's gap sets (core/exam-plan.ts orderNextUp): the skills the next assessment needs, and those of the lectures
- *  the class has covered. Both empty when the class has no lectures and the next assessment maps no skills. Pure. */
-export function standingGaps(standing: Pick<StandingView, "next" | "covered" | "lectures"> | null): { needs: Set<string>; covered: Set<string> } {
+ *  the class has covered. Both empty when the class has no lectures and the next assessment maps no skills. With `input`,
+ *  each set also holds the startable prerequisite a locked gap starts through (startFor), so the shared order puts it with
+ *  its gap (review 1, finding 11). Pure. */
+export function standingGaps(standing: Pick<StandingView, "next" | "covered" | "lectures" | "behind"> | null, input?: Pick<StandingInput, "skills" | "startable">): { needs: Set<string>; covered: Set<string> } {
 	if (!standing) return { needs: new Set(), covered: new Set() };
 	const coveredIds = new Set(standing.covered);
-	return {
-		needs: new Set(standing.next?.needs ?? []),
-		covered: new Set(standing.lectures.filter((l) => coveredIds.has(l.id)).flatMap((l) => l.skillIds)),
-	};
+	const needs = new Set(standing.next?.needs ?? []);
+	const covered = new Set(standing.lectures.filter((l) => coveredIds.has(l.id)).flatMap((l) => l.skillIds));
+	if (input) {
+		for (const m of standing.next?.missing ?? []) ((s) => s && needs.add(s))(startFor(m.skillId, input));
+		for (const g of standing.behind) ((s) => s && covered.add(s))(startFor(g, input));
+	}
+	return { needs, covered };
+}
+
+/**
+ * The card's one primary Start, from the SAME order Next up and Today use (review 1, finding 11): the first skill of the
+ * ordered Next up (core/exam-plan.ts orderNextUp over `standingGaps(standing, input)`) that is a gap of the next
+ * assessment, else one of what the class has covered. Next up holds only eligible skills (startable, and examined unless
+ * the next assessment needs them), so the Start never contradicts Today or "not examined". Null when no gap is in it.
+ * Pure.
+ */
+export function startInOrder(standing: Pick<StandingView, "next" | "covered" | "lectures" | "behind">, nextUp: readonly string[], input: Pick<StandingInput, "skills" | "startable">): StandingView["start"] {
+	const gaps = standingGaps(standing, input);
+	const pick = nextUp.find((id) => gaps.needs.has(id) || gaps.covered.has(id));
+	if (!pick) return null;
+	const viaNeeds = gaps.needs.has(pick);
+	const pool = viaNeeds ? (standing.next?.missing ?? []).map((m) => m.skillId) : standing.behind;
+	const gapId = pool.includes(pick) ? pick : (pool.find((g) => startFor(g, input) === pick) ?? pick);
+	return { skillId: pick, gapId, why: viaNeeds ? "assessment" : "covered" };
 }
 
 // ─── the syllabus pass's lectures ───────────────────────────────────────────
@@ -609,11 +693,21 @@ export function classifyLectures(found: ReadonlyArray<Omit<ProposedLecture, "sta
 
 // ─── linking skills to lectures ─────────────────────────────────────────────
 
-/** The linking pass's fingerprint: which lectures (and their files) and which skills it saw. A run is started again only
- *  when this changes (a lecture or a file added, a new map approved), never in a loop. Pure. */
-export function lectureLinkKey(lectures: readonly Pick<Lecture, "id" | "materialIds">[], skills: readonly string[]): string {
-	const l = lectures.map((x) => `${x.id}:${[...x.materialIds].sort().join(",")}`).sort().join(";");
-	return `${l}|${[...skills].sort().join(",")}`;
+/** The linking pass's fingerprint: EVERYTHING it reads (review 1, finding 7): the lectures as sent (titles, dates, topics,
+ *  file names and excerpts), the skills (names and statements), the draft's cites, and the learner's own placements. It
+ *  never includes the pass's own output, so a run is started again only when an input changes, never in a loop. A reply
+ *  whose inputs changed while it ran is discarded and the current inputs are placed instead. Pure (a short stable hash). */
+export function lectureLinkKey(evidence: unknown): string {
+	const text = JSON.stringify(evidence);
+	// FNV-1a, two lanes: short, stable on every device, no crypto import in core
+	let h1 = 0x811c9dc5;
+	let h2 = 0x01000193 ^ text.length;
+	for (let i = 0; i < text.length; i++) {
+		const c = text.charCodeAt(i);
+		h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+		h2 = Math.imul(h2 ^ c, 0x5bd1e995) >>> 0;
+	}
+	return `v2:${text.length.toString(36)}:${h1.toString(36)}:${h2.toString(36)}`;
 }
 
 /**
@@ -623,21 +717,37 @@ export function lectureLinkKey(lectures: readonly Pick<Lecture, "id" | "material
  */
 export function linksFromCites(cites: Readonly<Record<string, string>>, lectures: readonly LectureView[], files: readonly Pick<FileForLectures, "id" | "name">[]): Map<string, string[]> {
 	const out = new Map<string, string[]>();
-	const fileName = new Map(files.map((f) => [f.id, f.name.replace(/\.[a-z0-9]{1,5}$/i, "").toLowerCase()]));
+	const fold = (s: string) => s.normalize("NFKC").toLowerCase();
+	const fileName = new Map(files.map((f) => [f.id, fold(f.name.replace(/\.[a-z0-9]{1,5}$/i, ""))]));
 	const add = (lectureId: string, skillId: string) => {
 		const held = out.get(lectureId) ?? [];
 		if (!held.includes(skillId)) out.set(lectureId, [...held, skillId]);
 	};
+	const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	/** The file name as a whole word in the cite: "lecture 1" is not in "lecture 10.pdf" (review 1, finding 8). */
+	const named = (cite: string, name: string) => name.length >= 3 && new RegExp(`(?<![\\p{L}\\p{N}])${escape(name)}(?![\\p{L}\\p{N}])`, "u").test(cite);
 	for (const [skillId, cite] of Object.entries(cites)) {
-		const c = cite.toLowerCase();
+		const c = fold(cite);
 		const marks = readLectureMarks(cite);
+		// a file match wins over a number; among file matches, the longest name (the most specific) wins
+		let best = 0;
+		let byFile: string[] = [];
 		for (const l of lectures) {
-			const byFile = l.materialIds.some((m) => {
+			for (const m of l.materialIds) {
 				const name = fileName.get(m);
-				return !!name && name.length >= 3 && c.includes(name);
-			});
-			const byNumber = marks.n !== undefined && l.n === marks.n && (marks.kind === "week") === l.id.startsWith("lf_week_");
-			if (byFile || byNumber) add(l.id, skillId);
+				if (!name || !named(c, name)) continue;
+				if (name.length > best) {
+					best = name.length;
+					byFile = [l.id];
+				} else if (name.length === best && !byFile.includes(l.id)) byFile.push(l.id);
+			}
+		}
+		if (byFile.length > 0) {
+			for (const id of byFile) add(id, skillId);
+			continue;
+		}
+		for (const l of lectures) {
+			if (marks.n !== undefined && l.n === marks.n && (marks.kind === "week") === l.id.startsWith("lf_week_")) add(l.id, skillId);
 		}
 	}
 	return out;

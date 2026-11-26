@@ -4,6 +4,7 @@ import { useState } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import { ThinSelect } from "@/components/settings/controls";
 import { FIELD_CLASS } from "@/components/ui/input";
+import { clientTimeZoneHeader } from "@/components/time-zone";
 import { daysUntil, lectureShortLabel, shortDate, type CourseStandingView } from "@/src/core";
 import { cn } from "@/lib/utils";
 
@@ -71,17 +72,28 @@ export function showsStanding(s: CourseStandingView | undefined | null): s is Co
 	return !!s && (s.lectures.length > 0 || s.next !== null || s.position !== null);
 }
 
-/** The inline correction of the class position: pick the lecture, say what was covered, or follow the dates again. */
+/** The PUT body of a position correction: the lecture, what was covered and the note, as the form holds them. The note
+ *  the learner gave (in Short question too) is in the form, so correcting the lecture keeps it (WP9 review 1, finding
+ *  15). Pure (exported for tests). */
+export function positionBody(v: { lectureId: string; covered: string; note: string }): Record<string, string> {
+	return { ...(v.lectureId ? { lectureId: v.lectureId } : {}), ...(v.covered.trim() ? { coveredThrough: v.covered.trim() } : {}), ...(v.note.trim() ? { note: v.note.trim() } : {}) };
+}
+
+/** The inline correction of the class position: pick the lecture, say what was covered, the note, or follow the dates
+ *  again. */
 function PositionEditor({ courseId, standing, onDone }: { courseId: string; standing: CourseStandingView; onDone: (changed: boolean) => void }) {
+	const explicit = standing.position?.how === "explicit";
 	const [lectureId, setLectureId] = useState(standing.position?.lectureId ?? "");
-	const [covered, setCovered] = useState(standing.position?.how === "explicit" ? (standing.position.coveredThrough ?? "") : "");
+	const [covered, setCovered] = useState(explicit ? (standing.position?.coveredThrough ?? "") : "");
+	const [note, setNote] = useState(explicit ? (standing.position?.note ?? "") : "");
 	const [error, setError] = useState<string | null>(null);
 	const [working, setWorking] = useState(false);
 	const send = async (body: unknown, method: "PUT" | "DELETE") => {
 		setWorking(true);
 		setError(null);
 		try {
-			const res = await fetch(`/api/courses/${encodeURIComponent(courseId)}/class-position`, { method, headers: { "Content-Type": "application/json" }, ...(method === "PUT" ? { body: JSON.stringify(body) } : {}) });
+			// the day it is said is the learner's (review 1, finding 10)
+			const res = await fetch(`/api/courses/${encodeURIComponent(courseId)}/class-position`, { method, headers: { "Content-Type": "application/json", ...clientTimeZoneHeader() }, ...(method === "PUT" ? { body: JSON.stringify(body) } : {}) });
 			if (!res.ok) setError(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `rejected (${res.status})`);
 			else onDone(true);
 		} catch {
@@ -96,7 +108,7 @@ function PositionEditor({ courseId, standing, onDone }: { courseId: string; stan
 			data-testid="standing-position-form"
 			onSubmit={(e) => {
 				e.preventDefault();
-				void send({ ...(lectureId ? { lectureId } : {}), ...(covered.trim() ? { coveredThrough: covered.trim() } : {}) }, "PUT");
+				void send(positionBody({ lectureId, covered, note }), "PUT");
 			}}
 		>
 			<ThinSelect value={lectureId} onChange={setLectureId} ariaLabel="The lecture the class is at" className="w-48" testid="standing-position-lecture">
@@ -109,7 +121,8 @@ function PositionEditor({ courseId, standing, onDone }: { courseId: string; stan
 				))}
 			</ThinSelect>
 			<input aria-label="What the class covered" placeholder="Covered (e.g. chapter 6)" value={covered} onChange={(e) => setCovered(e.target.value)} className={cn(FIELD_CLASS, "h-7 w-44 px-2")} data-testid="standing-position-covered" />
-			<button type="submit" className={SMALL} disabled={working || (!lectureId && !covered.trim())} data-testid="standing-position-save">
+			<input aria-label="Note" placeholder="Note (e.g. a week behind)" value={note} onChange={(e) => setNote(e.target.value)} className={cn(FIELD_CLASS, "h-7 w-44 px-2")} data-testid="standing-position-note" />
+			<button type="submit" className={SMALL} disabled={working || (!lectureId && !covered.trim() && !note.trim())} data-testid="standing-position-save">
 				Save
 			</button>
 			{standing.position?.how === "explicit" && (

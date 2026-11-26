@@ -22,7 +22,11 @@
  *   skill_weights_set             how much the exams use each skill, 0-3 (set by the learner)
  *   class_update                  one class setting: title, language, pace or folder
  *   class_overview                READ-ONLY: where the learner stands (the class page's card) and each upcoming
- *                                 assessment's readiness ("am I ready for Friday?")
+ *                                 assessment's readiness ("am I ready for Friday?"); no write, no job (review 1, f. 5)
+ *   WP9 review 1, finding 13:
+ *   self_report_retract           take back what the learner said about some skills ("actually I do get X now"),
+ *                                 whichever chat said it
+ *   lecture_note_update           rename or redate one of the learner's handwritten lecture notes (the page's Edit)
  *
  * Grouping: the four class settings are one tool with a typed `field` (they are one-value edits with the same shape);
  * lectures and the position keep their own tools, as assessments do, because their inputs differ. What Short question
@@ -47,7 +51,8 @@ import {
 	type Assessment,
 	type SelfReport,
 } from "../../core/assessments.ts";
-import type { AssessmentReadiness, ClassPosition, Lecture, LectureView, StandingView } from "../../core/lectures.ts";
+import type { Tombstone } from "../../core/assessments.ts";
+import type { AssessmentReadiness, ClassPosition, ClearedPosition, Lecture, LectureView, StandingView } from "../../core/lectures.ts";
 import { daysUntil } from "../../core/exam-plan.ts";
 
 /** "Friday 27 Nov" for the question the agent asks. */
@@ -69,9 +74,11 @@ export const CLASS_POSITION_TOOL = "class_position_set";
 export const SKILL_WEIGHTS_TOOL = "skill_weights_set";
 export const CLASS_UPDATE_TOOL = "class_update";
 export const CLASS_OVERVIEW_TOOL = "class_overview";
+export const SELF_REPORT_RETRACT_TOOL = "self_report_retract";
+export const LECTURE_NOTE_UPDATE_TOOL = "lecture_note_update";
 
 /** The tools whose result carries a change card (and an Undo). */
-export const CLASS_CHANGE_TOOLS: readonly string[] = [ASSESSMENT_SAVE_TOOL, ASSESSMENT_REMOVE_TOOL, SELF_REPORT_TOOL, LECTURE_SAVE_TOOL, LECTURE_REMOVE_TOOL, CLASS_POSITION_TOOL, SKILL_WEIGHTS_TOOL, CLASS_UPDATE_TOOL];
+export const CLASS_CHANGE_TOOLS: readonly string[] = [ASSESSMENT_SAVE_TOOL, ASSESSMENT_REMOVE_TOOL, SELF_REPORT_TOOL, LECTURE_SAVE_TOOL, LECTURE_REMOVE_TOOL, CLASS_POSITION_TOOL, SKILL_WEIGHTS_TOOL, CLASS_UPDATE_TOOL, SELF_REPORT_RETRACT_TOOL, LECTURE_NOTE_UPDATE_TOOL];
 
 /** The class settings Short question may change (one tool, a typed field). */
 export const CLASS_FIELDS = ["title", "language", "pace", "folder"] as const;
@@ -79,6 +86,16 @@ export type ClassField = (typeof CLASS_FIELDS)[number];
 
 /** A skill's weight entry as stored (null: none, so it counts as 1). */
 export type WeightEntry = { w: 0 | 1 | 2 | 3; by: "model" | "learner"; reason?: string } | null;
+
+/** The class position as one stored revision (a cleared one is `{ updatedAt }`), or null when none is stored. */
+export type PositionRev = ClassPosition | ClearedPosition | null;
+
+/** A lecture note's fields a rename or redate changes. */
+export interface NoteFields {
+	title: string;
+	titleBy?: "auto" | "learner";
+	date: string;
+}
 
 /** One change, as the card shows it and Undo reads it (server/class-changes.ts undoClassChange). */
 export type ClassChange =
@@ -102,8 +119,10 @@ export type ClassChange =
 			after: Lecture | null;
 			id: string;
 			stamp: string;
-			/** It was read from the class's files before: Undo returns it to that. */
+			/** It was read from the class's files before. */
 			fromFiles?: true;
+			/** The class position it moved too (a removed lecture the position named): Undo restores both. */
+			position?: { before: PositionRev; after: PositionRev };
 			skillNames: string[];
 	  }
 	| {
@@ -114,9 +133,15 @@ export type ClassChange =
 			/** The lecture titles, for the card. */
 			label: string | null;
 			beforeLabel: string | null;
+			/** The revisions: what was stored before, and what this wrote (a clear too). Undo holds while the position is
+			 *  still exactly `afterRev` (review 1, finding 4). Absent on a card from before. */
+			beforeRev?: PositionRev;
+			afterRev?: ClassPosition | ClearedPosition;
 	  }
 	| { kind: "weights"; courseId: string; before: Record<string, WeightEntry>; after: Record<string, WeightEntry>; names: Record<string, string> }
-	| { kind: "setting"; courseId: string; field: ClassField; before: string | null; after: string | null };
+	| { kind: "setting"; courseId: string; field: ClassField; before: string | null; after: string | null }
+	| { kind: "self-report-retract"; courseId: string; before: SelfReport[]; after: Array<SelfReport | Tombstone>; skillNames: string[] }
+	| { kind: "note"; courseId: string; noteId: string; before: NoteFields; after: NoteFields };
 
 /** What a save may carry (fields present = fields changed). */
 export interface ClassFactsSaveInput {
@@ -125,6 +150,8 @@ export interface ClassFactsSaveInput {
 	date?: string | null;
 	topics?: string;
 	skillIds?: string[];
+	/** Covers every skill of the class (a flag, never capped: review 1, finding 12). */
+	allSkills?: boolean;
 }
 
 export interface LectureSaveInput {
@@ -143,6 +170,9 @@ export interface ClassOverview {
 	/** The upcoming dated assessments (at most 3), each with its readiness. */
 	upcoming: AssessmentReadiness[];
 	names: Record<string, string>;
+	/** Something the skill placement reads changed since it last ran (the class page places them again when opened):
+	 *  the overview says so instead of starting it (review 1, finding 5). */
+	linksStale?: boolean;
 }
 
 export interface ClassFactsPort {
@@ -163,6 +193,10 @@ export interface ClassFactsPort {
 	setWeights?(edits: Record<string, number | null>): Out;
 	update?(field: ClassField, value: string | null): Out;
 	overview?(): ClassOverview;
+	// review 1, finding 13
+	retractSelfReport?(skillIds: string[]): Out;
+	notes?(): Array<{ id: string; title: string; date: string }>;
+	updateNote?(noteId: string, input: { title?: string; date?: string }): Out;
 }
 
 function text(t: string, details?: unknown): AgentToolResult<unknown> {
@@ -203,6 +237,10 @@ function changeLine(change: ClassChange): string {
 				.join(", ")}. ${CARD}`;
 		case "setting":
 			return `Changed the class's ${change.field}: ${change.before ?? "(none)"} → ${change.after ?? "(none)"}. ${CARD}`;
+		case "self-report-retract":
+			return `Taken back what the learner had said about ${change.skillNames.join(", ")} (${change.before.length} report${change.before.length === 1 ? "" : "s"}). ${CARD}`;
+		case "note":
+			return `Changed the lecture note: "${change.before.title}", ${dateWithWeekday(change.before.date)} → "${change.after.title}", ${dateWithWeekday(change.after.date)}. ${CARD}`;
 	}
 }
 
@@ -273,7 +311,17 @@ const weightsInput = Type.Object({
 
 const updateInput = Type.Object({
 	field: Type.String({ enum: [...CLASS_FIELDS], description: "title, language (en or nb), pace (thorough, efficient or crash) or folder (a sidebar folder name)" }),
-	value: Type.Union([Type.String(), Type.Null()], { description: "The new value; null clears pace (back to the default) or takes the class out of its folder" }),
+	value: Type.Union([Type.String(), Type.Null()], { description: "The new value; null only for pace (back to the default) or folder (out of its folder)" }),
+});
+
+const retractInput = Type.Object({
+	skillIds: Type.Array(Type.String(), { minItems: 1, description: "The skill ids (from assessments_list) whose earlier self-report the learner takes back" }),
+});
+
+const noteUpdateInput = Type.Object({
+	noteId: Type.String({ description: "The lecture note's id, from lectures_list" }),
+	title: Type.Optional(Type.String({ description: "Its new title, as the learner says it" })),
+	date: Type.Optional(Type.String({ description: `Its new date, ${DATE_WORDS}` })),
 });
 
 function lectureLine(l: LectureView, names: ReadonlyMap<string, string>, files: Readonly<Record<string, string>>, position: StandingView["position"]): string {
@@ -355,7 +403,8 @@ export function classFactsTools(port: ClassFactsPort): Record<string, AgentTool<
 				...(input.title?.trim() ? { title: input.title } : {}),
 				...(date !== undefined ? { date } : {}),
 				...(input.topics !== undefined ? { topics: input.topics } : {}),
-				...(input.allSkills ? { skillIds: skills.map((s) => s.id) } : input.skillIds !== undefined ? { skillIds: input.skillIds } : {}),
+				// cumulative: a flag, not a list (review 1, finding 12)
+				...(input.allSkills ? { allSkills: true } : input.skillIds !== undefined ? { skillIds: input.skillIds } : {}),
 			};
 			const out = port.save(id, fields);
 			if (!out.ok) return refuse(`Not saved: ${out.error}.`);
@@ -428,6 +477,7 @@ export function classFactsTools(port: ClassFactsPort): Record<string, AgentTool<
 						`Today: ${today.weekday} ${today.date}.`,
 						positionLine(l.position),
 						l.lectures.length > 0 ? `Lectures:\n${l.lectures.map((x) => lectureLine(x, names, l.files, l.position)).join("\n")}` : "Lectures: none yet.",
+						...((notes) => (notes.length > 0 ? [`The learner's handwritten lecture notes (id · title · date):\n${notes.map((n) => `- [${n.id}] ${n.title} · ${dateWithWeekday(n.date)}`).join("\n")}`] : []))(port.notes?.() ?? []),
 						l.skills.length > 0 ? `Skills (id :: name):\n${l.skills.map((s) => `- ${s.id} :: ${s.name}`).join("\n")}` : "The class has no approved skill map yet: no skill ids.",
 					].join("\n\n"),
 				);
@@ -571,12 +621,53 @@ export function classFactsTools(port: ClassFactsPort): Record<string, AgentTool<
 						o.upcoming.length > 0 ? `Upcoming:\n${o.upcoming.map((r) => `- ${readinessLine(r, names, titleOf, port.now())}`).join("\n")}` : "Upcoming: no dated quiz or exam.",
 						s.start ? `The most urgent gap: ${names[s.start.gapId] ?? s.start.gapId}${s.start.skillId !== s.start.gapId ? ` (start with ${names[s.start.skillId] ?? s.start.skillId}, which it builds on)` : ""}; the class page's Start begins it.` : "",
 						s.unplaced > 0 ? `${s.unplaced} skill${s.unplaced === 1 ? " is" : "s are"} not placed in any lecture.` : "",
+						o.linksStale ? "The skills' placement in the lectures is out of date (lectures, files or skills changed since it ran): the class page places them again when it is opened, so the lecture numbers above may be stale." : "",
 					]
 						.filter(Boolean)
 						.join("\n\n"),
 				);
 			},
 		} satisfies AgentTool<typeof listInput>;
+	}
+
+	// ─── review 1, finding 13 ──────────────────────────────────────────────
+	const { retractSelfReport, notes, updateNote } = port;
+	if (retractSelfReport && port.hasSkills()) {
+		tools[SELF_REPORT_RETRACT_TOOL] = {
+			name: SELF_REPORT_RETRACT_TOOL,
+			label: SELF_REPORT_RETRACT_TOOL,
+			description:
+				"Take back what the learner said earlier about their grasp of some skills, in this chat or any other (\"actually I do get the chain rule now\", \"forget what I said about Laplace\"): their earlier self-report on those skills is removed. When they also say how well they know it now, record that with record_self_report after this.",
+			parameters: retractInput,
+			execute: async (_id, input: Static<typeof retractInput>) => {
+				const out = retractSelfReport(input.skillIds);
+				if (!out.ok) return refuse(`Nothing taken back: ${out.error}.`);
+				return text(changeLine(out.change), { change: out.change });
+			},
+		} satisfies AgentTool<typeof retractInput>;
+	}
+	if (notes && updateNote && notes().length > 0) {
+		tools[LECTURE_NOTE_UPDATE_TOOL] = {
+			name: LECTURE_NOTE_UPDATE_TOOL,
+			label: LECTURE_NOTE_UPDATE_TOOL,
+			description:
+				"Rename or redate one of the learner's handwritten lecture notes when they ask (\"call Tuesday's note 'Eigenvalues'\", \"that note was from Monday\"). Ids, titles and dates are in lectures_list. When two notes could be meant, ask which.",
+			parameters: noteUpdateInput,
+			execute: async (_id, input: Static<typeof noteUpdateInput>) => {
+				const all = notes();
+				if (!all.some((n) => n.id === input.noteId)) return refuse(`No lecture note has the id "${input.noteId}". The notes: ${all.map((n) => `[${n.id}] ${n.title} (${n.date})`).join("; ")}.`);
+				let date: string | undefined;
+				if (input.date !== undefined && input.date.trim() !== "") {
+					const read = resolveDate(input.date, port);
+					if ("refused" in read) return read.refused;
+					date = read.date;
+				}
+				if (!input.title?.trim() && date === undefined) return refuse("Give the note's new title or its new date.");
+				const out = updateNote(input.noteId, { ...(input.title?.trim() ? { title: input.title } : {}), ...(date ? { date } : {}) });
+				if (!out.ok) return refuse(`Not changed: ${out.error}.`);
+				return text(changeLine(out.change), { change: out.change });
+			},
+		} satisfies AgentTool<typeof noteUpdateInput>;
 	}
 
 	return tools;

@@ -230,16 +230,25 @@ export function parseExamDate(raw: unknown): string | null {
 
 const DAY_MS = 86_400_000;
 
-/** The local calendar day of `now` as a UTC midnight, so day differences are whole numbers. */
-function localDayStart(now: number): number {
+/** The calendar day of `now` as a UTC midnight, so day differences are whole numbers: the machine's own day, or the day in
+ *  `timeZone` (the learner's, WP9 review 1 finding 10). */
+function localDayStart(now: number, timeZone?: string): number {
+	if (timeZone) {
+		try {
+			const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now).map((p) => [p.type, p.value]));
+			return Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day));
+		} catch {
+			// an unknown zone: the machine's day
+		}
+	}
 	const d = new Date(now);
 	return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-/** Whole days from today (local) to the exam day: 0 on the day, negative after it. */
-export function daysUntil(examDate: string, now: number): number {
+/** Whole days from today (the machine's, or `timeZone`'s) to the exam day: 0 on the day, negative after it. */
+export function daysUntil(examDate: string, now: number, timeZone?: string): number {
 	const [y, m, d] = examDate.split("-").map(Number) as [number, number, number];
-	return Math.round((Date.UTC(y, m - 1, d) - localDayStart(now)) / DAY_MS);
+	return Math.round((Date.UTC(y, m - 1, d) - localDayStart(now, timeZone)) / DAY_MS);
 }
 
 /** "12 Dec 2026" from "2026-12-12", independent of the machine's time zone. Pure. */
