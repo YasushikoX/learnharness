@@ -114,7 +114,7 @@ describe("the setup checklist (an empty class)", () => {
 		assert.equal(filesSummary(1, 0), "1 file");
 		assert.equal(filesSummary(3, 1), "3 files · reading 1");
 		assert.equal(filesCount(0, 0), null);
-		assert.equal(filesCount(2, 1), "reading 1 of 2");
+		assert.equal(filesCount(2, 1), "2 · 1 reading");
 		assert.equal(pagesLabel(1), "1 page");
 		assert.equal(pagesLabel(12), "12 pages");
 		assert.equal(materialStatusLine(material({ pages: 1 })), "1 page", "not “1 pages”");

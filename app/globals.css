@@ -504,6 +504,20 @@
 .lh-row-list[data-overflow="true"] {
 	mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent);
 }
+/* A side-panel list, expanded (ShortList, components/ui/short-list.tsx): its own bounded scroll, whose height the
+   component cuts at a whole row; rows snap to the top so a scrolled list still shows whole rows. */
+.lh-short-list-area {
+	max-height: min(320px, 40vh);
+	overflow-x: hidden;
+	overflow-y: auto;
+	scroll-snap-type: y proximity;
+}
+.lh-short-list-area > * {
+	scroll-snap-align: start;
+}
+.lh-short-list-area[data-overflow="true"] {
+	mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent);
+}
 
 /* Type roles that need more than a size (SPEC §1). */
 /* UI round 2: the card-kind label is a 12px sentence-case muted label (was 11px uppercase with tracking: a lesson

@@ -7,6 +7,7 @@ import { FIELD_CLASS } from "@/components/ui/input";
 import { CheckRow, Field, FieldGroup, useOverflow } from "@/components/ui/field";
 import { ErrorNotice } from "@/components/ui/error-notice";
 import { InlineConfirm } from "@/components/ui/inline-confirm";
+import { shortRows, ShortList } from "@/components/ui/short-list";
 import { formDirty, useUnsavedGuard } from "@/components/use-unsaved-guard";
 import { ThinSelect } from "@/components/settings/controls";
 import { ASSESSMENT_KINDS, dayLabel, daysUntil, KIND_LABELS, relativeDays, shortDate, type Assessment, type AssessmentKind, type AssessmentProposal, type ProposedAssessment, type ProposedLecture, type UpcomingView } from "@/src/core";
@@ -404,10 +405,17 @@ export function UpcomingList({
 			)}
 
 			{(coming.length > 0 || undated.length > 0) && (
-				<div className="space-y-0.5" data-testid="upcoming-list">
-					{coming.map(row)}
-					{undated.map(row)}
-				</div>
+				<ShortList
+					{...shortRows([...coming, ...undated], editing ?? undefined)}
+					keyOf={(a) => a.id}
+					render={row}
+					text={(a) => `${a.title} ${a.topics}`}
+					noun="quizzes and exams"
+					storageKey={`${courseId}:upcoming`}
+					unbounded={editing !== null && editing !== "new"}
+					testid="upcoming-list"
+					rowsClassName="-mx-2 space-y-0.5 px-2"
+				/>
 			)}
 			{past.length > 0 && (
 				<div>
