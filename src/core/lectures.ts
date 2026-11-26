@@ -340,11 +340,24 @@ export function coveredLectures(lectures: readonly LectureView[], position: Posi
 
 /** A range of lectures in words: "Lecture 1", "Lectures 1–6", or "Lecture 1 – Intro". Pure. */
 export function lectureRangeLabel(from: Pick<Lecture, "n" | "title">, to: Pick<Lecture, "n" | "title">): string {
-	if (from === to || (from.title === to.title && from.n === to.n)) return from.title;
-	const word = (l: Pick<Lecture, "n" | "title">) => (l.n !== undefined ? l.title.replace(new RegExp(`\\s*0*${l.n}$`), "") : null);
-	const a = word(from);
-	if (a && a === word(to) && a !== "") return `${a}${/s$/.test(a) ? "" : "s"} ${from.n}–${to.n}`;
-	return `${from.title} – ${to.title}`;
+	if (from === to || (from.title === to.title && from.n === to.n)) return lectureShortLabel(from);
+	const a = lectureWord(from);
+	if (a && a === lectureWord(to)) return `${a}${/s$/.test(a) ? "" : "s"} ${from.n}–${to.n}`;
+	return `${lectureShortLabel(from)} – ${lectureShortLabel(to)}`;
+}
+
+/** The word a numbered title starts with ("Lecture 4: The proton gradient" → "Lecture"), or null. Pure. */
+function lectureWord(l: Pick<Lecture, "n" | "title">): string | null {
+	if (l.n === undefined) return null;
+	const m = new RegExp(`^(\\p{L}+)\\s*0*${l.n}(?![\\d])`, "u").exec(l.title);
+	return m ? m[1]! : null;
+}
+
+/** A lecture's short name for one-line places (the card, "(Lecture 7)"): "Lecture 4" for "Lecture 4: The proton
+ *  gradient", else the title. Pure. */
+export function lectureShortLabel(l: Pick<Lecture, "n" | "title">): string {
+	const w = lectureWord(l);
+	return w ? `${w} ${l.n}` : l.title;
 }
 
 /** "Tue 24 Nov" for the card. Pure. */

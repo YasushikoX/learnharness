@@ -4,7 +4,7 @@ import { useState } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import { ThinSelect } from "@/components/settings/controls";
 import { FIELD_CLASS } from "@/components/ui/input";
-import { daysUntil, shortDate, type CourseStandingView } from "@/src/core";
+import { daysUntil, lectureShortLabel, shortDate, type CourseStandingView } from "@/src/core";
 import { cn } from "@/lib/utils";
 
 /**
@@ -34,17 +34,21 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 
 /** The block's lines. Pure (exported for tests). */
 export function standingLines(s: CourseStandingView, now = Date.now()): StandingLines {
-	const title = (id: string) => s.lectures.find((l) => l.id === id)?.title ?? id;
+	// one-line places use the short name ("Lecture 4"); the lecture list shows the whole title
+	const title = (id: string) => {
+		const l = s.lectures.find((x) => x.id === id);
+		return l ? lectureShortLabel(l) : id;
+	};
 	let classLine: string | null = null;
 	if (s.position) {
-		const at = s.position.label ? `Class is at ${s.position.label}` : "Class";
+		const at = s.position.lectureId && s.position.label ? `Class is at ${title(s.position.lectureId)}` : "Class";
 		const covered = s.position.coveredThrough ? `${s.position.label ? " · covered" : " covered"} ${s.position.coveredThrough}` : "";
 		classLine = `${at}${s.position.date ? ` · ${shortDate(s.position.date)}` : ""}${covered}${s.position.note ? ` · ${s.position.note}` : ""}`;
 	} else if (s.lectures.length > 0) classLine = "Where the class is: not known yet";
 	let youLine: string | null = null;
 	const withSkills = s.lectures.filter((l) => l.skillIds.length > 0);
 	if (s.learnedThrough) youLine = `You've learned what ${s.learnedThrough.label} ${/–|^Lectures|^Forelesnings|^Weeks/.test(s.learnedThrough.label) ? "cover" : "covers"}`;
-	else if (withSkills.length > 0) youLine = `Not all of ${withSkills[0]!.title} learned yet`;
+	else if (withSkills.length > 0) youLine = `Not all of ${lectureShortLabel(withSkills[0]!)} learned yet`;
 	else if (s.lectures.length > 0) youLine = s.linking ? "Placing the skills in the lectures…" : "Skills aren't placed in lectures yet";
 	let nextLine: string | null = null;
 	if (s.next) {

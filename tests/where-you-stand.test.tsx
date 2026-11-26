@@ -814,6 +814,15 @@ describe("the class page: the card and the lecture list in each state", () => {
 		assert.match(render({ ...behind, linking: true }), /data-testid="lectures-linking"[\s\S]*Placing the skills in the lectures…/);
 		assert.match(render({ ...behind, linkError: "model down" }), /Placing skills failed: model down/);
 		assert.doesNotMatch(render({ ...behind, unplaced: 0 }), /lectures-unplaced/);
+		// long titles stay short in one-line places (screenshot round r6)
+		const t1 = { n: 1, title: "Lecture 1: ATP and energy coupling" };
+		const t4 = { n: 4, title: "Lecture 4: The proton gradient" };
+		assert.equal(L.lectureRangeLabel(t1, t4), "Lectures 1–4");
+		assert.equal(L.lectureShortLabel(t4), "Lecture 4");
+		assert.equal(L.lectureShortLabel({ title: "Guest talk" }), "Guest talk");
+		assert.equal(L.lectureRangeLabel({ n: 1, title: "Intro" }, t4), "Intro – Lecture 4");
+		const titled = { ...behind, lectures: behind.lectures.map((l) => (l.id === "lf_lecture_3" ? { ...l, title: "Lecture 3: Fermentation and the citric acid cycle" } : l)) };
+		assert.equal(standingLines(titled, NOW).classLine, "Class is at Lecture 3 · Tue 24 Nov");
 		assert.deepEqual(lectureBody({ n: "8", title: " Lecture 8 ", date: "", topics: "x", skillIds: ["a"] }, { skillIds: ["a"] }), { n: 8, title: "Lecture 8", date: null, topics: "x" }, "unchanged skills are not sent (they stay the model's)");
 		assert.deepEqual(lectureBody({ n: "", title: "T", date: "2026-12-01", topics: "", skillIds: ["b"] }, { skillIds: ["a"] }).skillIds, ["b"]);
 	});
