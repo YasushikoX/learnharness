@@ -24,7 +24,7 @@ This is YasushikoX's fork of LearnHarness, changed for one job: studying a unive
 - The stream is kept alive while the model thinks; a reply cut off at the model's limit shows a notice with Continue; a dropped connection shows Retry and brings back the reply. A per-turn timing log (`node scripts/turn-timeline.mjs`) records when each turn started and how it ended, so a turn that hangs leaves a trace.
 
 **Smaller things**
-- Questions can be read aloud with the system's voices (formulas are spoken correctly or called "formula").
+- Questions can be read aloud with Google's natural voices (a free AI Studio key) or the system's voices (formulas are spoken correctly or called "formula"); see docs/read-aloud.md.
 - Confidence is a 0–100 slider again; the buttons remain as a setting.
 - Switching between conversations loads about 25 KB instead of about 3 MB.
 
