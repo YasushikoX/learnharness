@@ -6,6 +6,7 @@ Every uploaded PDF is converted once, when it is added, into page-marked Markdow
 | --- | --- | --- |
 | **Built-in reader** (`pdfjs`, the default) | Nowhere: it runs on this computer | Reads the PDF's text layer. No OCR: scanned pages come out empty. |
 | **Docling** (`docling`) | Your own Docling Serve | OCR and formula recognition (options in Settings). Its key is optional. |
+| **Google AI Studio (Gemini)** (`gemini`) | `https://generativelanguage.googleapis.com` (fixed) | Gemini reads the PDF itself: scanned pages, tables (as Markdown tables), formulas (as LaTeX) and short figure descriptions. **Free tier** with daily limits; needs an AI Studio key, or uses your Google model provider key. **Unverified** until a real call has been made; run **Test** first. Details below. |
 | **Mistral OCR** (`mistral-ocr`, a preset) | `https://api.mistral.ai` (or the URL you set) | Hosted OCR, billed by Mistral. **Unverified**: written from Mistral's API reference without a real call; run **Test** first. |
 | **Your own profile** (`custom:<id>`) | The URL you save for it | Any service a profile can describe (below). |
 
@@ -28,6 +29,20 @@ If a service cannot be reached or times out, that PDF is read by the built-in re
 3. The API key must not appear in any answer or error, in any form the app knows (as is, URL-encoded, base64).
 
 The whole Test gives up after two minutes, and **Cancel** stops it. Its report is shown only for the converter it was started for: showing another converter cancels it.
+
+## Google AI Studio (Gemini)
+
+For when there is no Docling server: Google's Gemini models read PDFs natively, and the Gemini API has a free tier. Set it up in **Settings → PDF conversion → Google AI Studio (Gemini)**:
+
+1. **API key.** Create a key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and paste it into **API key**. It is stored like the other converter keys (in `auth.json`, bound to Google's address, never in `settings.json` or `process.env`). If you have not saved one but a **Google** key is configured under model providers (`GEMINI_API_KEY`), that key is used and the screen says "Using your Google provider key"; it is read when needed and never copied. A key saved here always wins.
+2. **Model.** The default is `gemini-3.8-flash`, a current Flash model with a free tier and good OCR. You can pick another from the list (`gemini-3.6-flash`, `gemini-3.5-flash-lite`, `gemini-4-hydrogen`) or type any model id; an empty field goes back to the default. Gemini 4 Neon, Carbon and Argon have no free tier.
+3. **Test**, then **Use for new PDFs**.
+
+**Privacy.** Google's free tier may use uploaded files to improve its products, and human reviewers may read them (Gemini API terms, "Unpaid Services"): don't upload private documents. On a billed project, Google does not use them that way.
+
+**How it converts.** The PDF is uploaded once (Files API), then Gemini is asked for 10 pages at a time, one request after another, to transcribe them to Markdown. Every page in the reply must start with an exact marker line (`<<<PAGE 7>>>`) and the app checks that each page of the batch is there exactly once, in order. A reply that was cut off at the output limit, or whose markers are missing, duplicated or out of range, is asked again in halves, down to single pages; a single page that still fails becomes an empty page with the reason, and so does a page Gemini declines (safety, recitation). Page numbers are never guessed or shifted. The uploaded file is deleted at the end, also after a failure or a cancel (Google deletes uploads after 48 hours anyway). Limits: 50 MB and 1,000 pages per PDF (Google's own limits).
+
+**Rate limits.** The free tier allows only a few requests per minute and per day (the numbers are shown in AI Studio). When Google says to wait a short while, the app waits and tries again (a bounded number of times, two minutes at most per wait). When the **daily** quota is used up, the conversion stops with a message that says so and roughly when it resets (midnight Pacific time); convert again after that, or pick another model. A refused key is shown on the material; network errors and Google server errors fall back to the built-in reader, as for the other services.
 
 ## Your own service: a profile
 
@@ -149,4 +164,5 @@ What a hostile page can still do, and what you see first: it can steer the AI to
 - **What runs:** only the app's own code. Profiles are validated data; nothing in a profile, a downloaded file or a generated draft is executed. A drafted profile is inert until you approve it after a passing Test ("Draft with AI" above).
 - **Where the key lives:** only in the credential store `auth.json` (mode 0600), bound to the base URL it was entered for. It is never in `settings.json`, never in `process.env` (so never in a child process), never in the key list, and never sent to a model. If you change a service's URL, the stored key is removed and must be entered again. The settings screen and its API never return a stored key: only whether one is stored and, for a key of 20 or more characters, its last four. Keys shorter than 8 characters are refused, so the app can always remove a key from text without mangling ordinary words.
 - **What is sent where:** nothing is sent until you have saved the service's URL (a preset's own address once you choose it) and, if it takes one, its key. The PDF and the key then go only to that URL's origin, never to this app itself. Every URL is checked before its request; redirects are refused, not followed. The key goes only in the profile's one auth header. The app removes the key (as is, URL-encoded and base64-encoded) from everything that comes back from any converter, Docling included: error messages (before they are shortened), the converter version, warnings, page text and page reasons; Test fails if the service echoed it, and its report never contains it.
+- **Google AI Studio (Gemini):** the key goes only in the `x-goog-api-key` header to `https://generativelanguage.googleapis.com`, never in a URL; the upload address Google returns must be on that same origin, and it is removed from messages like the key. Its job deadline grows with the page count (batches run one at a time) instead of the 15 minutes below; the upload start (which carries no PDF) may be repeated after a short rate-limit wait, the PDF bytes never are.
 - **Limits:** answers are capped in size, the upload has its own timeout, every request has one, polling is bounded by a count and by the 15-minute job deadline, and an upload is never retried automatically. A page list longer than the PDF is refused before it is read, and a delimited answer is split with a limit. Profiles are checked for size and depth before anything reads them, and an import larger than 256 KB is refused before it is read. The Test has its own two-minute deadline.
