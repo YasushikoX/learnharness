@@ -69,7 +69,7 @@ import { GraphFolderFilterControl, useGraphFolderSelection } from "@/components/
 import { useSourceDirectory } from "@/components/source-directory";
 import { NotesImportControl, NotesImportErrors, NotesImportNotices, useNotesImport } from "@/components/notes-import.tsx";
 import { PluginGraphActions } from "@/components/plugin-chrome";
-import { SettingsSlider as SettingSlider } from "@/components/settings/controls";
+import { SettingsSlider as SettingSlider, ThinSelect } from "@/components/settings/controls";
 import Link from "next/link";
 import { FileTextIcon, ListTreeIcon, Loader2Icon, SearchIcon, SettingsIcon, WaypointsIcon } from "lucide-react";
 import { clusterHue } from "./cluster-geometry.ts";
@@ -198,7 +198,7 @@ export function SkillDetail({
 			</div>
 			{skill.courses.length > 0 && (
 				<div className="flex flex-col gap-1">
-					<div className="text-xs text-muted-foreground">Courses</div>
+					<div className="text-xs text-muted-foreground">Classes</div>
 					{skill.courses.map((c) => (
 						<Link key={c.id} href={`/course/${c.id}`} className="truncate rounded-md px-2 py-1.5 text-sm text-foreground transition-colors hover:bg-accent">
 							{c.title}
@@ -572,12 +572,13 @@ function GraphSettingsControl({
 				// scrollbar itself does NOT move: it stays pinned at the same
 				// distance from the panel's right border.
 				<div ref={panelRef} style={{ zIndex: INTERACTION_LAYER_Z_BASE + popupLayer.order }} className="absolute right-0 top-full mt-2 flex max-h-[60vh] w-72 flex-col rounded-xl border bg-card/85 p-2.5 shadow-lg backdrop-blur">
-					<div className="flex flex-col gap-2 overflow-y-auto pr-2.5">
+					<div className="flex flex-col gap-2 overflow-y-auto pr-2.5 pb-3 [mask-image:linear-gradient(to_bottom,#000_calc(100%-16px),transparent)]">
 							{/* Size/zoom/region sliders: LADDER-mapped 0-100, step 10 (11
 							    stops, every DEFAULT dead-center at 50, every value a nice
 							    number — src/core/render-settings.ts). Physics keeps the
 							    fine-grained log sliders (step 5). */}
 							<SettingSlider
+								className="w-full"
 								label="Node size"
 								min={0}
 								max={100}
@@ -588,6 +589,7 @@ function GraphSettingsControl({
 									changeSettings((cur) => ({ ...cur, nodeSize: fromLadderPosition(p, NODE_SIZE_LADDER) }))}
 							/>
 							<SettingSlider
+								className="w-full"
 								label="Edge width"
 								min={0}
 								max={100}
@@ -598,6 +600,7 @@ function GraphSettingsControl({
 									changeSettings((cur) => ({ ...cur, edgeWidth: fromLadderPosition(p, EDGE_WIDTH_LADDER) }))}
 							/>
 							<SettingSlider
+								className="w-full"
 								label="Arrowhead size"
 								min={0}
 								max={100}
@@ -608,6 +611,7 @@ function GraphSettingsControl({
 									changeSettings((cur) => ({ ...cur, arrowLength: fromLadderPosition(p, ARROW_LENGTH_LADDER) }))}
 							/>
 							<SettingSlider
+								className="w-full"
 								label="Label size"
 								min={0}
 								max={100}
@@ -619,6 +623,7 @@ function GraphSettingsControl({
 							/>
 							{/* Display is absolute (ratio / 0.5): "1×" is the default, dead-center (owner, 2026-10-07). */}
 							<SettingSlider
+								className="w-full"
 								label="Labels until zoom"
 								min={0}
 								max={100}
@@ -649,10 +654,11 @@ function GraphSettingsControl({
 											...cur,
 											regions: { ...cur.regions, enabled: e.target.checked },
 										}))}
-										className="accent-primary"
+										className="lh-checkbox"
 								/>
 							</label>
 							<SettingSlider
+								className="w-full"
 								label="Dilation"
 								disabled={!regionTuning.enabled}
 								min={0}
@@ -667,6 +673,7 @@ function GraphSettingsControl({
 									}))}
 							/>
 							<SettingSlider
+								className="w-full"
 								label="Blur"
 								disabled={!regionTuning.enabled}
 								min={0}
@@ -682,6 +689,7 @@ function GraphSettingsControl({
 								}
 							/>
 							<SettingSlider
+								className="w-full"
 								label="Edge alpha"
 								disabled={!regionTuning.enabled}
 								min={0}
@@ -695,18 +703,17 @@ function GraphSettingsControl({
 										regions: { ...cur.regions, edgeAlpha: fromLadderPosition(p, REGION_EDGE_ALPHA_LADDER) },
 									}))}
 							/>
-							<label
-								className={`flex items-center justify-between gap-2 text-[11px] text-muted-foreground${!regionTuning.enabled ? " opacity-40" : ""}`}
-							>
+							<div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
 								<span>Bitmap resolution</span>
-								<select
+								<ThinSelect
+									ariaLabel="Bitmap resolution"
 									disabled={!regionTuning.enabled}
-									className="rounded-md border bg-background px-1.5 py-0.5 text-xs tabular-nums text-foreground"
-									value={regionTuning.bitmap}
-									onChange={(e) =>
+									className="w-24"
+									value={String(regionTuning.bitmap)}
+									onChange={(v) =>
 										changeSettings((cur) => ({
 											...cur,
-											regions: { ...cur.regions, bitmap: Number(e.target.value) },
+											regions: { ...cur.regions, bitmap: Number(v) },
 										}))
 									}
 								>
@@ -715,8 +722,8 @@ function GraphSettingsControl({
 											{o}
 										</option>
 									))}
-								</select>
-							</label>
+								</ThinSelect>
+							</div>
 							{/* Cluster labels moved here 2026-09-16 (user: cluster
 							    stuff lives in the regions section). Decoupled from
 							    the Background colors switch above — labels follow
@@ -728,10 +735,11 @@ function GraphSettingsControl({
 									type="checkbox"
 									checked={settings.clusterLabels}
 									onChange={(e) => changeSettings((cur) => ({ ...cur, clusterLabels: e.target.checked }))}
-									className="accent-primary"
+									className="lh-checkbox"
 								/>
 							</label>
 							<SettingSlider
+								className="w-full"
 								label="Cluster label size"
 								disabled={!settings.clusterLabels}
 								min={0}
@@ -761,6 +769,7 @@ function GraphSettingsControl({
 								Physics
 							</span>
 							<SettingSlider
+								className="w-full"
 								label="Node repulsion"
 								min={0}
 								max={100}
@@ -774,6 +783,7 @@ function GraphSettingsControl({
 									}))}
 							/>
 							<SettingSlider
+								className="w-full"
 								label="Edge attraction"
 								min={0}
 								max={100}
@@ -787,6 +797,7 @@ function GraphSettingsControl({
 									}))}
 							/>
 							<SettingSlider
+								className="w-full"
 								label="Edge length"
 								min={0}
 								max={100}
@@ -800,6 +811,7 @@ function GraphSettingsControl({
 									}))}
 							/>
 							<SettingSlider
+								className="w-full"
 								label="Central pull"
 								min={0}
 								max={100}
@@ -813,6 +825,7 @@ function GraphSettingsControl({
 									}))}
 							/>
 							<SettingSlider
+								className="w-full"
 								label="Cluster pull"
 								min={0}
 								max={100}
@@ -826,7 +839,8 @@ function GraphSettingsControl({
 									}))}
 							/>
 							<SettingSlider
-								label="Course pull"
+								className="w-full"
+								label="Class pull"
 								min={0}
 								max={100}
 								step={5}
@@ -839,6 +853,7 @@ function GraphSettingsControl({
 									}))}
 							/>
 							<SettingSlider
+								className="w-full"
 								label="Friction"
 								min={0}
 								max={100}
@@ -855,24 +870,26 @@ function GraphSettingsControl({
 							    forces first, then the mode + its conditional
 							    controls at the very bottom — the grayed group reads
 							    as a self-contained sub-section. */}
-							<label className="flex items-center justify-between gap-2 text-xs">
-								Depth anchor
-								<select
-									className="rounded-sm border bg-background px-1 py-0.5 text-xs"
+							<div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+								<span>Depth anchor</span>
+								<ThinSelect
+									ariaLabel="Depth anchor"
+									className="w-40"
 									value={physicsTuning.depthMode}
-									onChange={(e) =>
+									onChange={(v) =>
 										changeSettings((cur) => ({
 											...cur,
-											physics: { ...cur.physics, depthMode: e.target.value as GraphRenderSettings["physics"]["depthMode"] },
+											physics: { ...cur.physics, depthMode: v as GraphRenderSettings["physics"]["depthMode"] },
 										}))
 									}
 								>
 									<option value="off">Off</option>
 									<option value="vertical">Vertical (up)</option>
 									<option value="radial">Radial (outward)</option>
-								</select>
-							</label>
+								</ThinSelect>
+							</div>
 							<SettingSlider
+								className="w-full"
 								label="Depth strength"
 								disabled={physicsTuning.depthMode === "off"}
 								min={0}
@@ -887,6 +904,7 @@ function GraphSettingsControl({
 									}))}
 							/>
 							<SettingSlider
+								className="w-full"
 								label="Depth spacing"
 								disabled={physicsTuning.depthMode === "off"}
 								min={0}
@@ -901,6 +919,7 @@ function GraphSettingsControl({
 									}))}
 							/>
 							<SettingSlider
+								className="w-full"
 								label="Base ring radius"
 								disabled={physicsTuning.depthMode !== "radial"}
 								min={0}

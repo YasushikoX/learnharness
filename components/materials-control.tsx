@@ -140,7 +140,7 @@ export function MaterialsControl({
 	const count = chatId ? materials.length : draft.length;
 	return (
 		<div ref={containerRef} className="relative flex items-center" data-testid="materials-control">
-			<Hint label={courseId ? "This course's curriculum" : chatId ? "This lesson's source material" : "Source material for the new lesson"} side="bottom">
+			<Hint label={courseId ? "This class's curriculum" : chatId ? "This lesson's source material" : "Source material for the new lesson"} side="bottom">
 				<button
 					type="button"
 					data-testid="stats-materials"
@@ -157,7 +157,7 @@ export function MaterialsControl({
 			</Hint>
 			{files.node}
 			{open && (
-				<MenuShell anchorRef={containerRef} testid="materials-menu" preferredSide="up" align="right" menuClass="flex w-80 flex-col gap-1 lh-menu p-2">
+				<MenuShell anchorRef={containerRef} testid="materials-menu" preferredSide="up" align="left" menuClass="flex w-80 flex-col gap-1 lh-menu p-2">
 					<div className="px-1 pb-1 text-xs text-muted-foreground">The material sets the lesson&apos;s target; teaching uses its definitions, notation and terms and cites it.</div>
 					{chatId
 						? materials.map((m) => <MaterialRow key={m.id} material={m} onRemove={() => void files.remove(m.id)} />)

@@ -173,7 +173,7 @@ export function LearnerSection({
 							</p>
 						)}
 						<p className="text-xs text-muted-foreground">
-							Gaps: lessons carry no miss classification (only the answers above), practice outside a course carries no skill, and the kind of problem (proof, example,
+							Gaps: lessons carry no miss classification (only the answers above), practice outside a class carries no skill, and the kind of problem (proof, example,
 							computation) is not recorded.
 						</p>
 					</>

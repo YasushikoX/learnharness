@@ -114,6 +114,8 @@ node scripts/ui-shots/run.mjs --out /absolute/path/to/shots --port 3210 --themes
 
 The runner builds and starts the production app on loopback, seeds disposable data and auth directories, and drives headless Chrome. It captures Default (dark) and Ivory (light) at 1440 × 900 and three additional dark screens at 1024 × 768, all at 2×. Open `index.md` in the output directory for the shot list. Pass `--themes dark` or `--themes light` for a single theme, or `--no-build` to reuse the worktree’s existing production build. Set `CHROME_PATH` if Chrome is installed outside `/Applications/Google Chrome.app`.
 
+After the main screens it captures the small surfaces and in-between states (`scripts/ui-shots/small-surfaces.mjs`, shots `70a`–`85g`): dialogs, menus, popovers, tooltips, notices, running, empty and failed states, panels at 1024 and the inline forms. A failed pass is written into the class's record for one visit; a running pass, a change card's status and the plan usage come from per-shot request routes that answer the click's POST without a model call. `LH_UI_SHOTS_SMALL_ONLY=1` runs only those, and `LH_UI_SHOTS_KEEP_STAGE=1` keeps a failed run's shots in `<out>/.ui-shots-*`, for working on the kit.
+
 The fixture uses fixed IDs, content, and dates relative to the UTC day of the run, so exams and reviews stay current across rounds. The PDF index, graph, and tutor transcript are authored locally. A synthetic provider key populates the model controls. The runner sends no model requests. A cold Next build can fetch the fonts declared by the app. At exit the runner stops the server and removes the fixture directories.
 
 ## Checking a change on a phone

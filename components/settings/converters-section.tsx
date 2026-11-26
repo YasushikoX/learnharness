@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ErrorNotice } from "@/components/ui/error-notice";
 import { destinationLine, type ConverterEntry, type ConvertersOverview, type ConverterValidationReport } from "@/src/core";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -84,12 +85,18 @@ export function ConvertersSection() {
 
 	useEffect(() => () => testRun.current?.controller.abort(), []);
 
-	useEffect(() => {
+	const [reloading, setReloading] = useState(false);
+	const load = useCallback(() => {
+		setReloading(true);
 		void loadConverters().then(({ value, error: failed }) => {
-			if (value) adopt(value);
-			else setLoadError(failed);
+			setReloading(false);
+			if (value) {
+				setLoadError(null);
+				adopt(value);
+			} else setLoadError(failed);
 		});
 	}, [adopt]);
+	useEffect(() => load(), [load]);
 
 	async function change(input: ConverterChange, after?: () => void): Promise<void> {
 		cancelTest(); // a Test of the settings being replaced must not report under the new ones
@@ -183,7 +190,8 @@ export function ConvertersSection() {
 		} else setError(failed);
 	}
 
-	if (loadError) return <p role="alert" data-testid="converters-load-error" className="text-xs text-error">{loadError}</p>;
+	// the shared error notice with Try again (UI round 8, SPEC §9: it was a lone red line)
+	if (loadError) return <ErrorNotice error={loadError} what="Couldn't load the PDF conversion settings." onRetry={load} retrying={reloading} testid="converters-load-error" />;
 	if (!overview || !selected) return <p data-testid="converters-loading" className={NOTE}>Loading…</p>;
 
 	const urlChanged = url.trim() !== (selected.baseUrl ?? "");

@@ -139,6 +139,7 @@ export {
 	parseFolderField,
 	setCourseSkillWeights,
 	parseExamDateField,
+	parseTitleField,
 	parseWeightsField,
 	startCourseWeighing,
 	todayCourses,
@@ -150,17 +151,19 @@ export {
 export {
 	actOnProposal,
 	assessmentFinding,
-	classChangeStatuses,
 	createAssessment,
 	deleteAssessment,
 	deleteSelfReport,
+	requestTimeZone,
 	startAssessmentFind,
-	undoClassChange,
 	updateAssessment,
 	upcomingView,
 	type AssessmentInput,
-	type ChangeStatus,
 } from "./assessments.ts";
+// Short question's change cards and Undo (WP8, generalized in WP9).
+export { classChangeStatuses, undoClassChange, type ChangeStatus } from "./class-changes.ts";
+// The lecture timeline and the class position (WP9 — docs/courses.md "Lectures and where you stand").
+export { classLectures, createLecture, deleteLecture, lectureLinking, setClassPosition, startLectureLinking, updateLecture, type LectureInput } from "./lectures.ts";
 // Vocabulary coverage (WP5 — docs/courses.md "Vocabulary coverage").
 export { courseTermMapping, editCourseCoverage } from "./course-coverage.ts";
 export { startServerTiming, type ServerTiming } from "./server-timing.ts";

@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { CalendarCheckIcon, ChevronRightIcon } from "lucide-react";
 import type { TodayCourse } from "@/src/core";
 import { useServerEvent, useServerResync } from "@/components/server-events";
+import { clientTimeZoneHeader } from "@/components/time-zone";
 import { cn } from "@/lib/utils";
 
 /**
@@ -33,10 +34,11 @@ export type TodayLine =
 	| { kind: "learn"; courseId: string; skillId: string; text: string };
 
 /** "Matte 1 · 29 days": the course line. Pure. */
-export function todayHead(c: Pick<TodayCourse, "title" | "daysLeft">): string {
+export function todayHead(c: Pick<TodayCourse, "title" | "daysLeft" | "examTitle">): string {
 	if (c.daysLeft === undefined) return c.title;
-	if (c.daysLeft < 0) return `${c.title} · exam passed`;
-	return `${c.title} · ${c.daysLeft === 0 ? "exam today" : c.daysLeft === 1 ? "1 day" : `${c.daysLeft} days`}`;
+	const name = c.examTitle ?? "exam";
+	if (c.daysLeft < 0) return `${c.title} · ${name} passed`;
+	return `${c.title} · ${c.daysLeft === 0 ? `${name} today` : c.daysLeft === 1 ? "1 day" : `${c.daysLeft} days`}`;
 }
 
 /** The lines to show: a course line, then its review and lessons, until `max` item lines are used; a course whose items
@@ -69,7 +71,7 @@ export function useTodayCourses(initial: TodayCourse[] | null = null) {
 	const [courses, setCourses] = useState<TodayCourse[] | null>(initial);
 	const refresh = useCallback(async () => {
 		try {
-			const res = await fetch("/api/today", { cache: "no-store" });
+			const res = await fetch("/api/today", { cache: "no-store", headers: clientTimeZoneHeader() });
 			const d = (await res.json()) as { courses: TodayCourse[] };
 			setCourses(d.courses);
 		} catch {
@@ -127,7 +129,8 @@ export function TodaySection() {
 	const pathname = usePathname();
 	const courses = useTodayCourses();
 	const count = courses ? todayItemCount(courses) : 0;
-	if (count === 0) return null;
+	// UI round 8: the Today row stays when there is nothing to do (it was gone on a first run, and with it the way to
+	// Today's "Start with a class"); the count shows only when there is one
 	const active = pathname === "/today";
 	return (
 		<div className="mx-3 mb-1" data-testid="today-section">
@@ -144,7 +147,7 @@ export function TodaySection() {
 			>
 				<CalendarCheckIcon className="size-4" strokeWidth={1.75} />
 				Today
-				<span className="font-normal tabular-nums text-muted-foreground">{count}</span>
+				{count > 0 && <span className="font-normal tabular-nums text-muted-foreground">{count}</span>}
 				<ChevronRightIcon className="ml-auto size-3.5" strokeWidth={1.75} />
 			</Link>
 		</div>

@@ -272,7 +272,7 @@ test("the shared model menu preserves ranking, provider identity, keyboard clamp
 	assert.match(options()[1]!.textContent!, /p2 · alpha/);
 	assert.ok(!options()[0]!.classList.contains("bg-raised"));
 	assert.ok(options()[1]!.classList.contains("bg-raised"));
-	assert.match(options()[0]!.textContent!, /\$1\.00\/\$2\.00/);
+	assert.match(options()[0]!.textContent!, /\$1\.00\u2009\/\u2009\$2\.00/, "two decimals, thin spaces around the slash (UI round 8)");
 	assert.match(options()[0]!.textContent!, /32k/);
 	assert.match(document.body.textContent!, /Model footer/);
 	await key(modelInput, "Enter");

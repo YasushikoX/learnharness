@@ -76,7 +76,7 @@ const text = (selector: string) => host!.querySelector(selector)?.textContent ??
 describe("a skill's terms", () => {
 	it("shows the counts, and opens the list with state, definition and page", async () => {
 		await mount(<SkillTerms skillId="sk_rings" />, view(), []);
-		assert.equal(text('[data-testid="skill-terms-toggle-sk_rings"]'), "terms: 2 of 3 introduced, 1 checked");
+		assert.equal(text('[data-testid="skill-terms-toggle-sk_rings"]'), "Terms: 2 of 3 introduced, 1 checked");
 		assert.equal(host!.querySelector('[data-testid="skill-terms-list-sk_rings"]'), null);
 		await click('[data-testid="skill-terms-toggle-sk_rings"]');
 		assert.equal(text('[data-testid="term-state-t_ring"]'), "checked · apply");

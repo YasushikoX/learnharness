@@ -617,7 +617,7 @@ describe("the stores", () => {
 			if (e.type === "courses-changed") announced++;
 		});
 		const a = courseStore.createCourse("  ");
-		assert.equal(a.title, "Untitled course");
+		assert.equal(a.title, "Untitled class");
 		assert.equal(a.status, "new");
 		assert.match(a.id, /^course_/);
 		const updated = courseStore.updateCourse(a.id, { error: "boom", status: "error" })!;
@@ -1382,7 +1382,7 @@ describe("the UI", () => {
 	it("an open miss is listed with a button that practices its skills; a course without misses has no list (owner, 2026-11-16)", () => {
 		const missed = [{ id: "chat_1:1", at: "2026-11-12T10:00:00.000Z", statement: "Differentiate x^2 sin x", how: "gave up", skills: [{ id: "a", name: "Product rule" }] }];
 		const html = body(payload({ missed }));
-		assert.match(html, /data-testid="course-missed"[\s\S]*Missed problems<span[^>]*>1<[\s\S]*Differentiate x\^2 sin x[\s\S]*Product rule · gave up · 2026-11-12[\s\S]*aria-label="Retry as a new variant"[^>]*>Retry</);
+		assert.match(html, /data-testid="course-missed"[\s\S]*Missed problems<span[^>]*>1<[\s\S]*Differentiate x\^2 sin x[\s\S]*Product rule · gave up · Thu 12 Nov( 2026)?[\s\S]*aria-label="Retry as a new variant"[^>]*>Retry</);
 		assert.ok(html.indexOf("course-missed") > html.indexOf("course-known"), "below the skill groups (owner, 2026-11-16)");
 		assert.doesNotMatch(html, /course-missed-all/, "one miss: no Show all");
 		assert.doesNotMatch(body(payload()), /course-missed/);
@@ -1553,7 +1553,7 @@ describe("the UI", () => {
 			sessions: [],
 		});
 		const html = body(data);
-		assert.match(html, /data-testid="course-context-check"[\s\S]*From another course<span[^>]*>1<[\s\S]*optional, nothing is locked[\s\S]*data-testid="skill-a"/);
+		assert.match(html, /data-testid="course-context-check"[\s\S]*From another class<span[^>]*>1<[\s\S]*optional, nothing is locked[\s\S]*data-testid="skill-a"/);
 		assert.doesNotMatch(html, /data-testid="course-known"/, "A shows once — in its own section");
 		assert.match(html, /about one short question for 1 skill,/);
 		assert.doesNotMatch(body({ ...data, skills: [skillView("a", { understanding: 6, learned: true, known: true })], nextUp: [] }), /placement-offer/, "nothing left to place");

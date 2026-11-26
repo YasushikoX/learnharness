@@ -4,10 +4,13 @@ import { buttonVariants } from "@/components/ui/button";
 import { FIELD_CLASS } from "@/components/ui/input";
 import { createContext, useContext, useState } from "react";
 import { Loader2Icon } from "lucide-react";
-import { examDateLabel, forecastLine, readinessBasis, readinessStep, understandingColor, type Readiness, SKILL_WEIGHTS, WEIGHT_LABELS, type CoursePlan, type CourseMode, type CourseSkillView, type SkillWeightValue } from "@/src/core";
+import { dayLabel, forecastLine, readinessBasis, readinessStep, understandingColor, type Readiness, SKILL_WEIGHTS, WEIGHT_LABELS, type CoursePlan, type CourseMode, type CourseSkillView, type SkillWeightValue } from "@/src/core";
 import { cn } from "@/lib/utils";
+import { ErrorNotice } from "@/components/ui/error-notice";
 import { PAGE_HEAD } from "@/components/section-heads";
 import { CourseSettingRow } from "@/components/course-pace";
+import { showsStanding, WhereYouStand } from "@/components/where-you-stand";
+import type { CourseStandingView } from "@/src/core";
 
 /**
  * The exam plan on the course page (owner, 2026-11-13 — core/exam-plan.ts): today's list and the exam card (the
@@ -51,9 +54,21 @@ export function WeightEditor({ skill }: { skill: Pick<CourseSkillView, "id" | "w
 		<div className="flex flex-wrap items-center gap-x-2 gap-y-1.5" data-testid={`weight-editor-${skill.id}`}>
 			<span className="text-muted-foreground">Exam weight</span>
 			{edit ? (
-				<span className="flex items-center gap-1" role="group" aria-label="Exam weight">
+				// the app's segmented control (UI round 8, SPEC §9), not an inverted solid
+				<span className="flex h-7 items-center rounded-md bg-raised p-0.5" role="group" aria-label="Exam weight">
 					{SKILL_WEIGHTS.map((w) => (
-						<button key={w} type="button" aria-pressed={skill.weight === w} className={cn(BTN, "min-w-7 px-2", skill.weight === w && "border-foreground bg-foreground text-background")} data-testid={`weight-${skill.id}-${w}`} onClick={() => edit(skill.id, w as SkillWeightValue)}>
+						<button
+							key={w}
+							type="button"
+							aria-pressed={skill.weight === w}
+							title={WEIGHT_LABELS[w as SkillWeightValue]}
+							className={cn(
+								"h-6 min-w-7 rounded-sm px-2 text-chrome font-medium tabular-nums transition-colors duration-(--lh-duration-hover) ease-(--lh-ease)",
+								skill.weight === w ? "bg-card text-foreground shadow-[0_0_0_1px_var(--border),0_1px_2px_rgb(0_0_0/0.08)] dark:bg-raised-strong" : "text-muted-foreground hover:text-foreground",
+							)}
+							data-testid={`weight-${skill.id}-${w}`}
+							onClick={() => edit(skill.id, w as SkillWeightValue)}
+						>
 							{w}
 						</button>
 					))}
@@ -103,9 +118,9 @@ const HERO_TITLE = "text-lg leading-[22px] font-semibold";
 /** How many more next-up skills the box lists after today's lessons. */
 export const MORE_NEXT_UP = 4;
 
-/** The exam card's big figure: "30 d", "today", "passed". Pure. */
+/** The exam card's big figure, spelled out (SPEC §9): "30 days", "1 day", "today", "passed". Pure. */
 export function examCountdown(daysLeft: number): string {
-	if (daysLeft > 0) return `${daysLeft} d`;
+	if (daysLeft > 0) return daysLeft === 1 ? "1 day" : `${daysLeft} days`;
 	return daysLeft === 0 ? "today" : "passed";
 }
 
@@ -207,6 +222,9 @@ export interface ExamPlanSectionProps {
 	onChanged: () => void;
 	/** What sits between Next up and the exam card: the class's recent sessions (UI class page, 2026-11-25). */
 	afterNextUp?: React.ReactNode;
+	/** WP9: "Where you stand" (the lectures, the class's position, the next assessment's readiness): the top of the Next
+	 *  up card, and its Start goes to the most urgent gap. */
+	standing?: CourseStandingView;
 }
 
 /**
@@ -218,14 +236,17 @@ export interface ExamPlanSectionProps {
  * course is weighed the card holds "Weigh by exams"; afterwards it says so in one line and "Weigh again" is a setting.
  */
 export function ExamPlanSection(props: ExamPlanSectionProps) {
-	const { courseId, plan, names, weightOf, nextUp, learningCount, examDate, readiness, hasWeights, weightsError, weighing, canWeigh, busy, onStart, onRetest, onChanged, afterNextUp } = props;
+	const { courseId, plan, names, weightOf, nextUp, learningCount, examDate, readiness, hasWeights, weightsError, weighing, canWeigh, busy, onStart, onRetest, onChanged, afterNextUp, standing } = props;
+	const stand = showsStanding(standing) ? standing : null;
+	// WP9: the most urgent gap takes the card's one primary Start (a review due then gets a quiet button)
+	const gap = stand?.start ?? null;
 	const { error, starting, patch, weigh } = useExamActions(courseId, onChanged);
 
 	const f = plan.forecast;
 	const more = nextUp.filter((id) => !plan.lessons.includes(id)).slice(0, MORE_NEXT_UP);
 	const practiceAll = learningCount > 1;
 	const retest = (plan.retestCount ?? 0) > 0 && onRetest !== undefined;
-	const boxHasItems = plan.reviewDue > 0 || plan.lessons.length > 0 || more.length > 0 || practiceAll || retest;
+	const boxHasItems = plan.reviewDue > 0 || plan.lessons.length > 0 || more.length > 0 || practiceAll || retest || stand !== null;
 	const learnRow = (id: string, testid: string) => (
 		<div key={id} className={ROW} data-testid={testid}>
 			<span className="min-w-0 flex-1 line-clamp-2 break-words sm:line-clamp-none sm:block sm:truncate">
@@ -239,8 +260,8 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 	);
 	// The hero: the review when one is due, else the first lesson to take (today's, else the next by exam priority). It
 	// carries the page's one primary Start; everything after it is a quiet row.
-	const heroLesson = plan.reviewDue > 0 ? undefined : (plan.lessons[0] ?? more[0]);
-	const heroIsToday = heroLesson !== undefined && plan.lessons[0] === heroLesson;
+	const heroLesson = gap ? gap.skillId : plan.reviewDue > 0 ? undefined : (plan.lessons[0] ?? more[0]);
+	const heroIsToday = !gap && heroLesson !== undefined && plan.lessons[0] === heroLesson;
 	const todayRows = plan.lessons.filter((id) => id !== heroLesson);
 	const moreRows = more.filter((id) => id !== heroLesson);
 	const fading = plan.reviewFading ?? 0;
@@ -255,6 +276,7 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 			{boxHasItems && (
 				<div data-testid="course-next-up" className={HERO_CARD}>
 					<div className={PAGE_HEAD}>Next up</div>
+					{stand && <WhereYouStand courseId={courseId} standing={stand} onChanged={onChanged} />}
 					{plan.reviewDue > 0 && (
 						<div className="flex items-center justify-between gap-4 pb-4" data-testid="course-today-review">
 							<span className="min-w-0">
@@ -268,16 +290,26 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 									</span>
 								)}
 							</span>
-							<button type="button" className={BTN_HERO} disabled={busy} onClick={() => onStart("review")}>
+							<button type="button" className={gap ? BTN : BTN_HERO} disabled={busy} onClick={() => onStart("review")}>
 								Start
 							</button>
 						</div>
 					)}
 					{heroLesson !== undefined && (
-						<div data-testid={heroIsToday ? "course-today" : "course-next-more"}>
-							<div className="flex items-center justify-between gap-4 pb-4" data-testid={heroIsToday ? `course-today-lesson-${heroLesson}` : `course-next-more-${heroLesson}`}>
+						<div data-testid={gap ? "course-gap" : heroIsToday ? "course-today" : "course-next-more"}>
+							<div className="flex items-center justify-between gap-4 pb-4" data-testid={gap ? `course-gap-${heroLesson}` : heroIsToday ? `course-today-lesson-${heroLesson}` : `course-next-more-${heroLesson}`}>
 								<span className="min-w-0">
-									<span className="block text-meta font-medium text-muted-foreground">{heroIsToday ? "Learn today" : "More to learn"}</span>
+									<span className="block text-meta font-medium text-muted-foreground">
+										{gap
+											? gap.skillId !== gap.gapId
+												? `First, for ${names.get(gap.gapId) ?? gap.gapId}`
+												: gap.why === "assessment"
+													? `For ${stand?.next?.title ?? "the next test"}`
+													: "Covered in class, not learned yet"
+											: heroIsToday
+												? "Learn today"
+												: "More to learn"}
+									</span>
 									<span className={cn(HERO_TITLE, "mt-0.5 block line-clamp-2 break-words")}>
 										{names.get(heroLesson) ?? heroLesson}
 										{weightOf(heroLesson) !== 1 && <span className="ml-2 text-meta font-normal text-muted-foreground">w{weightOf(heroLesson)}</span>}
@@ -331,7 +363,7 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 					{examDate ? (
 						<div className="flex flex-wrap items-baseline gap-x-2" data-testid="course-exam-countdown">
 							<span className="lh-big-number">{examCountdown(plan.daysLeft ?? 0)}</span>
-							<span className="whitespace-nowrap text-sm text-muted-foreground">{examDateLabel(examDate)}</span>
+							<span className="whitespace-nowrap text-sm text-muted-foreground">{dayLabel(examDate)}</span>
 						</div>
 					) : (
 						<input
@@ -356,26 +388,19 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 								{keepMiddots(forecastLine(f))}
 							</p>
 						)}
-						{(weighing || starting) && (
-							<span className="flex items-center gap-1.5" data-testid="course-weighing">
-								<Loader2Icon className="size-3.5 animate-spin" />
-								Reading the exams…
-							</span>
-						)}
-						{hasWeights && !weighing && <p data-testid="course-weights-summary">Skills weighed by exam importance.</p>}
+						{/* a re-weigh runs and reports at its own button in the side panel (UI round 8): here the last good
+						    estimate stays, said as such */}
+						{hasWeights && <p data-testid="course-weights-summary">{weighing ? "Skills weighed by exam importance (the last weighing; a new one is running)." : "Skills weighed by exam importance."}</p>}
 						{!hasWeights && !weighing && !starting && !readiness && <p data-testid="course-exam-readiness-prompt">Weigh by exams to get a readiness score.</p>}
 					</div>
 					{!hasWeights && (
-						<button type="button" className={cn(BTN, "w-fit")} disabled={!canWeigh || weighing || starting || busy} data-testid="course-weigh-button" onClick={() => void weigh()}>
-							Weigh by exams
+						<button type="button" className={cn(BTN, "w-fit")} disabled={!canWeigh || weighing || starting || busy} aria-busy={weighing || starting} data-testid={weighing || starting ? "course-weighing" : "course-weigh-button"} onClick={() => void weigh()}>
+							{(weighing || starting) && <Loader2Icon className="animate-spin" aria-hidden />}
+							{weighing || starting ? "Reading the exams…" : "Weigh by exams"}
 						</button>
 					)}
-					{weightsError && !weighing && (
-						<p className="text-meta text-error" data-testid="course-weights-error">
-							Weighing failed: {weightsError}
-						</p>
-					)}
-					{error && <p className="text-meta text-error">{error}</p>}
+					{!hasWeights && weightsError && !weighing && <ErrorNotice error={weightsError} what="Couldn't weigh the exams." onRetry={canWeigh && !busy ? () => void weigh() : undefined} testid="course-weights-error" />}
+					{error && <ErrorNotice error={error} testid="course-exam-error" />}
 				</div>
 			</div>
 		</section>
@@ -387,23 +412,34 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
  * card holds the field), and "Weigh again" once the course is weighed (before that the exam card holds "Weigh by
  * exams"), with what the weighing found.
  */
-export function ExamSettings(props: Pick<ExamPlanSectionProps, "courseId" | "examDate" | "hasWeights" | "weighing" | "canWeigh" | "busy" | "onChanged"> & { weightsSummary?: string; weightsAt?: string }) {
-	const { courseId, examDate, hasWeights, weighing, canWeigh, busy, onChanged, weightsSummary, weightsAt } = props;
+export function ExamSettings(props: Pick<ExamPlanSectionProps, "courseId" | "examDate" | "hasWeights" | "weighing" | "canWeigh" | "busy" | "onChanged" | "weightsError"> & { weightsSummary?: string; weightsAt?: string }) {
+	const { courseId, examDate, hasWeights, weighing, canWeigh, busy, onChanged, weightsSummary, weightsAt, weightsError } = props;
 	const { error, starting, patch, weigh } = useExamActions(courseId, onChanged);
 	if (!examDate && !hasWeights) return null;
+	const running = weighing || starting;
 	return (
 		<CourseSettingRow
 			testid="course-exam-settings"
-			label="Exam"
-			stacked
+			label="Exam weights"
+			stacked={!!examDate}
 			description={
 				hasWeights && weightsSummary ? (
-					<p className="truncate" title={weightsSummary} data-testid="course-weights-found">
-						Last weighing{weightsAt ? ` (${weightsAt.slice(0, 10)})` : ""}: {weightsSummary}
-					</p>
+					// UI round 8: the date on its own meta line, the finding wrapping under it (it was clipped)
+					<div data-testid="course-weights-found">
+						{weightsAt && <p>Last weighed {dayLabel(weightsAt)}</p>}
+						<p className="line-clamp-3" title={weightsSummary}>
+							{weightsSummary}
+						</p>
+					</div>
 				) : undefined
 			}
-			note={error ? <p className="text-error">{error}</p> : undefined}
+			note={
+				hasWeights && weightsError && !running ? (
+					<ErrorNotice error={weightsError} what="Couldn't weigh the exams." onRetry={canWeigh && !busy ? () => void weigh() : undefined} testid="course-weights-error" />
+				) : error ? (
+					<ErrorNotice error={error} testid="course-exam-settings-error" />
+				) : undefined
+			}
 		>
 			{examDate && (
 				<>
@@ -421,8 +457,9 @@ export function ExamSettings(props: Pick<ExamPlanSectionProps, "courseId" | "exa
 				</>
 			)}
 			{hasWeights && (
-				<button type="button" className={SETTING_BTN} disabled={!canWeigh || weighing || starting || busy} data-testid="course-weigh-button" onClick={() => void weigh()}>
-					Weigh again
+				<button type="button" className={SETTING_BTN} disabled={!canWeigh || running || busy} aria-busy={running} data-testid={running ? "course-weighing" : "course-weigh-button"} onClick={() => void weigh()}>
+					{running && <Loader2Icon className="animate-spin" aria-hidden />}
+					{running ? "Weighing…" : "Weigh again"}
 				</button>
 			)}
 		</CourseSettingRow>

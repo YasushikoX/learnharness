@@ -29,6 +29,7 @@ import type { Usage } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { ASSESSMENT_KINDS, cleanLine, parseKind, PROPOSAL_ITEMS_MAX, PROPOSAL_SUMMARY_MAX, TITLE_MAX, TOPICS_MAX, weekDate, type ProposedAssessment } from "../../core/assessments.ts";
 import { parseExamDate } from "../../core/exam-plan.ts";
+import { LECTURE_TITLE_MAX, LECTURE_TOPICS_MAX, parseLectureNumber, PROPOSAL_LECTURES_MAX, type ProposedLecture } from "../../core/lectures.ts";
 import { withLanguageDirective, type LessonLanguage } from "../../core/language.ts";
 import type { PiEngine } from "../models.ts";
 import { runSubmitAgent } from "./submit-agent.ts";
@@ -55,9 +56,11 @@ For each assessment give:
 
 The term's start: give "termStart" (YYYY-MM-DD) ONLY when the syllabus writes the date week 1 starts, with "termStartText" (its exact words, containing that date), "termStartMaterial" and "termStartPage".
 
+THE LECTURE SCHEDULE, in the same run: when the syllabus or schedule lists the lectures, list each one (at most ${PROPOSAL_LECTURES_MAX}) with its number ("n"), title, topics, the approved skills those topics clearly cover, material and page, and when it is under the SAME date rules as above (dateText quoted exactly; a date or a week and weekday only as written there). Leave "lectures" out when there is no schedule.
+
 If no material is a syllabus, schedule or outline, submit an empty list and say so in the summary.
 
-DELIVERABLE: ONE submit_assessments call: a short summary (1-2 sentences: which material you read, what you found or did not find), the term's start when the syllabus gives it, and the list (at most ${PROPOSAL_ITEMS_MAX}).`;
+DELIVERABLE: ONE submit_assessments call: a short summary (1-2 sentences: which material you read, what you found or did not find), the term's start when the syllabus gives it, the list (at most ${PROPOSAL_ITEMS_MAX}) and the lectures.`;
 
 const itemSchema = Type.Object({
 	kind: Type.String({ enum: [...ASSESSMENT_KINDS], description: "quiz, exam, midterm, final, assignment or other" }),
@@ -72,6 +75,19 @@ const itemSchema = Type.Object({
 	page: Type.Optional(Type.Integer({ minimum: 1, description: "The page where it says when it is (required for PDFs)" })),
 });
 
+const lectureSchema = Type.Object({
+	n: Type.Optional(Type.Integer({ minimum: 0, maximum: 999, description: "The lecture's number in the schedule" })),
+	title: Type.String({ minLength: 1, description: "As the schedule names it (\"Lecture 8: Eigenvalues\")" }),
+	date: Type.Optional(Type.String({ description: "YYYY-MM-DD, only when the schedule writes the date" })),
+	week: Type.Optional(Type.Integer({ minimum: 1, maximum: 60, description: "The term week the schedule gives" })),
+	weekday: Type.Optional(Type.Integer({ minimum: 1, maximum: 7, description: "1 Monday .. 7 Sunday, with week" })),
+	dateText: Type.String({ description: "The schedule's exact words for when it is, copied from the cited page; \"\" when it says nothing" }),
+	topics: Type.String({ description: "What it covers, in the schedule's words" }),
+	skills: Type.Array(Type.String(), { description: "Approved skill ids the topics clearly cover; [] when unclear" }),
+	material: Type.String({ minLength: 1, description: "The id of the material the schedule is in" }),
+	page: Type.Optional(Type.Integer({ minimum: 1, description: "The page (required for PDFs)" })),
+});
+
 const submitSchema = Type.Object({
 	summary: Type.String({ minLength: 1, description: "1-2 sentences: the material read, what was found" }),
 	termStart: Type.Optional(Type.String({ description: "YYYY-MM-DD: the date the syllabus gives for the start of week 1; only when it gives one" })),
@@ -79,6 +95,7 @@ const submitSchema = Type.Object({
 	termStartMaterial: Type.Optional(Type.String({ description: "The id of the material that says when the term starts" })),
 	termStartPage: Type.Optional(Type.Integer({ minimum: 1, description: "Its page (PDFs)" })),
 	assessments: Type.Array(itemSchema, { description: `Every assessment found (at most ${PROPOSAL_ITEMS_MAX}); [] when there is no syllabus` }),
+	lectures: Type.Optional(Type.Array(lectureSchema, { description: `WP9: the lecture schedule (at most ${PROPOSAL_LECTURES_MAX}); leave out when there is none` })),
 });
 
 type SubmitInput = Static<typeof submitSchema>;
@@ -86,6 +103,8 @@ type SubmitInput = Static<typeof submitSchema>;
 export interface FoundAssessments {
 	summary: string;
 	items: Array<Omit<ProposedAssessment, "status" | "match" | "matchStamp">>;
+	/** WP9: the lecture schedule found in the same run (absent from a finder that does not read lectures). */
+	lectures?: Array<Omit<ProposedLecture, "status" | "match" | "matchStamp">>;
 	/** Raw problems the submit check found (empty when fine). */
 	problems: string[];
 }
@@ -209,11 +228,8 @@ export function fillFound(input: SubmitInput, materials: AssessmentFinderInput["
 			else if (cited.text !== null && quoteStatesDate(text, parsed)) termStart = parsed;
 		}
 	}
-	const items: FoundAssessments["items"] = [];
-	input.assessments.slice(0, PROPOSAL_ITEMS_MAX).forEach((a, i) => {
-		const n = `item ${i + 1} ("${a.title}")`;
-		const kind = parseKind(a.kind);
-		if (!kind) problems.push(`${n}: kind must be one of ${ASSESSMENT_KINDS.join(", ")}`);
+	/** One item's citation and when (WP9: shared by assessments and lectures): the same quote and page checks for both. */
+	const when = (a: WhenFields, n: string) => {
 		const material = byId.get(a.material);
 		if (!material) problems.push(`${n}: "${a.material}" is not a material id from the list`);
 		const dateText = cleanLine(a.dateText, 120);
@@ -239,7 +255,15 @@ export function fillFound(input: SubmitInput, materials: AssessmentFinderInput["
 		}
 		const unknown = a.skills.filter((s) => !allowed.has(s));
 		if (unknown.length > 0) problems.push(`${n}: ${unknown.map((s) => `"${s}"`).join(", ")} ${unknown.length === 1 ? "is" : "are"} not an approved skill id`);
-		if (!kind || !material || "problem" in cited) return;
+		return { material, date, dateText, verified, failed: "problem" in cited };
+	};
+	const items: FoundAssessments["items"] = [];
+	input.assessments.slice(0, PROPOSAL_ITEMS_MAX).forEach((a, i) => {
+		const n = `item ${i + 1} ("${a.title}")`;
+		const kind = parseKind(a.kind);
+		if (!kind) problems.push(`${n}: kind must be one of ${ASSESSMENT_KINDS.join(", ")}`);
+		const { material, date, dateText, verified, failed } = when(a, n);
+		if (!kind || !material || failed) return;
 		let topics = a.topics.trim();
 		// a date the syllabus gives only in words stays in the topics, so nothing it said is lost
 		if (!date && dateText) topics = topics ? `${topics} (when: ${dateText})` : `When: ${dateText}`;
@@ -254,7 +278,36 @@ export function fillFound(input: SubmitInput, materials: AssessmentFinderInput["
 			...(dateText && verified ? { quote: dateText } : {}),
 		});
 	});
-	return { summary: cleanLine(input.summary, PROPOSAL_SUMMARY_MAX), items, problems };
+	// WP9: the lecture schedule, with the same checks; a date the syllabus does not state is left out
+	const lectures: NonNullable<FoundAssessments["lectures"]> = [];
+	(input.lectures ?? []).slice(0, PROPOSAL_LECTURES_MAX).forEach((l, i) => {
+		const n = `lecture ${i + 1} ("${l.title}")`;
+		const { material, date, dateText, verified, failed } = when(l, n);
+		if (!material || failed) return;
+		const num = l.n === undefined ? undefined : parseLectureNumber(l.n);
+		lectures.push({
+			key: `l${lectures.length + 1}`,
+			...(num !== undefined ? { n: num } : {}),
+			title: cleanLine(l.title, LECTURE_TITLE_MAX) || (num !== undefined ? `Lecture ${num}` : "Lecture"),
+			...(date ? { date } : {}),
+			topics: l.topics.trim().slice(0, LECTURE_TOPICS_MAX),
+			skillIds: [...new Set(l.skills.filter((s) => allowed.has(s)))],
+			cite: `${material.name}${l.page ? ` p. ${l.page}` : ""}`,
+			...(dateText && verified ? { quote: dateText } : {}),
+		});
+	});
+	return { summary: cleanLine(input.summary, PROPOSAL_SUMMARY_MAX), items, lectures, problems };
+}
+
+/** The fields an item's "when" check reads (an assessment or a lecture). */
+interface WhenFields {
+	material: string;
+	page?: number;
+	dateText: string;
+	date?: string;
+	week?: number;
+	weekday?: number;
+	skills: string[];
 }
 
 export function finderPrompt(input: AssessmentFinderInput): string {
@@ -313,13 +366,13 @@ export async function findAssessments(input: AssessmentFinderInput, deps: Assess
 			maxTurns: FINDER_MAX_TURNS,
 			validate: (value) => (value.problems.length > 0 ? `Fix these and submit again:\n- ${value.problems.join("\n- ")}` : null),
 		});
-		return { summary: found.summary, items: found.items };
+		return { summary: found.summary, items: found.items, lectures: found.lectures };
 	} catch (err) {
 		if (deps.signal?.aborted) throw err;
 		const capped = overBudget || (err instanceof Error && err.message === neverSubmitted);
 		if (!capped) throw err;
 		if (!last) throw new Error(overBudget ? "the syllabus pass ran out of its token budget before submitting a list" : neverSubmitted);
-		return { summary: last.summary, items: last.items, partial: true };
+		return { summary: last.summary, items: last.items, lectures: last.lectures, partial: true };
 	} finally {
 		deps.signal?.removeEventListener("abort", onOuterAbort);
 	}

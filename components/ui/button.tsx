@@ -12,29 +12,31 @@ import type { PluginButtonColors as ButtonColors } from "@/src/core"
  * Variants: primary (`default`, solid accent, at most one per region) · secondary (neutral fill) · outline (hairline
  * input border) · ghost (no fill until hover) · destructive (danger text on a neutral fill) · destructiveSolid (the
  * confirm button of a delete dialog only) · link (inline). States: hover one fill step, active one more, no scale
- * except primary (0.98), disabled = muted text at full opacity (solid fills step down to the neutral raised fill; UI
- * round 2: a 45% fade on muted text fell under 3:1), focus-visible a 2px accent ring at 40% with a 1px offset. No shadows.
+ * except primary (0.98), disabled = the whole control at 45% in its OWN colours (UI round 8, SPEC §9: muted text on an
+ * outline looked enabled; 45% of the text colour stays above 3:1), focus-visible a 2px accent ring at 40% with a 1px
+ * offset. No shadows. destructiveSolid is #dc2626 with white text in both themes (4.8:1; the dark #f87171 needed dark
+ * text and read as salmon).
  * `buttonVariants` is the class helper for elements that cannot be a <Button> (a link, a label).
  */
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap select-none transition-[background-color,color,border-color,opacity,transform] duration-(--lh-duration-hover) ease-(--lh-ease) outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap select-none transition-[background-color,color,border-color,opacity,transform] duration-(--lh-duration-hover) ease-(--lh-ease) outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-45 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/85 active:scale-[0.98] motion-reduce:active:scale-100 disabled:bg-raised-strong disabled:text-muted-foreground",
+        default: "bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/85 active:scale-[0.98] motion-reduce:active:scale-100",
         secondary:
-          "bg-secondary text-secondary-foreground hover:bg-raised-strong active:bg-raised-strong disabled:text-muted-foreground",
+          "bg-secondary text-secondary-foreground hover:bg-raised-strong active:bg-raised-strong",
         outline:
-          "border border-input bg-transparent text-foreground hover:bg-raised active:bg-raised-strong disabled:text-muted-foreground",
+          "border border-input bg-transparent text-foreground hover:bg-raised active:bg-raised-strong",
         ghost:
-          "text-foreground hover:bg-raised active:bg-raised-strong disabled:text-muted-foreground",
+          "text-foreground hover:bg-raised active:bg-raised-strong",
         destructive:
-          "bg-secondary text-destructive hover:bg-raised-strong active:bg-raised-strong disabled:text-muted-foreground",
+          "bg-secondary text-destructive hover:bg-raised-strong active:bg-raised-strong",
         destructiveSolid:
-          "bg-destructive text-white dark:text-zinc-950 hover:bg-destructive/90 active:bg-destructive/85 disabled:bg-raised-strong disabled:text-muted-foreground",
-        link: "h-auto! px-0! text-primary underline-offset-4 hover:underline disabled:text-muted-foreground",
+          "bg-[#dc2626] text-white hover:bg-[#dc2626]/90 active:bg-[#dc2626]/85",
+        link: "h-auto! px-0! text-primary underline-offset-4 hover:underline",
         // Plugin colours own their disabled slots; without them the plain 45% fade stands in.
-        custom: "border border-transparent bg-primary text-primary-foreground disabled:opacity-45",
+        custom: "border border-transparent bg-primary text-primary-foreground",
       },
       size: {
         default: "h-8 px-3 has-[>svg]:px-2.5 has-[>[data-slot=button-icon]]:px-2.5",

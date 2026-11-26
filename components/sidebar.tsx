@@ -454,7 +454,9 @@ export function RenameRow({ chat, onCommit, onCancel, depth = 0, compact = false
 		const el = inputRef.current;
 		if (el) {
 			el.focus();
-			el.select();
+			// select all with the caret at the START (UI round 8): a long title then shows its first letters, not its end
+			el.setSelectionRange(0, el.value.length, "backward");
+			el.scrollLeft = 0;
 		}
 	}, []);
 	return (
@@ -488,7 +490,8 @@ export function RenameRow({ chat, onCommit, onCancel, depth = 0, compact = false
 					}}
 					aria-label="Rename session"
 					data-testid="session-rename-input"
-					className={cn("w-full min-w-0 truncate border-0 border-b border-border bg-transparent px-0 text-foreground outline-none", compact ? sidebarNameFont(true) : "lh-input")}
+					// 4px inside the row on each side (the -mx keeps the text at the title's x): the selection no longer runs to the edges
+					className={cn("-mx-1 w-[calc(100%+0.5rem)] min-w-0 rounded-sm border-0 border-b border-border bg-transparent px-1 text-foreground outline-none", compact ? sidebarNameFont(true) : "lh-input")}
 				/>
 				{!compact && <span className="block truncate text-xs text-muted-foreground">{sessionMeta(chat)}</span>}
 			</span>
@@ -1120,7 +1123,8 @@ function SessionsSidebar() {
 							<LhMark className="size-6" />
 						</Link>
 					</Hint>
-					<Hint label="Close sidebar" action="toggle-sidebar">
+					{/* to the side (UI round 8, SPEC §9): above it there is no room, and below it covered the Practice button */}
+					<Hint label="Close sidebar" action="toggle-sidebar" side="right">
 						<Button
 							variant="ghost"
 							size="icon"
@@ -1168,6 +1172,8 @@ function SessionsSidebar() {
 				    sessions, which they are made of. */}
 				<CoursesSection onCourses={setCourses} query={query} />
 
+				{/* UI round 8 (SPEC §9 empty states): no search, filter or folder button over an empty list */}
+				{chats !== null && chats.length === 0 && !query ? null : (
 				<div className="mx-3 mb-2 flex flex-col gap-2">
 					<Hint label="Search sessions" action="sessions-search" side="bottom">
 					<span className="relative min-w-0 flex-1">
@@ -1275,6 +1281,7 @@ function SessionsSidebar() {
 				</div>
 
 				</div>
+				)}
 
 					{folderFailure && (
 					<div role="alert" data-testid="sidebar-folder-error" className="mx-3 mt-2 flex items-start gap-2 text-xs text-error">
@@ -1428,7 +1435,7 @@ function SessionsSidebar() {
 					<MenuShell onClose={() => { setCtxFolderId(null); return "closed"; }}
 						anchorRef={folderAnchorRef}
 						testid="folder-context-menu"
-						preferredSide="down"
+						preferredSide="right"
 						menuClass="flex w-52 flex-col gap-0.5 lh-menu"
 					>
 						<button

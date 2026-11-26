@@ -125,7 +125,7 @@ describe("the result card", () => {
 		assert.match(out, /Solved it alone\./);
 		assert.match(out, />Practice this skill</);
 		assert.match(out, />Next: Chain rule</);
-		assert.match(out, />Back to the course</);
+		assert.match(out, />Back to the class</);
 	});
 
 	it("leaves out what it does not have", () => {

@@ -22,7 +22,7 @@ export function PaceSection({
 		<SettingsGroup label="Pace" testid="group-pace">
 			<SettingsRow
 				label="Default pace"
-				hint={`${paceInfo(current).blurb}. New sessions start here; a course can set its own, and each session can change its own`}
+				hint={`${paceInfo(current).blurb}. New sessions start here; a class can set its own, and each session can change its own`}
 				testid="row-default-pace"
 			>
 				<ThinSelect

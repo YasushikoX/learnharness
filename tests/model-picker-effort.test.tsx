@@ -78,7 +78,9 @@ describe("the model and effort pill", () => {
 		const pill = byId("stats-model")!;
 		assert.ok(pill, "the model pill");
 		const text = pill.textContent ?? "";
-		assert.match(text, /claude-sonnet/);
+		// the catalog's display name, as in the menu (UI round 8, SPEC §9), not the raw id
+		assert.match(text, /Claude Sonnet/);
+		assert.doesNotMatch(text, /claude-sonnet/);
 		assert.match(text, /·/);
 		assert.match(text, /medium/i);
 		assert.equal(byId("stats-thinking"), null, "the effort is not a second control");

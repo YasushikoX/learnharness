@@ -111,6 +111,21 @@ export function updateNote(courseId: string, noteId: string, patch: { title?: un
 	return next;
 }
 
+/** Put a note's title, its owner and its date back exactly as they were (Short question's Undo of a rename or redate,
+ *  WP9 review 1 finding 13). Null for an unknown note or a bad value. */
+export function restoreNoteFields(courseId: string, noteId: string, fields: { title: string; titleBy?: "auto" | "learner"; date: string }): LectureNote | null {
+	const note = getNote(courseId, noteId);
+	const title = normalizeNoteTitle(fields.title);
+	const date = parseNoteDate(fields.date);
+	if (!note || !title || !date) return null;
+	const next: LectureNote = { ...note, title, date, updatedAt: new Date().toISOString() };
+	if (fields.titleBy) next.titleBy = fields.titleBy;
+	else delete next.titleBy;
+	writeNote(next);
+	emit("courses-changed", {});
+	return next;
+}
+
 /** What the notes are about, as read from them: an automatic title takes it (the learner's own title is left alone). */
 export function setNoteTopic(courseId: string, noteId: string, topic: string): void {
 	const note = getNote(courseId, noteId);

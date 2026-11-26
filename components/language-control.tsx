@@ -123,7 +123,7 @@ export function LanguageControl({ chatId, courseId, variant = "pill" }: { chatId
 
 	return (
 		<div ref={containerRef} className="relative flex items-center" data-testid="language-control">
-			<Hint label={courseId ? "Course language" : chatId ? "Lesson language" : "Language for new lessons"} side="bottom">
+			<Hint label={courseId ? "Class language" : chatId ? "Lesson language" : "Language for new lessons"} side="bottom">
 				<button
 					type="button"
 					data-testid="stats-language"
@@ -143,8 +143,10 @@ export function LanguageControl({ chatId, courseId, variant = "pill" }: { chatId
 				<MenuShell
 					anchorRef={containerRef}
 					testid="language-menu"
-					preferredSide="up"
-					menuClass="flex w-48 flex-col gap-0.5 lh-menu"
+					// UI round 8 (SPEC §9): the class panel's menu opens under its button, inside the panel; the composer's opens up
+					preferredSide={courseId ? "down" : "up"}
+					align="left"
+					menuClass="flex w-56 flex-col gap-0.5 lh-menu"
 				>
 					{error && <div className="mb-1.5 text-destructive">{error}</div>}
 					{LESSON_LANGUAGES.map((l) => (
@@ -153,16 +155,15 @@ export function LanguageControl({ chatId, courseId, variant = "pill" }: { chatId
 							type="button"
 							data-testid={`language-option-${l.id}`}
 							onClick={() => void pick(l.id)}
-							className={`flex items-center justify-between rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted ${
-								l.id === current ? "text-foreground" : "text-muted-foreground"
-							}`}
+							aria-current={l.id === current ? "true" : undefined}
+							className="lh-menu-item justify-between text-foreground"
 						>
 							<span>{l.label}</span>
 							{l.id === current && <span aria-hidden>✓</span>}
 						</button>
 					))}
 					<div className="mt-1 border-t px-2 pt-1.5 text-xs text-muted-foreground">
-						{courseId ? "This course's language — its skill map and sessions" : chatId ? "This lesson's language — teaching and dictation" : "Default for new lessons"}
+						{courseId ? "This class's language — its skill map and sessions" : chatId ? "This lesson's language — teaching and dictation" : "Default for new lessons"}
 					</div>
 				</MenuShell>
 			)}

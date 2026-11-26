@@ -2,6 +2,8 @@
 
 import { buttonVariants } from "@/components/ui/button";
 import Link from "next/link";
+import { useState } from "react";
+import { PlusIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { TodayCourse } from "@/src/core";
 import { SidebarToggle } from "@/components/sidebar";
@@ -26,12 +28,15 @@ const ROW = "flex min-h-11 items-center justify-between gap-3 py-1.5 text-body";
 /** One reading column for the page and its header (a list reads best at the settings width, SPEC §2). */
 const COLUMN = "mx-auto w-full max-w-3xl px-4 sm:px-6";
 
-/** "15 days to the exam", "exam today", "exam passed", or nothing without a date. Pure. */
-export function examDaysLine(daysLeft: number | undefined): string | null {
+/** "15 days to Quiz 3", "Quiz 3 today", "Quiz 3 passed" — the assessment by its own name (UI round 8, SPEC §9); "the exam"
+ *  only for the old single exam date. Nothing without a date. Pure. */
+export function examDaysLine(daysLeft: number | undefined, title?: string): string | null {
 	if (daysLeft === undefined) return null;
-	if (daysLeft < 0) return "exam passed";
-	if (daysLeft === 0) return "exam today";
-	return daysLeft === 1 ? "1 day to the exam" : `${daysLeft} days to the exam`;
+	const name = title ?? "the exam";
+	const bare = title ?? "exam";
+	if (daysLeft < 0) return `${bare} passed`;
+	if (daysLeft === 0) return `${bare} today`;
+	return daysLeft === 1 ? `1 day to ${name}` : `${daysLeft} days to ${name}`;
 }
 
 /** The page's next task (UI round 1b): the first course's review when one is due, else its first lesson. Pure. */
@@ -47,8 +52,19 @@ export function todayHero(courses: readonly TodayCourse[]): { courseId: string; 
 const reviewText = (c: TodayCourse) => (c.reviewBatch < c.reviewDue ? `Review · ${c.reviewBatch} of ${c.reviewDue}` : `Review · ${c.reviewDue}`);
 const DUE_DOT = <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: "var(--lh-due)" }} />;
 
-export function TodayPage({ initial }: { initial: TodayCourse[] }) {
+export function TodayPage({ initial, hasClasses = true }: { initial: TodayCourse[]; /** Any class at all (first run: none). */ hasClasses?: boolean }) {
 	const router = useRouter();
+	const [creating, setCreating] = useState(false);
+	const newClass = async () => {
+		setCreating(true);
+		try {
+			const res = await fetch("/api/courses", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+			const { id } = (await res.json()) as { id: string };
+			router.push(`/course/${id}`);
+		} catch {
+			setCreating(false);
+		}
+	};
 	const courses = useTodayCourses(initial) ?? initial;
 	const { busy, startReview } = useStartReview();
 	const count = todayItemCount(courses);
@@ -65,9 +81,19 @@ export function TodayPage({ initial }: { initial: TodayCourse[] }) {
 				</div>
 			</header>
 			<div className={cn(COLUMN, "pb-16 pt-4")} data-testid="today-page">
-				{count === 0 ? (
+				{count === 0 && !hasClasses ? (
+					// First run (UI round 8, SPEC §9): say what to do first, and offer the button for it
+					<section className={cn(HERO_CARD, "space-y-2")} data-testid="today-empty">
+						<h2 className="lh-section-title text-foreground">Start with a class</h2>
+						<p className="text-body text-muted-foreground">A class holds your course files. LearnHarness turns them into a skill map, then plans what to learn and review each day.</p>
+						<button type="button" className={cn(BTN_PRIMARY, "mt-2")} disabled={creating} data-testid="today-new-class" onClick={() => void newClass()}>
+							<PlusIcon aria-hidden />
+							New class
+						</button>
+					</section>
+				) : count === 0 ? (
 					<p className="text-sm text-muted-foreground" data-testid="today-empty">
-						Nothing to review or learn today. Open a course to practice or learn ahead.
+						Nothing to review or learn today. Open a class to practice or learn ahead.
 					</p>
 				) : (
 					<div className="space-y-8">
@@ -80,10 +106,10 @@ export function TodayPage({ initial }: { initial: TodayCourse[] }) {
 									<Link href={`/course/${heroCourse.courseId}`} className="min-w-0 truncate hover:text-foreground hover:underline">
 										{heroCourse.title}
 									</Link>
-									{examDaysLine(heroCourse.daysLeft) && (
+									{examDaysLine(heroCourse.daysLeft, heroCourse.examTitle) && (
 										<>
 											<span aria-hidden>·</span>
-											<span className="shrink-0 whitespace-nowrap">{examDaysLine(heroCourse.daysLeft)}</span>
+											<span className="shrink-0 whitespace-nowrap">{examDaysLine(heroCourse.daysLeft, heroCourse.examTitle)}</span>
 										</>
 									)}
 								</div>
@@ -114,7 +140,7 @@ export function TodayPage({ initial }: { initial: TodayCourse[] }) {
 							</section>
 						)}
 						{courses.map((c) => {
-							const days = examDaysLine(c.daysLeft);
+							const days = examDaysLine(c.daysLeft, c.examTitle);
 							const showReview = c.reviewDue > 0 && !(hero?.kind === "review" && hero.courseId === c.courseId);
 							const lessons = c.lessons.filter((l) => !(hero?.kind === "learn" && hero.courseId === c.courseId && hero.skillId === l.skillId));
 							if (!showReview && lessons.length === 0) return null;

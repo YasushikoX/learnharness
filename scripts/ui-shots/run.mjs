@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { access, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -103,10 +103,47 @@ async function atLessonComposer(profile, visit) {
 	const earlier = join(profile, "lesson-before-question.json");
 	await rename(chat, pending);
 	try {
-		await rename(earlier, chat);
+		// a copy, so the composer can be visited more than once (UI round 8)
+		await copyFile(earlier, chat);
 		await visit();
 	} finally {
 		await rename(pending, chat);
+	}
+}
+
+async function withCourse(profile, courseId, patch, visit) {
+	// UI round 8: a state the server reads from the record (a failed pass's error), written straight into the class's
+	// file for one visit and put back after. The course store reads the file on every request.
+	const file = join(profile, "data", "courses", `${courseId}.json`);
+	const original = await readFile(file, "utf8");
+	await writeFile(`${file}.tmp`, JSON.stringify(patch(JSON.parse(original)), null, "\t"));
+	await rename(`${file}.tmp`, file);
+	try {
+		await visit();
+	} finally {
+		await writeFile(`${file}.tmp`, original);
+		await rename(`${file}.tmp`, file);
+	}
+}
+
+async function withEmptyLibrary(profile, visit) {
+	// UI round 8: the first-run states (no classes, no sessions, nothing today). The stores list these directories on
+	// every read; empty ones stand in for the seeded ones during the visit. The session folders go too (no file = none).
+	const dirs = ["courses", "chats"].map(name => join(profile, "data", name));
+	const folders = join(profile, "data", "graph", "source-organization.json");
+	for (const dir of dirs) {
+		await rename(dir, `${dir}.hidden`);
+		await mkdir(dir);
+	}
+	await rename(folders, `${folders}.hidden`);
+	try {
+		await visit();
+	} finally {
+		for (const dir of dirs) {
+			await rm(dir, { recursive: true, force: true });
+			await rename(`${dir}.hidden`, dir);
+		}
+		await rename(`${folders}.hidden`, folders);
 	}
 }
 
@@ -119,6 +156,8 @@ async function captureTheme({ browser, profile, origin, port, theme, stage }) {
 		return await captureScreens({
 			page: await context.newPage(), origin, theme, stage, signal: signal.signal,
 			withLessonComposer: visit => atLessonComposer(profile, visit),
+			withCourse: (courseId, patch, visit) => withCourse(profile, courseId, patch, visit),
+			withEmptyLibrary: visit => withEmptyLibrary(profile, visit),
 		});
 	} finally {
 		try {
@@ -178,7 +217,7 @@ async function main() {
 		});
 		const newFiles = new Set(entries.map(entry => entry.file));
 		for (const { file } of entries) await rename(join(stage, file), join(out, file));
-		for (const [, file] of oldIndex.matchAll(/^- (\d{2}-[a-z0-9-]+-(?:dark|light)\.png) — /gm)) {
+		for (const [, file] of oldIndex.matchAll(/^- (\d{2}[a-z]?-[a-z0-9-]+-(?:dark|light)\.png) — /gm)) {
 			if (!newFiles.has(file)) await rm(join(out, file), { force: true });
 		}
 		await rename(join(stage, "index.md"), join(out, "index.md"));
@@ -190,7 +229,8 @@ async function main() {
 			if (!closed) browser.process()?.kill("SIGKILL");
 		}
 		await rm(scratch, { recursive: true, force: true });
-		if (stage) await rm(stage, { recursive: true, force: true });
+		// LH_UI_SHOTS_KEEP_STAGE=1 keeps a failed run's shots (in <out>/.ui-shots-*), for working on the kit
+		if (stage && process.env.LH_UI_SHOTS_KEEP_STAGE !== "1") await rm(stage, { recursive: true, force: true });
 	}
 }
 

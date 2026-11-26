@@ -45,7 +45,8 @@ describe("RenameRow — the inline rename surface", () => {
 		// and the input is the ONLY shift-proof editing cue (underline).
 		assert.ok(!html.includes("w-3.5 shrink-0"), "no always-on spacer (idle rows have none)");
 		const input = html.split('data-testid="session-rename-input"')[1]?.split("/>")[0] ?? "";
-		assert.ok(input.includes("px-0"), "input carries no left padding");
+		// UI round 8: a 4px inset for the selection, cancelled by -mx-1, so the text still starts at the title's x
+		assert.ok(input.includes("-mx-1") && input.includes("px-1"), "the text stays at the title's x");
 		assert.ok(input.includes("border-b"), "the underline is the editing cue");
 		assert.ok(!input.includes("bg-background"), "no filled field box — text stays put");
 	});
@@ -120,7 +121,7 @@ describe("DeleteSessionDialog — the node-dialog shape (owner flow rework 2026-
 		);
 		assert.match(html, /data-testid="delete-cancel"[^>]*>Cancel</);
 		const del = html.match(/data-testid="delete-confirm"[^>]*>/)?.[0] ?? "";
-		assert.match(del, /bg-destructive text-white/);
+		assert.match(del, /bg-\[#dc2626\] text-white/, "the solid danger fill, white text in both themes (UI round 8)");
 		assert.match(html, /data-testid="delete-confirm"[^>]*>Deleting…</); // busy label on Delete
 		// the checkbox survives a busy render (disabled, not unmounted)
 		assert.match(html, /data-testid="delete-traces-checkbox"[^>]*disabled=""/);

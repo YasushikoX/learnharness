@@ -260,7 +260,7 @@ test("an opened skill shows what it needs as chips with a check or a lock, a com
 	await mount();
 	await expand("a"); // locked: needs B, and B is learned in this fixture
 	const chips = byTestId("skill-needs-a")!;
-	assert.match(chips.textContent ?? "", /needs/);
+	assert.match(chips.textContent ?? "", /^Needs/);
 	const chip = chips.querySelector("[data-testid='prereq-chip']")!;
 	assert.equal(chip.getAttribute("data-learned"), "true", "B is learned: a check");
 	assert.ok(chip.querySelector("svg"), "the state is an icon, not only a colour");
@@ -276,12 +276,13 @@ test("More opens the rest: the full statement, the evidence behind the weight, t
 	await mount();
 	await expand("b");
 	assert.equal(byTestId("skill-more-body-b"), null, "closed by default");
-	assert.equal(byTestId("skill-more-b")?.textContent, "More ›");
+	assert.equal(byTestId("skill-more-b")?.textContent, "More");
+	assert.ok(byTestId("skill-more-b")?.querySelector("svg.lucide-chevron-right"), "a chevron icon, not a text glyph");
 	await click("skill-more-b");
 	const body = byTestId("skill-more-body-b")!;
 	assert.ok(body.querySelector("[data-testid='weight-note-b']"), "the weight evidence");
 	assert.match(body.textContent ?? "", /Do b/, "the full statement");
-	assert.equal(byTestId("skill-more-b")?.textContent, "Less ‹");
+	assert.equal(byTestId("skill-more-b")?.textContent, "Less");
 	await click("skill-more-b");
 	assert.equal(byTestId("skill-more-body-b"), null);
 });
@@ -291,7 +292,7 @@ test("the due figure reads now, tomorrow, days, or a dash", () => {
 	assert.equal(dueShort({ learned: false, reviewAt: null }, at), "—");
 	assert.equal(dueShort({ learned: true, reviewAt: "2026-11-14T10:00:00Z" }, at), "now");
 	assert.equal(dueShort({ learned: true, reviewAt: "2026-11-15T10:00:00Z" }, at), "tomorrow");
-	assert.equal(dueShort({ learned: true, reviewAt: "2026-11-17T12:00:00Z" }, at), "3 d");
+	assert.equal(dueShort({ learned: true, reviewAt: "2026-11-17T12:00:00Z" }, at), "3 days");
 });
 
 test("row buttons live in the opened detail: next up gets Learn and Practice, learned-not-known gets Practice and Learn again, a known or context-check skill gets Practice (a context-check skill also Quick check)", async () => {

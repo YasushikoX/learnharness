@@ -21,7 +21,7 @@ export interface DeleteDialogCopy {
 	testid: string;
 	heading: string;
 	body: string;
-	/** The body when the deletion takes (or may take) course progress: the graph promise, qualified. */
+	/** The body when the deletion takes (or may take) class progress: the graph promise, qualified. */
 	courseLossBody: string;
 	/** How many sessions the deletion removes (the course-loss wording's numbers). */
 	sessions: number;
@@ -33,15 +33,15 @@ export const SESSION_DELETE_COPY: DeleteDialogCopy = {
 	testid: "delete-session-dialog",
 	heading: "Delete session?",
 	body: "This permanently removes the session — its messages, background jobs, and extraction records. Everything it added to the graph stays unless you check below. This cannot be undone.",
-	courseLossBody: "This permanently removes the session — its messages, background jobs, and extraction records. Everything it added to the graph stays unless you check below, except its course progress. This cannot be undone.",
+	courseLossBody: "This permanently removes the session — its messages, background jobs, and extraction records. Everything it added to the graph stays unless you check below, except its class progress. This cannot be undone.",
 	sessions: 1,
 	traces: TRACES_COPY,
 };
 
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-/** What a delete dialog knows about the course progress the deletion takes (POST /api/courses/deletion-impact).
- *  Merge review finding 1: skill progress is derived from the course sessions' transcripts, so it goes with them in
+/** What a delete dialog knows about the class progress the deletion takes (POST /api/courses/deletion-impact).
+ *  Merge review finding 1: skill progress is derived from the class sessions' transcripts, so it goes with them in
  *  either mode — the dialog must say so instead of promising that everything stays. */
 export type CourseLoss = { status: "checking" } | { status: "unknown" } | { status: "known"; impact: CourseDeletionImpact };
 
@@ -53,17 +53,17 @@ function courseNames(impact: CourseDeletionImpact): string {
 		if (c.title === null) deleted++;
 		else named.push(`“${c.title}”`);
 	}
-	const parts = deleted > 0 ? [...named, deleted === 1 ? "a deleted course" : `${deleted} deleted courses`] : named;
-	return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0] ?? "a course";
+	const parts = deleted > 0 ? [...named, deleted === 1 ? "a deleted class" : `${deleted} deleted classes`] : named;
+	return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0] ?? "a class";
 }
 
-/** True when the deletion takes, or may take, course progress (the qualified body shows). */
+/** True when the deletion takes, or may take, class progress (the qualified body shows). */
 export function mayLoseCourseProgress(loss: CourseLoss | undefined): boolean {
 	return loss !== undefined && (loss.status !== "known" || loss.impact.sessions > 0);
 }
 
 /** The plain-words course-progress line under the body, or null when nothing is lost. `total` is how many sessions
- *  the deletion removes, so the line can say how many of them are course sessions. Set `eitherMode: false` when the
+ *  the deletion removes, so the line can say how many of them are class sessions. Set `eitherMode: false` when the
  *  loss is already conditional on a checkbox (the graph Sources dialog) instead of happening in both modes below. */
 export function courseLossWarning(
 	loss: CourseLoss | undefined,
@@ -72,24 +72,24 @@ export function courseLossWarning(
 ): string | null {
 	if (!loss) return null;
 	const one = total === 1;
-	if (loss.status === "checking") return `Checking whether ${one ? "this session" : "these sessions"} recorded course progress…`;
+	if (loss.status === "checking") return `Checking whether ${one ? "this session" : "these sessions"} recorded class progress…`;
 	if (loss.status === "unknown") {
 		return one
-			? "Couldn’t check whether this session recorded course progress. If it came from a course, the skills it taught or checked lose that progress."
-			: "Couldn’t check whether these sessions recorded course progress. If any came from a course, the skills they taught or checked lose that progress.";
+			? "Couldn’t check whether this session recorded class progress. If it came from a class, the skills it taught or checked lose that progress."
+			: "Couldn’t check whether these sessions recorded class progress. If any came from a class, the skills they taught or checked lose that progress.";
 	}
 	const { sessions, skills } = loss.impact;
 	if (sessions === 0) return null;
 	const from = courseNames(loss.impact);
 	const who = one
-		? `This is a course session from ${from}.`
+		? `This is a class session from ${from}.`
 		: sessions === total
-			? `${total === 2 ? "Both" : `All ${total}`} sessions are course sessions, from ${from}.`
-			: `${sessions} of these ${total} sessions ${sessions === 1 ? "is a course session" : "are course sessions"}, from ${from}.`;
+			? `${total === 2 ? "Both" : `All ${total}`} sessions are class sessions, from ${from}.`
+			: `${sessions} of these ${total} sessions ${sessions === 1 ? "is a class session" : "are class sessions"}, from ${from}.`;
 	const it = sessions === 1 ? "it" : "they";
 	const what = skills > 0 ? `the ${count(skills, "skill", "skills")} ${it} taught or checked ${skills === 1 ? "loses" : "lose"}` : `the skills ${it} taught or checked lose`;
 	const suffix = eitherMode ? ", whichever you choose below." : ".";
-	return `${who} Deleting ${sessions === 1 ? "it" : "them"} also deletes the course progress ${it} recorded: ${what} that progress${suffix}`;
+	return `${who} Deleting ${sessions === 1 ? "it" : "them"} also deletes the class progress ${it} recorded: ${what} that progress${suffix}`;
 }
 
 /** Ask the server what deleting these sessions takes from the courses; null ids = the dialog is closed. Every open or
@@ -139,7 +139,7 @@ export function folderDeleteCopy(input: { sessions: number; subfolders: number; 
 		testid: "delete-folder-dialog",
 		heading: "Delete folder?",
 		body: `${removes} Everything they added to the graph stays unless you check below.${notes} This cannot be undone.`,
-		courseLossBody: `${removes} Everything they added to the graph stays unless you check below, except their course progress.${notes} This cannot be undone.`,
+		courseLossBody: `${removes} Everything they added to the graph stays unless you check below, except their class progress.${notes} This cannot be undone.`,
 		sessions: input.sessions,
 		traces: {
 			title: "Also remove their graph traces",

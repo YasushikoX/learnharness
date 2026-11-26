@@ -62,7 +62,8 @@ const MIN_USABLE = 96; // floor: a shorter cap is an unusable sliver; the
 export const MENU_OPEN_EVENT = "lh:menu-open";
 export const MENU_CLOSE_EVENT = "lh:menu-close";
 
-export type MenuSide = "up" | "down";
+/** "right": beside the anchor (a sidebar row's menu, UI round 8: it never covers the rows under it). */
+export type MenuSide = "up" | "down" | "right";
 export type MenuAlign = "left" | "right";
 
 /** One placement decision. `style` is the fixed-position payload; the side
@@ -92,6 +93,16 @@ export function computeMenuPlacement(
 	/** The system bars (px) the Android shell reports; a menu never opens under the status bar or the gesture bar. */
 	safe: { top: number; bottom: number } = { top: 0, bottom: 0 },
 ): MenuPlacement {
+	if (preferredSide === "right") {
+		// beside the anchor, its top on the anchor's top, kept inside the window; the left side when the right has no room
+		const maxWidth = Math.max(0, viewport.width - 2 * EDGE);
+		const width = contentWidth > 0 ? Math.min(contentWidth, maxWidth) : 0;
+		const horizontal: Record<string, number> = rect.right + GAP + width <= viewport.width - EDGE ? { left: rect.right + GAP } : { right: Math.max(EDGE, viewport.width - rect.left + GAP) };
+		const room = viewport.height - (EDGE + safe.bottom) - (EDGE + safe.top);
+		const height = contentHeight > 0 ? Math.min(contentHeight, room) : 0;
+		const top = Math.max(EDGE + safe.top, Math.min(rect.top, viewport.height - (EDGE + safe.bottom) - height));
+		return { side: "right", style: { ...horizontal, top }, maxHeight: Math.max(MIN_USABLE, room), maxWidth };
+	}
 	const availDown = viewport.height - (EDGE + safe.bottom) - (rect.bottom + GAP);
 	const availUp = rect.top - GAP - (EDGE + safe.top);
 	// contentHeight ≤ 0 (nothing measured yet) keeps the preferred side —

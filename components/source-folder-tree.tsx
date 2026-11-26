@@ -3,7 +3,7 @@
 import { createContext, useContext, useLayoutEffect, useRef, useState, type DragEvent, type HTMLAttributes, type ReactNode } from "react";
 import { FolderIcon, FolderOpenIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { canMoveFolder, folderIsEmpty, fuzzyScore, placementOf, folderEntryCheck, type SourceEntrySelection, type OrganizationAction, type SourceDirectory } from "@/src/core";
+import { canMoveFolder, dayLabel, folderIsEmpty, fuzzyScore, placementOf, folderEntryCheck, type SourceEntrySelection, type OrganizationAction, type SourceDirectory } from "@/src/core";
 import type { ChainSort } from "./chain-table";
 import { chainRow } from "./chain-navigation";
 import { TreeCell, TreeCheckbox, TreeDisclosure, TreeGuide, TreeSeparator, treeBranchLayout, treeRowLayout } from "./tree-presentation";
@@ -203,7 +203,7 @@ export function SourceFolderTree<T extends TreeSource>({ groups, directory, quer
 					{onAction ? <EditableSourceName name={folder.name} onSave={(name) => onAction({ action: "rename-folder", id: folder.id, name })} />
 						: <span className="min-w-0 flex-1 truncate text-sm font-medium">{folder.name}</span>}
 					<TreeCell widthClassName="w-14" align="right" className="text-xs tabular-nums text-muted-foreground">{members.length}</TreeCell>
-					<TreeCell widthClassName="w-20" align="right" className="text-xs tabular-nums text-muted-foreground">{folder.createdAt.slice(0, 10)}</TreeCell>
+					<TreeCell widthClassName="w-24" align="right" className="text-xs tabular-nums text-muted-foreground">{dayLabel(folder.createdAt)}</TreeCell>
 				</SourceDragRow>
 				{open && hasChildren && <TreeGuide selectionColumn through depth={depth} data-testid={`folder-thread-${folder.id}`} />}
 				{open && renderLevel(folder.id, depth + 1)}

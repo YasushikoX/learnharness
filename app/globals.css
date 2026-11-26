@@ -92,6 +92,8 @@
 	/* Floating layers (SPEC §3): the dialog scrim and the menu/popover/dialog shadow, per variant (.light below). */
 	--lh-scrim: rgb(0 0 0 / 0.6);
 	--lh-shadow-pop: 0 8px 28px rgb(0 0 0 / 0.5);
+	/* A tooltip's small shadow (UI round 8, SPEC §9). */
+	--lh-shadow-tip: 0 2px 8px rgb(0 0 0 / 0.4);
 	/* The strong line ink: plan-map outlines, callout borders, the LH mark. */
 	--lh-line-strong: #ededf0;
 	/* Skill understanding ramp (owner, 2026-11-09: color on the course page): steps 1-10 are the 0-10 understanding scale,
@@ -135,6 +137,7 @@
 	color-scheme: light;
 	--lh-scrim: rgb(0 0 0 / 0.32);
 	--lh-shadow-pop: 0 8px 28px rgb(0 0 0 / 0.12);
+	--lh-shadow-tip: 0 2px 8px rgb(0 0 0 / 0.12);
 }
 
 /* CMU Serif bold — bundled local file, no CDN dependency. Titles no longer use it (UI round 1: one sans for chrome and
@@ -370,6 +373,136 @@
 	.lh-scrim {
 		animation: none;
 	}
+}
+
+/* The class side panel arrives with a short fade and an 8px slide (UI round 8): on the first file, and as the 1024 sheet. */
+@keyframes lh-panel-in {
+	from {
+		opacity: 0;
+		translate: 8px 0;
+	}
+	to {
+		opacity: 1;
+		translate: 0 0;
+	}
+}
+.lh-panel-in {
+	animation: lh-panel-in var(--lh-duration-pop) var(--lh-ease);
+}
+@media (prefers-reduced-motion: reduce) {
+	.lh-panel-in {
+		animation: none;
+	}
+}
+
+/* THE CHECKBOX (UI round 8, SPEC §9): 16px, radius 4, a 1px input border on the field fill; on = the accent fill with a
+   white tick; disabled = 45%. Native semantics, drawn by CSS (no grey OS box in the dark theme). */
+.lh-checkbox {
+	appearance: none;
+	-webkit-appearance: none;
+	flex-shrink: 0;
+	width: 16px;
+	height: 16px;
+	margin: 0;
+	border-radius: 4px;
+	border: 1px solid var(--input);
+	background: var(--card);
+	display: inline-grid;
+	place-content: center;
+	cursor: pointer;
+	transition: background-color var(--lh-duration-hover) var(--lh-ease), border-color var(--lh-duration-hover) var(--lh-ease);
+}
+.lh-checkbox::before {
+	content: "";
+	width: 10px;
+	height: 10px;
+	scale: 0;
+	background: #fff;
+	clip-path: polygon(14% 44%, 0 59%, 40% 100%, 100% 22%, 86% 8%, 39% 70%);
+	transition: scale var(--lh-duration-hover) var(--lh-ease);
+}
+.lh-checkbox:checked {
+	background: var(--primary);
+	border-color: var(--primary);
+}
+.lh-checkbox:checked::before {
+	scale: 1;
+}
+.lh-checkbox:focus-visible {
+	outline: none;
+	box-shadow: 0 0 0 2px var(--lh-focus-ring);
+}
+.lh-checkbox:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+
+/* THE RANGE (UI round 8, SPEC §9): a 4px raised track filled with the accent up to the value, a 14px thumb on the card
+   fill with a hairline and a small shadow; the same in both themes (the OS drew a light track in the dark theme). */
+.lh-range {
+	appearance: none;
+	-webkit-appearance: none;
+	height: 14px;
+	background: transparent;
+	cursor: pointer;
+}
+.lh-range:disabled {
+	cursor: not-allowed;
+}
+.lh-range::-webkit-slider-runnable-track {
+	height: 4px;
+	border-radius: 9999px;
+	background: linear-gradient(to right, var(--primary) var(--lh-range-fill, 50%), var(--lh-raised-strong) var(--lh-range-fill, 50%));
+}
+.lh-range::-moz-range-track {
+	height: 4px;
+	border-radius: 9999px;
+	background: var(--lh-raised-strong);
+}
+.lh-range::-moz-range-progress {
+	height: 4px;
+	border-radius: 9999px;
+	background: var(--primary);
+}
+.lh-range::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	appearance: none;
+	width: 14px;
+	height: 14px;
+	margin-top: -5px;
+	border-radius: 9999px;
+	background: var(--card);
+	border: 1px solid var(--input);
+	box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+}
+.lh-range::-moz-range-thumb {
+	width: 14px;
+	height: 14px;
+	border-radius: 9999px;
+	background: var(--card);
+	border: 1px solid var(--input);
+	box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+}
+.lh-range:focus-visible {
+	outline: none;
+}
+.lh-range:focus-visible::-webkit-slider-thumb {
+	box-shadow: 0 0 0 3px var(--lh-focus-ring);
+}
+
+/* A list inside a form shows whole 28px rows only (SPEC §9): 5 rows, then it scrolls under a soft bottom fade. */
+.lh-row-list {
+	/* five 28px rows plus the box's 2px padding and 1px border on each side */
+	max-height: calc(140px + 6px);
+	overflow-y: auto;
+	scroll-snap-type: y proximity;
+}
+.lh-row-list > * {
+	min-height: 28px;
+	scroll-snap-align: start;
+}
+.lh-row-list[data-overflow="true"] {
+	mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent);
 }
 
 /* Type roles that need more than a size (SPEC §1). */

@@ -42,6 +42,14 @@ export function updateLectureNote(courseId: string, noteId: string, patch: NoteI
 	return courseExists(courseId) ? notes.updateNote(courseId, noteId, patch) : null;
 }
 
+export function restoreLectureNoteFields(courseId: string, noteId: string, fields: { title: string; titleBy?: "auto" | "learner"; date: string }): LectureNote | null {
+	return courseExists(courseId) ? notes.restoreNoteFields(courseId, noteId, fields) : null;
+}
+
+export function getLectureNote(courseId: string, noteId: string): LectureNote | null {
+	return courseExists(courseId) ? notes.getNote(courseId, noteId) : null;
+}
+
 export function deleteLectureNote(courseId: string, noteId: string): boolean {
 	return courseExists(courseId) && notes.deleteNote(courseId, noteId);
 }

@@ -2322,8 +2322,15 @@ export function Chat({
 														) : null;
 													case "tool-assessment_save":
 													case "tool-assessment_remove":
-													case "tool-record_self_report": {
-														// WP8: a Short question change, as a card with Undo; a refused call shows nothing
+													case "tool-record_self_report":
+													case "tool-lecture_save":
+													case "tool-lecture_remove":
+													case "tool-class_position_set":
+													case "tool-skill_weights_set":
+													case "tool-class_update":
+													case "tool-self_report_retract":
+													case "tool-lecture_note_update": {
+														// WP8, WP9: a Short question change, as a card with Undo; a refused call shows nothing
 														const change = (part.output as { change?: ClassChangeData } | undefined)?.change;
 														return part.state === "output-available" && change && part.toolCallId ? <ClassChangeCard key={pk} chatId={chatId} toolCallId={part.toolCallId} change={change} /> : null;
 													}

@@ -83,18 +83,34 @@ function handoutPdf(lines: string[]): Buffer {
 const sha256 = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
 
 export function seedCurriculum(addedAt: string) {
-	const name = "Unit 3 — Cellular energetics.pdf";
-	const title = "Unit 3: Cellular Energetics";
-	const lines = vocabulary.map(([, definition]) => definition);
+	seedMaterial({
+		owner: ids.biology, id: ids.material, addedAt, name: "Unit 3 — Cellular energetics.pdf", title: "Unit 3: Cellular Energetics",
+		vocabulary: vocabulary.map(([term, definition]) => [term, definition] as const),
+		profile: "## Scope and targets\n\nEnergy coupling, cellular respiration and photosynthesis (p. 1).\n\n"
+			+ "## Approach and order\n\nExplain the movement of carbon and electrons separately from ATP production (p. 1).",
+		summaryBullets: ["Follow electrons into the respiratory chain.", "Explain how a proton gradient powers ATP synthesis."],
+	});
+	// UI round 8: a class with one read file and no skill map yet (no indexed core term, so it has no coverage either)
+	seedMaterial({
+		owner: ids.chemistry, id: ids.chemistryMaterial, addedAt, name: "Week 1 — Functional groups.pdf", title: "Week 1: Functional groups",
+		vocabulary: [],
+		lines: ["Alcohols, aldehydes, ketones and carboxylic acids.", "Naming a molecule from its longest carbon chain."],
+		profile: "## Scope and targets\n\nFunctional groups and IUPAC naming (p. 1).",
+		summaryBullets: ["Recognize the common functional groups.", "Name a molecule from its longest chain."],
+	});
+}
+
+function seedMaterial({ owner, id, addedAt, name, title, vocabulary, lines: extra = [], profile, summaryBullets }: {
+	owner: string; id: string; addedAt: string; name: string; title: string;
+	vocabulary: ReadonlyArray<readonly [string, string]>; lines?: string[]; profile: string; summaryBullets: string[];
+}) {
+	const lines = [...vocabulary.map(([, definition]) => definition), ...extra];
 	const bytes = handoutPdf([title, ...lines]);
 	const contentMd = [formatPageMarker(1), `# ${title}`, ...lines, ""].join("\n\n");
 	const material: LessonMaterial = {
-		id: ids.material, name, file: "source.pdf", kind: "pdf", mimeType: "application/pdf",
-		bytes: bytes.length, pages: 1, addedAt, status: "ready", profileFromDigest: true,
-		profile: "## Scope and targets\n\nEnergy coupling, cellular respiration and photosynthesis (p. 1).\n\n"
-			+ "## Approach and order\n\nExplain the movement of carbon and electrons separately from ATP production (p. 1).",
+		id, name, file: "source.pdf", kind: "pdf", mimeType: "application/pdf",
+		bytes: bytes.length, pages: 1, addedAt, status: "ready", profileFromDigest: true, profile,
 	};
-	const owner = ids.biology;
 	const aux = (filename: string) => materialStore.auxPath(owner, material.id, filename);
 	const pdfPath = materialStore.filePath(owner, material);
 	mkdirSync(dirname(pdfPath), { recursive: true });
@@ -120,7 +136,7 @@ export function seedCurriculum(addedAt: string) {
 		batches: splitMaterial(contentMd).map((batch, index) => ({
 			index, pageStart: batch.pageStart, pageEnd: batch.pageEnd, pages: [...batch.pages], headingPath: [...batch.headingPath],
 			charStart: batch.charStart, charEnd: batch.charEnd, status: "indexed",
-			summaryBullets: ["Follow electrons into the respiratory chain.", "Explain how a proton gradient powers ATP synthesis."],
+			summaryBullets,
 		})),
 	};
 	const stored = JSON.stringify(digest, null, "\t");

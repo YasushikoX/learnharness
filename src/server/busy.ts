@@ -6,6 +6,7 @@ import { compactionsInFlight } from "./compaction.ts";
 import { courseDraftCount, courseWeighCount } from "./courses.ts";
 import { assessmentFindCount } from "./assessments.ts";
 import { courseTermMapCount } from "./course-coverage.ts";
+import { lectureLinkCount } from "./lectures.ts";
 import { wakeWorkCount } from "./jobs.ts";
 import { materialRunCount } from "./materials.ts";
 import { syncStatus } from "./sync-service.ts";
@@ -40,6 +41,7 @@ export function serverBusy(): BusyReport {
 		["exam weights are being read", courseWeighCount()],
 		["a syllabus is being read for quizzes and exams", assessmentFindCount()],
 		["a class's terms are being mapped", courseTermMapCount()],
+		["a class's skills are being placed in its lectures", lectureLinkCount()],
 		["a material is being read", materialRunCount()],
 		["a background model call is running", slots.active + slots.queue.length + workerRequestLoad()],
 		["a sync round is running", syncStatus().running ? 1 : 0],

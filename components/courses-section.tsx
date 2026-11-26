@@ -15,7 +15,7 @@ import { examDaysLabel, filterGroups, folderKey, folderNames, groupCourses } fro
 /**
  * The sidebar's Courses section (fork addition, 2026-10-24 — docs/courses.md
  * §6): one row per course with how much of its curriculum is known, and
- * "+ New course" (creates "Untitled course" and opens its page). Freshness
+ * "+ New course" (creates "Untitled class" and opens its page; the sidebar says "Classes" since 2026-11-25). Freshness
  * rides the events channel like the session list: courses-changed, and
  * every turn settle (a concluded practice problem moves understanding).
  *
@@ -404,26 +404,26 @@ export function CoursesSection({ onCourses, query = "" }: { onCourses?: (courses
 					)}
 				>
 					<GraduationCapIcon className="size-4" strokeWidth={1.75} />
-					Courses
-					{courses !== null && <span className="font-normal tabular-nums text-muted-foreground">{total}</span>}
+					Classes
+					{courses !== null && total > 0 && <span className="font-normal tabular-nums text-muted-foreground">{total}</span>}
 					{bodyOpen ? <ChevronDownIcon className="size-3.5" strokeWidth={1.75} /> : <ChevronRightIcon className="size-3.5" strokeWidth={1.75} />}
 				</button>
 				{/* a quiet + (owner, 2026-11-16): the gold pill was the loudest thing in the sidebar */}
 				<button
 					type="button"
 					data-testid="new-course"
-					title="New course"
+					title="New class"
 					onClick={() => void newCourse()}
 					className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "lh-touch text-muted-foreground hover:text-foreground")}
 				>
 					<PlusIcon strokeWidth={1.75} />
-					<span className="sr-only">New course</span>
+					<span className="sr-only">New class</span>
 				</button>
 			</div>
 			{bodyOpen && (
 				// capped so the sessions below always keep their room; the list scrolls inside
 				<div className="max-h-[35dvh] overflow-y-auto" data-testid="courses-list">
-					{courses !== null && courses.length === 0 && <div className="px-1 py-1 text-xs text-muted-foreground">No courses yet.</div>}
+					{courses !== null && courses.length === 0 && <div className="px-1 py-1 text-xs text-muted-foreground">No classes yet.</div>}
 					{groups?.unfiled.map(renderCourse)}
 					{groups?.folders.map(renderFolder)}
 				</div>

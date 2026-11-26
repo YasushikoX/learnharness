@@ -6,6 +6,7 @@
  */
 
 import type { SketchStroke } from "./contracts/sketch.ts";
+import { dayLabel, dayMonthLabel } from "./dates.ts";
 
 /** One lecture: title and date only. The ink lives in its segment files, so this record changes on rename and redate. */
 export interface LectureNote {
@@ -89,14 +90,17 @@ export function noteDateTag(date: string): string {
 	return `${date.slice(2, 4)}.${date.slice(5, 7)}.${date.slice(8, 10)}`;
 }
 
-/** The title a note gets from its date and what the notes are about: "26.03.12 - Eigenvalues and Eigenvectors"; the date alone before they are read. */
-export function autoTitle(date: string, topic?: string): string {
-	return topic ? `${noteDateTag(date)} - ${topic}` : noteDateTag(date);
+/** The title a note gets from its date and what the notes are about, in the one on-screen date (UI round 8, SPEC §9):
+ *  "Thu 12 Mar · Eigenvalues and Eigenvectors"; the date alone before they are read. The year joins only when the note's
+ *  day is not in the current year. */
+export function autoTitle(date: string, topic?: string, now: number = Date.now()): string {
+	const day = dayLabel(date, now);
+	return topic ? `${day} · ${topic}` : day;
 }
 
-/** The default title for a lecture note dated `date`: the date tag alone. */
-export function defaultNoteTitle(date: string): string {
-	return autoTitle(date);
+/** The default title for a lecture note dated `date`: its day alone ("Thu 12 Mar"). */
+export function defaultNoteTitle(date: string, now: number = Date.now()): string {
+	return autoTitle(date, undefined, now);
 }
 
 /** A title the model wrote, made fit: one line, no quotes, no "Lecture:" label, no date, no final full stop, at most 60 characters on a word edge. null when nothing is left. */
@@ -118,7 +122,8 @@ export function noteLabel(n: Pick<LectureNote, "title" | "titleBy" | "topic">): 
 
 /** Does the title already say the date (an automatic one does)? */
 export function titleShowsDate(n: Pick<LectureNote, "title" | "date">): boolean {
-	return n.title.startsWith(noteDateTag(n.date));
+	// "Thu 12 Mar…" (round 8 on), and the older "26.03.12…" titles a note may still carry
+	return n.title.startsWith(dayMonthLabel(n.date)) || n.title.startsWith(noteDateTag(n.date));
 }
 
 // ─── segments ────────────────────────────────────────────────────────────────
