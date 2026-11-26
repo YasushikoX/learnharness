@@ -9,7 +9,7 @@ import {
 } from "../agent/teacher-agent.ts";
 import { createAskAgent } from "../agent/ask-agent.ts";
 import { classFactsTools } from "../agent/tools/class-facts.ts";
-import { classFactsPort } from "./assessments.ts";
+import { classFactsPort, learnerTimeZone, noteClientTimeZone } from "./assessments.ts";
 import { piEngineForSpec, type PiEngine } from "../agent/models.ts";
 import { connectionBackgroundAllowed as subscriptionBackgroundAllowed, connectionScopeCurrent, isSubscriptionProvider } from "../agent/subscription-connections.ts";
 import { nativeSubscriptionError } from "../agent/subscription-stream.ts";
@@ -256,6 +256,9 @@ export async function handleChatRequest(
 	}
 	const chatId = typeof body.chatId === "string" ? body.chatId : "";
 	if (!chatId) return Response.json({ error: "Unknown chat" }, { status: 404 });
+	// WP8 review 1, finding 3: the browser's time zone (components/session-core.ts), for the dates a Short question
+	// resolves ("next Friday")
+	noteClientTimeZone(chatId, req.headers.get("x-lh-time-zone"));
 	const photo = await normalizePhotoSketch(body.input);
 	if (!photo.ok) return Response.json({ error: photo.error }, { status: 400 });
 	let input: TurnInput;
@@ -987,7 +990,7 @@ export async function handleChatInput(
 						// WP8: the class's quizzes and exams, and what the learner says they know (server/assessments.ts)
 						...((port) => (port ? { classFacts: classFactsTools(port) } : {}))(classFactsPort(chatId)),
 					},
-					agentOpts,
+					((tz) => (tz ? { ...agentOpts, timeZone: tz } : agentOpts))(learnerTimeZone(chatId)),
 				)
 		: course?.mode === "placement" && course.skills
 			? createPlacementAgent({ skills: course.skills, placementSkills: course.placementSkills, sessionModel: conversation }, agentOpts)

@@ -1,20 +1,27 @@
 import { randomUUID } from "node:crypto";
+import * as fs from "node:fs/promises";
 import type { CourseRecord, Skill, UpcomingView } from "../core/contracts.ts";
 import {
 	ASSESSMENT_KINDS,
+	ASSESSMENTS_MAX,
 	CITE_MAX,
 	cleanLine,
 	cleanSkillIds,
+	cleanTimeZone,
 	classifyProposal,
 	courseAssessments,
 	isTombstone,
-	LEGACY_EXAM_ID,
+	LEGACY_ITEM_ID,
 	liveSelfReports,
 	nextAssessment,
 	NOTE_MAX,
 	parseKind,
+	PROPOSAL_ITEMS_MAX,
+	PROPOSAL_SUMMARY_MAX,
 	readAssessmentEntries,
 	readSelfReportEntries,
+	sameAssessment,
+	sameEntry,
 	sanitizeAssessment,
 	SELF_REPORT_STANCES,
 	sortAssessments,
@@ -28,19 +35,23 @@ import {
 	type AssessmentKind,
 	type AssessmentProposal,
 	type AssessmentSource,
+	type ProposedAssessment,
 	type SelfReport,
 	type SelfReportEntry,
 	type SelfReportStance,
 	type Tombstone,
 } from "../core/assessments.ts";
 import { parseExamDate } from "../core/exam-plan.ts";
-import { materialBlock } from "../core/materials.ts";
+import { materialBlock, type LessonMaterial } from "../core/materials.ts";
+import { callUsage } from "../agent/subagents/extraction.ts";
+import { pdfExtract } from "../agent/subagents/pdf-ops.ts";
+import { readConvertedPages } from "../agent/tools/material-content.ts";
 import { DEFAULT_LESSON_LANGUAGE, type LessonLanguage } from "../core/language.ts";
 import { resolveRoleSpec } from "../core/settings-resolution.ts";
 import { mergeSkillLines } from "../core/skills.ts";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import { piEngineForSpec } from "../agent/models.ts";
-import { findAssessments } from "../agent/subagents/assessment-finder.ts";
+import { findAssessments, type MaterialSource } from "../agent/subagents/assessment-finder.ts";
 import { materialTools } from "../agent/tools/materials.ts";
 import { CLASS_CHANGE_TOOLS, type ClassChange, type ClassFactsPort } from "../agent/tools/class-facts.ts";
 import { listMaterials, waitForMaterials } from "./materials.ts";
@@ -99,9 +110,11 @@ export interface AssessmentChange {
 	stamp: string;
 }
 
+type CheckedInput = { kind?: AssessmentKind; title?: string; date?: string | null; topics?: string; skillIds?: string[] };
+
 /** Check an input's fields against the class (skills on its approved map). `partial`: only the fields present. */
-function checkInput(input: AssessmentInput, course: CourseRecord, partial: boolean): Result<{ kind?: AssessmentKind; title?: string; date?: string | null; topics?: string; skillIds?: string[] }> {
-	const out: { kind?: AssessmentKind; title?: string; date?: string | null; topics?: string; skillIds?: string[] } = {};
+function checkInput(input: AssessmentInput, course: CourseRecord, partial: boolean): Result<CheckedInput> {
+	const out: CheckedInput = {};
 	if (input.kind !== undefined || !partial) {
 		const kind = parseKind(input.kind);
 		if (!kind) return { ok: false, status: 400, error: `kind must be one of ${ASSESSMENT_KINDS.join(", ")}` };
@@ -135,41 +148,27 @@ function checkInput(input: AssessmentInput, course: CourseRecord, partial: boole
 	return { ok: true, value: out };
 }
 
-/** Add an assessment. */
-export function createAssessment(courseId: string, input: AssessmentInput, source: AssessmentSource = "manual", cite?: string): Result<AssessmentChange> {
-	const course = stores.courseStore.getCourse(courseId);
-	if (!course) return { ok: false, status: 404, error: "Unknown course" };
-	const checked = checkInput(input, course, false);
-	if (!checked.ok) return checked;
-	const v = checked.value;
-	const entries = readAssessmentEntries(course.assessments);
-	if (entries.filter((e) => !isTombstone(e)).length >= 100) return { ok: false, status: 409, error: "This class already has 100 assessments" };
-	const item: Assessment = {
-		id: `as_${randomUUID().replace(/-/g, "").slice(0, 10)}`,
+const newId = () => `as_${randomUUID().replace(/-/g, "").slice(0, 10)}`;
+const liveCount = (entries: readonly AssessmentEntry[]) => entries.filter((e) => !isTombstone(e)).length;
+const FULL = `This class already has ${ASSESSMENTS_MAX} assessments: remove one first`;
+
+/** A new item from checked fields. Pure. */
+function newItem(v: CheckedInput, source: AssessmentSource, cite?: string, prevStamp?: string): Assessment {
+	return {
+		id: newId(),
 		kind: v.kind!,
 		title: v.title!,
 		...(v.date ? { date: v.date } : {}),
 		topics: v.topics ?? "",
 		skillIds: v.skillIds ?? [],
 		source,
-		updatedAt: stampAfter(),
+		updatedAt: stampAfter(prevStamp),
 		...(cite ? { cite: cleanLine(cite, CITE_MAX) } : {}),
 	};
-	writeAssessments(courseId, [...entries, item]);
-	return { ok: true, value: { action: "added", before: null, after: item, id: item.id, stamp: item.updatedAt } };
 }
 
-/** Change an assessment (only the fields given). The old exam date (LEGACY_EXAM_ID) becomes a real assessment carrying
- *  the edit, and `examDate` is cleared. An edit by the learner makes it theirs: a later syllabus pass keeps it. */
-export function updateAssessment(courseId: string, id: string, input: AssessmentInput, source: Exclude<AssessmentSource, "syllabus"> | "syllabus" = "manual"): Result<AssessmentChange> {
-	const course = stores.courseStore.getCourse(courseId);
-	if (!course) return { ok: false, status: 404, error: "Unknown course" };
-	const checked = checkInput(input, course, true);
-	if (!checked.ok) return checked;
-	const v = checked.value;
-	const entries = readAssessmentEntries(course.assessments);
-	const before = courseAssessments(course).find((a) => a.id === id);
-	if (!before) return { ok: false, status: 404, error: "Unknown assessment" };
+/** An item with checked fields applied over it (only the fields present). Pure. */
+function applyInput(before: Assessment, v: CheckedInput, source: AssessmentSource): Assessment {
 	const merged: Assessment = {
 		...before,
 		...(v.kind ? { kind: v.kind } : {}),
@@ -182,27 +181,71 @@ export function updateAssessment(courseId: string, id: string, input: Assessment
 	if (v.date === null) delete merged.date;
 	else if (v.date) merged.date = v.date;
 	delete merged.legacy;
+	return merged;
+}
+
+/** Add an assessment. Refused (409) when the class already has ASSESSMENTS_MAX: nothing is ever dropped to make room. */
+export function createAssessment(courseId: string, input: AssessmentInput, source: AssessmentSource = "manual", cite?: string): Result<AssessmentChange> {
+	const course = stores.courseStore.getCourse(courseId);
+	if (!course) return { ok: false, status: 404, error: "Unknown course" };
+	const checked = checkInput(input, course, false);
+	if (!checked.ok) return checked;
+	const entries = readAssessmentEntries(course.assessments);
+	if (liveCount(entries) >= ASSESSMENTS_MAX) return { ok: false, status: 409, error: FULL };
+	const item = newItem(checked.value, source, cite);
+	writeAssessments(courseId, [...entries, item]);
+	return { ok: true, value: { action: "added", before: null, after: item, id: item.id, stamp: item.updatedAt } };
+}
+
+/** Change an assessment (only the fields given). An edit by the learner makes it theirs: a later syllabus pass keeps it.
+ *
+ *  The old exam date (LEGACY_EXAM_ID) becomes a real assessment carrying the edit, and `examDate` is cleared. It takes the
+ *  stable id LEGACY_ITEM_ID (review 1, finding 4), so two devices converting it write one item that merges by id; only
+ *  when that id already holds a live item (converted before, and an older device set a new exam date since) does the
+ *  new one get a fresh id, so the earlier item is never overwritten. */
+export function updateAssessment(courseId: string, id: string, input: AssessmentInput, source: AssessmentSource = "manual"): Result<AssessmentChange> {
+	const course = stores.courseStore.getCourse(courseId);
+	if (!course) return { ok: false, status: 404, error: "Unknown course" };
+	const checked = checkInput(input, course, true);
+	if (!checked.ok) return checked;
+	const entries = readAssessmentEntries(course.assessments);
+	const before = courseAssessments(course).find((a) => a.id === id);
+	if (!before) return { ok: false, status: 404, error: "Unknown assessment" };
+	const merged = applyInput(before, checked.value, source);
 	if (before.legacy) {
-		const after: Assessment = { ...merged, id: `as_${randomUUID().replace(/-/g, "").slice(0, 10)}` };
-		writeAssessments(courseId, [...entries, after], { examDate: undefined });
+		const held = entries.find((e) => e.id === LEGACY_ITEM_ID);
+		const stableFree = !held || isTombstone(held);
+		const after: Assessment = { ...merged, id: stableFree ? LEGACY_ITEM_ID : newId(), updatedAt: stampAfter(held?.updatedAt) };
+		if (!stableFree && liveCount(entries) >= ASSESSMENTS_MAX) return { ok: false, status: 409, error: FULL };
+		writeAssessments(courseId, upsertEntry<AssessmentEntry>(entries, after), { examDate: undefined });
 		return { ok: true, value: { action: "updated", before, after, id: after.id, stamp: after.updatedAt } };
 	}
 	writeAssessments(courseId, upsertEntry<AssessmentEntry>(entries, merged));
 	return { ok: true, value: { action: "updated", before, after: merged, id: merged.id, stamp: merged.updatedAt } };
 }
 
-/** Delete an assessment: a tombstone, so the deletion survives a sync. The old exam date: `examDate` is cleared. */
+/** Delete an assessment: a tombstone, so the deletion survives a sync. The old exam date: `examDate` is cleared and the
+ *  deletion is recorded as a tombstone on LEGACY_ITEM_ID, its revision (review 1, finding 4): the card's Undo holds
+ *  only while exactly that tombstone does, so a later clearing of the field never revives it. When LEGACY_ITEM_ID holds
+ *  a live item, the field is cleared with no tombstone and the change offers no Undo (`stamp` ""). */
 export function deleteAssessment(courseId: string, id: string): Result<AssessmentChange> {
 	const course = stores.courseStore.getCourse(courseId);
 	if (!course) return { ok: false, status: 404, error: "Unknown course" };
 	const before = courseAssessments(course).find((a) => a.id === id);
 	if (!before) return { ok: false, status: 404, error: "Unknown assessment" };
+	const entries = readAssessmentEntries(course.assessments);
 	if (before.legacy) {
-		const updated = stores.courseStore.updateCourse(courseId, { examDate: undefined })!;
-		return { ok: true, value: { action: "removed", before, after: null, id: LEGACY_EXAM_ID, stamp: updated.updatedAt } };
+		const held = entries.find((e) => e.id === LEGACY_ITEM_ID);
+		if (held && !isTombstone(held)) {
+			stores.courseStore.updateCourse(courseId, { examDate: undefined });
+			return { ok: true, value: { action: "removed", before, after: null, id: LEGACY_ITEM_ID, stamp: "" } };
+		}
+		const tomb: Tombstone = { id: LEGACY_ITEM_ID, deleted: true, updatedAt: stampAfter(held?.updatedAt) };
+		writeAssessments(courseId, upsertEntry<AssessmentEntry>(entries, tomb), { examDate: undefined });
+		return { ok: true, value: { action: "removed", before, after: null, id: LEGACY_ITEM_ID, stamp: tomb.updatedAt } };
 	}
 	const tomb: Tombstone = { id, deleted: true, updatedAt: stampAfter(before.updatedAt) };
-	writeAssessments(courseId, upsertEntry<AssessmentEntry>(readAssessmentEntries(course.assessments), tomb));
+	writeAssessments(courseId, upsertEntry<AssessmentEntry>(entries, tomb));
 	return { ok: true, value: { action: "removed", before, after: null, id, stamp: tomb.updatedAt } };
 }
 
@@ -246,9 +289,10 @@ export function deleteSelfReport(courseId: string, id: string): Result<Tombstone
 	return { ok: true, value: tomb };
 }
 
-/** Every course's live self-reports, for the mastery fold (core/mastery.ts applySelfReports). */
-export function allSelfReports(courses: readonly CourseRecord[]): SelfReport[] {
-	return courses.flatMap((c) => liveSelfReports(c.selfReports).filter((r) => r.skillIds.some((id) => c.skills.includes(id))));
+/** Every course's live self-reports with the class that holds them, for the mastery fold (core/mastery.ts
+ *  applySelfReports). */
+export function allSelfReports(courses: readonly CourseRecord[]): Array<SelfReport & { courseId: string }> {
+	return courses.flatMap((c) => liveSelfReports(c.selfReports).filter((r) => r.skillIds.some((id) => c.skills.includes(id))).map((r) => ({ ...r, courseId: c.id })));
 }
 
 // ─── the chat's change cards and Undo ────────────────────────────────────────
@@ -267,14 +311,20 @@ function changeIn(chatId: string, toolCallId: string): { courseId: string; chang
 /** applied: the change is still what the list holds (Undo is offered) · changed: it was undone or changed since. */
 export type ChangeStatus = "applied" | "changed";
 
+/** Is the change still exactly what the class holds? Every field Undo would restore is compared (review 1, finding 4):
+ *  the whole entry written (an item, field by field; a tombstone, by its stamp), and for a change to the old exam date
+ *  also that `examDate` is still empty. */
 function changeStatus(course: CourseRecord, change: ClassChange): ChangeStatus {
 	if (change.kind === "self-report") {
 		const held = readSelfReportEntries(course.selfReports).find((e) => e.id === change.report.id);
 		return held && !isTombstone(held) && held.updatedAt === change.report.updatedAt ? "applied" : "changed";
 	}
-	if (change.id === LEGACY_EXAM_ID) return course.examDate === undefined || course.examDate === "" ? "applied" : "changed";
+	if (!change.stamp) return "changed";
 	const held = readAssessmentEntries(course.assessments).find((e) => e.id === change.id);
-	return held && held.updatedAt === change.stamp ? "applied" : "changed";
+	const expected: AssessmentEntry | null = change.after ?? { id: change.id, deleted: true, updatedAt: change.stamp };
+	if (!sameEntry(held, expected)) return "changed";
+	if (change.before?.legacy && course.examDate) return "changed";
+	return "applied";
 }
 
 /** GET /api/chats/[id]/class-changes: every change card's status in one request. */
@@ -308,8 +358,9 @@ export function undoClassChange(chatId: string, toolCallId: string): Result<{ st
 	}
 	const entries = readAssessmentEntries(course.assessments);
 	if (change.before?.legacy) {
-		// the old exam date comes back; the item that replaced it (an edit) is removed
-		const restored = change.after ? upsertEntry<AssessmentEntry>(entries, { id: change.after.id, deleted: true, updatedAt: stampAfter(change.stamp) }) : entries;
+		// the old exam date comes back; the entry the change wrote (the item that replaced it, or the deletion's
+		// tombstone) is superseded by a newer tombstone, so this card no longer holds
+		const restored = upsertEntry<AssessmentEntry>(entries, { id: change.id, deleted: true, updatedAt: stampAfter(change.stamp) });
 		writeAssessments(courseId, restored, { examDate: change.before.date });
 		return { ok: true, value: { status: "undone" } };
 	}
@@ -369,9 +420,46 @@ export function setAssessmentFinderForTests(f: AssessmentFinder | null): void {
 	finderOverride = f;
 }
 
+/** Per material, the text the finder's quote and page checks read (agent/subagents/assessment-finder.ts): a PDF's pages
+ *  (its converted content.md, else pdfjs on the original), a text's body (an image's transcription); null when it cannot
+ *  be read on this device. Bounded per material. */
+const SOURCE_CHARS_MAX = 400_000;
+async function loadSources(courseId: string, materials: readonly LessonMaterial[]): Promise<Map<string, MaterialSource>> {
+	const out = new Map<string, MaterialSource>();
+	for (const m of materials) {
+		try {
+			if (m.kind === "pdf") {
+				const converted = await readConvertedPages(stores.materialStore.auxPath(courseId, m.id, "content.md"));
+				const pages = new Map<number, string>();
+				if (converted) for (const p of converted) pages.set(p.page, `${pages.get(p.page) ?? ""}\n${p.text}`.slice(0, SOURCE_CHARS_MAX));
+				else {
+					const text = await pdfExtract(stores.materialStore.filePath(courseId, m), "all");
+					for (const part of text.split(/^--- Page (\d+) ---$/m).slice(1).reduce<Array<[number, string]>>((acc, s, i, arr) => (i % 2 === 0 ? [...acc, [Number(s), arr[i + 1] ?? ""]] : acc), [])) {
+						pages.set(part[0], part[1].slice(0, SOURCE_CHARS_MAX));
+					}
+				}
+				out.set(m.id, pages.size > 0 ? { kind: "pages", pages } : null);
+			} else {
+				const file = m.kind === "image" ? stores.materialStore.auxPath(courseId, m.id, "content.md") : stores.materialStore.filePath(courseId, m);
+				out.set(m.id, { kind: "text", text: (await fs.readFile(file, "utf8")).slice(0, SOURCE_CHARS_MAX) });
+			}
+		} catch {
+			out.set(m.id, null); // the original is on another device, or unreadable: no date can be checked from it
+		}
+	}
+	return out;
+}
+
 async function runFind(courseId: string, controller: AbortController): Promise<void> {
+	const startedAt = Date.now();
+	const steps: ReturnType<typeof callUsage>[] = [];
+	let model = "unknown";
+	// every model call's usage is kept on the course's planner log, as the planner's is (review 1, finding 10)
 	const settle = (patch: Partial<CourseRecord>) => {
-		if (stores.courseStore.getCourse(courseId)) stores.courseStore.updateCourse(courseId, patch);
+		const current = stores.courseStore.getCourse(courseId);
+		if (!current) return;
+		const usage = steps.length > 0 ? [...(current.drafts ?? []), { startedAt, at: new Date().toISOString(), durationMs: Date.now() - startedAt, pass: "find-assessments" as const, planner: { model, steps } }] : undefined;
+		stores.courseStore.updateCourse(courseId, { ...patch, ...(usage ? { drafts: usage } : {}) });
 	};
 	try {
 		await waitForMaterials(courseId);
@@ -386,13 +474,31 @@ async function runFind(courseId: string, controller: AbortController): Promise<v
 		const materialsSection = `<curriculum>\n${materials.map((m) => materialBlock(m, stores.materialStore.filePath(courseId, m))).join("\n\n")}\n</curriculum>`;
 		const skills = mergeSkillLines(stores.skillStore.readSkillLines()).filter((s) => course.skills.includes(s.id)).map((s) => ({ id: s.id, name: s.name, statement: s.statement }));
 		const run = finderOverride ?? findAssessments;
+		const sources = await loadSources(courseId, materials);
 		const found = await run(
-			{ title: course.title, materialsSection, materials: materials.map((m) => ({ id: m.id, name: m.name })), skills, language: languageOf(course) },
-			{ engine: spec ? piEngineForSpec(spec) : undefined, signal: controller.signal, tools: materialTools({ chatId: courseId, store: stores.materialStore }), onStep: () => {}, courseId },
+			{ title: course.title, materialsSection, materials: materials.map((m) => ({ id: m.id, name: m.name, kind: m.kind })), sources, skills, language: languageOf(course) },
+			{
+				engine: spec ? piEngineForSpec(spec) : undefined,
+				signal: controller.signal,
+				tools: materialTools({ chatId: courseId, store: stores.materialStore }),
+				onStep: (usage, m) => {
+					model = m;
+					steps.push(callUsage(usage));
+				},
+				courseId,
+			},
 		);
 		const fresh = stores.courseStore.getCourse(courseId);
 		if (!fresh || controller.signal.aborted) return;
-		const proposal: AssessmentProposal = { createdAt: new Date().toISOString(), summary: found.summary, items: classifyProposal(found.items, courseAssessments(fresh)) };
+		// capped before it is stored, whatever the finder returned
+		const items = found.items.slice(0, PROPOSAL_ITEMS_MAX).map((it, i) => ({ ...it, key: `p${i + 1}` }));
+		const proposal: AssessmentProposal = {
+			id: `ap_${randomUUID().replace(/-/g, "").slice(0, 10)}`,
+			createdAt: new Date().toISOString(),
+			summary: cleanLine(found.summary, PROPOSAL_SUMMARY_MAX),
+			...(found.partial ? { partial: true as const } : {}),
+			items: classifyProposal(items, courseAssessments(fresh)),
+		};
 		settle({ assessmentProposal: proposal, assessmentsScannedAt: proposal.createdAt, assessmentsError: undefined });
 	} catch (err) {
 		if (controller.signal.aborted) return;
@@ -400,50 +506,65 @@ async function runFind(courseId: string, controller: AbortController): Promise<v
 	}
 }
 
+/** What the proposal actions may carry. `proposalId` is the proposal the learner was shown: required whenever the stored
+ *  proposal has an id, and a different one is refused (409) so the page refreshes (review 1, finding 1). */
+export type ProposalAction = ({ action: "approve"; keys?: string[]; edits?: Record<string, AssessmentInput> } | { action: "drop"; key: string } | { action: "discard" }) & { proposalId?: string };
+
 /** The proposal's actions: approve (all pending items, or the listed keys; `edits` changes an item before it is written),
  *  drop one item, or discard the whole proposal. Only new and update items are written; a kept one (the learner's own)
- *  and a same one are left alone. Approving clears the proposal. */
-export function actOnProposal(
-	courseId: string,
-	action: { action: "approve"; keys?: string[]; edits?: Record<string, AssessmentInput> } | { action: "drop"; key: string } | { action: "discard" },
-): Result<CourseRecord> {
+ *  and a same one are left alone.
+ *
+ *  An approval is staged against ONE snapshot of the list and written in ONE update together with what is left of the
+ *  proposal (review 1, finding 7): when any item is refused, or the additions would take the class over ASSESSMENTS_MAX,
+ *  nothing is written. An update is bound to the item it matched when the pass ran (`match` and `matchStamp`, review 1
+ *  finding 6): deleted or edited since, it is left alone, never recreated or re-matched by its old fields. A new item
+ *  that the learner has meanwhile entered themselves (same kind and title, or kind and date) is left alone too. */
+export function actOnProposal(courseId: string, action: ProposalAction): Result<CourseRecord> {
 	const course = stores.courseStore.getCourse(courseId);
 	if (!course) return { ok: false, status: 404, error: "Unknown course" };
 	const proposal = course.assessmentProposal;
 	if (!proposal || !Array.isArray(proposal.items)) return { ok: false, status: 409, error: "There is no proposal" };
+	if (proposal.id && action.proposalId !== proposal.id) return { ok: false, status: 409, error: "The proposal changed since this page showed it: look again" };
 	if (action.action === "discard") return { ok: true, value: stores.courseStore.updateCourse(courseId, { assessmentProposal: undefined })! };
+	const pendingOf = (items: readonly ProposedAssessment[]) => items.filter((i) => i.status === "new" || i.status === "update");
 	if (action.action === "drop") {
 		if (!proposal.items.some((i) => i.key === action.key)) return { ok: false, status: 404, error: "Unknown proposal item" };
 		const items = proposal.items.filter((i) => i.key !== action.key);
-		return { ok: true, value: stores.courseStore.updateCourse(courseId, { assessmentProposal: items.some((i) => i.status === "new" || i.status === "update") ? { ...proposal, items } : undefined })! };
+		return { ok: true, value: stores.courseStore.updateCourse(courseId, { assessmentProposal: pendingOf(items).length > 0 ? { ...proposal, items } : undefined })! };
 	}
-	const chosen = proposal.items.filter((i) => (i.status === "new" || i.status === "update") && (!action.keys || action.keys.includes(i.key)));
-	// check every item first: nothing is written when one is refused
+	if (action.keys?.some((k) => !proposal.items.some((i) => i.key === k))) return { ok: false, status: 404, error: "Unknown proposal item" };
+	const chosen = pendingOf(proposal.items).filter((i) => !action.keys || action.keys.includes(i.key));
 	const own = new Set(course.skills);
+	let entries = readAssessmentEntries(course.assessments);
+	const startLive = liveCount(entries);
+	let prevStamp: string | undefined;
 	for (const item of chosen) {
 		const edit = action.edits?.[item.key];
 		const input: AssessmentInput = { kind: item.kind, title: item.title, date: item.date ?? null, topics: item.topics, skillIds: item.skillIds.filter((s) => own.has(s)), ...(edit ?? {}) };
 		const checked = checkInput(input, course, false);
 		if (!checked.ok) return { ok: false, status: checked.status, error: `${item.title}: ${checked.error}` };
-	}
-	// the list as it is NOW decides again: an item the learner made or edited meanwhile still wins
-	for (const item of chosen) {
-		const edit = action.edits?.[item.key];
-		const input: AssessmentInput = { kind: item.kind, title: item.title, date: item.date ?? null, topics: item.topics, skillIds: item.skillIds.filter((s) => own.has(s)), ...(edit ?? {}) };
-		const fresh = stores.courseStore.getCourse(courseId)!;
-		const [now] = classifyProposal([{ ...item, ...(typeof input.title === "string" ? { title: input.title } : {}) }], courseAssessments(fresh));
 		const source: AssessmentSource = edit ? "manual" : "syllabus";
-		if (now?.status === "new") {
-			const made = createAssessment(courseId, input, source, item.cite);
-			if (!made.ok) return made;
-		} else if (now?.status === "update" && now.match) {
-			const made = updateAssessment(courseId, now.match, input, source);
-			if (!made.ok) return made;
+		const live = entries.filter((e): e is Assessment => !isTombstone(e));
+		if (item.status === "update" && item.match) {
+			const held = entries.find((e) => e.id === item.match);
+			// deleted, or changed since the pass saw it: the learner's later edit or deletion wins
+			if (!held || isTombstone(held) || (item.matchStamp !== undefined && held.updatedAt !== item.matchStamp)) continue;
+			const merged = applyInput(held, checked.value, source);
+			entries = upsertEntry<AssessmentEntry>(entries, merged);
+			continue;
 		}
+		// new: unless the learner has entered it meanwhile
+		if (sameAssessment(live, { kind: checked.value.kind!, title: checked.value.title!, ...(checked.value.date ? { date: checked.value.date } : {}) }).length > 0) continue;
+		const made = newItem(checked.value, source, item.cite, prevStamp);
+		prevStamp = made.updatedAt;
+		entries = [...entries, made];
 	}
-	const after = stores.courseStore.getCourse(courseId)!;
-	const rest = (after.assessmentProposal?.items ?? []).filter((i) => !chosen.some((c) => c.key === i.key) && (i.status === "new" || i.status === "update"));
-	return { ok: true, value: stores.courseStore.updateCourse(courseId, { assessmentProposal: rest.length > 0 ? { ...proposal, items: rest } : undefined })! };
+	const endLive = liveCount(entries);
+	if (endLive > startLive && endLive > ASSESSMENTS_MAX) {
+		return { ok: false, status: 409, error: `Adding ${endLive - startLive} would take this class over ${ASSESSMENTS_MAX} assessments: remove some first, or add fewer` };
+	}
+	const rest = pendingOf(proposal.items).filter((i) => !chosen.some((c) => c.key === i.key));
+	return { ok: true, value: writeAssessments(courseId, entries, { assessmentProposal: rest.length > 0 ? { ...proposal, items: rest } : undefined }) };
 }
 
 // ─── the page's view ─────────────────────────────────────────────────────────
@@ -476,6 +597,28 @@ export function upcomingView(course: CourseRecord, now = Date.now()): UpcomingVi
 
 // ─── the Short question tools' port (agent/tools/class-facts.ts) ────────────
 
+// ─── the learner's time zone (review 1, finding 3) ──────────────────────────
+
+const TZ_KEY = Symbol.for("lh.clientTimeZones");
+function zones(): Map<string, string> {
+	const g = globalThis as Record<symbol, Map<string, string> | undefined>;
+	g[TZ_KEY] ??= new Map();
+	return g[TZ_KEY];
+}
+
+/** Remember the time zone a chat request carried (the browser's: `timeZone` in POST /api/chat). Unknown names are
+ *  ignored. In memory only: the next request carries it again. */
+export function noteClientTimeZone(chatId: string, raw: unknown): void {
+	const tz = cleanTimeZone(raw);
+	if (tz) zones().set(chatId, tz);
+}
+
+/** The learner's time zone for a chat's dates: the client's when its requests carry it, else undefined (the machine's
+ *  own zone, which is the learner's when the app runs on their machine). */
+export function learnerTimeZone(chatId: string): string | undefined {
+	return zones().get(chatId);
+}
+
 /** The port the Ask agent's class tools use, bound to one Ask conversation. Null when the chat is not an Ask chat of a
  *  class that still exists. */
 export function classFactsPort(chatId: string): ClassFactsPort | null {
@@ -488,6 +631,7 @@ export function classFactsPort(chatId: string): ClassFactsPort | null {
 	const withNames = (c: CourseRecord, a: Assessment | null) => (a ? a.skillIds.map((id) => names(c).get(id) ?? id) : []);
 	return {
 		now: () => Date.now(),
+		timeZone: () => learnerTimeZone(chatId),
 		hasSkills: () => (course()?.skills.length ?? 0) > 0,
 		list: () => {
 			const c = course();

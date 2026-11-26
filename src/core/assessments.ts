@@ -9,7 +9,8 @@
  *
  * THE OLD EXAM DATE. `CourseRecord.examDate` stays what it was, and is READ as one more assessment: a virtual "Exam"
  * with the id LEGACY_EXAM_ID (`courseAssessments`). Nothing is migrated on read. Editing that item on the page or in a
- * chat turns it into a real assessment and clears `examDate` (server/assessments.ts); deleting it clears `examDate`.
+ * chat turns it into a real assessment with the stable id LEGACY_ITEM_ID and clears `examDate` (server/assessments.ts);
+ * deleting it clears `examDate` and leaves a tombstone on LEGACY_ITEM_ID (the deletion's revision, for Undo).
  * Why derive and not migrate: a read never writes; a device on an older build keeps its countdown until the learner
  * touches the item; the field keeps syncing field by field as before.
  *
@@ -21,6 +22,7 @@
  *
  * SYNC. Both lists merge per item by id, the later `updatedAt` winning (`mergeEntries`); a deletion is a TOMBSTONE
  * (`{ id, deleted: true, updatedAt }`) kept in the list, so it survives a merge with a device that still has the item.
+ * Tombstones are capped by count; past the cap the three-way merge against the last synced copy keeps the deletion.
  *
  * SELF-REPORTS ("I already know X", "I don't get Y") are stored on the course too, so deleting the chat they were said
  * in keeps them. Their effect on understanding is one rule in core/mastery.ts (applySelfReports).
@@ -83,16 +85,23 @@ export interface SelfReport {
 export type SelfReportEntry = SelfReport | Tombstone;
 
 export const LEGACY_EXAM_ID = "exam-date";
+/** The stored id the old exam date takes when the learner edits it (review 1, finding 4): the same on every device, so
+ *  two devices converting it write ONE item that merges by id, never two. */
+export const LEGACY_ITEM_ID = "as_exam";
 export const TITLE_MAX = 120;
 export const TOPICS_MAX = 1000;
 export const NOTE_MAX = 300;
 export const CITE_MAX = 200;
 export const SKILLS_PER_ITEM_MAX = 60;
-/** Live items a class holds at most (the oldest by date are dropped first on write). */
+/** Live items a class holds at most. Enforced when adding (create, an approval): a write never drops live items, so a
+ *  sync that brings the list over this keeps them all and only refuses the next addition (review 1, finding 5). */
 export const ASSESSMENTS_MAX = 100;
+/** Self-reports kept: the newest (an old report has long been overridden by real evidence or a newer report). */
 export const SELF_REPORTS_MAX = 300;
-/** Tombstones kept per list (the oldest go first: by then every device has long seen the deletion). */
-export const TOMBSTONES_MAX = 200;
+/** Tombstones kept per list, the oldest dropped first (review 1, finding 5: by count, not by age). A device that still
+ *  holds an item whose tombstone has gone does not bring it back either: the sync merge is three-way, and an item the
+ *  last synced copy had and one side has dropped stays deleted (mergeEntries `base`). */
+export const TOMBSTONES_MAX = 1000;
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T/;
@@ -186,21 +195,33 @@ export function liveSelfReports(raw: unknown): SelfReport[] {
 	return readSelfReportEntries(raw).filter((e): e is SelfReport => !isTombstone(e));
 }
 
-/** A list bounded for writing: live items capped (assessments: the undated and the latest dates kept; reports: the
- *  newest), tombstones capped (the newest kept). */
-export function boundEntries<T extends { id: string; updatedAt: string }>(entries: ReadonlyArray<T | Tombstone>, liveMax: number, rank: (t: T) => string): Array<T | Tombstone> {
+/** A list bounded for writing: tombstones capped (the newest kept); live items capped only with `liveMax` (the highest
+ *  `rank` kept). */
+export function boundEntries<T extends { id: string; updatedAt: string }>(entries: ReadonlyArray<T | Tombstone>, liveMax?: { max: number; rank: (t: T) => string }): Array<T | Tombstone> {
 	const live = entries.filter((e): e is T => !isTombstone(e));
 	const dead = entries.filter(isTombstone);
-	const keptLive = live.length > liveMax ? [...live].sort((a, b) => rank(b).localeCompare(rank(a))).slice(0, liveMax) : live;
+	const keptLive = liveMax && live.length > liveMax.max ? [...live].sort((a, b) => liveMax.rank(b).localeCompare(liveMax.rank(a))).slice(0, liveMax.max) : live;
 	const keptDead = dead.length > TOMBSTONES_MAX ? [...dead].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, TOMBSTONES_MAX) : dead;
 	const keep = new Set<unknown>([...keptLive, ...keptDead]);
 	return entries.filter((e) => keep.has(e));
 }
 
-export const boundAssessments = (entries: readonly AssessmentEntry[]): AssessmentEntry[] =>
-	boundEntries(entries, ASSESSMENTS_MAX, (a: Assessment) => a.date ?? "9999");
+/** Assessments: only the tombstones are capped; a write never drops a live item (ASSESSMENTS_MAX is checked on adding). */
+export const boundAssessments = (entries: readonly AssessmentEntry[]): AssessmentEntry[] => boundEntries(entries);
 export const boundSelfReports = (entries: readonly SelfReportEntry[]): SelfReportEntry[] =>
-	boundEntries(entries, SELF_REPORTS_MAX, (r: SelfReport) => r.at);
+	boundEntries(entries, { max: SELF_REPORTS_MAX, rank: (r: SelfReport) => r.at });
+
+/** Is the stored entry exactly this one (every field)? Undo compares the whole entry, not only its stamp: two devices
+ *  can write different values in the same millisecond (review 1, finding 4). */
+export function sameEntry(held: unknown, expected: unknown): boolean {
+	if (held === undefined || expected === undefined || held === null || expected === null) return false;
+	if (isTombstone(held) || isTombstone(expected)) {
+		return isTombstone(held) && isTombstone(expected) && held.id === expected.id && held.updatedAt === expected.updatedAt;
+	}
+	const a = sanitizeAssessment(held);
+	const b = sanitizeAssessment(expected);
+	return a !== null && b !== null && JSON.stringify(a) === JSON.stringify(b);
+}
 
 /** Put one entry (an item or a tombstone) in a list by id, replacing what was there. */
 export function upsertEntry<T extends { id: string }>(entries: readonly T[], entry: T): T[] {
@@ -209,12 +230,27 @@ export function upsertEntry<T extends { id: string }>(entries: readonly T[], ent
 }
 
 /** The sync merge of one list: per id, the later `updatedAt` wins (a tombstone included); a tie keeps `prefer`'s. Order:
- *  `prefer`'s entries first, then the other side's new ones. */
-export function mergeEntries(prefer: unknown, other: unknown): unknown[] {
+ *  `prefer`'s entries first, then the other side's new ones.
+ *
+ *  Three-way with `base` (the last synced copy), as the graph ledgers merge (core/sync-merge.ts mergeIdLedger): an id the
+ *  base had that a side's list no longer holds at all was deleted there (its tombstone dropped by the count cap), so a
+ *  live copy from the other side does not come back (review 1, finding 5). A side without a list (an older build) drops
+ *  nothing. */
+export function mergeEntries(prefer: unknown, other: unknown, base?: unknown): unknown[] {
 	const a = Array.isArray(prefer) ? prefer : [];
 	const b = Array.isArray(other) ? other : [];
 	const stamp = (e: unknown): string => (isObj(e) && typeof e.updatedAt === "string" ? e.updatedAt : "");
 	const idOf = (e: unknown): string | null => (isObj(e) && typeof e.id === "string" ? e.id : null);
+	const gone = new Set<string>();
+	if (Array.isArray(base)) {
+		const idsOf = (list: unknown) => (Array.isArray(list) ? new Set(list.map(idOf).filter((x): x is string => x !== null)) : null);
+		const inA = idsOf(prefer);
+		const inB = idsOf(other);
+		for (const e of base) {
+			const id = idOf(e);
+			if (id !== null && ((inA && !inA.has(id)) || (inB && !inB.has(id)))) gone.add(id);
+		}
+	}
 	const out: unknown[] = [];
 	const index = new Map<string, number>();
 	for (const e of [...a, ...b]) {
@@ -226,7 +262,8 @@ export function mergeEntries(prefer: unknown, other: unknown): unknown[] {
 			out.push(e);
 		} else if (stamp(e) > stamp(out[at])) out[at] = e;
 	}
-	return out;
+	// a deleted id keeps a tombstone if a side still has one; a live copy of it goes
+	return out.filter((e) => !(gone.has(idOf(e)!) && !isTombstone(e)));
 }
 
 // ─── reading a class's assessments ──────────────────────────────────────────
@@ -309,37 +346,68 @@ const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "frida
 const WEEKDAYS_NB = ["søndag", "mandag", "tirsdag", "onsdag", "torsdag", "fredag", "lørdag"];
 const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
 
-/** "YYYY-MM-DD" of a local calendar day. */
-function ymd(d: Date): string {
-	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+/** A usable IANA time zone name, or undefined (an unknown name, not a string). */
+export function cleanTimeZone(raw: unknown): string | undefined {
+	if (typeof raw !== "string" || raw === "" || raw.length > 64) return undefined;
+	try {
+		return new Intl.DateTimeFormat("en-US", { timeZone: raw }).resolvedOptions().timeZone;
+	} catch {
+		return undefined;
+	}
 }
 
-/** Today in the local time zone (the machine the app runs on: the learner's), as "YYYY-MM-DD" and a weekday name. */
-export function todayLine(now: number): { date: string; weekday: string } {
-	const d = new Date(now);
-	const name = WEEKDAYS[d.getDay()]!;
-	return { date: ymd(d), weekday: name[0]!.toUpperCase() + name.slice(1) };
+/** Today's calendar date in `timeZone` (absent: the machine's own zone), as "YYYY-MM-DD". */
+export function todayIn(now: number, timeZone?: string): string {
+	const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { ...(timeZone ? { timeZone } : {}), year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now).map((p) => [p.type, p.value]));
+	return `${parts.year}-${parts.month}-${parts.day}`;
 }
+
+/** Calendar arithmetic on "YYYY-MM-DD" (UTC noon underneath: no DST step can move a day). */
+function addDays(date: string, days: number): string {
+	const [y, m, d] = date.split("-").map(Number) as [number, number, number];
+	return new Date(Date.UTC(y, m - 1, d + days, 12)).toISOString().slice(0, 10);
+}
+
+/** 0 Sunday .. 6 Saturday of a "YYYY-MM-DD". */
+function weekdayOf(date: string): number {
+	const [y, m, d] = date.split("-").map(Number) as [number, number, number];
+	return new Date(Date.UTC(y, m - 1, d, 12)).getUTCDay();
+}
+
+/** Today in the learner's time zone (the client's when the request carries it, else the machine's), as "YYYY-MM-DD" and a
+ *  weekday name. */
+export function todayLine(now: number, timeZone?: string): { date: string; weekday: string } {
+	const date = todayIn(now, timeZone);
+	const name = WEEKDAYS[weekdayOf(date)]!;
+	return { date, weekday: name[0]!.toUpperCase() + name.slice(1) };
+}
+
+/** What the learner's words for a date come to: one date, two it could be (ask which), or nothing readable (ask). */
+export type DateReading = { kind: "date"; date: string } | { kind: "ambiguous"; options: [string, string] } | { kind: "unreadable" };
 
 /**
- * A date the learner said, resolved against today in the local time zone. Accepts "YYYY-MM-DD"; "today", "tomorrow";
- * "in N days/weeks"; "Friday", "this Friday", "next Friday" (all the coming Friday: the first one after today);
- * "Friday next week" / "Friday in two weeks" (that weekday in next week's / the week after's Monday-to-Sunday week); "12
- * March", "March 12" (this year, or next year when that day has passed). English, and the Norwegian weekdays. Null when
- * it cannot be read: the caller asks instead of guessing.
+ * THE DATE RULE (review 1, finding 3; the owner's ruling, 2026-11-25): a date the learner said, against today in their
+ * time zone (`timeZone`: the client's when the request carries it, else the machine's). Weeks run Monday to Sunday.
+ *
+ *   "YYYY-MM-DD" · "today" · "tomorrow" · "in N days/weeks"     as written
+ *   "this Friday"                     the coming Friday, today included
+ *   "Friday", "on Friday"             the coming Friday after today
+ *   "next Friday"                     the coming Friday when it falls in next calendar week; when it falls in THIS
+ *                                     week the words admit both it and the one a week later: ambiguous (ask "Friday 27
+ *                                     Nov or Friday 4 Dec?")
+ *   "Friday next week" / "in two weeks"  that weekday in next week / the week after
+ *   "12 March", "March 12"            the next occurrence (today included)
+ *
+ * English, and the Norwegian weekdays and words. Anything else: unreadable. Pure.
  */
-export function resolveDateText(raw: string, now: number): string | null {
-	const text = raw.trim().toLowerCase().replace(/[.,]/g, " ").replace(/\s+/g, " ").trim();
-	if (!text) return null;
+export function readLearnerDate(raw: string, now: number, timeZone?: string): DateReading {
+	const text = raw.trim().toLowerCase().replace(/[.,?]/g, " ").replace(/\s+/g, " ").trim();
+	const unreadable: DateReading = { kind: "unreadable" };
+	if (!text) return unreadable;
 	const iso = parseExamDate(text);
-	if (iso) return iso;
-	const base = new Date(now);
-	base.setHours(12, 0, 0, 0);
-	const plus = (days: number) => {
-		const d = new Date(base);
-		d.setDate(d.getDate() + days);
-		return ymd(d);
-	};
+	if (iso) return { kind: "date", date: iso };
+	const today = todayIn(now, timeZone);
+	const plus = (days: number): DateReading => ({ kind: "date", date: addDays(today, days) });
 	if (text === "today" || text === "i dag") return plus(0);
 	if (text === "tomorrow" || text === "i morgen") return plus(1);
 	const inN = /^in (\d{1,3}|a|one|two|three|four) (day|days|week|weeks)$/.exec(text);
@@ -351,16 +419,24 @@ export function resolveDateText(raw: string, now: number): string | null {
 		const en = WEEKDAYS.indexOf(word);
 		return en !== -1 ? en : WEEKDAYS_NB.indexOf(word);
 	};
-	const weekday = /^(?:(?:this|next|on|neste|på) )?([a-zø]+)$/.exec(text);
-	if (weekday && dayIndex(weekday[1]!) !== -1) {
-		const target = dayIndex(weekday[1]!);
-		const ahead = (target - base.getDay() + 7) % 7 || 7;
-		return plus(ahead);
+	const todayDow = weekdayOf(today);
+	const mondayOffset = (todayDow + 6) % 7; // days since this week's Monday
+	const weekday = /^(?:(this|next|on|denne|neste|på|nå på) )?([a-zø]+)$/.exec(text);
+	if (weekday && dayIndex(weekday[2]!) !== -1) {
+		const target = dayIndex(weekday[2]!);
+		const prefix = weekday[1];
+		const ahead = (target - todayDow + 7) % 7;
+		if (prefix === "this" || prefix === "denne" || prefix === "nå på") return plus(ahead); // today included
+		const coming = ahead || 7;
+		if (prefix === "next" || prefix === "neste") {
+			const sameWeek = mondayOffset + coming <= 6;
+			if (sameWeek) return { kind: "ambiguous", options: [addDays(today, coming), addDays(today, coming + 7)] };
+		}
+		return plus(coming);
 	}
-	const weekOut = /^([a-zø]+) (?:next week|in (two|2) weeks|neste uke)$/.exec(text);
+	const weekOut = /^(?:on |på )?([a-zø]+) (?:next week|in (two|2) weeks|neste uke|om (to|2) uker)$/.exec(text);
 	if (weekOut && dayIndex(weekOut[1]!) !== -1) {
-		const mondayOffset = (base.getDay() + 6) % 7; // days since this week's Monday
-		const weeks = weekOut[2] ? 2 : 1;
+		const weeks = weekOut[2] || weekOut[3] ? 2 : 1;
 		const target = (dayIndex(weekOut[1]!) + 6) % 7; // Monday = 0
 		return plus(-mondayOffset + weeks * 7 + target);
 	}
@@ -370,14 +446,21 @@ export function resolveDateText(raw: string, now: number): string | null {
 	if (dayMonth) {
 		const month = MONTHS.findIndex((m) => m === dayMonth.month || (dayMonth.month.length >= 3 && m.slice(0, 3) === dayMonth.month));
 		const day = Number(dayMonth.day);
+		const year = Number(today.slice(0, 4));
 		if (month !== -1) {
-			for (const year of [base.getFullYear(), base.getFullYear() + 1]) {
-				const s = parseExamDate(`${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`);
-				if (s && daysUntil(s, now) >= 0) return s;
+			for (const y of [year, year + 1]) {
+				const s = parseExamDate(`${y}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`);
+				if (s && s >= today) return { kind: "date", date: s };
 			}
 		}
 	}
-	return null;
+	return unreadable;
+}
+
+/** `readLearnerDate` as one date, or null when it is unreadable or ambiguous (the caller asks). */
+export function resolveDateText(raw: string, now: number, timeZone?: string): string | null {
+	const r = readLearnerDate(raw, now, timeZone);
+	return r.kind === "date" ? r.date : null;
 }
 
 /** "Fri 4 Dec 2026" for a card. */
@@ -401,15 +484,21 @@ export function weekDate(termStart: string, week: number, weekday: number): stri
 
 // ─── matching (the chat's save, the syllabus pass's re-run) ─────────────────
 
-/** A title folded for matching: case, punctuation and spacing ignored ("Quiz #3" = "quiz 3"). */
+/** A title folded for matching: case, accents, punctuation and spacing ignored ("Quiz #3" = "quiz 3"); letters and
+ *  numbers of every script kept ("小テスト1" ≠ "中間試験", review 1 finding 11). "" when the title has none. */
 export function titleKey(title: string): string {
-	return title.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9æøå]+/g, " ").trim();
+	return title.normalize("NFKC").toLowerCase().normalize("NFKD").replace(/\p{M}+/gu, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+/** Do two titles name the same item? Only with a nonempty key: two titles with no letters or numbers never match. */
+export function sameTitle(a: string, b: string): boolean {
+	const key = titleKey(a);
+	return key !== "" && key === titleKey(b);
 }
 
 /** The existing items one proposed item is the same as: the same kind and title, or the same kind and date. */
 export function sameAssessment(list: readonly Assessment[], item: Pick<Assessment, "kind" | "title" | "date">): Assessment[] {
-	const key = titleKey(item.title);
-	return list.filter((a) => a.kind === item.kind && (titleKey(a.title) === key || (!!item.date && a.date === item.date)));
+	return list.filter((a) => a.kind === item.kind && (sameTitle(a.title, item.title) || (!!item.date && a.date === item.date)));
 }
 
 // ─── the syllabus pass's proposal ───────────────────────────────────────────
@@ -430,18 +519,32 @@ export interface ProposedAssessment {
 	status: "new" | "update" | "same" | "kept";
 	/** The existing item it matches (update, same, kept). */
 	match?: string;
+	/** update: the matched item as it was when the pass ran (its stamp). Approval writes the update only while the item
+	 *  still holds exactly that; deleted or edited since, it is left alone (review 1, finding 6). */
+	matchStamp?: string;
+	/** The syllabus's own words for the item, quoted by the pass (shown with the citation; review 1, finding 2). */
+	quote?: string;
 }
 
 /** The proposal parked on the course until the learner approves it. */
 export interface AssessmentProposal {
+	/** A random id per pass: every action names the proposal it was shown, and a different one is refused (409), so an
+	 *  action never lands on a proposal the learner did not see (review 1, finding 1). Absent on a proposal from before. */
+	id?: string;
 	createdAt: string;
 	summary: string;
+	/** The pass stopped at its call or token cap: what it found so far (review 1, finding 10). */
+	partial?: true;
 	items: ProposedAssessment[];
 }
 
+/** Proposal items at most, and the summary's length (review 1, finding 10). */
+export const PROPOSAL_ITEMS_MAX = 60;
+export const PROPOSAL_SUMMARY_MAX = 400;
+
 /** Each found item against the class's list: new, an update of a syllabus item, the same, or kept (the learner's own
  *  item wins). Pure. */
-export function classifyProposal(found: ReadonlyArray<Omit<ProposedAssessment, "status" | "match">>, list: readonly Assessment[]): ProposedAssessment[] {
+export function classifyProposal(found: ReadonlyArray<Omit<ProposedAssessment, "status" | "match" | "matchStamp">>, list: readonly Assessment[]): ProposedAssessment[] {
 	const real = list.filter((a) => !a.legacy);
 	const claimed = new Set<string>();
 	return found.map((f) => {
@@ -450,7 +553,7 @@ export function classifyProposal(found: ReadonlyArray<Omit<ProposedAssessment, "
 		claimed.add(match.id);
 		if (match.source !== "syllabus") return { ...f, status: "kept", match: match.id };
 		const same = match.title === f.title && match.date === f.date && match.topics === f.topics && sameSet(match.skillIds, f.skillIds);
-		return { ...f, status: same ? "same" : "update", match: match.id };
+		return same ? { ...f, status: "same", match: match.id } : { ...f, status: "update", match: match.id, matchStamp: match.updatedAt };
 	});
 }
 

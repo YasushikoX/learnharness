@@ -264,7 +264,7 @@ export function ExamPlanSection(props: ExamPlanSectionProps) {
 								</span>
 								{fading > 0 && (
 									<span className="mt-0.5 block pl-4 text-sm text-muted-foreground" data-testid="course-review-fading">
-										{`${fading} fading before ${named ? named.title : "the exam"}`}
+										{`${fading} fading before ${plan.reviewFadingBefore ?? "the exam"}`}
 									</span>
 								)}
 							</span>

@@ -367,11 +367,12 @@ function mergeCourse(i: MergeInput & { local: string; remote: string }): MergeRe
 	if (weights.conflict) overridden("exam weights");
 
 	// WP8: assessments and self-reports merge per item by id, the later updatedAt winning; a deletion is a tombstone in the
-	// list, so it outlives the other device's copy of the item. A side without the list (an older build) adds nothing and
-	// removes nothing.
+	// list, so it outlives the other device's copy of the item. Three-way against the base (review 1, finding 5): an item
+	// the base had that a side no longer lists at all (its tombstone dropped by the count cap) stays deleted. A side
+	// without the list (an older build) adds nothing and removes nothing.
 	for (const key of ["assessments", "selfReports"]) {
 		if (!Array.isArray(l[key]) && !Array.isArray(r[key])) continue;
-		out[key] = mergeEntries(newer === "local" ? l[key] : r[key], newer === "local" ? r[key] : l[key]);
+		out[key] = mergeEntries(newer === "local" ? l[key] : r[key], newer === "local" ? r[key] : l[key], b?.[key]);
 	}
 	// the pass's pending proposal and its state move as one unit, like the weights
 	const ppick = (side: Obj) => Object.fromEntries(COURSE_PROPOSAL_UNIT.filter((k) => k in side).map((k) => [k, side[k]]));

@@ -68,10 +68,10 @@ export function askSourcesLine(caps: AskPromptCapabilities): string {
 }
 
 /** Today's date, only when the class tools are offered (WP8): relative dates the learner says are resolved against it, in
- *  the time zone of the machine the app runs on (the learner's). Pure. */
-export function askTodayLine(caps: AskPromptCapabilities, now: number): string | undefined {
+ *  the learner's time zone (the client's when the request carries it, else the machine's). Pure. */
+export function askTodayLine(caps: AskPromptCapabilities, now: number, timeZone?: string): string | undefined {
 	if (!caps.tools.includes("assessment_save")) return undefined;
-	const t = todayLine(now);
+	const t = todayLine(now, timeZone);
 	return `<today>\nToday is ${t.weekday} ${t.date}.\n</today>`;
 }
 
@@ -96,13 +96,15 @@ export function askSystemPrompt(opts: {
 	course?: { section: string };
 	/** ms — "today" for the class tools' dates (WP8); default now. */
 	now?: number;
+	/** The learner's time zone for that day; absent = the machine's. */
+	timeZone?: string;
 }): string {
 	return [
 		askInstructions(opts.caps, opts.switches),
 		opts.materials?.section,
 		opts.course?.section,
 		askSourcesLine(opts.caps),
-		askTodayLine(opts.caps, opts.now ?? Date.now()),
+		askTodayLine(opts.caps, opts.now ?? Date.now(), opts.timeZone),
 		askLanguageSection(opts.language ?? DEFAULT_LESSON_LANGUAGE),
 	]
 		.filter(Boolean)

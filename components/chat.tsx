@@ -40,7 +40,7 @@ import { Separator } from "@/components/ui/separator";
 import { AnsweredCard } from "@/components/answered-card";
 import { MalformedQuestion } from "@/components/malformed-question";
 import { SubagentSteerCard } from "@/components/artifacts/steer-card";
-import { ChatSessionComposer } from "@/components/composer";
+import { ChatSessionComposer, composerPlaceholder } from "@/components/composer";
 import { useEnterSubmits } from "@/components/enter-submits";
 import { blurAfterPointerClick } from "@/components/focus-hygiene";
 import { retryPlan, withoutRetries } from "@/components/retry-steps";
@@ -2559,7 +2559,7 @@ export function Chat({
 							onNext={sendNext}
 							planContinue={planContinueReady}
 							onPlanContinue={sendPlanContinue}
-							placeholder={nextReady ? "Ask anything, or press Enter for the next one." : undefined}
+							placeholder={composerPlaceholder({ nextReady, askSession })}
 							// The shell's bottom edge (owner, 2026-10-25): sources,
 							// language and the mic ride the composer itself.
 							edge={{ chatId, mic: <DictationBar dictation={dictation} compact /> }}

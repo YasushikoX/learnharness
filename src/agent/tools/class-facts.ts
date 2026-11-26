@@ -12,9 +12,9 @@
  *   record_self_report          "I know / I'm not sure about / I don't get" these skills
  *
  * The writes go through a port (server/assessments.ts classFactsPort) so the agent layer never touches a store. Dates
- * the learner says are resolved here, against today in the learner's time zone (core/assessments.ts resolveDateText).
+ * the learner says are resolved here, against today in the learner's time zone (core/assessments.ts readLearnerDate).
  * Ambiguity is refused with a message telling the agent to ask: two items match, no date for a new one, a date that
- * cannot be read.
+ * cannot be read, words that admit two dates ("next Friday" on a Wednesday: "Friday 27 Nov or Friday 4 Dec?").
  */
 
 import { Type, type Static } from "typebox";
@@ -22,13 +22,20 @@ import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
 	ASSESSMENT_KINDS,
 	dateWithWeekday,
-	resolveDateText,
+	readLearnerDate,
+	sameTitle,
 	SELF_REPORT_STANCES,
-	titleKey,
 	todayLine,
 	type Assessment,
 	type SelfReport,
 } from "../../core/assessments.ts";
+
+/** "Friday 27 Nov" for the question the agent asks. */
+function spokenDate(date: string): string {
+	const [y, m, d] = date.split("-").map(Number) as [number, number, number];
+	const t = new Date(Date.UTC(y, m - 1, d));
+	return `${t.toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" })} ${d} ${t.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" })}`;
+}
 
 export const ASSESSMENTS_LIST_TOOL = "assessments_list";
 export const ASSESSMENT_SAVE_TOOL = "assessment_save";
@@ -65,6 +72,8 @@ export interface ClassFactsSaveInput {
 
 export interface ClassFactsPort {
 	now(): number;
+	/** The learner's time zone (the client's), or undefined for the machine's own. */
+	timeZone(): string | undefined;
 	hasSkills(): boolean;
 	list(): { assessments: Assessment[]; skills: Array<{ id: string; name: string }> };
 	save(id: string | undefined, input: ClassFactsSaveInput): { ok: true; change: ClassChange } | { ok: false; error: string };
@@ -99,7 +108,7 @@ const saveInput = Type.Object({
 	id: Type.Optional(Type.String({ description: "The id of the assessment to change, from assessments_list. Leave out to add one (or to change the one with the same kind and title)." })),
 	kind: Type.Optional(Type.String({ enum: [...ASSESSMENT_KINDS], description: "quiz, exam, midterm, final, assignment or other (required to add)" })),
 	title: Type.Optional(Type.String({ description: "As the learner names it: \"Quiz 3\", \"Midterm\" (required to add)" })),
-	date: Type.Optional(Type.String({ description: "When, as YYYY-MM-DD or in the learner's words: \"today\", \"tomorrow\", \"Friday\", \"next Friday\" (the coming one), \"Friday next week\", \"in 2 weeks\", \"12 March\". Resolved against today." })),
+	date: Type.Optional(Type.String({ description: "When, as YYYY-MM-DD or in the learner's words, keeping their \"this\" or \"next\": \"today\", \"tomorrow\", \"Friday\", \"this Friday\", \"next Friday\", \"Friday next week\", \"in 2 weeks\", \"12 March\". Resolved against today in the learner's time zone; refused as ambiguous when the words admit two dates." })),
 	noDate: Type.Optional(Type.Boolean({ description: "true only when the learner said the date is not known yet (adding without a date is refused otherwise)" })),
 	clearDate: Type.Optional(Type.Boolean({ description: "true to remove the date of an existing one" })),
 	topics: Type.Optional(Type.String({ description: "What it covers, in the learner's words (\"chapters 4 and 5\")" })),
@@ -125,7 +134,7 @@ export function classFactsTools(port: ClassFactsPort): Record<string, AgentTool<
 		execute: async () => {
 			const { assessments, skills } = port.list();
 			const names = new Map(skills.map((s) => [s.id, s.name]));
-			const today = todayLine(port.now());
+			const today = todayLine(port.now(), port.timeZone());
 			return text(
 				[
 					`Today: ${today.weekday} ${today.date}.`,
@@ -148,17 +157,21 @@ export function classFactsTools(port: ClassFactsPort): Record<string, AgentTool<
 			let date: string | null | undefined;
 			if (input.clearDate) date = null;
 			else if (input.date !== undefined && input.date.trim() !== "") {
-				const resolved = resolveDateText(input.date, now);
-				if (!resolved) return refuse(`Could not read the date "${input.date}". Ask the learner for the date (a weekday, "next Friday" or a calendar date), then save again.`);
-				date = resolved;
+				const read = readLearnerDate(input.date, now, port.timeZone());
+				if (read.kind === "unreadable") return refuse(`Could not read the date "${input.date}". Ask the learner for the date (a weekday, "next Friday" or a calendar date), then save again.`);
+				if (read.kind === "ambiguous") {
+					const [a, b] = read.options.map(spokenDate) as [string, string];
+					return refuse(`Ambiguous: "${input.date}" could be ${a} or ${b}. Nothing was saved. Ask the learner in one short question: "${a} or ${b}?", then save again with the date as YYYY-MM-DD.`);
+				}
+				date = read.date;
 			}
 			let id = input.id;
 			const { assessments } = port.list();
 			if (id !== undefined && !assessments.some((a) => a.id === id)) return refuse(`No assessment has the id "${id}". Call assessments_list for the ids.`);
 			if (id === undefined) {
 				if (!input.kind || !input.title?.trim()) return refuse("To add an assessment give its kind and title (and its date). To change one, give its id from assessments_list.");
-				const key = titleKey(input.title);
-				const same = assessments.filter((a) => a.kind === input.kind && titleKey(a.title) === key);
+				// a title with no letters or numbers matches nothing (review 1, finding 11)
+				const same = assessments.filter((a) => a.kind === input.kind && sameTitle(a.title, input.title!));
 				if (same.length > 1) {
 					return refuse(`Ambiguous: ${same.length} assessments match "${input.title}" (${same.map((a) => `[${a.id}] ${a.title}, ${a.date ?? "no date"}`).join("; ")}). Nothing was saved. Ask the learner which one they mean.`);
 				}

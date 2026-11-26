@@ -367,7 +367,7 @@ interface ReadContext {
 	/** WP8: skills the learner said they do not get, not learned yet: first among their peers in Next up. */
 	needsWork: Set<string>;
 	/** WP8: each skill's self-report in force (core/mastery.ts applySelfReports). */
-	selfReports: Map<string, ActiveSelfReport & { chatId?: string }>;
+	selfReports: Map<string, ActiveSelfReport & { chatId?: string; courseId?: string }>;
 	now: number;
 }
 
@@ -381,8 +381,16 @@ function readContext(): ReadContext {
 	// WP8: what the learner said in a Short question conversation moves a skill a little; real evidence always wins
 	const reports = allSelfReports(stores.courseStore.listCourses());
 	const applied = applySelfReports(folded, reports.map((r) => ({ id: r.id, at: Date.parse(r.at), skillIds: r.skillIds, stance: r.stance })), events);
-	const chatOf = new Map(reports.map((r) => [r.id, r.chatId]));
-	const selfReports = new Map([...applied.active].map(([id, a]) => [id, { ...a, ...(chatOf.get(a.id) ? { chatId: chatOf.get(a.id) } : {}) }]));
+	const byReport = new Map(reports.map((r) => [r.id, r]));
+	// review 1, finding 9: each report carries the class that holds it (a shared skill shows it in every class, and only
+	// that class can remove it), and its chat only while that chat still exists (no dead "where" link)
+	const liveChats = new Set(stores.chatStore.listChats().map((c) => c.id));
+	const selfReports = new Map(
+		[...applied.active].map(([id, a]) => {
+			const r = byReport.get(a.id);
+			return [id, { ...a, ...(r ? { courseId: r.courseId } : {}), ...(r?.chatId && liveChats.has(r.chatId) ? { chatId: r.chatId } : {}) }];
+		}),
+	);
 	return { graph, nodeIds, skills, skillStates: applied.states, byCourse, notes, problems, needsWork: applied.needsWork, selfReports, now: Date.now() };
 }
 
@@ -518,6 +526,12 @@ function examPlanOf(course: CourseRecord, p: SkillPartition, ctx: ReadContext): 
 	const daysLeft = next ? daysUntil(next.date, ctx.now) : undefined;
 	const f = daysLeft === undefined ? undefined : forecast({ skillsLeft, daysLeft, pacePerDay: lessonsPerDay(finishes, ctx.now, firstActivity) });
 	const lessons = nextUp.slice(0, lessonsToday(f ? f.neededPerDay : null, nextUp.length));
+	// review 1, finding 12: what the fading skills fade before. Each is timed for its own nearest assessment; only when
+	// every one of them is timed for the next one does the page name it
+	const target = examTargetOf(course, ctx);
+	const upcomingNext = next && daysUntil(next.date, ctx.now) >= 0 ? next : undefined;
+	const allForNext = upcomingNext !== undefined && p.fading.length > 0 && p.fading.every((id) => target(id) === examInstant(upcomingNext.date, ctx.now));
+	const reviewFadingBefore = p.fading.length === 0 ? undefined : allForNext ? (upcomingNext.legacy ? "the exam" : upcomingNext.title) : "upcoming tests";
 	const plan: CoursePlan = {
 		...(next ? { examDate: next.date, next: { id: next.id, kind: next.kind, title: next.title, date: next.date, topics: next.topics, skillIds: next.skillIds, ...(next.legacy ? { legacy: true as const } : {}) } } : {}),
 		...(daysLeft !== undefined ? { daysLeft } : {}),
@@ -525,6 +539,7 @@ function examPlanOf(course: CourseRecord, p: SkillPartition, ctx: ReadContext): 
 		...(f ? { forecast: f } : {}),
 		reviewDue: p.review.length,
 		reviewFading: p.fading.length,
+		...(reviewFadingBefore ? { reviewFadingBefore } : {}),
 		retestCount: p.order.some((id) => p.states.get(id)?.learned) ? retestSkills(p).length : 0,
 		reviewBatch: Math.min(p.review.length, REVIEW_SESSION_SIZE),
 		lessons,
@@ -606,7 +621,7 @@ export function courseView(courseId: string): CourseView | null {
 			missing: s.missing,
 			...(ctx.notes.get(id) ? { lessonNote: { summary: ctx.notes.get(id)!.summary, at: new Date(ctx.notes.get(id)!.at).toISOString(), chatId: ctx.notes.get(id)!.chatId } } : {}),
 			// WP8: what the learner said about it, while no real evidence has overridden it
-			...((r) => (r ? { selfReport: { id: r.id, stance: r.stance, at: new Date(r.at).toISOString(), ...(r.chatId ? { chatId: r.chatId } : {}) } } : {}))(ctx.selfReports.get(id)),
+			...((r) => (r ? { selfReport: { id: r.id, stance: r.stance, at: new Date(r.at).toISOString(), ...(r.chatId ? { chatId: r.chatId } : {}), ...(r.courseId ? { courseId: r.courseId } : {}) } } : {}))(ctx.selfReports.get(id)),
 			weight: weightOf(weights, id),
 			...(weights?.[id] ? { weightBy: weights[id]!.by } : {}),
 			...(weights?.[id]?.reason ? { weightReason: weights[id]!.reason } : {}),

@@ -5,7 +5,7 @@ import { Loader2Icon, PlusIcon, XIcon } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { FIELD_CLASS } from "@/components/ui/input";
 import { ThinSelect } from "@/components/settings/controls";
-import { ASSESSMENT_KINDS, daysUntil, examDateLabel, KIND_LABELS, type Assessment, type AssessmentKind, type ProposedAssessment, type UpcomingView } from "@/src/core";
+import { ASSESSMENT_KINDS, daysUntil, examDateLabel, KIND_LABELS, type Assessment, type AssessmentKind, type AssessmentProposal, type ProposedAssessment, type UpcomingView } from "@/src/core";
 import { cn } from "@/lib/utils";
 
 /**
@@ -42,6 +42,12 @@ export function upcomingRows(items: readonly Assessment[], now: number): { comin
 export function proposalRows(items: readonly ProposedAssessment[]): { pending: ProposedAssessment[]; already: number } {
 	const pending = items.filter((i) => i.status === "new" || i.status === "update");
 	return { pending, already: items.length - pending.length };
+}
+
+/** A proposal action's body, naming the proposal the page shows (review 1, finding 1: the server refuses an action on
+ *  any other with 409, and the page refreshes). Pure. */
+export function proposalBody(proposal: Pick<AssessmentProposal, "id">, action: Record<string, unknown>): string {
+	return JSON.stringify({ ...action, ...(proposal.id ? { proposalId: proposal.id } : {}) });
 }
 
 interface FormValue {
@@ -207,6 +213,8 @@ export function UpcomingList({
 			const res = await fetch(url, { ...init, headers: { "Content-Type": "application/json" } });
 			if (!res.ok) {
 				setError(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `rejected (${res.status})`);
+				// 409: the list or the proposal changed under this page (a second pass, a sync): show what is there now
+				if (res.status === 409) onChanged();
 				return false;
 			}
 			onChanged();
@@ -231,6 +239,8 @@ export function UpcomingList({
 	};
 	const { coming, undated, past } = upcomingRows(upcoming.items, now);
 	const proposal = upcoming.proposal ? proposalRows(upcoming.proposal.items) : null;
+	const shown = upcoming.proposal ?? {};
+	const act = (action: Record<string, unknown>) => call(`${base}/proposal`, { method: "POST", body: proposalBody(shown, action) });
 	const disabled = busy || working;
 	const row = (a: Assessment) =>
 		editing === a.id ? (
@@ -327,6 +337,7 @@ export function UpcomingList({
 					<p className="text-meta text-muted-foreground">
 						{upcoming.proposal.summary}
 						{proposal.already > 0 ? ` ${proposal.already} already in your list.` : ""}
+						{upcoming.proposal.partial ? " It stopped early, so this may not be all of them." : ""}
 					</p>
 					{proposal.pending.length === 0 && <p className="text-meta text-muted-foreground">Nothing new to add.</p>}
 					<div className="divide-y divide-border">
@@ -340,7 +351,7 @@ export function UpcomingList({
 									busy={disabled}
 									onCancel={() => setProposalEdit(null)}
 									onSave={async (v) => {
-										if (await call(`${base}/proposal`, { method: "POST", body: JSON.stringify({ action: "approve", keys: [p.key], edits: { [p.key]: bodyOf(v) } }) })) setProposalEdit(null);
+										if (await act({ action: "approve", keys: [p.key], edits: { [p.key]: bodyOf(v) } })) setProposalEdit(null);
 									}}
 								/>
 							) : (
@@ -355,13 +366,14 @@ export function UpcomingList({
 										{p.topics ? ` · ${p.topics}` : ""}
 									</div>
 									<div className="flex items-center gap-1 text-meta text-muted-foreground">
-										<span className="min-w-0 flex-1 truncate" data-testid={`proposal-cite-${p.key}`}>
+										<span className="min-w-0 flex-1 truncate" data-testid={`proposal-cite-${p.key}`} title={p.quote ? `“${p.quote}”` : undefined}>
 											{p.cite}
+											{p.quote ? ` · “${p.quote}”` : ""}
 										</span>
 										<button type="button" className={GHOST} disabled={disabled} onClick={() => setProposalEdit(p.key)}>
 											Edit
 										</button>
-										<button type="button" className={GHOST} disabled={disabled} data-testid={`proposal-drop-${p.key}`} onClick={() => void call(`${base}/proposal`, { method: "POST", body: JSON.stringify({ action: "drop", key: p.key }) })}>
+										<button type="button" className={GHOST} disabled={disabled} data-testid={`proposal-drop-${p.key}`} onClick={() => void act({ action: "drop", key: p.key })}>
 											Drop
 										</button>
 									</div>
@@ -371,11 +383,11 @@ export function UpcomingList({
 					</div>
 					<div className="flex items-center gap-2 pt-1">
 						{proposal.pending.length > 0 && (
-							<button type="button" className={SMALL} disabled={disabled} data-testid="proposal-approve" onClick={() => void call(`${base}/proposal`, { method: "POST", body: JSON.stringify({ action: "approve" }) })}>
+							<button type="button" className={SMALL} disabled={disabled} data-testid="proposal-approve" onClick={() => void act({ action: "approve" })}>
 								{proposal.pending.length === 1 ? "Add it" : `Add all ${proposal.pending.length}`}
 							</button>
 						)}
-						<button type="button" className={GHOST} disabled={disabled} data-testid="proposal-discard" onClick={() => void call(`${base}/proposal`, { method: "POST", body: JSON.stringify({ action: "discard" }) })}>
+						<button type="button" className={GHOST} disabled={disabled} data-testid="proposal-discard" onClick={() => void act({ action: "discard" })}>
 							{proposal.pending.length > 0 ? "Discard" : "Close"}
 						</button>
 					</div>

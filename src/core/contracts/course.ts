@@ -174,6 +174,8 @@ export interface CourseDraftUsage {
 	startedAt: number;
 	at: string;
 	durationMs: number;
+	/** Which pass on the planner slot: absent = drafting the skill map; "find-assessments" = the syllabus pass (WP8). */
+	pass?: "find-assessments";
 	planner: ExtractionStageUsage;
 }
 
@@ -348,7 +350,15 @@ export interface CourseSkillView {
 	lessonNote?: { summary: string; at: string; chatId: string };
 	/** WP8: what the learner said about it in a Short question conversation, while it is still in force (no real evidence
 	 *  since). `at` ISO. */
-	selfReport?: { id: string; stance: SelfReport["stance"]; at: string; chatId?: string };
+	selfReport?: {
+		id: string;
+		stance: SelfReport["stance"];
+		at: string;
+		/** The chat it was said in, while that chat exists. */
+		chatId?: string;
+		/** The class that holds it (a shared skill shows it in every class; Remove goes to this one). */
+		courseId?: string;
+	};
 	/** The propositions it rests on: stored links ∪ derived from Learn sessions. */
 	propositions: Array<{ id: string; name: string; statement: string; sessions: Array<{ id: string; title: string }> }>;
 }

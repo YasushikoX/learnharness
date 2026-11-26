@@ -439,9 +439,10 @@ export interface ActiveSelfReport {
 
 /**
  * THE SELF-REPORT RULE (WP8): what the learner SAID moves a skill a little; real evidence always wins. Applied after the
- * fold, never written as an event. Per skill, the newest report counts, and only while no real evidence on the skill
- * (any non-dismissed event: a graded problem, a finish, a placement answer) is at or after it: the first real result
- * overrides it, whichever way it went.
+ * fold (`states` must be the fold of `events`), never written as an event. Per skill, the newest report counts, and only
+ * while no real evidence on the skill is at or after it: any non-dismissed event on it (a graded problem, a finish, a
+ * placement answer, a miss), or credit the fold gave it through a skill above it (its folded `lastReview`). The first
+ * real result overrides it, whichever way it went.
  *
  *   know       an unlearned skill becomes learned with SELF_KNOW_DAYS of stability (it leaves Next up, unlocks what
  *              builds on it, and is due for review within two days: the short check); a learned skill is unchanged.
@@ -462,10 +463,14 @@ export function applySelfReports(
 	const needsWork = new Set<string>();
 	const active = new Map<string, ActiveSelfReport>();
 	const lastEvidence = new Map<string, number>();
-	for (const e of events) {
-		if (e.outcome === "dismissed") continue;
-		if ((lastEvidence.get(e.skillId) ?? -Infinity) < e.at) lastEvidence.set(e.skillId, e.at);
-	}
+	const saw = (skillId: string, at: number) => {
+		if ((lastEvidence.get(skillId) ?? -Infinity) < at) lastEvidence.set(skillId, at);
+	};
+	// direct evidence, negative included (a miss on an unlearned skill makes no FSRS state but is still evidence)
+	for (const e of events) if (e.outcome !== "dismissed") saw(e.skillId, e.at);
+	// and every skill the fold credited, inferred credit included (a prerequisite credited through placement on a skill
+	// above it: review 1, finding 8): its folded state's last review is evidence at that time
+	for (const [skillId, s] of states) saw(skillId, s.lastReview);
 	const newest = new Map<string, SelfReportInput>();
 	for (const r of reports) {
 		for (const id of r.skillIds) {

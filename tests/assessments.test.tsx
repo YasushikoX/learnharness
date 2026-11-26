@@ -197,13 +197,14 @@ describe("assessments: the data", () => {
 		assert.ok(A.isTombstone(list[2]));
 	});
 
-	it("bounds a list for writing: live items and tombstones capped", () => {
+	it("bounds a list for writing: tombstones capped by count (the oldest go); live items never dropped", () => {
 		const t = (i: number) => new Date(Date.UTC(2026, 0, 1) + i * 1000).toISOString();
 		const items = Array.from({ length: 130 }, (_, i) => ({ id: `as_${i}`, kind: "quiz" as const, title: `Q${i}`, date: `2027-01-${String((i % 28) + 1).padStart(2, "0")}`, topics: "", skillIds: [], source: "manual" as const, updatedAt: t(i) }));
-		const dead = Array.from({ length: 250 }, (_, i) => ({ id: `d_${i}`, deleted: true as const, updatedAt: t(i) }));
+		const dead = Array.from({ length: A.TOMBSTONES_MAX + 50 }, (_, i) => ({ id: `d_${i}`, deleted: true as const, updatedAt: t(i) }));
 		const bounded = A.boundAssessments([...items, ...dead]);
-		assert.equal(bounded.filter((e) => !A.isTombstone(e)).length, A.ASSESSMENTS_MAX);
+		assert.equal(bounded.filter((e) => !A.isTombstone(e)).length, 130, "a write never drops a live item (review 1, finding 5)");
 		assert.equal(bounded.filter(A.isTombstone).length, A.TOMBSTONES_MAX);
+		assert.ok(!bounded.some((e) => e.id === "d_0") && bounded.some((e) => e.id === `d_${A.TOMBSTONES_MAX + 49}`), "the oldest tombstones go first");
 	});
 
 	it("the old exam date is read as an \"Exam\" (no write), hidden when an exam-type item sits on that date", () => {
@@ -238,7 +239,7 @@ describe("assessments: the data", () => {
 
 	it("resolves the learner's dates against today in the local time zone, and refuses what it cannot read", () => {
 		const wed = new Date(2026, 10, 25, 9).getTime(); // Wednesday 25 Nov 2026
-		assert.equal(A.resolveDateText("next Friday", wed), "2026-11-27");
+		assert.equal(A.resolveDateText("next Friday", wed), null, "ambiguous on a Wednesday (review 1, finding 3)");
 		assert.equal(A.resolveDateText("Friday", wed), "2026-11-27");
 		assert.equal(A.resolveDateText("on wednesday", wed), "2026-12-02", "a weekday is always after today");
 		assert.equal(A.resolveDateText("friday next week", wed), "2026-12-04");
@@ -380,31 +381,37 @@ describe("Find quizzes and exams (the syllabus pass)", () => {
 	beforeEach(reset);
 
 	it("fillFound: citations, dates only with the syllabus's words, weeks resolved in code, nothing invented", () => {
-		const mats = [{ id: "mat_s", name: "Syllabus.pdf" }];
+		const mats = [{ id: "mat_s", name: "Syllabus.pdf", kind: "pdf" }];
+		const sources = new Map([["mat_s", { kind: "pages" as const, pages: new Map([[1, "Term starts Monday 12 January 2026."], [2, "Quiz 1: **Friday 6 February**, chapter 1."], [3, "Midterm: Week 7, Friday. Final: TBA in the exam period. Quiz 3: week 3"]]) }]]);
 		const out = fillFound(
 			{
 				summary: "Read the syllabus.",
 				termStart: "2026-01-12",
+				termStartText: "Monday 12 January 2026",
+				termStartMaterial: "mat_s",
+				termStartPage: 1,
 				assessments: [
 					{ kind: "quiz", title: "Quiz 1", date: "2026-02-06", dateText: "Friday 6 February", topics: "Ch 1", skills: ["sk_a"], material: "mat_s", page: 2 },
 					{ kind: "midterm", title: "Midterm", week: 7, weekday: 5, dateText: "Week 7, Friday", topics: "Ch 1-4", skills: [], material: "mat_s", page: 3 },
-					{ kind: "final", title: "Final", dateText: "TBA in the exam period", topics: "Everything", skills: [], material: "mat_s" },
+					{ kind: "final", title: "Final", dateText: "TBA in the exam period", topics: "Everything", skills: [], material: "mat_s", page: 3 },
 				],
 			},
 			mats,
 			["sk_a"],
+			sources,
 		);
 		assert.deepEqual(out.problems, []);
-		assert.deepEqual(out.items.map((i) => [i.title, i.date, i.cite]), [["Quiz 1", "2026-02-06", "Syllabus.pdf p. 2"], ["Midterm", "2026-02-27", "Syllabus.pdf p. 3"], ["Final", undefined, "Syllabus.pdf"]]);
+		assert.deepEqual(out.items.map((i) => [i.title, i.date, i.cite, i.quote]), [["Quiz 1", "2026-02-06", "Syllabus.pdf p. 2", "Friday 6 February"], ["Midterm", "2026-02-27", "Syllabus.pdf p. 3", "Week 7, Friday"], ["Final", undefined, "Syllabus.pdf p. 3", "TBA in the exam period"]]);
 		assert.equal(out.items[2]!.topics, "Everything (when: TBA in the exam period)", "an unresolved date stays in the topics");
 		const bad = fillFound(
 			{ summary: "s", assessments: [
-				{ kind: "quiz", title: "Q", date: "2026-02-06", dateText: "", topics: "", skills: ["sk_x"], material: "mat_s" },
+				{ kind: "quiz", title: "Q", date: "2026-02-06", dateText: "", topics: "", skills: ["sk_x"], material: "mat_s", page: 2 },
 				{ kind: "quiz", title: "R", week: 3, weekday: 5, dateText: "week 3", topics: "", skills: [], material: "mat_nope" },
-				{ kind: "quiz", title: "S", week: 3, weekday: 5, dateText: "week 3", topics: "", skills: [], material: "mat_s" },
+				{ kind: "quiz", title: "S", week: 3, weekday: 5, dateText: "week 3", topics: "", skills: [], material: "mat_s", page: 3 },
 			] },
 			mats,
 			["sk_a"],
+			sources,
 		);
 		assert.equal(bad.problems.length, 3, bad.problems.join(" | "));
 		assert.match(bad.problems.join("\n"), /needs the syllabus's own words/);
@@ -435,8 +442,11 @@ describe("Find quizzes and exams (the syllabus pass)", () => {
 		assert.deepEqual(view.proposal!.items.map((i) => [i.title, i.status, i.cite]), [["Quiz 1", "new", "Syllabus.md p. 1"], ["Quiz 2", "new", "Syllabus.md p. 1"], ["Final", "new", "Syllabus.md p. 2"]]);
 		assert.deepEqual(live(getCourse(courseId)), [], "nothing written before approval");
 
-		assert.equal((await proposalRoute.POST(json({ action: "drop", key: "p2" }), params({ id: courseId }))).status, 200);
-		assert.equal((await proposalRoute.POST(json({ action: "approve" }), params({ id: courseId }))).status, 200);
+		// every action names the proposal the page shows (review 1, finding 1)
+		const pid = () => getCourse(courseId).assessmentProposal!.id;
+		assert.match(pid()!, /^ap_/);
+		assert.equal((await proposalRoute.POST(json({ action: "drop", key: "p2", proposalId: pid() }), params({ id: courseId }))).status, 200);
+		assert.equal((await proposalRoute.POST(json({ action: "approve", proposalId: pid() }), params({ id: courseId }))).status, 200);
 		const approved = live(getCourse(courseId));
 		assert.deepEqual(approved.map((x) => [x.title, x.source, x.cite]).sort(), [["Final", "syllabus", "Syllabus.md p. 2"], ["Quiz 1", "syllabus", "Syllabus.md p. 1"]]);
 		assert.equal(getCourse(courseId).assessmentProposal, undefined);
@@ -449,7 +459,7 @@ describe("Find quizzes and exams (the syllabus pass)", () => {
 		await waitFinding(courseId);
 		view = courses.courseView(courseId)!.upcoming!;
 		assert.deepEqual(view.proposal!.items.map((i) => [i.title, i.status]), [["Quiz 1", "kept"], ["Quiz 2", "new"], ["Final", "same"]]);
-		assert.equal((await proposalRoute.POST(json({ action: "approve" }), params({ id: courseId }))).status, 200);
+		assert.equal((await proposalRoute.POST(json({ action: "approve", proposalId: pid() }), params({ id: courseId }))).status, 200);
 		const after = live(getCourse(courseId));
 		assert.equal(after.length, 3, "no duplicates");
 		assert.equal(after.find((x) => x.title === "Quiz 1")!.date, inDays(11), "the learner's edit wins");
@@ -458,7 +468,9 @@ describe("Find quizzes and exams (the syllabus pass)", () => {
 		found([{ ...quiz2, key: "p9", title: "Quiz 4", date: inDays(30) }]);
 		assert.ok(assess.startAssessmentFind(courseId).ok);
 		await waitFinding(courseId);
-		assert.equal((await proposalRoute.POST(json({ action: "approve", keys: ["p9"], edits: { p9: { title: "Quiz 4 (take-home)" } } }), params({ id: courseId }))).status, 200);
+		// the stored proposal keys its items afresh (p1..): the key the page shows is the stored one
+		assert.deepEqual(getCourse(courseId).assessmentProposal!.items.map((i) => i.key), ["p1"]);
+		assert.equal((await proposalRoute.POST(json({ action: "approve", keys: ["p1"], edits: { p1: { title: "Quiz 4 (take-home)" } }, proposalId: pid() }), params({ id: courseId }))).status, 200);
 		assert.equal(live(getCourse(courseId)).find((x) => x.title === "Quiz 4 (take-home)")?.source, "manual");
 		assert.equal(calls, 3);
 	});
@@ -508,17 +520,19 @@ describe("Short question writes what the learner states", () => {
 	it("\"quiz 3 is next Friday on chapters 4 and 5\": saved at once, the date resolved, shown as a card; Undo removes it", async () => {
 		const { courseId, b } = approvedCourse();
 		const chatId = askChat(courseId);
+		// "next Friday" is ambiguous on some weekdays (review 1, finding 3: tested with a fixed day below); "Friday next
+		// week" resolves on every day
 		await runTurn(
 			chatId,
-			"Quiz 3 is next Friday and covers chapters 4 and 5 (poles).",
+			"Quiz 3 is Friday next week and covers chapters 4 and 5 (poles).",
 			scripted([
-				fauxAssistantMessage([fauxToolCall("assessment_save", { kind: "quiz", title: "Quiz 3", date: "next Friday", topics: "chapters 4 and 5", skillIds: [b] }, { id: "save1" })], { stopReason: "toolUse" }),
+				fauxAssistantMessage([fauxToolCall("assessment_save", { kind: "quiz", title: "Quiz 3", date: "Friday next week", topics: "chapters 4 and 5", skillIds: [b] }, { id: "save1" })], { stopReason: "toolUse" }),
 				fauxAssistantMessage([fauxText("Saved Quiz 3 for Friday.")]),
 			]),
 		);
 		const saved = live(getCourse(courseId));
 		assert.equal(saved.length, 1);
-		assert.deepEqual([saved[0]!.title, saved[0]!.kind, saved[0]!.date, saved[0]!.topics, saved[0]!.skillIds, saved[0]!.source], ["Quiz 3", "quiz", A.resolveDateText("next Friday", Date.now()), "chapters 4 and 5", [b], "chat"]);
+		assert.deepEqual([saved[0]!.title, saved[0]!.kind, saved[0]!.date, saved[0]!.topics, saved[0]!.skillIds, saved[0]!.source], ["Quiz 3", "quiz", A.resolveDateText("Friday next week", Date.now()), "chapters 4 and 5", [b], "chat"]);
 		assert.equal(new Date(`${saved[0]!.date}T12:00:00`).getDay(), 5, "a Friday");
 		const result = toolResults(chatId).find((r) => r.toolCallId === "save1")!;
 		assert.equal(result.isError, false);
@@ -814,4 +828,374 @@ describe("the class page: the Upcoming list in each state", () => {
 		const report = { kind: "self-report" as const, courseId: "c", report: { stance: "dont_know" as const, note: "", at: "t" }, skillNames: ["Bode"] };
 		assert.match(renderToStaticMarkup(<ClassChangeView change={report} status="applied" onUndo={() => {}} />), /Noted[\s\S]*Don&#x27;t get yet: Bode/);
 	});
+});
+
+// ─── review 1 (2026-11-25): one regression per finding ──────────────────────
+
+const finder = await import("../src/agent/subagents/assessment-finder.ts");
+const { composerPlaceholder } = await import("../components/composer.tsx");
+const { removeSelfReport } = await import("../components/course-page.tsx");
+const { proposalBody } = await import("../components/upcoming-list.tsx");
+
+describe("review 1 fixes", () => {
+	beforeEach(reset);
+
+	/** Park a proposal on the course as a pass would (through the injected finder). */
+	async function propose(courseId: string, items: Array<Omit<ProposedAssessment, "status" | "match" | "matchStamp">>) {
+		if (materialStore.list(courseId).length === 0) addSyllabus(courseId);
+		assess.setAssessmentFinderForTests(async () => ({ summary: "Read the syllabus.", items }));
+		assert.ok(assess.startAssessmentFind(courseId).ok);
+		await waitFinding(courseId);
+		return getCourse(courseId).assessmentProposal!;
+	}
+
+	it("1: an action names the proposal it was shown; another proposal (a second pass, a sync) is refused with 409", async () => {
+		const { courseId } = approvedCourse();
+		const first = await propose(courseId, [{ key: "p1", kind: "quiz", title: "Quiz 1", date: inDays(5), topics: "", skillIds: [], cite: "Syllabus.md" }]);
+		const second = await propose(courseId, [{ key: "p1", kind: "exam", title: "Final", date: inDays(50), topics: "", skillIds: [], cite: "Syllabus.md" }]);
+		assert.notEqual(first.id, second.id);
+		// the tab still shows the first proposal: approve, drop and discard are all refused, nothing written
+		for (const action of [{ action: "approve" }, { action: "drop", key: "p1" }, { action: "discard" }]) {
+			const res = await proposalRoute.POST(new Request("http://x", { method: "POST", body: proposalBody(first, action) }), params({ id: courseId }));
+			assert.equal(res.status, 409, JSON.stringify(action));
+		}
+		assert.equal((await proposalRoute.POST(json({ action: "approve" }), params({ id: courseId }))).status, 409, "no proposal named: refused");
+		assert.deepEqual(live(getCourse(courseId)), []);
+		assert.equal(getCourse(courseId).assessmentProposal?.id, second.id);
+		// what every action of the list sends (components/upcoming-list.tsx; a 409 there refreshes the page)
+		assert.deepEqual(JSON.parse(proposalBody(second, { action: "approve" })), { action: "approve", proposalId: second.id });
+		assert.equal((await proposalRoute.POST(new Request("http://x", { method: "POST", body: proposalBody(second, { action: "approve" }) }), params({ id: courseId }))).status, 200);
+		assert.deepEqual(live(getCourse(courseId)).map((a) => a.title), ["Final"]);
+	});
+
+	it("2: a date needs the cited page to hold the quote and the quote to state it; a week needs an anchored term start", () => {
+		const mats = [{ id: "mat_s", name: "Syllabus.pdf", kind: "pdf" }, { id: "mat_t", name: "Plan.md", kind: "text" }];
+		const sources = new Map<string, import("../src/agent/subagents/assessment-finder.ts").MaterialSource>([
+			["mat_s", { kind: "pages", pages: new Map([[1, "Quiz 1: TBA"], [2, "Midterm: Week 7, Friday"]]) }],
+			["mat_t", { kind: "text", text: "Week 1 starts on 12 January 2026." }],
+		]);
+		const fill = (assessments: Parameters<typeof fillFound>[0]["assessments"], extra: Partial<Parameters<typeof fillFound>[0]> = {}) => fillFound({ summary: "s", assessments, ...extra }, mats, [], sources);
+		// a contradictory quote: a valid date paired with "TBA" (which IS on the page) keeps no date, and the words stay
+		const tba = fill([{ kind: "quiz", title: "Quiz 1", date: "2026-02-06", dateText: "TBA", topics: "", skills: [], material: "mat_s", page: 1 }]);
+		assert.deepEqual(tba.problems, []);
+		assert.equal(tba.items[0]!.date, undefined);
+		assert.equal(tba.items[0]!.topics, "When: TBA");
+		// a wrong page: the quote is not on page 1; a page the PDF does not have; a PDF citation with no page
+		assert.match(fill([{ kind: "midterm", title: "Midterm", week: 7, weekday: 5, dateText: "Week 7, Friday", topics: "", skills: [], material: "mat_s", page: 1 }]).problems.join(), /is not on the cited page 1/);
+		assert.match(fill([{ kind: "quiz", title: "Quiz 1", dateText: "TBA", topics: "", skills: [], material: "mat_s", page: 9 }]).problems.join(), /page 9 is not in that material/);
+		assert.match(fill([{ kind: "quiz", title: "Quiz 1", dateText: "TBA", topics: "", skills: [], material: "mat_s" }]).problems.join(), /needs the page/);
+		// a missing anchor: a model-supplied term start with no quote dates nothing
+		const midterm = { kind: "midterm", title: "Midterm", week: 7, weekday: 5, dateText: "Week 7, Friday", topics: "", skills: [], material: "mat_s", page: 2 };
+		const unanchored = fill([midterm], { termStart: "2026-01-12" });
+		assert.match(unanchored.problems.join(), /termStart needs termStartText/);
+		assert.equal(unanchored.items[0]!.date, undefined);
+		// a term start whose quote states another date: no date either
+		const wrong = fill([midterm], { termStart: "2026-01-19", termStartText: "Week 1 starts on 12 January 2026", termStartMaterial: "mat_t" });
+		assert.deepEqual(wrong.problems, []);
+		assert.equal(wrong.items[0]!.date, undefined);
+		// anchored: the week resolves in code
+		const anchored = fill([midterm], { termStart: "2026-01-12", termStartText: "Week 1 starts on 12 January 2026", termStartMaterial: "mat_t" });
+		assert.equal(anchored.items[0]!.date, "2026-02-27");
+		// the quote check itself
+		assert.ok(finder.quoteStatesDate("Friday 6 February", "2026-02-06"));
+		assert.ok(finder.quoteStatesDate("fredag 6. februar", "2026-02-06"));
+		assert.ok(finder.quoteStatesDate("6/2", "2026-02-06"));
+		assert.ok(!finder.quoteStatesDate("Friday 13 February", "2026-02-06"));
+		assert.ok(!finder.quoteStatesDate("6 February 2025", "2026-02-06"), "another year");
+		// a source this device cannot read gives no date and no problem
+		const elsewhere = fillFound({ summary: "s", assessments: [{ kind: "quiz", title: "Q", date: "2026-02-06", dateText: "6 February", topics: "", skills: [], material: "mat_s", page: 1 }] }, mats, [], new Map([["mat_s", null]]));
+		assert.deepEqual([elsewhere.problems, elsewhere.items[0]!.date], [[], undefined]);
+	});
+
+	it("3: the date rule, in the learner's time zone; \"next <weekday>\" in this week asks which", async () => {
+		const at = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d, h).getTime();
+		const read = (text: string, now: number, tz?: string) => A.readLearnerDate(text, now, tz);
+		const wed = at(2026, 11, 25);
+		const fri = at(2026, 11, 27);
+		const sat = at(2026, 11, 28);
+		assert.deepEqual(read("next Friday", wed), { kind: "ambiguous", options: ["2026-11-27", "2026-12-04"] });
+		assert.deepEqual(read("next Friday", sat), { kind: "date", date: "2026-12-04" }, "the coming Friday is in next week: no doubt");
+		assert.deepEqual(read("next Friday", fri), { kind: "date", date: "2026-12-04" });
+		assert.deepEqual(read("this Friday", fri), { kind: "date", date: "2026-11-27" }, "\"this Friday\" on a Friday is today");
+		assert.deepEqual(read("this Friday", wed), { kind: "date", date: "2026-11-27" });
+		assert.deepEqual(read("Friday", wed), { kind: "date", date: "2026-11-27" });
+		assert.deepEqual(read("neste fredag", wed), { kind: "ambiguous", options: ["2026-11-27", "2026-12-04"] });
+		assert.deepEqual(read("25 November", wed), { kind: "date", date: "2026-11-25" }, "a yearless date: the next occurrence, today included");
+		assert.deepEqual(read("24 November", wed), { kind: "date", date: "2027-11-24" });
+		// the time zone: 05:00 UTC on Thu 26 Nov is still Wednesday evening in Los Angeles
+		const utcMorning = Date.UTC(2026, 10, 26, 5);
+		assert.equal(A.todayIn(utcMorning, "America/Los_Angeles"), "2026-11-25");
+		assert.equal(A.todayIn(utcMorning, "Europe/Oslo"), "2026-11-26");
+		assert.deepEqual(read("tomorrow", utcMorning, "America/Los_Angeles"), { kind: "date", date: "2026-11-26" });
+		assert.deepEqual(read("tomorrow", utcMorning, "Europe/Oslo"), { kind: "date", date: "2026-11-27" });
+		assert.equal(A.todayLine(utcMorning, "America/Los_Angeles").weekday, "Wednesday");
+		assert.equal(A.cleanTimeZone("Mars/Olympus"), undefined);
+		// the tool refuses the ambiguous date and tells the agent the question to ask, naming both dates
+		const { courseId } = approvedCourse();
+		const chatId = askChat(courseId);
+		const port = assess.classFactsPort(chatId)!;
+		const save = classFactsTools({ ...port, now: () => wed, timeZone: () => undefined }).assessment_save!;
+		const out = (await save.execute("x", { kind: "quiz", title: "Quiz 3", date: "next Friday" }, undefined as never)) as { isError?: boolean; content: Array<{ text: string }> };
+		assert.equal(out.isError, true);
+		assert.match(out.content[0]!.text, /"Friday 27 Nov or Friday 4 Dec\?"/);
+		assert.deepEqual(live(getCourse(courseId)), [], "nothing saved");
+		// the browser's time zone rides the chat request and reaches the class tools and the prompt
+		const req = new Request("http://test/api/chat", { method: "POST", headers: { "Content-Type": "application/json", "X-LH-Time-Zone": "America/Los_Angeles" }, body: JSON.stringify({ chatId, input: { type: "text", text: "hi" } }) });
+		const ack = await handleChatRequest(req, (opts) => createAskAgent({ classFacts: classFactsTools(assess.classFactsPort(chatId)!) }, { ...opts, engine: scripted([fauxAssistantMessage([fauxText("Hi.")])]) }));
+		assert.equal(ack.status, 200);
+		const handle = runningTurn(chatId);
+		if (handle) await new Response(handle.subscribe()).text();
+		assert.equal(assess.learnerTimeZone(chatId), "America/Los_Angeles");
+		assert.equal(assess.classFactsPort(chatId)!.timeZone(), "America/Los_Angeles");
+		assert.match(askSystemPrompt({ caps: { tools: ["assessment_save"], sources: { pdf: false, other: false, notes: false } }, now: utcMorning, timeZone: "America/Los_Angeles" }), /Today is Wednesday 2026-11-25\./);
+	});
+
+	it("4: the old exam date converts to one stable id on every device; Undo checks every field it restores", async () => {
+		const { courseId } = approvedCourse();
+		courses.setCourseExamDate(courseId, inDays(30));
+		const before = JSON.stringify(getCourse(courseId));
+		const edited = assess.updateAssessment(courseId, A.LEGACY_EXAM_ID, { title: "Final exam" });
+		assert.ok(edited.ok);
+		assert.equal(edited.value.id, A.LEGACY_ITEM_ID);
+		// a second device converts the same exam date: the same id, so a sync merges them into one
+		const other = JSON.parse(before) as CourseRecord;
+		const otherItem = { id: A.LEGACY_ITEM_ID, kind: "exam", title: "Exam", date: inDays(30), topics: "everything", skillIds: [], source: "chat", updatedAt: new Date(Date.now() + 60_000).toISOString() };
+		const remote = { ...other, examDate: undefined, assessments: [otherItem], updatedAt: otherItem.updatedAt };
+		const merged = JSON.parse(mergeFile({ path: `courses/${courseId}.json`, base: before, local: JSON.stringify(getCourse(courseId)), remote: JSON.stringify(remote), prefer: "local" }).content!) as CourseRecord;
+		assert.equal(live(merged).filter((a) => a.kind === "exam").length, 1, "one exam, not two");
+		// an older device sets a new exam date after the conversion: Undo of the conversion is refused (it would clobber it)
+		const chatId = askChat(courseId);
+		const toolCall = (id: string, change: unknown) => [
+			{ id: `${id}a`, role: "assistant", content: [{ type: "toolCall", id, name: "assessment_save", arguments: {} }], ...ASSISTANT_BASE, timestamp: Date.now() },
+			{ id: `${id}r`, role: "toolResult", toolCallId: id, toolName: "assessment_save", content: [{ type: "text", text: "ok" }], isError: false, details: { change }, timestamp: Date.now() },
+		];
+		chatStore.saveMessages(chatId, toolCall("conv", { kind: "assessment", courseId, ...edited.value, skillNames: [] }) as unknown as LhMessage[]);
+		assert.deepEqual(assess.classChangeStatuses(chatId), { conv: "applied" });
+		courseStore.updateCourse(courseId, { examDate: inDays(35) });
+		assert.deepEqual(assess.classChangeStatuses(chatId), { conv: "changed" });
+		assert.equal(assess.undoClassChange(chatId, "conv").ok, false);
+		assert.equal(getCourse(courseId).examDate, inDays(35), "the synced date stays");
+		// removing the (new) legacy exam: its card holds only while its own tombstone does
+		courseStore.updateCourse(courseId, { assessments: [] });
+		const removed = assess.deleteAssessment(courseId, A.LEGACY_EXAM_ID);
+		assert.ok(removed.ok);
+		chatStore.saveMessages(chatId, [...chatStore.getChat(chatId)!.messages, ...(toolCall("rm", { kind: "assessment", courseId, ...removed.value, skillNames: [] }) as unknown as LhMessage[])]);
+		assert.equal(assess.classChangeStatuses(chatId).rm, "applied");
+		assert.ok(assess.undoClassChange(chatId, "rm").ok);
+		assert.equal(getCourse(courseId).examDate, inDays(35));
+		courseStore.updateCourse(courseId, { examDate: undefined }); // the field becomes empty again some other way
+		assert.equal(assess.classChangeStatuses(chatId).rm, "changed", "the removal card does not come back to life");
+		// an ordinary item: a write with the same stamp but other values (another device, the same millisecond) is a change
+		const made = assess.createAssessment(courseId, { kind: "quiz", title: "Quiz 1", date: inDays(3) });
+		assert.ok(made.ok);
+		chatStore.saveMessages(chatId, [...chatStore.getChat(chatId)!.messages, ...(toolCall("add", { kind: "assessment", courseId, ...made.value, skillNames: [] }) as unknown as LhMessage[])]);
+		const entries = A.readAssessmentEntries(getCourse(courseId).assessments).map((e) => (e.id === made.value.id ? { ...e, title: "Quiz 1 (moved)" } : e));
+		courseStore.updateCourse(courseId, { assessments: entries });
+		assert.equal(assess.classChangeStatuses(chatId).add, "changed");
+		assert.ok(A.sameEntry(made.value.after, made.value.after) && !A.sameEntry({ ...made.value.after!, title: "x" }, made.value.after));
+	});
+
+	it("5: a deletion survives an offline copy after its tombstone is gone; a sync over 100 items drops none", () => {
+		const t = (h: number) => `2026-11-25T${String(h).padStart(2, "0")}:00:00.000Z`;
+		const q = (id: string, h: number) => ({ id, kind: "quiz", title: id, topics: "", skillIds: [], source: "manual", updatedAt: t(h) });
+		const base = { id: "c1", title: "T", createdAt: t(1), updatedAt: t(1), status: "active", skills: [], assessments: [q("as_old", 1)], version: 1 };
+		// this device deleted as_old and, many deletions later, dropped its tombstone; the other still holds the item
+		const local = { ...base, updatedAt: t(5), assessments: [q("as_new", 5)] };
+		const remote = { ...base, updatedAt: t(2), assessments: [q("as_old", 1)] };
+		for (const prefer of ["local", "remote"] as const) {
+			const merged = JSON.parse(mergeFile({ path: "courses/c1.json", base: JSON.stringify(base), local: JSON.stringify(local), remote: JSON.stringify(remote), prefer }).content!) as CourseRecord;
+			assert.deepEqual(live(merged).map((a) => a.id), ["as_new"], prefer);
+		}
+		// with no base (a first sync) nothing is taken as deleted
+		const first = JSON.parse(mergeFile({ path: "courses/c1.json", base: null, local: JSON.stringify(local), remote: JSON.stringify(remote), prefer: "local" }).content!) as CourseRecord;
+		assert.deepEqual(live(first).map((a) => a.id).sort(), ["as_new", "as_old"]);
+		// a merged list over the cap: every live item stays through an unrelated write; only an addition is refused
+		const { courseId } = approvedCourse();
+		const many = Array.from({ length: A.ASSESSMENTS_MAX + 5 }, (_, i) => q(`as_${i}`, 3));
+		courseStore.updateCourse(courseId, { assessments: many as Assessment[] });
+		assert.ok(assess.updateAssessment(courseId, "as_0", { topics: "ch 1" }).ok);
+		assert.equal(live(getCourse(courseId)).length, A.ASSESSMENTS_MAX + 5);
+		const refused = assess.createAssessment(courseId, { kind: "quiz", title: "One more" });
+		assert.equal(refused.ok, false);
+		assert.equal(!refused.ok && refused.status, 409);
+	});
+
+	it("6: an update bound to a quiz the learner deleted or renamed meanwhile never recreates it; an edited title updates the same quiz", async () => {
+		const { courseId } = approvedCourse();
+		const quiz = (title: string, date?: string) => ({ key: "p1", kind: "quiz" as const, title, ...(date ? { date } : {}), topics: "ch 1", skillIds: [], cite: "Syllabus.md" });
+		await propose(courseId, [quiz("Quiz 1", inDays(5))]);
+		assert.equal((await proposalRoute.POST(json({ action: "approve", proposalId: getCourse(courseId).assessmentProposal!.id }), params({ id: courseId }))).status, 200);
+		const q1 = live(getCourse(courseId))[0]!;
+		// a re-run proposes a change; meanwhile the learner deletes the quiz
+		let p = await propose(courseId, [quiz("Quiz 1", inDays(6))]);
+		assert.deepEqual(p.items.map((i) => [i.status, i.match, i.matchStamp]), [["update", q1.id, q1.updatedAt]]);
+		assess.deleteAssessment(courseId, q1.id);
+		assert.equal((await proposalRoute.POST(json({ action: "approve", proposalId: p.id }), params({ id: courseId }))).status, 200);
+		assert.deepEqual(live(getCourse(courseId)), [], "the deleted quiz is not recreated");
+		// again, and the learner renames it and moves its date (it was syllabus-sourced: the learner's edit wins)
+		const made = assess.createAssessment(courseId, { kind: "quiz", title: "Quiz 2", date: inDays(8), topics: "ch 2" }, "syllabus");
+		assert.ok(made.ok);
+		p = await propose(courseId, [quiz("Quiz 2", inDays(9))]);
+		assert.equal(p.items[0]!.status, "update");
+		assess.updateAssessment(courseId, made.value.id, { title: "Quiz 2b", date: inDays(10) }, "syllabus");
+		assert.equal((await proposalRoute.POST(json({ action: "approve", proposalId: p.id }), params({ id: courseId }))).status, 200);
+		assert.deepEqual(live(getCourse(courseId)).map((a) => [a.title, a.date]), [["Quiz 2b", inDays(10)]], "no second quiz; the rename stays");
+		// an undated proposed update whose title the learner edits on approval updates the matched quiz, not a new one
+		const undated = assess.createAssessment(courseId, { kind: "quiz", title: "Quiz 3", topics: "" }, "syllabus");
+		assert.ok(undated.ok);
+		p = await propose(courseId, [quiz("Quiz 3")]);
+		const key = p.items.find((i) => i.status === "update")!.key;
+		assert.equal((await proposalRoute.POST(json({ action: "approve", keys: [key], edits: { [key]: { title: "Quiz 3 (take-home)" } }, proposalId: p.id }), params({ id: courseId }))).status, 200);
+		const quizzes = live(getCourse(courseId)).filter((a) => a.title.startsWith("Quiz 3"));
+		assert.deepEqual(quizzes.map((a) => [a.id, a.title]), [[undated.value.id, "Quiz 3 (take-home)"]]);
+	});
+
+	it("7: approve-all over the item cap writes nothing and keeps the whole proposal", async () => {
+		const { courseId } = approvedCourse();
+		const t = new Date().toISOString();
+		courseStore.updateCourse(courseId, { assessments: Array.from({ length: A.ASSESSMENTS_MAX - 1 }, (_, i) => ({ id: `as_${i}`, kind: "quiz" as const, title: `Old ${i}`, topics: "", skillIds: [], source: "manual" as const, updatedAt: t })) });
+		const p = await propose(courseId, [
+			{ key: "p1", kind: "quiz", title: "New A", date: inDays(5), topics: "", skillIds: [], cite: "Syllabus.md" },
+			{ key: "p2", kind: "quiz", title: "New B", date: inDays(6), topics: "", skillIds: [], cite: "Syllabus.md" },
+		]);
+		const before = JSON.stringify(getCourse(courseId).assessments);
+		const res = await proposalRoute.POST(json({ action: "approve", proposalId: p.id }), params({ id: courseId }));
+		assert.equal(res.status, 409);
+		assert.match(((await res.json()) as { error: string }).error, /over 100 assessments/);
+		assert.equal(JSON.stringify(getCourse(courseId).assessments), before, "not even the first one");
+		assert.deepEqual(getCourse(courseId).assessmentProposal!.items.map((i) => i.key), ["p1", "p2"], "both still pending");
+		// one fits
+		assert.equal((await proposalRoute.POST(json({ action: "approve", keys: ["p1"], proposalId: p.id }), params({ id: courseId }))).status, 200);
+		assert.equal(live(getCourse(courseId)).length, A.ASSESSMENTS_MAX);
+		assert.deepEqual(getCourse(courseId).assessmentProposal!.items.map((i) => i.key), ["p2"]);
+	});
+
+	it("8: placement credit on a prerequisite overrides its self-report", () => {
+		const T = Date.UTC(2026, 10, 25, 12);
+		const requiresOf = (id: string) => (id === "b" ? ["a"] : []);
+		// "I don't get a" at T; then placement shows the learner knows b (which requires a) at T + 1 h
+		const events = [{ skillId: "b", at: T + 3_600_000, outcome: "placementKnown" as const, placement: false }];
+		const folded = mastery.foldSkills(events, requiresOf);
+		assert.ok(folded.has("a"), "the fold credits the prerequisite");
+		const out = mastery.applySelfReports(folded, [{ id: "r", at: T, skillIds: ["a"], stance: "dont_know" }], events);
+		assert.equal(out.active.has("a"), false, "the report is overridden");
+		assert.deepEqual(out.states.get("a"), folded.get("a"), "a keeps its fresh credit, not shifted back to due");
+		assert.ok(!out.needsWork.has("a"));
+		// a direct miss with no FSRS state is evidence too
+		const miss = [{ skillId: "c", at: T + 1000, outcome: "placementMiss" as const, placement: false }];
+		assert.equal(mastery.applySelfReports(mastery.foldSkills(miss, requiresOf), [{ id: "r2", at: T, skillIds: ["c"], stance: "know" }], miss).active.has("c"), false);
+	});
+
+	it("9: a shared skill's report removes in the class that holds it; failures show; no link to a deleted chat", async () => {
+		const { courseId, b } = approvedCourse("Class A");
+		const other = courseStore.createCourse("Class B");
+		courseStore.updateCourse(other.id, { status: "active", skills: [b] });
+		const chatId = askChat(courseId);
+		assert.ok(assess.classFactsPort(chatId)!.selfReport({ skillIds: [b], stance: "dont_know", note: "" }).ok);
+		const inB = courses.courseView(other.id)!.skills.find((s) => s.id === b)!.selfReport!;
+		assert.equal(inB.courseId, courseId, "B shows A's report and knows it is A's");
+		assert.equal(inB.chatId, chatId);
+		const urls: string[] = [];
+		const ok = (async (url: string) => {
+			urls.push(url);
+			return reportRoute.DELETE(new Request("http://x"), params({ id: url.split("/")[3]!, reportId: url.split("/")[5]! }));
+		}) as unknown as typeof fetch;
+		assert.equal(await removeSelfReport(inB, other.id, ok), null);
+		assert.deepEqual(urls, [`/api/courses/${courseId}/self-reports/${inB.id}`]);
+		assert.equal(courses.courseView(other.id)!.skills.find((s) => s.id === b)!.selfReport, undefined);
+		// a refused removal says why
+		assert.equal(await removeSelfReport({ id: "sr_gone" }, other.id, ok), "Unknown self-report");
+		assert.equal(await removeSelfReport({ id: "x" }, other.id, (async () => { throw new Error("offline"); }) as unknown as typeof fetch), "Could not reach the server — try again.");
+		// the chat it was said in is deleted: the report stays, its "where" link goes
+		assert.ok(assess.classFactsPort(chatId)!.selfReport({ skillIds: [b], stance: "shaky", note: "" }).ok);
+		chatStore.deleteChat(chatId);
+		const kept = courses.courseView(courseId)!.skills.find((s) => s.id === b)!.selfReport!;
+		assert.equal(kept.stance, "shaky");
+		assert.equal(kept.chatId, undefined);
+	});
+
+	it("10: the finder stops at 6 model turns with what it found (partial), at its token budget too, and records usage", async () => {
+		const mats = [{ id: "mat_t", name: "Plan.md", kind: "text" }];
+		const sources = new Map([["mat_t", { kind: "text" as const, text: "Quiz 1: TBA" }]]);
+		const input = { title: "C", materialsSection: "<curriculum/>", materials: mats, sources, skills: [], language: "en" as const };
+		// every submission has one fixable problem (an unknown material) beside a good item: the model never gets it right
+		const submit = fauxToolCall("submit_assessments", { summary: "Read Plan.md.", assessments: [{ kind: "quiz", title: "Quiz 1", dateText: "TBA", topics: "", skills: [], material: "mat_t" }, { kind: "quiz", title: "Quiz 2", dateText: "", topics: "", skills: [], material: "mat_nope" }] });
+		let steps = 0;
+		const found = await finder.findAssessments(input, { engine: scripted(Array.from({ length: 20 }, () => fauxAssistantMessage([submit], { stopReason: "toolUse" }))), tools: {}, onStep: () => steps++, courseId: "c" });
+		assert.equal(steps, finder.FINDER_MAX_TURNS);
+		assert.equal(found.partial, true);
+		assert.deepEqual(found.items.map((i) => i.title), ["Quiz 1"]);
+		// the token budget: the second call's prompt carries a huge tool result
+		const big: import("@earendil-works/pi-agent-core").AgentTool<any> = { name: "big", label: "big", description: "x", parameters: { type: "object", properties: {} } as never, execute: async () => ({ content: [{ type: "text", text: "x".repeat(finder.FINDER_TOKEN_BUDGET * 4 + 4000) }], details: null }) };
+		steps = 0;
+		const capped = await finder.findAssessments(input, { engine: scripted([fauxAssistantMessage([submit, fauxToolCall("big", {})], { stopReason: "toolUse" }), ...Array.from({ length: 5 }, () => fauxAssistantMessage([submit], { stopReason: "toolUse" }))]), tools: { big }, onStep: () => steps++, courseId: "c" });
+		assert.equal(steps, 2, "stopped right after the call that went over");
+		assert.equal(capped.partial, true);
+		// with nothing submitted at all it fails, saying why
+		await assert.rejects(finder.findAssessments(input, { engine: scripted(Array.from({ length: 8 }, () => fauxAssistantMessage([fauxToolCall("big", {})], { stopReason: "toolUse" }))), tools: { big }, onStep: () => {}, courseId: "c" }), /token budget/);
+		// the server caps what it stores, marks it partial, and logs every call's usage on the course
+		const { courseId } = approvedCourse();
+		addSyllabus(courseId);
+		assess.setAssessmentFinderForTests(async (_in, deps) => {
+			deps.onStep({ input: 100, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 120, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, "faux:faux", 1, "toolUse", "submit_assessments");
+			return { summary: "s".repeat(2000), partial: true, items: Array.from({ length: 90 }, (_, i) => ({ key: `k${i}`, kind: "quiz" as const, title: `Quiz ${i}`, topics: "", skillIds: [], cite: "Syllabus.md" })) };
+		});
+		assert.ok(assess.startAssessmentFind(courseId).ok);
+		await waitFinding(courseId);
+		const stored = getCourse(courseId);
+		assert.equal(stored.assessmentProposal!.items.length, A.PROPOSAL_ITEMS_MAX);
+		assert.equal(stored.assessmentProposal!.summary.length, A.PROPOSAL_SUMMARY_MAX);
+		assert.equal(stored.assessmentProposal!.partial, true);
+		assert.deepEqual(stored.drafts?.map((d) => [d.pass, d.planner.steps.length, d.planner.steps[0]!.inputTokens]), [["find-assessments", 1, 100]]);
+		assert.match(render(stored.assessmentProposal!), /stopped early/);
+	});
+
+	it("11: titles in any script match only themselves; a title with no letters or numbers matches nothing", async () => {
+		assert.equal(A.titleKey("小テスト 1"), "小テスト 1");
+		assert.notEqual(A.titleKey("小テスト1"), A.titleKey("中間試験"));
+		assert.equal(A.titleKey("Quiz #3"), A.titleKey("quiz 3"));
+		assert.equal(A.titleKey("Exposé 2"), A.titleKey("expose 2"), "accents folded as before");
+		assert.equal(A.titleKey("Prøve 2"), "prøve 2", "Norwegian letters kept as before");
+		assert.ok(!A.sameTitle("???", "!!!"));
+		const { courseId } = approvedCourse();
+		const made = assess.createAssessment(courseId, { kind: "quiz", title: "小テスト1", date: inDays(4) });
+		assert.ok(made.ok);
+		// Ask: naming another all-Japanese quiz adds it, never overwrites the one there
+		const chatId = askChat(courseId);
+		const save = classFactsTools(assess.classFactsPort(chatId)!).assessment_save!;
+		const out = (await save.execute("x", { kind: "quiz", title: "中間試験", date: inDays(9) }, undefined as never)) as { isError?: boolean };
+		assert.notEqual(out.isError, true);
+		assert.deepEqual(live(getCourse(courseId)).map((a) => [a.title, a.date]).sort(), [["中間試験", inDays(9)], ["小テスト1", inDays(4)]]);
+		// the syllabus pass: a differently named item is new, not an update of the existing one
+		const classified = A.classifyProposal([{ key: "p1", kind: "quiz", title: "期末試験", topics: "", skillIds: [], cite: "s" }], live(getCourse(courseId)));
+		assert.equal(classified[0]!.status, "new");
+	});
+
+	it("12: the fading line names an assessment only when every fading skill is timed for it", () => {
+		const { courseId, a, c } = approvedCourse();
+		practiceEvidence(courseId, a, Date.now() - DAY);
+		practiceEvidence(courseId, c, Date.now() - DAY);
+		// Friday's quiz covers a (fine by then); a later final covers c (faded by then)
+		assess.createAssessment(courseId, { kind: "quiz", title: "Friday quiz", date: inDays(1), skillIds: [a] });
+		assess.createAssessment(courseId, { kind: "final", title: "Final", date: inDays(60), skillIds: [c] });
+		let plan = courses.courseView(courseId)!.plan;
+		assert.equal(plan.next?.title, "Friday quiz");
+		assert.equal(plan.reviewFading, 1);
+		assert.equal(plan.reviewFadingBefore, "upcoming tests", "c fades before the final, not before Friday's quiz");
+		// only the final left: it is named
+		const quiz = live(getCourse(courseId)).find((x) => x.title === "Friday quiz")!;
+		assess.deleteAssessment(courseId, quiz.id);
+		plan = courses.courseView(courseId)!.plan;
+		assert.equal(plan.reviewFadingBefore, "Final");
+	});
+
+	it("13: a Short question's composer asks about the class, not the lesson", () => {
+		assert.equal(composerPlaceholder({ nextReady: false, askSession: true }), "Ask a question about this class…");
+		assert.equal(composerPlaceholder({ nextReady: false, askSession: false }), undefined, "the lesson default");
+		assert.equal(composerPlaceholder({ nextReady: true, askSession: false }), "Ask anything, or press Enter for the next one.");
+	});
+
+	function render(proposal: AssessmentProposal) {
+		return renderToStaticMarkup(<UpcomingList courseId="course_1" upcoming={{ items: [], finding: false, proposal }} skills={[]} canFind onChanged={() => {}} />);
+	}
 });

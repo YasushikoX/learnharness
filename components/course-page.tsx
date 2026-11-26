@@ -203,8 +203,21 @@ const SkillListContext = createContext<{
 	toggle: (skillId: string) => void;
 } | null>(null);
 
-/** WP8: remove a self-report from a skill's detail; absent outside a course page. */
-const SelfReportContext = createContext<((reportId: string) => void) | null>(null);
+/** WP8: remove a self-report from a skill's detail, in the class that holds it (review 1, finding 9: a shared skill shows
+ *  another class's report); resolves to an error to show, or null. Absent outside a course page. */
+const SelfReportContext = createContext<((report: { id: string; courseId?: string }) => Promise<string | null>) | null>(null);
+
+/** DELETE one self-report in the class that holds it (`fallbackCourseId` when the view names none); the error to show, or
+ *  null. Exported for tests. */
+export async function removeSelfReport(report: { id: string; courseId?: string }, fallbackCourseId: string, fetcher: typeof fetch = fetch): Promise<string | null> {
+	try {
+		const res = await fetcher(`/api/courses/${report.courseId ?? fallbackCourseId}/self-reports/${report.id}`, { method: "DELETE" });
+		if (res.ok) return null;
+		return ((await res.json().catch(() => ({}))) as { error?: string }).error ?? `Could not remove it (${res.status})`;
+	} catch {
+		return "Could not reach the server — try again.";
+	}
+}
 
 /** What the learner said, as the skill shows it: "you said you know this", "…this is unclear", "…you don't get this". Pure. */
 export function selfReportLabel(stance: "know" | "shaky" | "dont_know"): string {
@@ -230,6 +243,7 @@ function SkillRow({
 	const [more, setMore] = useState(false);
 	const choose = useContext(SkillListContext);
 	const removeReport = useContext(SelfReportContext);
+	const [reportError, setReportError] = useState<string | null>(null);
 	const choosing = choose?.choosing === true;
 	const can = choose?.canChoose(skill.id) === true;
 	const checked = choose?.chosen.has(skill.id) === true;
@@ -317,9 +331,22 @@ function SkillRow({
 								)}
 							</span>
 							{removeReport && (
-								<button type="button" className="underline decoration-border underline-offset-2 hover:text-foreground" data-testid={`skill-self-report-remove-${skill.id}`} onClick={() => removeReport(skill.selfReport!.id)}>
+								<button
+									type="button"
+									className="underline decoration-border underline-offset-2 hover:text-foreground"
+									data-testid={`skill-self-report-remove-${skill.id}`}
+									onClick={() => {
+										setReportError(null);
+										void removeReport(skill.selfReport!).then(setReportError);
+									}}
+								>
 									Remove
 								</button>
+							)}
+							{reportError && (
+								<span className="text-error" role="alert" data-testid={`skill-self-report-error-${skill.id}`}>
+									{reportError}
+								</span>
 							)}
 						</p>
 					)}
@@ -695,12 +722,14 @@ export function CourseBody({
 	};
 	const draftNames = new Map((course.draft?.skills ?? []).map((s) => [s.key, s.name]));
 	const coverage = data.coverage ? { view: data.coverage, skillNames: names, draftNames, busy, ...(onCoverage ? { actions: onCoverage } : {}) } : null;
-	// WP8: "Remove" on a skill's self-report (a tombstone; the skill's state goes back to what the evidence says)
+	// WP8: "Remove" on a skill's self-report (a tombstone; the skill's state goes back to what the evidence says), sent
+	// to the class that holds it; a failure shows on the skill
 	const removeReport = onChanged
-		? (reportId: string) =>
-				void fetch(`/api/courses/${course.id}/self-reports/${reportId}`, { method: "DELETE" })
-					.catch(() => undefined)
-					.finally(() => onChanged())
+		? async (report: { id: string; courseId?: string }) => {
+				const error = await removeSelfReport(report, course.id);
+				if (!error) onChanged();
+				return error;
+			}
 		: null;
 	return (
 		<CoverageContext.Provider value={coverage}>
@@ -861,7 +890,7 @@ export function CourseBody({
 									</div>
 									{fadingCount > 0 && (
 										<p className="mb-2 text-xs text-muted-foreground" data-testid="course-review-split">
-											{dueNowCount} due now · {fadingCount} fading before the exam
+											{dueNowCount} due now · {fadingCount} fading before {data.plan.reviewFadingBefore ?? "the exam"}
 										</p>
 									)}
 									<RowList>{list(data.review).map((s) => <SkillRow key={s.id} skill={s} names={names} now={now} actions={actionsFor(s)} />)}</RowList>

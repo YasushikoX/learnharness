@@ -369,6 +369,9 @@ export interface CoursePlan {
 	retestCount?: number;
 	/** How many of `reviewDue` are only fading before the exam (fine today). */
 	reviewFading?: number;
+	/** WP8 review 1, finding 12: what they fade before, as the page words it: the next assessment's title ("the exam" for
+	 *  the old exam date) when every fading skill is timed for it, else "upcoming tests". Absent with none fading. */
+	reviewFadingBefore?: string;
 	reviewBatch: number;
 	/** The lessons to take today: the first of the ordered Next up. */
 	lessons: string[];
