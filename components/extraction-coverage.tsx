@@ -195,18 +195,16 @@ export function CoverageMenuBody({
 			{busy ? (
 				<span className="flex items-center gap-1.5 text-muted-foreground" data-testid="ctx-coverage-running">
 					<span className="size-1.5 animate-pulse rounded-full bg-foreground/70" aria-hidden />
-					extracting…
+					Adding to your knowledge graph…
 				</span>
 			) : complete ? (
-				<span className="text-muted-foreground">fully extracted</span>
+				<span className="text-muted-foreground">All of it is in your knowledge graph.</span>
 			) : (
-				<span className="flex flex-col">
-					<span className="tabular-nums text-foreground">
-						{formatTokens(coverage.uncoveredTokens)} tok uncovered
-					</span>
-					<span className="tabular-nums text-muted-foreground">
-						{coverage.uncoveredCount} message{coverage.uncoveredCount === 1 ? "" : "s"} unextracted
-					</span>
+				// UI round 8 (SPEC §9): plain words in a menu; the token count stays as the line's detail (its title)
+				<span className="text-foreground" title={`${formatTokens(coverage.uncoveredTokens)} tokens not yet extracted`} data-testid="ctx-coverage-line">
+					{coverage.uncoveredCount === 0
+						? "Part of this session is not in your knowledge graph yet."
+						: `${coverage.uncoveredCount} message${coverage.uncoveredCount === 1 ? " is" : "s are"} not in your knowledge graph yet.`}
 				</span>
 			)}
 			<button
@@ -216,7 +214,7 @@ export function CoverageMenuBody({
 				disabled={busy || complete}
 				className="flex items-center justify-center rounded-lg border px-2 py-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent"
 			>
-				{busy ? "Running" : "Extract"}
+				{busy ? "Adding…" : "Add them now"}
 			</button>
 		</div>
 	);

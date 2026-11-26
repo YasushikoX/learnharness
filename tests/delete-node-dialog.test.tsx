@@ -72,7 +72,7 @@ describe("DeleteNodeBody — the minimal screen (owner, 2026-09-30)", () => {
 		assert.match(html, /data-testid="node-delete-cancel"/);
 		assert.match(html, /data-testid="node-delete-confirm"/);
 		// the Delete button carries the destructive red (owner, polish round): solid danger on a delete dialog (UI round 1)
-		assert.match(html, /bg-destructive text-white/);
+		assert.match(html, /bg-\[#dc2626\] text-white/, "the solid danger fill, white text in both themes (UI round 8)");
 	});
 
 	it("NO impact facts, NO loading line, NO sessions join — the pre-flight read is dead", () => {

@@ -85,7 +85,7 @@ it("shared presentation preserves deep folder rows, direct controls and native g
 		assert.equal(disclosure.getAttribute("aria-expanded"), "true");
 		assert.doesNotMatch(disclosure.outerHTML, /rounded|transition-|hover:/);
 		assert.equal(row.querySelectorAll(":scope > .w-14").length, 1);
-		assert.equal(row.querySelectorAll(":scope > .w-20").length, 1);
+		assert.equal(row.querySelectorAll(":scope > .w-24").length, 1, "the date column (w-24 since UI round 8: \"Wed 25 Nov 2025\" fits)");
 		assert.equal(document.querySelector<HTMLElement>(`[data-testid="folder-thread-${id}"]`)?.style.left, `${37 + depth * 36}px`);
 	}
 	assert.equal(document.querySelector<HTMLElement>('[data-testid="cluster-group-notes"]')?.style.marginLeft, "144px");
@@ -95,7 +95,7 @@ it("re-import record dates do not change existing graph groups' Created dates", 
 	const newer = { ...directory, sources: directory.sources.map((s) => s.id === "notes" ? { ...s, createdAt: "2099-01-01" } : s) };
 	const html = render({ nodes, directory: newer, expandedClusters: new Set(["f1", "f2"]) });
 	assert.doesNotMatch(html, /2099-01-01/);
-	assert.match(html, /2026-10-29/);
+	assert.match(html, /Thu 29 Oct( 2026)?</);
 });
 it("folder selection means all its graph contents even while a search hides some rows", () => {
 	const html = render({ selectMode: true, nodes, query: "a", expandedClusters: new Set(["f1", "f2"]), selection: new Set(["a"]) });

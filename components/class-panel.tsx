@@ -15,6 +15,7 @@ import type { CourseStandingView, UpcomingView } from "@/src/core";
 import type { MaterialsApi } from "@/components/use-materials";
 import { DeleteCourseDialog } from "@/components/course-row-actions";
 import { ErrorNotice } from "@/components/ui/error-notice";
+import { cn } from "@/lib/utils";
 
 /**
  * The class side panel (UI class page, 2026-11-25; owner: "class stuff (files, settings) goes on the side; the center
@@ -171,8 +172,9 @@ export function ClassPanel({
 			)}
 
 			<div className="px-4 py-3">
-				{/* UI round 8: a destructive small button on the section's edge (it read as disabled body text) */}
-				<button type="button" onClick={() => setDeleting(true)} data-testid="course-delete" className={buttonVariants({ variant: "destructive", size: "sm" })}>
+				{/* quiet (the dialog's confirm is the one destructive button), but in the text colour so it does not read as
+				    disabled, and its text on the section's edge (UI round 8) */}
+				<button type="button" onClick={() => setDeleting(true)} data-testid="course-delete" className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "-ml-2.5")}>
 					Delete class…
 				</button>
 			</div>

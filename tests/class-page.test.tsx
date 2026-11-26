@@ -136,9 +136,10 @@ describe("the setup checklist (an empty class)", () => {
 		assert.match(ready.match(/<button[^>]*data-testid="setup-draft"[^>]*>/)![0], /bg-primary/, "the step's action is the primary button");
 		assert.equal((ready.match(/bg-primary text-primary-foreground/g) ?? []).length, 1, "and the only one");
 		const failed = setup(fakeFiles([material()]), { courseError: "no credit" });
-		assert.match(failed, /Drafting failed: no credit/);
-		assert.match(failed, /data-testid="setup-draft"[^>]*>Try again</);
-		assert.match(setup(fakeFiles([material()]), { drafting: true }), /data-testid="setup-drafting"/);
+		// UI round 8: one error notice with its own Try again, where the Draft button was
+		assert.match(failed, /data-testid="setup-error"[\s\S]*Couldn&#x27;t draft the skill map\.[\s\S]*no credit[\s\S]*data-testid="setup-error-retry"[^>]*>Try again</);
+		assert.doesNotMatch(failed, /data-testid="setup-draft"/);
+		assert.match(setup(fakeFiles([material()]), { drafting: true }), /<button[^>]*disabled=""[^>]*data-testid="setup-drafting"/);
 	});
 });
 
@@ -178,12 +179,15 @@ describe("the class page body", () => {
 		assert.equal(titleFieldValue("Biology"), "Biology");
 		assert.ok(isUntitledClass(UNTITLED_CLASS));
 		assert.equal(UNTITLED_CLASS, "Untitled class");
-		// the field: always the top bar's title, placeholder "Class name", focused on a new class, Enter saves (blur)
+		// owner, round 8: a new class names itself in a labelled field at the top of the setup card, focused on open; the
+		// top bar shows a muted "New class" until then; a named class renames in the top bar (Enter saves by blur)
 		const page = fs.readFileSync("components/course-page.tsx", "utf8");
-		assert.match(page, /autoFocus=\{setup && isUntitledClass\(initial\.course\.title\)\}/);
+		assert.match(page, /<ClassNameField[\s\S]*onCommit=\{\(\) => void commitTitle\(\)\}[\s\S]*autoFocus=\{isUntitledClass\(initial\.course\.title\)\}/);
+		assert.match(page, /\{untitled \? "New class" : data\.course\.title\}/);
 		assert.match(page, /placeholder="Class name"/);
 		assert.match(page, /onBlur=\{\(\) => void commitTitle\(\)\}/);
 		assert.match(page, /e\.key === "Enter"\) \{\s*e\.preventDefault\(\);\s*e\.currentTarget\.blur\(\);/);
+		assert.match(page, /<PencilIcon[^>]*group-hover\/title:opacity-100/, "the editable title shows a pencil on hover");
 		assert.doesNotMatch(page, /setup \? <span className="flex-1" \/>/, "no empty top band on a new class");
 	});
 
@@ -245,10 +249,15 @@ describe("the class side panel", () => {
 	});
 
 	it("drafting shows the planner's progress and disables re-drafting; a failure shows its reason", () => {
+		// UI round 8: the running state is the Re-draft button itself (spinner, "Drafting…", disabled)
 		const html = panel({ drafting: true });
-		assert.match(html, /data-testid="course-drafting"/);
-		assert.match(html.match(/<button[^>]*data-testid="course-draft-button"[^>]*>/)![0], /disabled=""/);
-		assert.match(panel({ courseError: "no credit" }), /Drafting failed: no credit/);
+		assert.match(html, /<button[^>]*disabled=""[^>]*aria-busy="true"[^>]*data-testid="course-drafting"[^>]*>[\s\S]*Drafting…/);
+		assert.doesNotMatch(html, /data-testid="course-draft-button"/);
+		assert.match(panel({ courseError: "no credit" }), /data-testid="course-error"[\s\S]*Couldn&#x27;t draft the skill map\.[\s\S]*no credit[\s\S]*>Try again</);
+		// before the first map the checklist owns Draft: no second button, no second error (shooter #9)
+		const setup = panel({ hasSkills: false, exam: undefined, setup: true, courseError: "no credit" });
+		assert.doesNotMatch(setup, /course-draft-button|course-error/);
+		assert.match(setup, /The checklist drafts the first skill map\./);
 	});
 
 	it("the Draft button's state", () => {

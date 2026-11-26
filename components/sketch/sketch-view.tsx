@@ -19,7 +19,7 @@ import { useNativeInk } from "@/components/sketch/use-native-ink";
 import { loadEraser, loadPen, loadToolbar, saveEraser, savePen, saveToolbar, SKETCH_COLORS, SKETCH_WIDTHS, type EraserSettings, type PenSettings, type ToolbarPrefs } from "@/components/sketch/pen-settings";
 import { afterHydrate, applyOp, hasNewInk, pagePayload, readInk, revertOp, sendPage, thawInk, useInk, useInkSaveFailed, useKept, writeInk, type InkOp, type InkState } from "@/components/sketch/ink-memory";
 import { cn } from "@/lib/utils";
-import { boundsOf, pasteCopies, restyleStroke, SketchPayloadError, sketchStrokeCut, titleShowsDate, transformStroke, translation, type Affine, type ConfidenceControl, type SketchPayload, type SketchStroke } from "@/src/core";
+import { boundsOf, dayLabel, pasteCopies, restyleStroke, SketchPayloadError, sketchStrokeCut, titleShowsDate, transformStroke, translation, type Affine, type ConfidenceControl, type SketchPayload, type SketchStroke } from "@/src/core";
 import { useInteractionLayer } from "../interaction-layers";
 
 /**
@@ -532,7 +532,7 @@ export function SketchView({
 					<>
 						<div className="pointer-events-none absolute left-3 top-2 flex max-w-[40%] items-center gap-2 text-xs text-muted-foreground">
 							<p data-testid="note-title" className="truncate">
-								{titleShowsDate(note) ? note.title : `${note.title} · ${note.date}`}
+								{titleShowsDate(note) ? note.title : `${note.title} · ${dayLabel(note.date)}`}
 							</p>
 							{note.extra && (
 								<span data-ink-hole="" className="pointer-events-auto shrink-0">

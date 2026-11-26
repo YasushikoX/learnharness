@@ -109,8 +109,10 @@ describe("CoverageMenuBody — the context-menu block", () => {
 			<CoverageMenuBody coverage={coverage()} extracting={false} onExtract={() => {}} />,
 		);
 		assert.ok(html.includes('data-testid="ctx-coverage"'), "the block carries its testid");
-		assert.match(html, /2k tok uncovered/, "the unit is typed out — tok (owner refinement round)");
-		assert.match(html, /5 messages unextracted/);
+		// UI round 8 (SPEC §9): plain words in the menu, the token count kept as the line's detail
+		assert.match(html, /title="2k tokens not yet extracted"[^>]*>5 messages are not in your knowledge graph yet\./);
+		assert.doesNotMatch(html, /tok uncovered|unextracted/);
+		assert.match(html, /data-testid="ctx-extract"[^>]*>Add them now</);
 		assert.ok(html.includes('data-testid="ctx-extract"'), "the Extract affordance");
 		assert.ok(!html.includes('disabled=""'), "an uncovered session can extract (the disabled: utilities alone don't count)");
 	});
@@ -123,7 +125,7 @@ describe("CoverageMenuBody — the context-menu block", () => {
 				onExtract={() => {}}
 			/>,
 		);
-		assert.match(html, /fully extracted/);
+		assert.match(html, /All of it is in your knowledge graph\./);
 		assert.ok(html.includes("disabled"), "nothing to run — the button rests");
 	});
 
@@ -132,8 +134,8 @@ describe("CoverageMenuBody — the context-menu block", () => {
 			<CoverageMenuBody coverage={coverage({ running: true })} extracting={false} onExtract={() => {}} />,
 		);
 		assert.ok(html.includes('data-testid="ctx-coverage-running"'));
-		assert.match(html, /extracting…/);
-		assert.ok(html.includes(">Running</button>"), "the affordance reads Running while in flight");
+		assert.match(html, /Adding to your knowledge graph…/);
+		assert.ok(html.includes(">Adding…</button>"), "the affordance reads Adding… while in flight");
 		assert.ok(html.includes("disabled"), "no double-fire");
 	});
 
@@ -142,7 +144,7 @@ describe("CoverageMenuBody — the context-menu block", () => {
 			<CoverageMenuBody coverage={coverage()} extracting onExtract={() => {}} />,
 		);
 		assert.ok(html.includes('data-testid="ctx-coverage-running"'), "the optimistic state shows at once");
-		assert.match(html, />Running</);
+		assert.match(html, />Adding…</);
 	});
 });
 

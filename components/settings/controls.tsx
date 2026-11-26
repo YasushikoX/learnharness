@@ -9,7 +9,7 @@
  * control together) and the control itself locks — the row owns the dim.
  */
 
-import { useLayoutEffect, useRef, useState, type ComponentPropsWithRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ComponentPropsWithRef, type CSSProperties, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FIELD_CLASS, Input } from "@/components/ui/input";
@@ -254,8 +254,10 @@ export function ThinSelect({
 }
 
 /** Shared graph/settings range control; the label and value stay paired. */
-export function SettingsSlider({ label, min, max, step, value, display, onChange, disabled, showLabel = true }: {
+export function SettingsSlider({ label, min, max, step, value, display, onChange, disabled, showLabel = true, className = "w-40" }: {
 	label: string;
+	/** The width (UI round 8: the graph panel's sliders run the panel's full width). */
+	className?: string;
 	min?: number;
 	max?: number;
 	step?: number;
@@ -266,12 +268,14 @@ export function SettingsSlider({ label, min, max, step, value, display, onChange
 	onChange: (value: number) => void;
 	disabled?: boolean;
 }) {
-	return <label className={`flex min-h-8 w-40 max-w-full flex-col justify-center gap-1${disabled ? " opacity-40" : ""}`}>
+	// the app's range (UI round 8, SPEC §9): a themed track and thumb (globals.css .lh-range), not the OS's light track
+	return <label className={cn("flex min-h-8 max-w-full flex-col justify-center gap-1", className, disabled && "opacity-45")}>
 		<span className="flex items-center justify-between text-xs text-muted-foreground">
-			{showLabel && label}<span className="tabular-nums">{display ?? value}</span>
+			{showLabel && label}<span className="tabular-nums text-foreground">{display ?? value}</span>
 		</span>
 		<input type="range" aria-label={label} min={min} max={max} step={step} value={value} disabled={disabled}
-			onChange={(e) => onChange(Number(e.target.value))} className="h-1.5 w-full accent-primary" />
+			onChange={(e) => onChange(Number(e.target.value))} className="lh-range w-full"
+			style={{ "--lh-range-fill": `${max !== undefined && min !== undefined && max > min ? ((value - min) / (max - min)) * 100 : 50}%` } as CSSProperties} />
 	</label>;
 }
 

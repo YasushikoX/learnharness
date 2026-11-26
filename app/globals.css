@@ -437,6 +437,59 @@
 	cursor: not-allowed;
 }
 
+/* THE RANGE (UI round 8, SPEC §9): a 4px raised track filled with the accent up to the value, a 14px thumb on the card
+   fill with a hairline and a small shadow; the same in both themes (the OS drew a light track in the dark theme). */
+.lh-range {
+	appearance: none;
+	-webkit-appearance: none;
+	height: 14px;
+	background: transparent;
+	cursor: pointer;
+}
+.lh-range:disabled {
+	cursor: not-allowed;
+}
+.lh-range::-webkit-slider-runnable-track {
+	height: 4px;
+	border-radius: 9999px;
+	background: linear-gradient(to right, var(--primary) var(--lh-range-fill, 50%), var(--lh-raised-strong) var(--lh-range-fill, 50%));
+}
+.lh-range::-moz-range-track {
+	height: 4px;
+	border-radius: 9999px;
+	background: var(--lh-raised-strong);
+}
+.lh-range::-moz-range-progress {
+	height: 4px;
+	border-radius: 9999px;
+	background: var(--primary);
+}
+.lh-range::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	appearance: none;
+	width: 14px;
+	height: 14px;
+	margin-top: -5px;
+	border-radius: 9999px;
+	background: var(--card);
+	border: 1px solid var(--input);
+	box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+}
+.lh-range::-moz-range-thumb {
+	width: 14px;
+	height: 14px;
+	border-radius: 9999px;
+	background: var(--card);
+	border: 1px solid var(--input);
+	box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+}
+.lh-range:focus-visible {
+	outline: none;
+}
+.lh-range:focus-visible::-webkit-slider-thumb {
+	box-shadow: 0 0 0 3px var(--lh-focus-ring);
+}
+
 /* A list inside a form shows whole 28px rows only (SPEC §9): 5 rows, then it scrolls under a soft bottom fade. */
 .lh-row-list {
 	max-height: 140px;

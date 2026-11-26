@@ -10,7 +10,7 @@ import { HEAD_COUNT, PAGE_HEAD } from "@/components/section-heads";
 import { LectureNoteView } from "@/components/lecture-note-view";
 import { createLectureNote, deleteLectureNote, fetchLectureNotes, thumbnailUrl, updateLectureNote, type LectureNoteItem } from "@/components/lecture-notes-client";
 import { useNotifyHub } from "@/components/server-events";
-import { defaultNoteTitle, titleShowsDate, todayDate } from "@/src/core";
+import { dayLabel, defaultNoteTitle, titleShowsDate, todayDate } from "@/src/core";
 import { cn } from "@/lib/utils";
 
 /**
@@ -111,7 +111,7 @@ export function LectureNotesRow({ courseId, compact = false }: { courseId: strin
 								)}
 							</div>
 							<div className="mt-1.5 line-clamp-2 text-sm font-medium leading-snug text-foreground">{n.title}</div>
-							{!titleShowsDate(n) && <div className="text-xs tabular-nums text-muted-foreground">{n.date}</div>}
+							{!titleShowsDate(n) && <div className="text-xs tabular-nums text-muted-foreground">{dayLabel(n.date)}</div>}
 						</button>
 						<button
 							type="button"
@@ -217,6 +217,8 @@ function NoteDialog({
 					</label>
 					<label className="mt-3 block text-sm font-medium text-foreground">
 						Date
+						{/* the OS date field, and the day in the app's format beside the label (UI round 8, SPEC §9) */}
+						<span className="ml-2 text-xs font-normal tabular-nums text-muted-foreground" data-testid="lecture-note-date-label">{date ? dayLabel(date) : ""}</span>
 						<input data-testid="lecture-note-date" type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} className={cn(FIELD_CLASS, "mt-1.5 h-8 w-full px-2.5 font-normal")} />
 					</label>
 					{error && <p className="mt-2 text-xs text-destructive">{error}</p>}

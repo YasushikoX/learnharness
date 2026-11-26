@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { CheckIcon, ChevronRightIcon } from "lucide-react";
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { FOLDER_NAME_MAX, folderKey } from "@/src/core";
 import { MenuShell } from "./menu-shell.tsx";
 import { buttonVariants } from "./ui/button.tsx";
@@ -68,7 +68,8 @@ export function CourseMenu({
 			}}
 			anchorRef={anchorRef}
 			testid="course-context-menu"
-			preferredSide="down"
+			// beside the row (UI round 8, SPEC §9): a menu never covers the rows under its own
+			preferredSide="right"
 			menuClass={MENU}
 		>
 			{view === "main" && (
@@ -92,6 +93,12 @@ export function CourseMenu({
 			)}
 			{view === "folders" && (
 				<>
+					{/* a way back to the first level (UI round 8: the list replaced its parent with no route back) */}
+					<button type="button" data-testid="folder-back" onClick={() => setView("main")} onKeyDown={(e) => e.key === "ArrowLeft" && setView("main")} className={`${ITEM} gap-1 text-muted-foreground`}>
+						<ChevronLeftIcon className="size-3.5" aria-hidden />
+						Move to folder
+					</button>
+					<div className="my-0.5 border-t border-border/60" aria-hidden="true" />
 					<button type="button" data-testid="folder-option-none" onClick={() => onMove(null)} className={`${ITEM} justify-between`}>
 						No folder
 						{current === undefined && <CheckIcon className="size-3.5" aria-label="Current" />}
@@ -183,16 +190,17 @@ export function FolderMenu({
 			}}
 			anchorRef={anchorRef}
 			testid="folder-context-menu"
-			preferredSide="down"
+			// beside the row (UI round 8, SPEC §9): a menu never covers the rows under its own
+			preferredSide="right"
 			menuClass={MENU}
 		>
 			<button type="button" data-testid="ctx-folder-rename" onClick={onRename} className={ITEM}>
-				Rename folder
+				Rename
 			</button>
 			<button type="button" data-testid="ctx-folder-remove" onClick={onRemove} className={ITEM}>
-				Remove folder
+				Remove
 			</button>
-			<span className="px-2.5 pb-1 text-muted-foreground">Removing a folder deletes no class.</span>
+			<span className="px-2.5 pb-1 text-xs text-muted-foreground">Its classes move out of the folder; none is deleted.</span>
 		</MenuShell>
 	);
 }

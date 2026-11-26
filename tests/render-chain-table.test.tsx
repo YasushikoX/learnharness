@@ -234,7 +234,7 @@ describe("ChainTableBody — clusters (the outermost layer)", () => {
 		assert.ok(html.includes('data-testid="cluster-checkbox-chat1"'));
 		// chat1: chains c1 (a, b, c1) + solo (solo) → 4 member ids
 		assert.ok(html.includes(">4</span>"), "chat1's proposition count");
-		assert.ok(html.includes("2026-09-20"), "the newest-member date");
+		assert.match(html, /Sun 20 Sep( 2026)?</, "the newest-member date, in the one date format (UI round 8)");
 		assert.ok(html.includes(">notes</span>"), "the notes kind tag");
 	});
 });

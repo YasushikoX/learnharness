@@ -22,16 +22,19 @@ export function dayMonthLabel(date: string): string {
 	const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
 	const at = new Date(Date.UTC(y, mo - 1, d));
 	if (Number.isNaN(at.getTime())) return date;
-	const weekday = at.toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" });
-	const month = at.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" });
-	return `${weekday} ${d} ${month}`;
+	return `${WEEKDAYS[at.getUTCDay()]} ${at.getUTCDate()} ${MONTHS[at.getUTCMonth()]}`;
 }
+
+/** Fixed English names, not the runtime's locale data (whose en-GB September is "Sept" in newer ICU builds). */
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
 
 /** The weekday alone ("Fri"), for a date within the coming week. Pure. */
 export function weekdayLabel(date: string): string {
 	const m = DAY_RE.exec(date.trim());
 	if (!m) return date;
-	return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))).toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" });
+	const at = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+	return Number.isNaN(at.getTime()) ? date : WEEKDAYS[at.getUTCDay()]!;
 }
 
 /** Whole days as words: "today", "tomorrow", "in 10 days", "yesterday", "3 days ago". Pure. */

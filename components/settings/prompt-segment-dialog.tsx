@@ -116,9 +116,10 @@ export function PromptSegmentDialog({ name, source, override, mode, returnFocusF
 		</div>
 		<footer className="flex shrink-0 flex-col gap-2 border-t border-border px-6 py-4 max-sm:px-4">
 			{error && <p role="alert" className="text-xs text-error">{error}</p>}
-			{confirmDiscard ? <div className="flex flex-wrap items-center justify-between gap-2">
-				<p role="status" className="text-xs">Discard unsaved changes?</p>
-				<div className="ml-auto flex gap-2">
+			{/* UI round 8: the question and its answers as one raised group at the right, not a line at the far left */}
+			{confirmDiscard ? <div className="ml-auto flex flex-wrap items-center gap-2 rounded-lg bg-raised p-3">
+				<p role="status" className="text-sm font-medium text-foreground">Discard unsaved changes?</p>
+				<div className="flex gap-2">
 					<Button ref={keepEditing} type="button" variant="outline" onClick={resumeEditing}>Keep editing</Button>
 					<Button type="button" variant="destructive" onClick={onClose}>Discard changes</Button>
 				</div>

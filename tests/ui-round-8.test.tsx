@@ -36,6 +36,7 @@ describe("the one on-screen date (SPEC §9)", () => {
 		assert.equal(dayLabel("soon", IN_2026), "soon");
 		assert.equal(dayMonthLabel("2027-01-05"), "Tue 5 Jan", "the prefix form never has a year");
 		assert.equal(weekdayLabel("2026-11-27"), "Fri");
+		assert.equal(dayLabel("2026-09-20", IN_2026), "Sun 20 Sep", "fixed month names: never the ICU's \"Sept\"");
 	});
 	it("spells relative days out", () => {
 		assert.deepEqual([0, 1, -1, 10, -3].map(relativeDays), ["today", "tomorrow", "yesterday", "in 10 days", "3 days ago"]);

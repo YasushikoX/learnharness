@@ -421,10 +421,12 @@ describe("Settings → PDF conversion", () => {
 		}
 	});
 
-	it("a load failure reads as a line of text", async () => {
+	it("a load failure is the shared error notice: a plain sentence, the server's text, Try again (UI round 8)", async () => {
 		const ui = await mount({ "GET /api/converters": () => ({ status: 500, json: { error: "Settings unavailable" } }) });
 		try {
-			assert.equal(ui.text("converters-load-error"), "Settings unavailable");
+			assert.equal(ui.text("converters-load-error-detail"), "Settings unavailable");
+			assert.match(ui.text("converters-load-error") ?? "", /^Couldn't load the PDF conversion settings\./);
+			assert.equal(ui.text("converters-load-error-retry"), "Try again");
 		} finally {
 			ui.cleanup();
 		}

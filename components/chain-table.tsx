@@ -66,7 +66,7 @@ import {
 	SearchIcon,
 	XIcon,
 } from "lucide-react";
-import { chainsForSelection, chainSourceDirectory, folderEntryCheck, toggleSourceEntries, formatChainLine, fuzzyScore, sourceFileLabel } from "@/src/core";
+import { chainsForSelection, chainSourceDirectory, dayLabel, folderEntryCheck, toggleSourceEntries, formatChainLine, fuzzyScore, sourceFileLabel } from "@/src/core";
 import type { GraphChain, GraphNode, SourceDirectory, SourceEntry, SourceFolder, SourceEntrySelection } from "@/src/core";
 import { EditableSourceName, SourceDragRow, sourceNameMatches, SourceFolderTree, type OrganizationChange } from "./source-folder-tree";
 import { chainRow, useChainNavigation } from "./chain-navigation";
@@ -304,7 +304,7 @@ export function ChainTableBody({
 
 	const fullySelectedFolders = directory ? new Set([...selectedFolders].filter((id) => folderEntryCheck(directory, id, { sources: selectedSources, folders: selectedFolders }).checked)) : selectedFolders;
 	const nameOf = (id: string) => byId.get(id)?.name ?? id;
-	const dateOf = (id: string) => byId.get(id)?.createdAt.slice(0, 10) ?? "";
+	const dateOf = (id: string) => { const at = byId.get(id)?.createdAt; return at ? dayLabel(at) : ""; };
 	const dirIcon = (col: ChainSortCol) =>
 		sort.col !== col ? null : sort.dir === 1 ? <ChevronUpIcon className="size-3" /> : <ChevronDownIcon className="size-3" />;
 
@@ -380,7 +380,7 @@ export function ChainTableBody({
 						data-testid="sort-created"
 						onClick={() => onSort("created")}
 						aria-sort={sort.col === "created" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
-						{...treeColumnLayout({ widthClassName: "w-20", align: "right", className: "flex items-center justify-end gap-1 transition-colors hover:text-foreground" })}
+						{...treeColumnLayout({ widthClassName: "w-24", align: "right", className: "flex items-center justify-end gap-1 transition-colors hover:text-foreground" })}
 					>
 						Created {dirIcon("created")}
 					</button>
@@ -448,8 +448,8 @@ export function ChainTableBody({
 								<TreeCell widthClassName="w-14" align="right" className="text-xs tabular-nums text-muted-foreground">
 									{group.nodeIds.length}
 								</TreeCell>
-								<TreeCell widthClassName="w-20" align="right" className="text-xs tabular-nums text-muted-foreground">
-									{group.newestCreatedAt.slice(0, 10)}
+								<TreeCell widthClassName="w-24" align="right" className="text-xs tabular-nums text-muted-foreground">
+									{dayLabel(group.newestCreatedAt)}
 								</TreeCell>
 							</SourceDragRow>
 
@@ -526,7 +526,7 @@ export function ChainTableBody({
 												<TreeCell widthClassName="w-14" align="right" className="text-xs tabular-nums text-muted-foreground">
 													{memberIds.length}
 												</TreeCell>
-												<TreeCell widthClassName="w-20" align="right" className="text-xs tabular-nums text-muted-foreground">
+												<TreeCell widthClassName="w-24" align="right" className="text-xs tabular-nums text-muted-foreground">
 													{dateOf(chain.conclusion)}
 												</TreeCell>
 											</div>
@@ -561,7 +561,7 @@ export function ChainTableBody({
 																{node.statement}
 															</ToolContentResponse>
 															<TreeCell widthClassName="w-14" />
-															<TreeCell widthClassName="w-20" />
+															<TreeCell widthClassName="w-24" />
 														</div>
 													);
 												})}
