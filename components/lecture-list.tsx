@@ -179,6 +179,11 @@ function LectureForm({
 }
 
 
+/** The row's leading dot (UI round 12): the class's position in the accent, a covered lecture filled, one not covered
+ *  yet hollow. The dot carries "not yet covered", so every title keeps the normal text colour (SPEC §9: a muted title
+ *  read as disabled). */
+const DOT = "size-1.5 shrink-0 -translate-y-0.5 rounded-full";
+
 /** One lecture row: number and title, its date; the topics or where it came from, and how many skills it teaches. */
 function Row({ l, here, covered, onEdit }: { l: LectureView; here: boolean; covered: boolean; onEdit: () => void }) {
 	const sub = [l.derived || l.source === "files" ? "from your files" : l.source === "syllabus" ? "from the syllabus" : null, l.topics || null, l.skillIds.length > 0 ? `${l.skillIds.length} skill${l.skillIds.length === 1 ? "" : "s"}` : "no skills placed"].filter(Boolean);
@@ -186,13 +191,22 @@ function Row({ l, here, covered, onEdit }: { l: LectureView; here: boolean; cove
 		<button
 			type="button"
 			onClick={onEdit}
-			aria-label={`Edit ${l.title}`}
+			aria-label={`Edit ${l.title}${here ? " (the class is here)" : covered ? "" : " (not covered yet)"}`}
 			data-testid={`lecture-item-${l.id}`}
 			data-covered={covered ? "true" : "false"}
-			className={cn("-mx-2 block w-[calc(100%+1rem)] rounded-sm px-2 py-1.5 text-left hover:bg-raised", !covered && "text-muted-foreground")}
+			className="-mx-2 block w-[calc(100%+1rem)] rounded-sm px-2 py-1.5 text-left hover:bg-raised"
 		>
 			<span className="flex items-baseline gap-2 text-chrome">
-				{here && <span aria-label="the class is here" title="The class is here" className="size-1.5 shrink-0 -translate-y-0.5 rounded-full bg-primary" data-testid={`lecture-here-${l.id}`} />}
+				{here ? (
+					<span title="The class is here" className={cn(DOT, "bg-primary")} data-testid={`lecture-here-${l.id}`} />
+				) : (
+					<span
+						aria-hidden
+						title={covered ? "Covered" : "Not covered yet"}
+						className={cn(DOT, covered ? "bg-muted-foreground" : "border border-muted-foreground")}
+						data-testid={`lecture-dot-${l.id}`}
+					/>
+				)}
 				<span className={cn("min-w-0 flex-1 truncate", covered && "font-medium")}>{l.title}</span>
 				<span className="shrink-0 text-meta text-muted-foreground tabular-nums">{l.date ? shortDate(l.date) : "no date"}</span>
 			</span>
