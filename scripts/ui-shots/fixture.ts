@@ -81,7 +81,7 @@ const courses: CourseRecord[] = [
 			summary: "Read the course schedule (Unit 3 syllabus).",
 			items: [
 				{ key: "p1", kind: "quiz", title: "Quiz 4", date: dayIso(10), topics: "Light reactions and the Calvin cycle", skillIds: ["sk_light", "sk_calvin"], cite: "Unit 3 syllabus.pdf p. 2", status: "new" },
-				{ key: "p2", kind: "quiz", title: "Quiz 3", date: dayIso(3), topics: "Glycolysis", skillIds: ["sk_glycolysis"], cite: "Unit 3 syllabus.pdf p. 2", status: "kept", match: quiz3.id },
+				{ key: "p2", kind: "quiz", title: "Quiz 3", date: quiz3.date, topics: "Glycolysis", skillIds: ["sk_glycolysis"], cite: "Unit 3 syllabus.pdf p. 2", status: "kept", match: quiz3.id },
 			],
 		},
 		assessmentsScannedAt: updatedAt,

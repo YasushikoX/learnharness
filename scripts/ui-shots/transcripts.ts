@@ -187,7 +187,9 @@ export let calvinReport = { id: "sr_ui_calvin", chatId: ids.ask, at: "", skillId
 export function stampClassFacts(day: number) {
 	const dayIso = (n: number) => new Date(day + n * 86_400_000).toISOString().slice(0, 10);
 	const at = new Date(day - 3 * 3_600_000 + 5 * 90_000).toISOString();
-	quiz3 = { ...quiz3, date: dayIso(3), updatedAt: at };
+	// "next Friday", as the learner says in the transcript: the first Friday after the screenshot day
+	const friday = (5 - new Date(day).getUTCDay() + 7) % 7 || 7;
+	quiz3 = { ...quiz3, date: dayIso(friday), updatedAt: at };
 	calvinReport = { ...calvinReport, at, updatedAt: at };
 	return { quiz3, calvinReport, dayIso };
 }
