@@ -186,3 +186,5 @@ export { regradeConcludedProblem } from "./practice-grade.ts";
 // One hint on the pending lesson question (fork addition, 2026-11-13).
 export { handleHintRequest } from "./hint.ts";
 export { learnerStats, runAdapt, type AdaptOutcome } from "./learner-adapt.ts";
+// Read-aloud with Google voices (WP10, 2026-11-26): Gemini TTS through the converter's AI Studio key.
+export { ttsService, testInput as ttsTestInput, type SpeakResult } from "./tts/service.ts";

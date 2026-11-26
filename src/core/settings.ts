@@ -49,6 +49,7 @@ import { DEFAULT_DIFFICULTY, isDifficulty, type Difficulty } from "./difficulty.
 import { parseFileAccessSettings, type FileAccessSettings } from "./file-access.ts";
 import { sanitizeLearner, type LearnerSettings } from "./learner.ts";
 import { COLOR_OVERRIDE_KEYS, DEFAULT_THEME_ID, isThemeId, type AppearanceColorOverrides } from "./themes.ts";
+import { GOOGLE_TTS_DEFAULT_MODEL, isGoogleTtsModel, isGoogleTtsVoice, isReadAloudEngine, type ReadAloudEngine } from "./tts.ts";
 
 /** The schema version this code understands. Bump ONLY for breaking shape
  *  changes (a field renamed/meaning changed); pure additions never bump. */
@@ -424,6 +425,14 @@ export interface GeneralSettings {
 	readAloudRate?: number;
 	/** Preferred system voice (voiceURI or name) for question read-aloud; null = system default matched to lesson language. Per device. */
 	readAloudVoice?: string | null;
+	/** Which voices read aloud (WP10, 2026-11-26; core/tts.ts): "google" (Gemini TTS, online, through the AI Studio key),
+	 *  "system" (the system voices), or null = Google once a key works, else system voices. Every Google failure falls
+	 *  back to system voices for that read. Per device. */
+	readAloudEngine?: ReadAloudEngine | null;
+	/** The Gemini TTS model (core/tts.ts GOOGLE_TTS_MODELS: the default, or the "Faster" one). Per device. */
+	readAloudModel?: string;
+	/** The Google voice per lesson language (absent = core/tts.ts GOOGLE_TTS_DEFAULT_VOICES). Per device. */
+	readAloudVoices?: Partial<Record<LessonLanguage, string>>;
 	/** Vocabulary coverage (WP5, 2026-11-25; core/coverage-ledger.ts): refuse a course lesson's `finish_lesson` once while
 	 *  a core term listed to it was neither introduced nor deferred. OFF by default (experimental until a trial with a real
 	 *  model measures its false refusals); the term lists, the lesson-result line and the course page's counts work without
@@ -736,6 +745,9 @@ export const FACTORY_SETTINGS: FactorySettings = {
 		readAloudAuto: false,
 		readAloudRate: DEFAULT_READ_ALOUD_RATE,
 		readAloudVoice: null,
+		readAloudEngine: null,
+		readAloudModel: GOOGLE_TTS_DEFAULT_MODEL,
+		readAloudVoices: {},
 		refuseFinishWithUnintroducedTerms: false,
 	},
 	agent: { workerRequestConcurrency: 8 },
@@ -786,6 +798,16 @@ function sanitizeHexOrNull(value: unknown): string | null {
 const boolOrDrop = (value: unknown): boolean | undefined =>
 	typeof value === "boolean" ? value : undefined;
 
+/** The Google voice per language: only known voices for known languages are kept; undefined when not an object. */
+export function sanitizeReadAloudVoices(value: unknown): Partial<Record<LessonLanguage, string>> | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const out: Partial<Record<LessonLanguage, string>> = {};
+	for (const [language, voice] of Object.entries(value as Record<string, unknown>)) {
+		if (isLessonLanguage(language) && isGoogleTtsVoice(voice)) out[language] = voice;
+	}
+	return out;
+}
+
 function sanitizeGeneral(raw: Record<string, unknown>): GeneralSettings {
 	const out: GeneralSettings = {};
 	const autoUpdate = boolOrDrop(raw.autoUpdate);
@@ -804,6 +826,10 @@ function sanitizeGeneral(raw: Record<string, unknown>): GeneralSettings {
 	if (raw.readAloudVoice !== undefined) {
 		out.readAloudVoice = typeof raw.readAloudVoice === "string" && raw.readAloudVoice.trim() ? raw.readAloudVoice.trim() : null;
 	}
+	if (raw.readAloudEngine === null || isReadAloudEngine(raw.readAloudEngine)) out.readAloudEngine = raw.readAloudEngine;
+	if (isGoogleTtsModel(raw.readAloudModel)) out.readAloudModel = raw.readAloudModel;
+	const voices = sanitizeReadAloudVoices(raw.readAloudVoices);
+	if (voices) out.readAloudVoices = voices;
 	const refuseFinish = boolOrDrop(raw.refuseFinishWithUnintroducedTerms);
 	if (refuseFinish !== undefined) out.refuseFinishWithUnintroducedTerms = refuseFinish;
 	return out;

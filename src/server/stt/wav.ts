@@ -6,7 +6,8 @@
 
 export const PCM_SAMPLE_RATE = 16_000;
 
-export function wavFromPcm(pcm: Uint8Array): Uint8Array<ArrayBuffer> {
+/** `sampleRate`: the PCM's rate in Hz (dictation records 16 kHz; Gemini TTS answers 24 kHz, src/server/tts/). */
+export function wavFromPcm(pcm: Uint8Array, sampleRate = PCM_SAMPLE_RATE): Uint8Array<ArrayBuffer> {
 	// an odd trailing byte is half a sample: dropped, never read past
 	const dataBytes = pcm.byteLength - (pcm.byteLength % 2);
 	const out = new Uint8Array(44 + dataBytes);
@@ -21,8 +22,8 @@ export function wavFromPcm(pcm: Uint8Array): Uint8Array<ArrayBuffer> {
 	view.setUint32(16, 16, true); // fmt chunk size
 	view.setUint16(20, 1, true); // PCM
 	view.setUint16(22, 1, true); // mono
-	view.setUint32(24, PCM_SAMPLE_RATE, true);
-	view.setUint32(28, PCM_SAMPLE_RATE * 2, true); // byte rate
+	view.setUint32(24, sampleRate, true);
+	view.setUint32(28, sampleRate * 2, true); // byte rate
 	view.setUint16(32, 2, true); // block align
 	view.setUint16(34, 16, true); // bits per sample
 	ascii(36, "data");

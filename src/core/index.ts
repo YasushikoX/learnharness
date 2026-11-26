@@ -125,6 +125,8 @@ export * from "./sketch-gate.ts";
 export * from "./ink-bridge.ts";
 export * from "./speech-bridge.ts";
 export * from "./speech-text.ts";
+// Read-aloud voices: Google (Gemini TTS) and system voices (WP10, 2026-11-26).
+export * from "./tts.ts";
 // Courses: skills, the Leitner stand-in for "known", draft checks
 // (fork addition, 2026-10-24 — docs/courses.md).
 export * from "./skills.ts";
